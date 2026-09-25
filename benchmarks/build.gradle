@@ -6,7 +6,7 @@ dependencies {
 	implementation project(':core')
 	implementation 'io.jooby:jooby-jetty:4.5.4'
 	implementation 'io.javalin:javalin:7.2.3'
-	runtimeOnly 'org.slf4j:slf4j-simple:2.0.17'
+	runtimeOnly 'org.slf4j:slf4j-simple:2.0.20'
 }
 
 application {
