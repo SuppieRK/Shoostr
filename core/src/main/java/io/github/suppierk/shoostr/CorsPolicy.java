@@ -7,6 +7,7 @@ import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import java.net.URI;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -99,17 +100,7 @@ public record CorsPolicy(
       return false;
     }
 
-    if (incomingOrigins.size() != 1 || "*".equals(incomingOrigins.getFirst())) {
-      throw new BadRequestException();
-    }
-
-    var origin = incomingOrigins.getFirst();
-
-    try {
-      validateOrigin(origin);
-    } catch (IllegalArgumentException failure) {
-      throw new BadRequestException(failure);
-    }
+    var origin = validatedOrigin(incomingOrigins);
 
     var requestedMethods = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
     boolean preflight = options && !requestedMethods.isEmpty();
@@ -141,6 +132,29 @@ public record CorsPolicy(
     populateResponseHeaders(fields, request, method, preflight);
     response.corsHeaders(Map.copyOf(fields));
     return preflight;
+  }
+
+  /**
+   * Requires exactly one concrete, syntactically valid Origin field.
+   *
+   * @param incomingOrigins raw Origin fields
+   * @return validated serialized origin
+   * @throws BadRequestException if Origin is missing, repeated or malformed
+   */
+  private static String validatedOrigin(List<String> incomingOrigins) {
+    if (incomingOrigins.size() != 1 || "*".equals(incomingOrigins.getFirst())) {
+      throw new BadRequestException();
+    }
+
+    var origin = incomingOrigins.getFirst();
+
+    try {
+      validateOrigin(origin);
+    } catch (IllegalArgumentException failure) {
+      throw new BadRequestException(failure);
+    }
+
+    return origin;
   }
 
   /**

@@ -649,7 +649,7 @@ public final class Shoostr implements Closeable {
     server.setHandler(graceful);
     var compressionHandler = compression ? new CompressionHandler() : null;
     var applicationHandler =
-        applicationHandler(dispatch, proxy, cors, websocketRoutes, compressionHandler);
+        new ApplicationHandler(dispatch, proxy, cors, websocketRoutes, compressionHandler);
     var installedSessionHandler =
         installHandlers(
             Objects.requireNonNull(server),
@@ -824,426 +824,6 @@ public final class Shoostr implements Closeable {
       throw new IllegalStateException(
           "Jetty configuration must preserve Shoostr lifecycle, handler and default connector");
     }
-  }
-
-  /**
-   * Creates the request dispatcher from frozen registrations and startup transport policy.
-   *
-   * @param dispatch immutable application registrations
-   * @param proxy trusted proxy policy, or null
-   * @param cors cross-origin policy, or null
-   * @param websocketRoutes compiled WebSocket routes, or null
-   * @param compressionHandler native compression wrapper, or null
-   * @return handler owning every HTTP request
-   */
-  private org.eclipse.jetty.server.Handler applicationHandler(
-      DispatchConfiguration dispatch,
-      @Nullable TrustedProxy proxy,
-      @Nullable CorsPolicy cors,
-      @Nullable RadixRoutes websocketRoutes,
-      @Nullable CompressionHandler compressionHandler) {
-    var router = dispatch.router();
-    var errors = dispatch.errors();
-    var statuses = dispatch.statuses();
-    var gates = dispatch.gates();
-    var headerHooks = dispatch.headerHooks();
-    var matchedHooks = dispatch.matchedHooks();
-    var postRouteHooks = dispatch.postRouteHooks();
-    var beforeFlushHooks = dispatch.beforeFlushHooks();
-    var afterFlushHooks = dispatch.afterFlushHooks();
-    var observers = dispatch.observers();
-    var instrumentation = dispatch.instrumentation();
-
-    var applicationHandler =
-        new org.eclipse.jetty.server.Handler.Abstract() {
-          /**
-           * Dispatches one request and completes it exactly once through the transport callback.
-           * Uncommitted failures become safe error responses; committed or fatal failures abort.
-           *
-           * @param rawRequest transport-owned input
-           * @param rawResponse transport-owned output
-           * @param callback completion notification, also used by asynchronous finite writes
-           * @return true because this handler owns every request, including 404 and 405 responses
-           */
-          @Override
-          @SuppressWarnings("java:S1181") // Every throwable must finalize the Jetty callback.
-          public boolean handle(
-              org.eclipse.jetty.server.Request rawRequest,
-              org.eclipse.jetty.server.Response rawResponse,
-              Callback callback) {
-            var observation =
-                observers.isEmpty() && instrumentation.isEmpty()
-                    ? null
-                    : new Completion(rawRequest.getMethod(), observers);
-            if (observation != null) {
-              org.eclipse.jetty.server.Request.addCompletionListener(
-                  rawRequest,
-                  failure ->
-                      observation.complete(
-                          rawResponse.isCommitted() ? rawResponse.getStatus() : 0, failure));
-            }
-
-            var responseCallback =
-                observation == null
-                    ? callback
-                    : Callback.from(callback, observation::recordTransportFailure);
-            var response =
-                new Response(
-                    rawResponse,
-                    options,
-                    responseCallback,
-                    HttpMethods.HEAD.value().equals(rawRequest.getMethod()),
-                    rawRequest);
-            if (compressionHandler != null) {
-              response.compression(compressionHandler);
-              configureEncoding(response, rawRequest);
-            }
-
-            var request =
-                new Request(
-                    rawRequest,
-                    response,
-                    options.maxRequestBytes(),
-                    options.maxParameters(),
-                    options.multipart());
-            response.flushHooks(
-                () -> flush(beforeFlushHooks, request, response),
-                () -> flush(afterFlushHooks, request, response));
-            Throwable terminalFailure = null;
-            Throwable applicationFailure = null;
-
-            try {
-              if (processRequest(
-                  rawRequest, rawResponse, responseCallback, request, response, observation)) {
-                return true;
-              }
-            } catch (Throwable failure) {
-              applicationFailure = flushFailure(failure);
-              terminalFailure = recoverFailure(applicationFailure, request, response, observation);
-            } finally {
-              finishRequest(
-                  request, response, observation, callback, applicationFailure, terminalFailure);
-            }
-
-            return true;
-          }
-
-          /**
-           * Attempts a safe error response or returns the cause that must abort committed output.
-           *
-           * @param failure unwrapped application or transport failure
-           * @param request live request
-           * @param response live response
-           * @param observation optional terminal observation
-           * @return terminal abort cause, or null when error rendering completed
-           */
-          private @Nullable Throwable recoverFailure(
-              Throwable failure,
-              Request request,
-              Response response,
-              @Nullable Completion observation) {
-            response.disableFlushHooksAfterBeforeFailure();
-            if (failure instanceof Error || response.committed()) {
-              response.fail();
-              return failure;
-            }
-
-            try {
-              renderFailure(errors, failure, request, response, observation);
-              return null;
-            } catch (Throwable writeFailure) {
-              if (observation != null && writeFailure != failure) {
-                failure.addSuppressed(writeFailure);
-              }
-
-              response.fail();
-              return writeFailure;
-            }
-          }
-
-          /**
-           * Releases request-scoped resources and reports final application and transport outcomes.
-           *
-           * @param request live request
-           * @param response live response
-           * @param observation optional terminal observation
-           * @param callback original Jetty callback
-           * @param applicationFailure initiating application failure, or null
-           * @param terminalFailure transport abort cause, or null
-           */
-          private void finishRequest(
-              Request request,
-              Response response,
-              @Nullable Completion observation,
-              Callback callback,
-              @Nullable Throwable applicationFailure,
-              @Nullable Throwable terminalFailure) {
-            var postFlushFailure = response.afterFlushFailure();
-            if (postFlushFailure != null) {
-              var originalPostFlushFailure = flushFailure(postFlushFailure);
-              if (applicationFailure == null) {
-                applicationFailure = originalPostFlushFailure;
-              } else if (applicationFailure != originalPostFlushFailure) {
-                applicationFailure.addSuppressed(originalPostFlushFailure);
-              }
-            }
-
-            var routePattern = observation == null ? null : request.routePattern();
-            if (observation != null) {
-              observation.closeScopes();
-            }
-
-            request.finish();
-
-            try {
-              if (terminalFailure != null) {
-                callback.failed(
-                    new org.eclipse.jetty.server.Request.Handler.AbortException(terminalFailure));
-              }
-            } finally {
-              if (observation != null) {
-                observation.finish(routePattern, applicationFailure);
-              }
-            }
-          }
-
-          /**
-           * Applies admission, routing and the selected endpoint before response completion.
-           *
-           * @param rawRequest transport-owned input
-           * @param rawResponse transport-owned output
-           * @param responseCallback terminal response callback
-           * @param request live framework request
-           * @param response live framework response
-           * @param observation optional request observation
-           * @return whether preflight or WebSocket upgrade already completed the exchange
-           * @throws Exception if application callbacks or output fail
-           */
-          @SuppressWarnings("java:S112") // Handler callbacks may throw their own checked failures.
-          private boolean processRequest(
-              org.eclipse.jetty.server.Request rawRequest,
-              org.eclipse.jetty.server.Response rawResponse,
-              Callback responseCallback,
-              Request request,
-              Response response,
-              @Nullable Completion observation)
-              throws Exception {
-            if (prepareRequest(request, response, observation)) {
-              response.preflight();
-              response.complete();
-              return true;
-            }
-
-            var endpoint = matchEndpoint(rawRequest, request);
-            if (endpoint == null) {
-              handleUnmatched(request, response);
-            } else if (handleMatched(
-                endpoint,
-                rawRequest,
-                rawResponse,
-                responseCallback,
-                request,
-                response,
-                observation)) {
-              return true;
-            }
-
-            response.complete();
-            return false;
-          }
-
-          /**
-           * Applies observation, proxy and CORS admission before header hooks.
-           *
-           * @param request live request
-           * @param response live response
-           * @param observation optional terminal observation
-           * @return whether an admitted preflight should finish without route handling
-           * @throws Exception if a header hook fails
-           */
-          @SuppressWarnings("java:S112") // Header hooks retain their checked exception contracts.
-          private boolean prepareRequest(
-              Request request, Response response, @Nullable Completion observation)
-              throws Exception {
-            if (observation != null) {
-              observation.begin(request, instrumentation);
-            }
-
-            if (proxy != null) {
-              proxy.apply(request);
-            }
-
-            boolean preflight = false;
-            HttpException corsFailure = null;
-            if (cors != null) {
-              try {
-                preflight = cors.prepare(request, response);
-              } catch (HttpException failure) {
-                corsFailure = failure;
-              }
-            }
-
-            response.gating(preflight || corsFailure != null);
-
-            try {
-              for (var hook : headerHooks) {
-                hook.handle(request, response);
-              }
-            } finally {
-              response.gating(false);
-            }
-
-            if (corsFailure != null) {
-              throw corsFailure;
-            }
-
-            return preflight;
-          }
-
-          /**
-           * Resolves upgrades, ordinary routes and static resources in precedence order.
-           *
-           * @param rawRequest transport request with upgrade headers
-           * @param request parsed framework request
-           * @return matched endpoint, or null
-           */
-          private RadixRoutes.@Nullable Endpoint matchEndpoint(
-              org.eclipse.jetty.server.Request rawRequest, Request request) {
-            var method = HttpMethods.httpMethod(request.method()).orElse(null);
-            var endpoint =
-                websocketRoutes != null
-                        && rawRequest.getHeaders().contains(HttpHeader.UPGRADE, "websocket")
-                    ? websocketRoutes.match(request.path(), method)
-                    : null;
-            if (endpoint == null) {
-              endpoint = router.match(request.path(), method);
-            }
-
-            return endpoint == null ? router.staticEndpoint(request.path(), method) : endpoint;
-          }
-
-          /**
-           * Produces the configured not-found or method-not-allowed response.
-           *
-           * @param request unmatched request
-           * @param response live response
-           * @throws Exception if a generated-status handler fails
-           */
-          @SuppressWarnings("java:S112") // Status handlers may throw their own checked failures.
-          private void handleUnmatched(Request request, Response response) throws Exception {
-            var methods = router.allowedMethods(request.path());
-            if (methods.isEmpty()) {
-              generated(
-                  statuses, HttpStatusCodes.NOT_FOUND.value(), "Not found", request, response);
-              return;
-            }
-
-            response.requiredAllow(
-                String.join(", ", methods.stream().map(HttpMethods::value).toList()));
-            generated(
-                statuses,
-                HttpStatusCodes.METHOD_NOT_ALLOWED.value(),
-                "Method not allowed",
-                request,
-                response);
-          }
-
-          /**
-           * Runs route hooks and the endpoint, then performs a requested WebSocket upgrade.
-           *
-           * @param endpoint selected endpoint
-           * @param rawRequest transport request
-           * @param rawResponse transport response
-           * @param responseCallback terminal response callback
-           * @param request live framework request
-           * @param response live framework response
-           * @param observation optional terminal observation
-           * @return whether Jetty accepted the WebSocket upgrade
-           * @throws Exception if a hook, handler or generated-status handler fails
-           */
-          @SuppressWarnings("java:S112") // Route callbacks may throw their own checked failures.
-          private boolean handleMatched(
-              RadixRoutes.Endpoint endpoint,
-              org.eclipse.jetty.server.Request rawRequest,
-              org.eclipse.jetty.server.Response rawResponse,
-              Callback responseCallback,
-              Request request,
-              Response response,
-              @Nullable Completion observation)
-              throws Exception {
-            request.route(endpoint);
-            for (var hook : matchedHooks) {
-              hook.handle(request, response);
-            }
-
-            if (rawRequest.getLength() > request.maxBodyBytes()) {
-              throw new ContentTooLargeException();
-            }
-
-            runGates(request, response);
-            endpoint.handler().handle(request, response);
-            for (var hook : postRouteHooks) {
-              hook.handle(request, response);
-            }
-
-            if (endpoint.websocketFactory() == null) {
-              return false;
-            }
-
-            var container =
-                Objects.requireNonNull(ServerWebSocketContainer.get(rawRequest.getContext()));
-            if (upgradeWebSocket(
-                container,
-                endpoint,
-                request,
-                response,
-                errors,
-                observation,
-                rawRequest,
-                rawResponse,
-                responseCallback)) {
-              return true;
-            }
-
-            response.header(HttpHeader.UPGRADE.asString(), "websocket");
-            response.header(
-                HttpHeader.SEC_WEBSOCKET_VERSION.asString(),
-                WebSocketConstants.SPEC_VERSION_STRING);
-            generated(
-                statuses,
-                HttpStatusCodes.UPGRADE_REQUIRED.value(),
-                "Upgrade required",
-                request,
-                response);
-            return false;
-          }
-
-          /**
-           * Runs application admission gates while response output is disabled.
-           *
-           * @param request matched request
-           * @param response live response
-           * @throws Exception if an admission gate fails
-           */
-          @SuppressWarnings("java:S112") // Admission gates may throw checked application failures.
-          private void runGates(Request request, Response response) throws Exception {
-            if (gates.isEmpty()) {
-              return;
-            }
-
-            response.gating(true);
-
-            try {
-              for (var gate : gates) {
-                gate.handle(request, response);
-              }
-            } finally {
-              response.gating(false);
-            }
-          }
-        };
-
-    return applicationHandler;
   }
 
   /**
@@ -1567,6 +1147,433 @@ public final class Shoostr implements Closeable {
       // Hooks cannot be removed once JVM shutdown has begun.
     } finally {
       shutdownHook = null;
+    }
+  }
+
+  /** Request dispatcher with one immutable startup snapshot and no registration locks. */
+  private final class ApplicationHandler extends org.eclipse.jetty.server.Handler.Abstract {
+    private final RadixRoutes compiledRoutes;
+    private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors;
+    private final Map<Integer, Handler> statuses;
+    private final List<Handler> gates;
+    private final List<Handler> headerHooks;
+    private final List<Handler> matchedHooks;
+    private final List<Handler> postRouteHooks;
+    private final List<Handler> preFlushHooks;
+    private final List<Handler> postFlushHooks;
+    private final List<Consumer<RequestOutcome>> observers;
+    private final List<Function<Request, RequestObservation>> instrumentation;
+    private final @Nullable TrustedProxy proxy;
+    private final @Nullable CorsPolicy cors;
+    private final @Nullable RadixRoutes websocketRoutes;
+    private final @Nullable CompressionHandler compressionHandler;
+
+    /**
+     * Retains the immutable registration snapshot and startup policies for all requests.
+     *
+     * @param dispatch immutable application registrations
+     * @param proxy trusted proxy policy, or null
+     * @param cors cross-origin policy, or null
+     * @param websocketRoutes compiled WebSocket routes, or null
+     * @param compressionHandler native compression wrapper, or null
+     */
+    private ApplicationHandler(
+        DispatchConfiguration dispatch,
+        @Nullable TrustedProxy proxy,
+        @Nullable CorsPolicy cors,
+        @Nullable RadixRoutes websocketRoutes,
+        @Nullable CompressionHandler compressionHandler) {
+      compiledRoutes = dispatch.router();
+      errors = dispatch.errors();
+      statuses = dispatch.statuses();
+      gates = dispatch.gates();
+      headerHooks = dispatch.headerHooks();
+      matchedHooks = dispatch.matchedHooks();
+      postRouteHooks = dispatch.postRouteHooks();
+      preFlushHooks = dispatch.beforeFlushHooks();
+      postFlushHooks = dispatch.afterFlushHooks();
+      observers = dispatch.observers();
+      instrumentation = dispatch.instrumentation();
+      this.proxy = proxy;
+      this.cors = cors;
+      this.websocketRoutes = websocketRoutes;
+      this.compressionHandler = compressionHandler;
+    }
+
+    /**
+     * Dispatches one request and completes it exactly once through the transport callback.
+     * Uncommitted failures become safe error responses; committed or fatal failures abort.
+     *
+     * @param rawRequest transport-owned input
+     * @param rawResponse transport-owned output
+     * @param callback completion notification, also used by asynchronous finite writes
+     * @return true because this handler owns every request, including 404 and 405 responses
+     */
+    @Override
+    @SuppressWarnings({
+      "java:S1181",
+      "java:S3516"
+    }) // Jetty owns every exchange and must finalize every throwable.
+    public boolean handle(
+        org.eclipse.jetty.server.Request rawRequest,
+        org.eclipse.jetty.server.Response rawResponse,
+        Callback callback) {
+      var observation =
+          observers.isEmpty() && instrumentation.isEmpty()
+              ? null
+              : new Completion(rawRequest.getMethod(), observers);
+      if (observation != null) {
+        org.eclipse.jetty.server.Request.addCompletionListener(
+            rawRequest,
+            failure ->
+                observation.complete(
+                    rawResponse.isCommitted() ? rawResponse.getStatus() : 0, failure));
+      }
+
+      var responseCallback =
+          observation == null
+              ? callback
+              : Callback.from(callback, observation::recordTransportFailure);
+      var response =
+          new Response(
+              rawResponse,
+              options,
+              responseCallback,
+              HttpMethods.HEAD.value().equals(rawRequest.getMethod()),
+              rawRequest);
+      if (compressionHandler != null) {
+        response.compression(compressionHandler);
+        configureEncoding(response, rawRequest);
+      }
+
+      var request =
+          new Request(
+              rawRequest,
+              response,
+              options.maxRequestBytes(),
+              options.maxParameters(),
+              options.multipart());
+      response.flushHooks(
+          () -> flush(preFlushHooks, request, response),
+          () -> flush(postFlushHooks, request, response));
+      Throwable terminalFailure = null;
+      Throwable applicationFailure = null;
+
+      try {
+        if (processRequest(
+            rawRequest, rawResponse, responseCallback, request, response, observation)) {
+          return true;
+        }
+      } catch (Throwable failure) {
+        applicationFailure = flushFailure(failure);
+        terminalFailure = recoverFailure(applicationFailure, request, response, observation);
+      } finally {
+        finishRequest(
+            request, response, observation, callback, applicationFailure, terminalFailure);
+      }
+
+      return true;
+    }
+
+    /**
+     * Attempts a safe error response or returns the cause that must abort committed output.
+     *
+     * @param failure unwrapped application or transport failure
+     * @param request live request
+     * @param response live response
+     * @param observation optional terminal observation
+     * @return terminal abort cause, or null when error rendering completed
+     */
+    private @Nullable Throwable recoverFailure(
+        Throwable failure, Request request, Response response, @Nullable Completion observation) {
+      response.disableFlushHooksAfterBeforeFailure();
+      if (failure instanceof Error || response.committed()) {
+        response.fail();
+        return failure;
+      }
+
+      try {
+        renderFailure(errors, failure, request, response, observation);
+        return null;
+      } catch (Throwable writeFailure) {
+        if (observation != null && writeFailure != failure) {
+          failure.addSuppressed(writeFailure);
+        }
+
+        response.fail();
+        return writeFailure;
+      }
+    }
+
+    /**
+     * Releases request-scoped resources and reports final application and transport outcomes.
+     *
+     * @param request live request
+     * @param response live response
+     * @param observation optional terminal observation
+     * @param callback original Jetty callback
+     * @param applicationFailure initiating application failure, or null
+     * @param terminalFailure transport abort cause, or null
+     */
+    private void finishRequest(
+        Request request,
+        Response response,
+        @Nullable Completion observation,
+        Callback callback,
+        @Nullable Throwable applicationFailure,
+        @Nullable Throwable terminalFailure) {
+      var postFlushFailure = response.afterFlushFailure();
+      if (postFlushFailure != null) {
+        var originalPostFlushFailure = flushFailure(postFlushFailure);
+        if (applicationFailure == null) {
+          applicationFailure = originalPostFlushFailure;
+        } else if (applicationFailure != originalPostFlushFailure) {
+          applicationFailure.addSuppressed(originalPostFlushFailure);
+        }
+      }
+
+      var routePattern = observation == null ? null : request.routePattern();
+      if (observation != null) {
+        observation.closeScopes();
+      }
+
+      request.finish();
+
+      try {
+        if (terminalFailure != null) {
+          callback.failed(
+              new org.eclipse.jetty.server.Request.Handler.AbortException(terminalFailure));
+        }
+      } finally {
+        if (observation != null) {
+          observation.finish(routePattern, applicationFailure);
+        }
+      }
+    }
+
+    /**
+     * Applies admission, routing and the selected endpoint before response completion.
+     *
+     * @param rawRequest transport-owned input
+     * @param rawResponse transport-owned output
+     * @param responseCallback terminal response callback
+     * @param request live framework request
+     * @param response live framework response
+     * @param observation optional request observation
+     * @return whether preflight or WebSocket upgrade already completed the exchange
+     * @throws Exception if application callbacks or output fail
+     */
+    @SuppressWarnings("java:S112") // Handler callbacks may throw their own checked failures.
+    private boolean processRequest(
+        org.eclipse.jetty.server.Request rawRequest,
+        org.eclipse.jetty.server.Response rawResponse,
+        Callback responseCallback,
+        Request request,
+        Response response,
+        @Nullable Completion observation)
+        throws Exception {
+      if (prepareRequest(request, response, observation)) {
+        response.preflight();
+        response.complete();
+        return true;
+      }
+
+      var endpoint = matchEndpoint(rawRequest, request);
+      if (endpoint == null) {
+        handleUnmatched(request, response);
+      } else if (handleMatched(
+          endpoint, rawRequest, rawResponse, responseCallback, request, response, observation)) {
+        return true;
+      }
+
+      response.complete();
+      return false;
+    }
+
+    /**
+     * Applies observation, proxy and CORS admission before header hooks.
+     *
+     * @param request live request
+     * @param response live response
+     * @param observation optional terminal observation
+     * @return whether an admitted preflight should finish without route handling
+     * @throws Exception if a header hook fails
+     */
+    @SuppressWarnings("java:S112") // Header hooks retain their checked exception contracts.
+    private boolean prepareRequest(
+        Request request, Response response, @Nullable Completion observation) throws Exception {
+      if (observation != null) {
+        observation.begin(request, instrumentation);
+      }
+
+      if (proxy != null) {
+        proxy.apply(request);
+      }
+
+      boolean preflight = false;
+      HttpException corsFailure = null;
+      if (cors != null) {
+        try {
+          preflight = cors.prepare(request, response);
+        } catch (HttpException failure) {
+          corsFailure = failure;
+        }
+      }
+
+      response.gating(preflight || corsFailure != null);
+
+      try {
+        for (var hook : headerHooks) {
+          hook.handle(request, response);
+        }
+      } finally {
+        response.gating(false);
+      }
+
+      if (corsFailure != null) {
+        throw corsFailure;
+      }
+
+      return preflight;
+    }
+
+    /**
+     * Resolves upgrades, ordinary routes and static resources in precedence order.
+     *
+     * @param rawRequest transport request with upgrade headers
+     * @param request parsed framework request
+     * @return matched endpoint, or null
+     */
+    private RadixRoutes.@Nullable Endpoint matchEndpoint(
+        org.eclipse.jetty.server.Request rawRequest, Request request) {
+      var method = HttpMethods.httpMethod(request.method()).orElse(null);
+      var endpoint =
+          websocketRoutes != null
+                  && rawRequest.getHeaders().contains(HttpHeader.UPGRADE, "websocket")
+              ? websocketRoutes.match(request.path(), method)
+              : null;
+      if (endpoint == null) {
+        endpoint = compiledRoutes.match(request.path(), method);
+      }
+
+      return endpoint == null ? compiledRoutes.staticEndpoint(request.path(), method) : endpoint;
+    }
+
+    /**
+     * Produces the configured not-found or method-not-allowed response.
+     *
+     * @param request unmatched request
+     * @param response live response
+     * @throws Exception if a generated-status handler fails
+     */
+    @SuppressWarnings("java:S112") // Status handlers may throw their own checked failures.
+    private void handleUnmatched(Request request, Response response) throws Exception {
+      var methods = compiledRoutes.allowedMethods(request.path());
+      if (methods.isEmpty()) {
+        generated(statuses, HttpStatusCodes.NOT_FOUND.value(), "Not found", request, response);
+        return;
+      }
+
+      response.requiredAllow(String.join(", ", methods.stream().map(HttpMethods::value).toList()));
+      generated(
+          statuses,
+          HttpStatusCodes.METHOD_NOT_ALLOWED.value(),
+          "Method not allowed",
+          request,
+          response);
+    }
+
+    /**
+     * Runs route hooks and the endpoint, then performs a requested WebSocket upgrade.
+     *
+     * @param endpoint selected endpoint
+     * @param rawRequest transport request
+     * @param rawResponse transport response
+     * @param responseCallback terminal response callback
+     * @param request live framework request
+     * @param response live framework response
+     * @param observation optional terminal observation
+     * @return whether Jetty accepted the WebSocket upgrade
+     * @throws ContentTooLargeException if the declared request body exceeds the configured limit
+     * @throws Exception if a hook, handler or generated-status handler fails
+     */
+    @SuppressWarnings("java:S112") // Route callbacks may throw their own checked failures.
+    private boolean handleMatched(
+        RadixRoutes.Endpoint endpoint,
+        org.eclipse.jetty.server.Request rawRequest,
+        org.eclipse.jetty.server.Response rawResponse,
+        Callback responseCallback,
+        Request request,
+        Response response,
+        @Nullable Completion observation)
+        throws Exception {
+      request.route(endpoint);
+      for (var hook : matchedHooks) {
+        hook.handle(request, response);
+      }
+
+      if (rawRequest.getLength() > request.maxBodyBytes()) {
+        throw new ContentTooLargeException();
+      }
+
+      runGates(request, response);
+      endpoint.handler().handle(request, response);
+      for (var hook : postRouteHooks) {
+        hook.handle(request, response);
+      }
+
+      if (endpoint.websocketFactory() == null) {
+        return false;
+      }
+
+      var container = Objects.requireNonNull(ServerWebSocketContainer.get(rawRequest.getContext()));
+      if (upgradeWebSocket(
+          container,
+          endpoint,
+          request,
+          response,
+          errors,
+          observation,
+          rawRequest,
+          rawResponse,
+          responseCallback)) {
+        return true;
+      }
+
+      response.header(HttpHeader.UPGRADE.asString(), "websocket");
+      response.header(
+          HttpHeader.SEC_WEBSOCKET_VERSION.asString(), WebSocketConstants.SPEC_VERSION_STRING);
+      generated(
+          statuses,
+          HttpStatusCodes.UPGRADE_REQUIRED.value(),
+          "Upgrade required",
+          request,
+          response);
+      return false;
+    }
+
+    /**
+     * Runs application admission gates while response output is disabled.
+     *
+     * @param request matched request
+     * @param response live response
+     * @throws Exception if an admission gate fails
+     */
+    @SuppressWarnings("java:S112") // Admission gates may throw checked application failures.
+    private void runGates(Request request, Response response) throws Exception {
+      if (gates.isEmpty()) {
+        return;
+      }
+
+      response.gating(true);
+
+      try {
+        for (var gate : gates) {
+          gate.handle(request, response);
+        }
+      } finally {
+        response.gating(false);
+      }
     }
   }
 

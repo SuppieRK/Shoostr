@@ -36,9 +36,42 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF_NAME" != "main" ]]; then
             ./gradlew sonar -Dsonar.branch.name="$GITHUB_REF_NAME" --console=plain
           else
             ./gradlew sonar --console=plain
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            audit_branch="branch-pr-${PR_NUMBER}-audit"
+          elif [[ "$GITHUB_REF_NAME" != "main" ]]; then
+            audit_branch="branch-${GITHUB_REF_NAME//\//-}-audit"
+          fi
+          if [[ -n "${audit_branch:-}" ]]; then
+            # PR and short-lived branch gates cover new code only; audit the whole project.
+            ./gradlew sonar -Dsonar.branch.name="$audit_branch" --console=plain
+          fi
+
+      - name: Require zero open Sonar issues
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            audit_branch="branch-pr-${PR_NUMBER}-audit"
+          elif [[ "$GITHUB_REF_NAME" != "main" ]]; then
+            audit_branch="branch-${GITHUB_REF_NAME//\//-}-audit"
+          else
+            audit_branch="main"
+          fi
+          issue_count=$(curl -fsS -u "$SONAR_TOKEN:" --get \
+            --data-urlencode 'componentKeys=SuppieRK_Shoostr' \
+            --data-urlencode 'resolved=false' \
+            --data-urlencode 'ps=1' \
+            --data-urlencode "branch=$audit_branch" \
+            'https://sonarcloud.io/api/issues/search' | jq -er '.total')
+          if (( issue_count != 0 )); then
+            echo "::error::SonarQube Cloud reports $issue_count open issues on $audit_branch"
+            exit 1
           fi

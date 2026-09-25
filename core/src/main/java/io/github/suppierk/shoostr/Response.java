@@ -2049,10 +2049,13 @@ public final class Response implements AutoCloseable {
     }
 
     var preferred = config.getCompressPreferredEncodings();
-    String candidate =
-        preferred.isEmpty()
-            ? (encoders.isEmpty() ? null : encoders.keySet().iterator().next())
-            : preferred.stream().filter(encoders::containsKey).findFirst().orElse(null);
+    String candidate;
+    if (preferred.isEmpty()) {
+      candidate = encoders.isEmpty() ? null : encoders.keySet().iterator().next();
+    } else {
+      candidate = preferred.stream().filter(encoders::containsKey).findFirst().orElse(null);
+    }
+
     return candidate != null && compressionEncodingAllowed(config, candidate)
         ? encoders.get(candidate)
         : null;

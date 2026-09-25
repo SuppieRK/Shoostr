@@ -136,36 +136,49 @@ final class TrustedProxy {
   private static void parseForwarding(
       List<String> forwarding, List<Map<String, String>> chain, List<InetSocketAddress> addresses) {
     for (var header : forwarding) {
-      var elements = ELEMENTS.tokenize(header);
-      boolean elementExpected = true;
-      while (elements.hasNext()) {
-        var element = elements.next();
-        if (",".equals(element)) {
-          if (elementExpected) {
-            throw new IllegalArgumentException("Empty forwarding element");
-          }
+      parseForwardingHeader(header, chain, addresses);
+    }
+  }
 
-          elementExpected = true;
-          continue;
+  /**
+   * Parses one physical Forwarded field without resetting the chain-wide size limit.
+   *
+   * @param header raw field value
+   * @param chain destination for parameter maps
+   * @param addresses destination for node addresses
+   * @throws IllegalArgumentException if an element or address is malformed
+   */
+  private static void parseForwardingHeader(
+      String header, List<Map<String, String>> chain, List<InetSocketAddress> addresses) {
+    var elements = ELEMENTS.tokenize(header);
+    boolean elementExpected = true;
+    while (elements.hasNext()) {
+      var element = elements.next();
+      if (",".equals(element)) {
+        if (elementExpected) {
+          throw new IllegalArgumentException("Empty forwarding element");
         }
 
-        if (!elementExpected) {
-          throw new IllegalArgumentException("Invalid forwarding element");
-        }
-
-        var fields = parameters(element);
-        if (chain.size() == MAX_FORWARDING_ELEMENTS) {
-          throw new IllegalArgumentException("Too many forwarding elements");
-        }
-
-        chain.add(fields);
-        addresses.add(node(fields.get("for")));
-        elementExpected = false;
+        elementExpected = true;
+        continue;
       }
 
-      if (elementExpected) {
-        throw new IllegalArgumentException("Empty forwarding element");
+      if (!elementExpected) {
+        throw new IllegalArgumentException("Invalid forwarding element");
       }
+
+      var fields = parameters(element);
+      if (chain.size() == MAX_FORWARDING_ELEMENTS) {
+        throw new IllegalArgumentException("Too many forwarding elements");
+      }
+
+      chain.add(fields);
+      addresses.add(node(fields.get("for")));
+      elementExpected = false;
+    }
+
+    if (elementExpected) {
+      throw new IllegalArgumentException("Empty forwarding element");
     }
   }
 
