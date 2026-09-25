@@ -257,7 +257,7 @@ class ExceptionHandlerTest {
                       NotFoundException.class,
                       (failure, request, response) -> response.text("registered"));
                   return true;
-                } catch (IllegalStateException started) {
+                } catch (IllegalStateException _) {
                   return false;
                 }
               });

@@ -8,8 +8,8 @@ import org.jspecify.annotations.Nullable;
 
 /** Immutable outbound media-type name; construction does not inspect or encode payloads. */
 public final class MediaType {
-  private static final String NAME = "[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}";
-  private static final Pattern BARE_TYPE = Pattern.compile(NAME + "/" + NAME);
+  private static final String NAME_FRAGMENT = "[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}";
+  private static final Pattern BARE_TYPE = Pattern.compile(NAME_FRAGMENT + "/" + NAME_FRAGMENT);
   private static final Pattern TOKEN = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
 
   /** JSON media type from RFC 8259; no charset parameter is added. */

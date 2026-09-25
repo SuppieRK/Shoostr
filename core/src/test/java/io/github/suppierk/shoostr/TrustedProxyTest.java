@@ -514,6 +514,37 @@ class TrustedProxyTest {
     assertEquals(0, calls.get());
   }
 
+  @Test
+  void acceptsLongQuotedForwardedExtension() throws Exception {
+    app.trustedProxies(InetAddress::isLoopbackAddress);
+    app.routes().get("/quoted", (request, response) -> response.text("accepted"));
+    app.start();
+
+    var result = send("/quoted", "for=203.0.113.7;extension=\"" + "x".repeat(4000) + "\"");
+    assertEquals(200, result.statusCode());
+    assertEquals("accepted", result.body());
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"for=203.0.113.7;extension=\"a\\\"b\"", "for=203.0.113.7;extension=\"a\\\\b\""})
+  void acceptsEscapedQuotedForwardedExtensions(String value) throws Exception {
+    app.trustedProxies(InetAddress::isLoopbackAddress);
+    app.routes().get("/quoted", (request, response) -> response.text("accepted"));
+    app.start();
+
+    assertEquals(200, send("/quoted", value).statusCode());
+  }
+
+  @Test
+  void rejectsEscapedClosingQuoteWithoutTerminator() throws Exception {
+    app.trustedProxies(InetAddress::isLoopbackAddress);
+    app.routes().get("/quoted", (request, response) -> response.text("unexpected"));
+    app.start();
+
+    assertEquals(400, send("/quoted", "for=203.0.113.7;extension=\"abc\\\"").statusCode());
+  }
+
   private HttpResponse<String> send(String path, String... forwarded) throws Exception {
     var request =
         HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))

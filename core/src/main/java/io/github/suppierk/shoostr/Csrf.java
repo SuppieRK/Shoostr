@@ -222,7 +222,7 @@ public final class Csrf {
       CorsPolicy.validateOrigin(origin);
       return trustedOrigins.contains(origin)
           || CorsPolicy.sameOrigin(origin, request.effectiveUrl());
-    } catch (IllegalArgumentException failure) {
+    } catch (IllegalArgumentException _) {
       return false;
     }
   }

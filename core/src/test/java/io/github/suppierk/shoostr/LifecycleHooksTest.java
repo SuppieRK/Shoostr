@@ -450,7 +450,7 @@ class LifecycleHooksTest {
                   }
 
                   return true;
-                } catch (IllegalStateException rejected) {
+                } catch (IllegalStateException _) {
                   return false;
                 }
               });

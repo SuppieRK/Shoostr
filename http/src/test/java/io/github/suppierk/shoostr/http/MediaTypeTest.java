@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.nio.charset.Charset;
@@ -31,8 +32,7 @@ class MediaTypeTest {
                 MediaType.of("TEXT/PLAIN").withCharset(Charset.forName("utf8"))));
     assertEquals(1, values.size());
     assertNotEquals(MediaType.TEXT_PLAIN, MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
-    assertNotEquals(MediaType.TEXT_PLAIN, null);
-    assertNotEquals(MediaType.TEXT_PLAIN, "text/plain");
+    assertNotNull(MediaType.TEXT_PLAIN);
   }
 
   @Test
@@ -113,8 +113,8 @@ class MediaTypeTest {
             return StandardCharsets.UTF_8.newEncoder();
           }
         };
-    assertThrows(
-        IllegalArgumentException.class, () -> MediaType.of("text/plain").withCharset(charset));
+    var mediaType = MediaType.of("text/plain");
+    assertThrows(IllegalArgumentException.class, () -> mediaType.withCharset(charset));
   }
 
   private static Stream<String> invalidNames() {

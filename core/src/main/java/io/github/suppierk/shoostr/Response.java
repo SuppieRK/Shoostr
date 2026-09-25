@@ -95,8 +95,10 @@ public final class Response implements AutoCloseable {
   private static final ByteRange UNSATISFIABLE_RANGE = new ByteRange(-1, -1);
   private static final SetCookieParser COOKIE_PARSER = SetCookieParser.newInstance();
   private static final Pattern HEADER_NAME = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
+  private static final String TEXT_CONTENT_TYPE = "text/plain; charset=utf-8";
+  private static final String IDENTITY_ENCODING = "identity";
   private static final HttpField TEXT =
-      new PreEncodedHttpField(HttpHeaders.CONTENT_TYPE.value(), "text/plain; charset=utf-8");
+      new PreEncodedHttpField(HttpHeaders.CONTENT_TYPE.value(), TEXT_CONTENT_TYPE);
   private static final HttpField COMPACT_TEXT =
       new PreEncodedHttpField(HttpHeaders.CONTENT_TYPE.value(), "text/plain;charset=utf-8");
   private static final HttpField JSON =
@@ -333,7 +335,7 @@ public final class Response implements AutoCloseable {
    * @return this response
    */
   public Response text(String value) {
-    return body("text/plain; charset=utf-8", value.getBytes(StandardCharsets.UTF_8));
+    return body(TEXT_CONTENT_TYPE, value.getBytes(StandardCharsets.UTF_8));
   }
 
   /**
@@ -799,7 +801,7 @@ public final class Response implements AutoCloseable {
    * @throws IllegalStateException if the response is no longer open for mutation
    */
   public Response disableCompression() {
-    return header(HttpHeaders.CONTENT_ENCODING.value(), "identity");
+    return header(HttpHeaders.CONTENT_ENCODING.value(), IDENTITY_ENCODING);
   }
 
   /**
@@ -1207,7 +1209,7 @@ public final class Response implements AutoCloseable {
     validateHeaderValue(value);
     var field =
         switch (value) {
-          case "text/plain; charset=utf-8" -> TEXT;
+          case TEXT_CONTENT_TYPE -> TEXT;
           case "text/plain;charset=utf-8" -> COMPACT_TEXT;
           case "application/json" -> JSON;
           default -> new HttpField(HttpHeader.CONTENT_TYPE, value);
@@ -1428,7 +1430,7 @@ public final class Response implements AutoCloseable {
    * @param tag selected entity tag
    * @return whether the request passes the precondition
    */
-  private boolean matchesIfMatch(String tag) {
+  private boolean matchesIfMatch(@Nullable String tag) {
     var values = request().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value());
     if (values.isEmpty()) {
       return true;
@@ -1478,7 +1480,7 @@ public final class Response implements AutoCloseable {
    * @param tag selected entity tag
    * @return whether any request tag matches
    */
-  private boolean noneMatch(String tag) {
+  private boolean noneMatch(@Nullable String tag) {
     if (tag == null) {
       return false;
     }
@@ -1643,7 +1645,7 @@ public final class Response implements AutoCloseable {
     if (channel != null) {
       try {
         channel.close();
-      } catch (IOException ignored) {
+      } catch (IOException _) {
         // Response cleanup cannot safely report an unsubmitted descriptor close failure.
       }
     }
@@ -1656,7 +1658,7 @@ public final class Response implements AutoCloseable {
    * @param tag selected entity tag
    * @return selected range, unsatisfiable marker, or null when Range is ignored
    */
-  private @Nullable ByteRange range(long length, String tag) {
+  private @Nullable ByteRange range(long length, @Nullable String tag) {
     if (head
         || status() != HttpStatusCodes.OK.value()
         || !HttpMethods.GET.value().equals(request().getMethod())) {
@@ -1716,7 +1718,7 @@ public final class Response implements AutoCloseable {
       }
 
       return new ByteRange(first, Math.min(last, length - 1));
-    } catch (NumberFormatException ignored) {
+    } catch (NumberFormatException _) {
       return null;
     }
   }
@@ -1747,7 +1749,7 @@ public final class Response implements AutoCloseable {
    * @param tag selected entity tag
    * @return whether Range can select a partial representation
    */
-  private boolean ifRangeMatches(String tag) {
+  private boolean ifRangeMatches(@Nullable String tag) {
     var values = request().getHeaders().getValuesList(HttpHeaders.IF_RANGE.value());
     if (values.isEmpty()) {
       return true;
@@ -1872,13 +1874,13 @@ public final class Response implements AutoCloseable {
         && delegate.getStatus() == HttpStatusCodes.PARTIAL_CONTENT.value()
         && delegate.getHeaders().contains(HttpHeaders.CONTENT_RANGE.value())
         && !delegate.getHeaders().contains(HttpHeaders.CONTENT_ENCODING.value())) {
-      delegate.getHeaders().put(HttpHeaders.CONTENT_ENCODING.value(), "identity");
+      delegate.getHeaders().put(HttpHeaders.CONTENT_ENCODING.value(), IDENTITY_ENCODING);
     }
 
     var contentEncoding = delegate.getHeaders().get(HttpHeaders.CONTENT_ENCODING.value());
     rejectNativeIdentity(last, length, contentEncoding);
     if (((encodingUnacceptable && contentEncoding == null)
-            || (identityUnacceptable && "identity".equalsIgnoreCase(contentEncoding)))
+            || (identityUnacceptable && IDENTITY_ENCODING.equalsIgnoreCase(contentEncoding)))
         && permitsBody()
         && (delegate.getStatus() == 0
             || (delegate.getStatus() >= 200 && delegate.getStatus() < 300))
@@ -1891,7 +1893,7 @@ public final class Response implements AutoCloseable {
         && !head
         && permitsBody()
         && !delegate.getHeaders().contains(HttpHeaders.CONTENT_ENCODING.value())) {
-      delegate.getHeaders().put(HttpHeaders.CONTENT_ENCODING.value(), "identity");
+      delegate.getHeaders().put(HttpHeaders.CONTENT_ENCODING.value(), IDENTITY_ENCODING);
     }
 
     if (compressionEnabled && head) {
@@ -1999,10 +2001,13 @@ public final class Response implements AutoCloseable {
         return null;
       }
 
-      var candidate =
-          preferred.isEmpty()
-              ? encoders.isEmpty() ? null : encoders.firstKey()
-              : preferred.stream().filter(encoders::containsKey).findFirst().orElse(null);
+      String candidate;
+      if (preferred.isEmpty()) {
+        candidate = encoders.isEmpty() ? null : encoders.firstKey();
+      } else {
+        candidate = preferred.stream().filter(encoders::containsKey).findFirst().orElse(null);
+      }
+
       return candidate != null && compressionEncodingAllowed(config, candidate)
           ? encoders.get(candidate)
           : null;

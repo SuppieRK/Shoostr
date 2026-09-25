@@ -259,7 +259,7 @@ class ShoostrLifecycleTest {
                 while (release.getCount() != 0) {
                   try {
                     release.await();
-                  } catch (InterruptedException ignored) {
+                  } catch (InterruptedException _) {
                     interrupted.countDown();
                   }
                 }

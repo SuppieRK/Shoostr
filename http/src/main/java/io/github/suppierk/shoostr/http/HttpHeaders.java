@@ -163,7 +163,8 @@ public final class HttpHeaders {
    *     href="https://www.w3.org/TR/2007/WD-access-control-20071126/#access-control0">Specification
    *     cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders ACCESS_CONTROL = new HttpHeaders("Access-Control");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders ACCESS_CONTROL = new HttpHeaders("Access-Control");
 
   /**
    * Indicates whether a cross-origin response can be shared with credentials.
@@ -389,7 +390,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
    */
-  @Deprecated public static final HttpHeaders C_EXT = new HttpHeaders("C-Ext");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders C_EXT = new HttpHeaders("C-Ext");
 
   /**
    * Declares mandatory hop-by-hop HTTP extensions.
@@ -399,7 +401,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
    */
-  @Deprecated public static final HttpHeaders C_MAN = new HttpHeaders("C-Man");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders C_MAN = new HttpHeaders("C-Man");
 
   /**
    * Declares optional hop-by-hop HTTP extensions.
@@ -409,7 +412,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
    */
-  @Deprecated public static final HttpHeaders C_OPT = new HttpHeaders("C-Opt");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders C_OPT = new HttpHeaders("C-Opt");
 
   /**
    * Declares hop-by-hop extensions in the historical PEP protocol.
@@ -419,7 +423,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/WD-http-pep">Specification cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders C_PEP = new HttpHeaders("C-PEP");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders C_PEP = new HttpHeaders("C-PEP");
 
   /**
    * Provides hop-by-hop extension information in the historical PEP protocol.
@@ -687,7 +692,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2068.html">RFC 2068</a>
    */
-  @Deprecated public static final HttpHeaders CONTENT_BASE = new HttpHeaders("Content-Base");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders CONTENT_BASE = new HttpHeaders("Content-Base");
 
   /**
    * Carries integrity digests of HTTP message content.
@@ -765,7 +771,8 @@ public final class HttpHeaders {
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2616.html#section-14.15">RFC 2616, section
    *     14.15</a>
    */
-  @Deprecated public static final HttpHeaders CONTENT_MD5 = new HttpHeaders("Content-MD5");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders CONTENT_MD5 = new HttpHeaders("Content-MD5");
 
   /**
    * Describes the range conveyed in a partial representation.
@@ -785,7 +792,7 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/html401">Specification cited by IANA</a>
    */
-  @Deprecated
+  @Deprecated(since = "0.1.0")
   public static final HttpHeaders CONTENT_SCRIPT_TYPE = new HttpHeaders("Content-Script-Type");
 
   /**
@@ -816,7 +823,7 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/html401">Specification cited by IANA</a>
    */
-  @Deprecated
+  @Deprecated(since = "0.1.0")
   public static final HttpHeaders CONTENT_STYLE_TYPE = new HttpHeaders("Content-Style-Type");
 
   /**
@@ -837,7 +844,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2068.html">RFC 2068</a>
    */
-  @Deprecated public static final HttpHeaders CONTENT_VERSION = new HttpHeaders("Content-Version");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders CONTENT_VERSION = new HttpHeaders("Content-Version");
 
   /**
    * Carries applicable cookies from the user agent to the server.
@@ -857,7 +865,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2965.html">RFC 2965</a>
    */
-  @Deprecated public static final HttpHeaders COOKIE2 = new HttpHeaders("Cookie2");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders COOKIE2 = new HttpHeaders("Cookie2");
 
   /**
    * Controls whether a document can embed cross-origin resources.
@@ -965,7 +974,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/html401">Specification cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders DEFAULT_STYLE = new HttpHeaders("Default-Style");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders DEFAULT_STYLE = new HttpHeaders("Default-Style");
 
   /**
    * Identifies the base representation used for delta encoding.
@@ -1002,7 +1012,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2068.html">RFC 2068</a>
    */
-  @Deprecated public static final HttpHeaders DERIVED_FROM = new HttpHeaders("Derived-From");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders DERIVED_FROM = new HttpHeaders("Derived-From");
 
   /**
    * Specifies the destination URI for a WebDAV COPY or MOVE operation.
@@ -1049,7 +1060,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc3230.html">RFC 3230</a>
    */
-  @Deprecated public static final HttpHeaders DIGEST = new HttpHeaders("Digest");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders DIGEST = new HttpHeaders("Digest");
 
   /**
    * Carries a proof of possession for an OAuth request.
@@ -1134,7 +1146,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
    */
-  @Deprecated public static final HttpHeaders EXT = new HttpHeaders("Ext");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders EXT = new HttpHeaders("Ext");
 
   /**
    * Records proxy forwarding information such as original client and host.
@@ -1163,7 +1176,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/NOTE-OPS-OverHTTP">Specification cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders GETPROFILE = new HttpHeaders("GetProfile");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders GETPROFILE = new HttpHeaders("GetProfile");
 
   /**
    * Reports the result of an HTTP Origin-Bound Authentication registration.
@@ -1194,7 +1208,8 @@ public final class HttpHeaders {
    * @see <a href="https://www.rfc-editor.org/rfc/rfc7540.html#section-3.2.1">RFC 7540, section
    *     3.2.1</a>
    */
-  @Deprecated public static final HttpHeaders HTTP2_SETTINGS = new HttpHeaders("HTTP2-Settings");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders HTTP2_SETTINGS = new HttpHeaders("HTTP2-Settings");
 
   /**
    * Expresses WebDAV conditions involving lock tokens and entity tags.
@@ -1387,7 +1402,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
    */
-  @Deprecated public static final HttpHeaders MAN = new HttpHeaders("Man");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders MAN = new HttpHeaders("Man");
 
   /**
    * Limits the number of intermediary hops for TRACE and OPTIONS.
@@ -1427,7 +1443,8 @@ public final class HttpHeaders {
    *     href="https://www.w3.org/TR/2007/WD-access-control-20071126/#method-check">Specification
    *     cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders METHOD_CHECK = new HttpHeaders("Method-Check");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders METHOD_CHECK = new HttpHeaders("Method-Check");
 
   /**
    * Specifies expiration of a historical cross-site method permission check.
@@ -1439,7 +1456,7 @@ public final class HttpHeaders {
    *     href="https://www.w3.org/TR/2007/WD-access-control-20071126/#method-check-expires">Specification
    *     cited by IANA</a>
    */
-  @Deprecated
+  @Deprecated(since = "0.1.0")
   public static final HttpHeaders METHOD_CHECK_EXPIRES = new HttpHeaders("Method-Check-Expires");
 
   /**
@@ -1521,7 +1538,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774.html">RFC 2774</a>
    */
-  @Deprecated public static final HttpHeaders OPT = new HttpHeaders("Opt");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders OPT = new HttpHeaders("Opt");
 
   /**
    * Offers optional authentication without requiring an authentication failure response.
@@ -1600,7 +1618,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/P3P">Specification cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders P3P = new HttpHeaders("P3P");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders P3P = new HttpHeaders("P3P");
 
   /**
    * Declares end-to-end extensions in the historical PEP protocol.
@@ -1610,7 +1629,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="http://www.w3.org/TR/WD-http-pep">Specification cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders PEP = new HttpHeaders("PEP");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders PEP = new HttpHeaders("PEP");
 
   /**
    * Provides end-to-end extension information in the historical PEP protocol.
@@ -1620,7 +1640,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="http://www.w3.org/TR/WD-http-pep">Specification cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders PEP_INFO = new HttpHeaders("PEP-Info");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders PEP_INFO = new HttpHeaders("PEP-Info");
 
   /**
    * Controls which browser features a document and its frames may use.
@@ -1640,7 +1661,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/REC-PICS-labels-961031">Specification cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders PICS_LABEL = new HttpHeaders("PICS-Label");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders PICS_LABEL = new HttpHeaders("PICS-Label");
 
   /**
    * Identifies the document containing a followed hyperlink for hyperlink auditing.
@@ -1716,7 +1738,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/NOTE-OPS-OverHTTP">Specification cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders PROFILEOBJECT = new HttpHeaders("ProfileObject");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders PROFILEOBJECT = new HttpHeaders("ProfileObject");
 
   /**
    * Declares protocol extensions in the historical PICS extension mechanism.
@@ -1726,7 +1749,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/REC-PICS-labels-961031">Specification cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders PROTOCOL = new HttpHeaders("Protocol");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders PROTOCOL = new HttpHeaders("Protocol");
 
   /**
    * Advertises protocol information in the historical electronic payment initiative.
@@ -1754,7 +1778,7 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/REC-PICS-labels-961031">Specification cited by IANA</a>
    */
-  @Deprecated
+  @Deprecated(since = "0.1.0")
   public static final HttpHeaders PROTOCOL_REQUEST = new HttpHeaders("Protocol-Request");
 
   /**
@@ -1796,7 +1820,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/WD-proxy.html">Specification cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders PROXY_FEATURES = new HttpHeaders("Proxy-Features");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders PROXY_FEATURES = new HttpHeaders("Proxy-Features");
 
   /**
    * Carries instructions in the historical proxy-cache notification protocol.
@@ -1806,7 +1831,7 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/WD-proxy.html">Specification cited by IANA</a>
    */
-  @Deprecated
+  @Deprecated(since = "0.1.0")
   public static final HttpHeaders PROXY_INSTRUCTION = new HttpHeaders("Proxy-Instruction");
 
   /**
@@ -1837,7 +1862,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2068.html">RFC 2068</a>
    */
-  @Deprecated public static final HttpHeaders PUBLIC = new HttpHeaders("Public");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders PUBLIC = new HttpHeaders("Public");
 
   /**
    * Defines a certificate public-key pinning policy.
@@ -1897,7 +1923,8 @@ public final class HttpHeaders {
    *     href="https://www.w3.org/TR/2007/WD-access-control-20071126/#referer-root">Specification
    *     cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders REFERER_ROOT = new HttpHeaders("Referer-Root");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders REFERER_ROOT = new HttpHeaders("Referer-Root");
 
   /**
    * Controls how much referrer information a browser sends.
@@ -2013,7 +2040,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2310.html">RFC 2310</a>
    */
-  @Deprecated public static final HttpHeaders SAFE = new HttpHeaders("Safe");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders SAFE = new HttpHeaders("Safe");
 
   /**
    * Controls scheduling replies when deleting a CalDAV scheduling object.
@@ -2167,7 +2195,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2660.html">RFC 2660</a>
    */
-  @Deprecated public static final HttpHeaders SECURITY_SCHEME = new HttpHeaders("Security-Scheme");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders SECURITY_SCHEME = new HttpHeaders("Security-Scheme");
 
   /**
    * Identifies software used by the origin server.
@@ -2206,7 +2235,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2965.html">RFC 2965</a>
    */
-  @Deprecated public static final HttpHeaders SET_COOKIE2 = new HttpHeaders("Set-Cookie2");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders SET_COOKIE2 = new HttpHeaders("Set-Cookie2");
 
   /**
    * Carries a transaction identifier for the SCIM profile of Security Event Tokens.
@@ -2225,7 +2255,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.w3.org/TR/NOTE-OPS-OverHTTP">Specification cited by IANA</a>
    */
-  @Deprecated public static final HttpHeaders SETPROFILE = new HttpHeaders("SetProfile");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders SETPROFILE = new HttpHeaders("SetProfile");
 
   /**
    * Carries cryptographic HTTP message signatures.
@@ -2448,7 +2479,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2068.html">RFC 2068</a>
    */
-  @Deprecated public static final HttpHeaders URI = new HttpHeaders("URI");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders URI = new HttpHeaders("URI");
 
   /**
    * Offers response content for use as a compression dictionary.
@@ -2516,7 +2548,8 @@ public final class HttpHeaders {
    * @deprecated Obsoleted in the IANA registry; retained for recognizing historical fields.
    * @see <a href="https://www.rfc-editor.org/rfc/rfc3230.html">RFC 3230</a>
    */
-  @Deprecated public static final HttpHeaders WANT_DIGEST = new HttpHeaders("Want-Digest");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders WANT_DIGEST = new HttpHeaders("Want-Digest");
 
   /**
    * Expresses preferences for integrity digests of the selected representation.
@@ -2547,7 +2580,8 @@ public final class HttpHeaders {
    * @see <a href="https://www.rfc-editor.org/rfc/rfc9111.html#section-5.5">RFC 9111, section
    *     5.5</a>
    */
-  @Deprecated public static final HttpHeaders WARNING = new HttpHeaders("Warning");
+  @Deprecated(since = "0.1.0")
+  public static final HttpHeaders WARNING = new HttpHeaders("Warning");
 
   /**
    * Carries authentication challenges from the origin server.

@@ -10,7 +10,7 @@ import org.jspecify.annotations.Nullable;
  * @see HttpStatusCodes#NOT_EXTENDED
  * @deprecated This status is obsoleted in the IANA registry.
  */
-@Deprecated
+@Deprecated(since = "0.1.0")
 public class NotExtendedException extends HttpServerException {
   @Serial private static final long serialVersionUID = 1L;
 

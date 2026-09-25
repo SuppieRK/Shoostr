@@ -29,14 +29,12 @@ public abstract class HttpException extends RuntimeException {
    */
   protected HttpException(
       HttpStatusCodes statusCode, @Nullable String message, @Nullable Throwable cause) {
-    super(
-        message == null ? Objects.requireNonNull(statusCode, "statusCode").reasonPhrase() : message,
-        cause);
     Objects.requireNonNull(statusCode, "statusCode");
     if (!statusCode.isError()) {
       throw new IllegalArgumentException("HTTP exceptions require a client or server error status");
     }
 
+    super(message == null ? statusCode.reasonPhrase() : message, cause);
     this.statusCode = statusCode;
   }
 

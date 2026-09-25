@@ -1306,7 +1306,7 @@ public final class Shoostr implements Closeable {
 
     try {
       Runtime.getRuntime().removeShutdownHook(shutdownHook);
-    } catch (IllegalStateException shutdownInProgress) {
+    } catch (IllegalStateException _) {
       // Hooks cannot be removed once JVM shutdown has begun.
     } finally {
       shutdownHook = null;

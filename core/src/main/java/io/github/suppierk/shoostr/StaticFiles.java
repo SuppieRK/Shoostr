@@ -200,7 +200,7 @@ final class StaticFiles implements Closeable {
    */
   RadixRoutes.@Nullable Endpoint endpoint(String path, @Nullable HttpMethods method)
       throws IOException {
-    if (method != HttpMethods.GET && method != HttpMethods.HEAD) {
+    if (method == null || (method != HttpMethods.GET && method != HttpMethods.HEAD)) {
       return null;
     }
 
@@ -368,7 +368,7 @@ final class StaticFiles implements Closeable {
       }
 
       return filesystemAttributes(relative) != null;
-    } catch (IOException ignored) {
+    } catch (IOException _) {
       return false;
     }
   }
@@ -524,7 +524,7 @@ final class StaticFiles implements Closeable {
       }
 
       return directories;
-    } catch (NoSuchFileException | NotDirectoryException ignored) {
+    } catch (NoSuchFileException | NotDirectoryException _) {
       closeNestedDirectories(directories);
       return null;
     } catch (IOException | RuntimeException failure) {
@@ -549,7 +549,7 @@ final class StaticFiles implements Closeable {
               Path.of(file), BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
       var attributes = view.readAttributes();
       return attributes.isRegularFile() ? attributes : null;
-    } catch (NoSuchFileException ignored) {
+    } catch (NoSuchFileException _) {
       return null;
     }
   }
@@ -604,10 +604,15 @@ final class StaticFiles implements Closeable {
       return null;
     }
 
-    var encoded =
-        mount.length() == 1
-            ? path.substring(1)
-            : path.equals(mount) ? "" : path.substring(mount.length() + 1);
+    String encoded;
+    if (mount.length() == 1) {
+      encoded = path.substring(1);
+    } else if (path.equals(mount)) {
+      encoded = "";
+    } else {
+      encoded = path.substring(mount.length() + 1);
+    }
+
     String decoded;
 
     try {
@@ -615,7 +620,7 @@ final class StaticFiles implements Closeable {
           URLDecoder.decode(
               encoded.replace(HttpCharacters.PLUS_SIGN_STRING, HttpCharacters.PERCENT_ENCODED_PLUS),
               StandardCharsets.UTF_8);
-    } catch (IllegalArgumentException ignored) {
+    } catch (IllegalArgumentException _) {
       return null;
     }
 

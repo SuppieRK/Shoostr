@@ -79,7 +79,7 @@ class RoutesConcurrencyTest {
                             prefix(index) + "{id" + index + "}",
                             (req, res) -> res.text(Integer.toString(index)));
                     return true;
-                  } catch (IllegalArgumentException duplicate) {
+                  } catch (IllegalArgumentException _) {
                     return false;
                   }
                 }));
@@ -233,7 +233,7 @@ class RoutesConcurrencyTest {
                         .get(index % scopes.size())
                         .get(prefix(index) + index, (req, res) -> res.text("registered"));
                     return true;
-                  } catch (IllegalStateException frozen) {
+                  } catch (IllegalStateException _) {
                     return false;
                   }
                 }));

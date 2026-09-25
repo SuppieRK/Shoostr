@@ -24,13 +24,11 @@ final class TrustedProxy {
   private static final String X_FORWARDED_HOST = "X-Forwarded-Host";
   private static final String X_FORWARDED_PORT = "X-Forwarded-Port";
   private static final String X_FORWARDED_PROTO = "X-Forwarded-Proto";
+  private static final String PROTO_FIELD = "proto";
   private static final Pattern TOKEN = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
-  private static final Pattern IPV4 = Pattern.compile("[0-9]{1,3}(?:\\.[0-9]{1,3}){3}");
+  private static final Pattern IPV4 = Pattern.compile("\\d{1,3}(?:\\.\\d{1,3}){3}");
   private static final Pattern OBFUSCATED = Pattern.compile("_[A-Za-z0-9._-]+");
-  private static final Pattern DIGITS = Pattern.compile("[0-9]+");
-  private static final Pattern QUOTED =
-      Pattern.compile(
-          "\"(?:[\\t\\x20\\x21\\x23-\\x5B\\x5D-\\x7E\\x80-\\xFF]|\\\\[\\t\\x20-\\x7E\\x80-\\xFF])*\"");
+  private static final Pattern DIGITS = Pattern.compile("\\d+");
   private static final QuotedStringTokenizer PARAMETERS =
       QuotedStringTokenizer.builder()
           .delimiters(";")
@@ -119,7 +117,7 @@ final class TrustedProxy {
           throw new IllegalArgumentException("Empty forwarding element");
         }
       }
-    } catch (IllegalArgumentException failure) {
+    } catch (IllegalArgumentException _) {
       throw new BadRequestException();
     }
 
@@ -133,8 +131,8 @@ final class TrustedProxy {
 
     try {
       var uri = HttpURI.build(request.fullUrl());
-      if (fields.containsKey("proto")) {
-        uri.scheme(fields.get("proto").toLowerCase(Locale.ROOT));
+      if (fields.containsKey(PROTO_FIELD)) {
+        uri.scheme(fields.get(PROTO_FIELD).toLowerCase(Locale.ROOT));
       }
 
       if (fields.containsKey("host")) {
@@ -143,7 +141,7 @@ final class TrustedProxy {
       }
 
       request.forwarded(addresses.get(selected), uri.asString());
-    } catch (IllegalArgumentException failure) {
+    } catch (IllegalArgumentException _) {
       throw new BadRequestException();
     }
   }
@@ -171,7 +169,7 @@ final class TrustedProxy {
       }
 
       validateLegacyOrigins(hosts, protocols, ports);
-    } catch (IllegalArgumentException failure) {
+    } catch (IllegalArgumentException _) {
       throw new BadRequestException();
     }
 
@@ -195,7 +193,7 @@ final class TrustedProxy {
       }
 
       request.forwarded(addresses.get(selected), uri.asString());
-    } catch (IllegalArgumentException failure) {
+    } catch (IllegalArgumentException _) {
       throw new BadRequestException();
     }
   }
@@ -329,20 +327,18 @@ final class TrustedProxy {
       var name = token.substring(0, equals).toLowerCase(Locale.ROOT);
       var raw = token.substring(equals + 1);
       if (!TOKEN.matcher(name).matches()
-          || !(TOKEN.matcher(raw).matches() || QUOTED.matcher(raw).matches())
+          || !(TOKEN.matcher(raw).matches() || validQuoted(raw))
           || fields.putIfAbsent(name, PARAMETERS.unquote(raw)) != null) {
         throw new IllegalArgumentException("Invalid forwarding parameter");
       }
 
-      if (tokens.hasNext()) {
-        if (!";".equals(tokens.next()) || !tokens.hasNext()) {
-          throw new IllegalArgumentException("Invalid forwarding delimiter");
-        }
+      if (tokens.hasNext() && (!";".equals(tokens.next()) || !tokens.hasNext())) {
+        throw new IllegalArgumentException("Invalid forwarding delimiter");
       }
     }
-    if (fields.containsKey("proto")
-        && !"http".equalsIgnoreCase(fields.get("proto"))
-        && !"https".equalsIgnoreCase(fields.get("proto"))) {
+    if (fields.containsKey(PROTO_FIELD)
+        && !"http".equalsIgnoreCase(fields.get(PROTO_FIELD))
+        && !"https".equalsIgnoreCase(fields.get(PROTO_FIELD))) {
       throw new IllegalArgumentException("Unsupported forwarding scheme");
     }
 
@@ -355,6 +351,37 @@ final class TrustedProxy {
     }
 
     return fields;
+  }
+
+  /**
+   * Validates a quoted forwarding value in one pass, including its permitted escape sequences.
+   *
+   * @param value raw parameter value
+   * @return whether the value follows the HTTP quoted-string grammar
+   */
+  private static boolean validQuoted(String value) {
+    if (value.length() < 2 || value.charAt(0) != '"' || value.charAt(value.length() - 1) != '"') {
+      return false;
+    }
+
+    for (int index = 1; index < value.length() - 1; index++) {
+      char character = value.charAt(index);
+      if (character == '\\') {
+        if (++index == value.length() - 1) {
+          return false;
+        }
+
+        char escaped = value.charAt(index);
+        if (escaped != '\t' && (escaped < 0x20 || escaped == 0x7f || escaped > 0xff)) {
+          return false;
+        }
+      } else if (character != '\t'
+          && (character < 0x20 || character == 0x7f || character > 0xff || character == '"')) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   /**

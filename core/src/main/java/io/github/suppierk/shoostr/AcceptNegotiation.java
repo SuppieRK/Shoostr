@@ -257,10 +257,6 @@ final class AcceptNegotiation {
    * @return trimmed components
    */
   private static List<String> split(String value, char separator, boolean ignoreEmpty) {
-    if (value == null) {
-      throw malformed();
-    }
-
     var values = new ArrayList<String>();
     int start = 0;
     boolean quoted = false;
@@ -279,7 +275,7 @@ final class AcceptNegotiation {
       }
     }
 
-    if (quoted || escaped) {
+    if (quoted) {
       throw malformed();
     }
 

@@ -37,10 +37,7 @@ public record Cookie(
     @Nullable Instant expires) {
   private static final String SECURE_PREFIX = "__Secure-";
   private static final String HOST_PREFIX = "__Host-";
-  private static final Pattern NAME = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
-  private static final Pattern DOMAIN =
-      Pattern.compile(
-          "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*");
+  private static final Pattern NAME_PATTERN = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
   private static final DateTimeFormatter DATE =
       DateTimeFormatter.ofPattern("EEE, dd MMM uuuu HH:mm:ss 'GMT'", Locale.US)
           .withZone(ZoneOffset.UTC);
@@ -56,7 +53,7 @@ public record Cookie(
     Objects.requireNonNull(name);
     Objects.requireNonNull(value);
     Objects.requireNonNull(path);
-    if (!NAME.matcher(name).matches()) {
+    if (!NAME_PATTERN.matcher(name).matches()) {
       throw new IllegalArgumentException("Invalid cookie name");
     }
 
@@ -77,7 +74,7 @@ public record Cookie(
 
     if (domain != null) {
       domain = (domain.startsWith(".") ? domain.substring(1) : domain).toLowerCase(Locale.ROOT);
-      if (domain.length() > 253 || !DOMAIN.matcher(domain).matches()) {
+      if (domain.length() > 253 || !validDomain(domain)) {
         throw new IllegalArgumentException("Invalid cookie domain");
       }
     }
@@ -238,6 +235,43 @@ public record Cookie(
    */
   public Cookie expired() {
     return new Cookie(name, "", path, domain, 0, secure, httpOnly, sameSite, Instant.EPOCH);
+  }
+
+  /**
+   * Checks DNS labels in linear time, with the same ASCII and length rules as the domain syntax.
+   *
+   * @param value normalized domain
+   * @return whether every label is valid
+   */
+  private static boolean validDomain(String value) {
+    int labelStart = 0;
+    for (int index = 0; index <= value.length(); index++) {
+      if (index < value.length() && value.charAt(index) != '.') {
+        char character = value.charAt(index);
+        if (!asciiLetterOrDigit(character) && character != '-') {
+          return false;
+        }
+
+        continue;
+      }
+
+      int labelLength = index - labelStart;
+      if (labelLength < 1
+          || labelLength > 63
+          || !asciiLetterOrDigit(value.charAt(labelStart))
+          || !asciiLetterOrDigit(value.charAt(index - 1))) {
+        return false;
+      }
+
+      labelStart = index + 1;
+    }
+
+    return true;
+  }
+
+  /** Returns whether a character is an ASCII lowercase letter or decimal digit. */
+  private static boolean asciiLetterOrDigit(char character) {
+    return (character >= 'a' && character <= 'z') || (character >= '0' && character <= '9');
   }
 
   /**

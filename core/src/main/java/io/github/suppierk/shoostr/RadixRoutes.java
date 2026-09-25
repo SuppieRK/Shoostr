@@ -21,7 +21,7 @@ import org.jspecify.annotations.Nullable;
 
 /** Frozen compressed path patterns that prefer complete matches through literal branches. */
 final class RadixRoutes {
-  private static final Pattern PARAMETER =
+  private static final Pattern PARAMETER_PATTERN =
       Pattern.compile(
           "\\"
               + HttpCharacters.OPEN_CURLY_BRACE_STRING
@@ -119,8 +119,8 @@ final class RadixRoutes {
    * @throws IOException if resource metadata cannot be read
    */
   @Nullable Endpoint staticEndpoint(String path, @Nullable HttpMethods method) throws IOException {
-    for (var staticFiles : staticFiles) {
-      var endpoint = staticFiles.endpoint(path, method);
+    for (var mount : staticFiles) {
+      var endpoint = mount.endpoint(path, method);
       if (endpoint != null) {
         return endpoint;
       }
@@ -149,8 +149,8 @@ final class RadixRoutes {
    */
   Set<HttpMethods> allowedMethods(String path) {
     var methods = collectMethods(path, 0, null);
-    for (var staticFiles : staticFiles) {
-      if (staticFiles.exists(path)) {
+    for (var mount : staticFiles) {
+      if (mount.exists(path)) {
         if (methods == null) {
           methods = EnumSet.noneOf(HttpMethods.class);
         }
@@ -174,7 +174,7 @@ final class RadixRoutes {
    */
   static Endpoint endpoint(HttpMethods method, String path, Handler handler) {
     var parameters = parameters(path);
-    var matcher = PARAMETER.matcher(path);
+    var matcher = PARAMETER_PATTERN.matcher(path);
     boolean hasParameter = matcher.find();
     int firstParameterOffset = hasParameter ? matcher.start() : -1;
     int firstParameterSegment = hasParameter ? parameters.get(matcher.group(1)) : 0;
@@ -222,7 +222,7 @@ final class RadixRoutes {
    * @return immutable parameter names and their segment indexes, counting the leading empty segment
    * @throws IllegalArgumentException if the path syntax is invalid or a parameter name is repeated
    */
-  static Map<String, Integer> parameters(String path) {
+  static Map<String, Integer> parameters(@Nullable String path) {
     if (path == null
         || path.isEmpty()
         || path.charAt(0) != HttpCharacters.PATH_SEPARATOR
@@ -235,7 +235,7 @@ final class RadixRoutes {
     var segments = path.split(HttpCharacters.PATH_SEPARATOR_STRING, -1);
     for (int i = 1; i < segments.length; i++) {
       String segment = segments[i];
-      var parameter = PARAMETER.matcher(segment);
+      var parameter = PARAMETER_PATTERN.matcher(segment);
       if (parameter.matches()) {
         if (parameters.putIfAbsent(parameter.group(1), i) != null) {
           throw new IllegalArgumentException("Repeated path parameter: " + parameter.group(1));

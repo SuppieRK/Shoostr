@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -821,7 +822,7 @@ class RangeConditionalResponseTest {
 
       assertEquals(true, completed.await(5, TimeUnit.SECONDS));
       assertEquals(200, outcome.get().statusCode());
-      assertTrue(outcome.get().transportFailure() != null);
+      assertNotNull(outcome.get().transportFailure());
       var result = client.send(request(app, "bytes=0-2"), HttpResponse.BodyHandlers.ofString());
       assertEquals(206, result.statusCode());
       assertEquals("\u0000\u0000\u0000", result.body());
@@ -874,12 +875,12 @@ class RangeConditionalResponseTest {
 
       try {
         client.send(request(app, "bytes=0-2"), HttpResponse.BodyHandlers.ofString());
-      } catch (IOException ignored) {
+      } catch (IOException _) {
         // The transport can fail before a complete response reaches the client.
       }
 
       assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertTrue(outcome.get().transportFailure() != null);
+      assertNotNull(outcome.get().transportFailure());
     }
   }
 
