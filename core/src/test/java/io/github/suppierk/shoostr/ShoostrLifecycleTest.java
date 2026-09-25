@@ -217,11 +217,10 @@ class ShoostrLifecycleTest {
 
         try {
           assertTrue(stopping.await(3, TimeUnit.SECONDS));
-          Thread.sleep(1500);
-          assertFalse(
-              pending.isDone(),
-              "quiet requests must survive Jetty's native one-second shutdown idle default");
-          assertFalse(closing.isDone());
+          await()
+              .during(Duration.ofMillis(1500))
+              .atMost(Duration.ofSeconds(3))
+              .until(() -> !pending.isDone() && !closing.isDone());
           release.countDown();
           assertEquals(
               streaming ? "firstlast" : "complete", pending.get(3, TimeUnit.SECONDS).body());
@@ -259,7 +258,7 @@ class ShoostrLifecycleTest {
                 while (release.getCount() != 0) {
                   try {
                     release.await();
-                  } catch (InterruptedException ignored) {
+                  } catch (InterruptedException _) {
                     interrupted.countDown();
                   }
                 }
@@ -441,7 +440,8 @@ class ShoostrLifecycleTest {
       assertSame(failure, assertThrows(IllegalArgumentException.class, app::start));
       assertThrows(IllegalStateException.class, app::start);
       assertThrows(IllegalStateException.class, app::port);
-      assertThrows(IllegalStateException.class, () -> app.routes().get("/", (req, res) -> {}));
+      var routes = app.routes();
+      assertThrows(IllegalStateException.class, () -> routes.get("/", (req, res) -> {}));
       if (!http) {
         assertTrue(nativeServer.get().isStopped());
         var pool = (QueuedThreadPool) nativeServer.get().getThreadPool();
@@ -484,8 +484,10 @@ class ShoostrLifecycleTest {
     assertThrows(IllegalStateException.class, app::port);
     assertThrows(IllegalStateException.class, () -> app.modifyServer(server -> {}));
     assertThrows(IllegalStateException.class, () -> app.modifyHttpConfiguration(http -> {}));
-    assertThrows(IllegalStateException.class, () -> app.routes().get("/later", (req, res) -> {}));
-    assertThrows(IllegalStateException.class, () -> scope.get().path("/later", routes -> {}));
+    var routes = app.routes();
+    var closedScope = scope.get();
+    assertThrows(IllegalStateException.class, () -> routes.get("/later", (req, res) -> {}));
+    assertThrows(IllegalStateException.class, () -> closedScope.path("/later", group -> {}));
   }
 
   @Test
@@ -497,15 +499,19 @@ class ShoostrLifecycleTest {
       app.routes().path("/other", sibling::set);
 
       try (Closeable registration = child.get()) {
+        assertSame(child.get(), registration);
         child.get().get((req, res) -> res.text("pending"));
       }
 
       child.get().close();
       sibling.get().close();
       app.routes().close();
-      assertThrows(IllegalStateException.class, () -> app.routes().get("/late", (req, res) -> {}));
-      assertThrows(IllegalStateException.class, () -> child.get().get((req, res) -> {}));
-      assertThrows(IllegalStateException.class, () -> sibling.get().path("/late", routes -> {}));
+      var routes = app.routes();
+      var closedChild = child.get();
+      var closedSibling = sibling.get();
+      assertThrows(IllegalStateException.class, () -> routes.get("/late", (req, res) -> {}));
+      assertThrows(IllegalStateException.class, () -> closedChild.get((req, res) -> {}));
+      assertThrows(IllegalStateException.class, () -> closedSibling.path("/late", group -> {}));
       assertThrows(IllegalStateException.class, app::start);
       assertThrows(IllegalStateException.class, app::port);
     }
@@ -533,7 +539,8 @@ class ShoostrLifecycleTest {
       var response = client.send(request, HttpResponse.BodyHandlers.ofString());
       assertEquals(200, response.statusCode());
       assertEquals("42", response.body());
-      assertThrows(IllegalStateException.class, () -> child.get().get("/later", (req, res) -> {}));
+      var closedChild = child.get();
+      assertThrows(IllegalStateException.class, () -> closedChild.get("/later", (req, res) -> {}));
     }
   }
 
@@ -565,7 +572,8 @@ class ShoostrLifecycleTest {
       app.close();
       assertThrows(IllegalStateException.class, app::port);
       assertThrows(IllegalStateException.class, app::start);
-      assertThrows(IllegalStateException.class, () -> app.routes().path("/late", routes -> {}));
+      var routes = app.routes();
+      assertThrows(IllegalStateException.class, () -> routes.path("/late", group -> {}));
     }
   }
 

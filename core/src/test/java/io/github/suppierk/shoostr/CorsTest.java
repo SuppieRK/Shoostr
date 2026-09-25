@@ -170,39 +170,23 @@ class CorsTest {
 
   @Test
   void rejectsUnsafeOrMalformedPolicyConfigurationBeforeStartup() {
+    var wildcardOrigin = Set.of("*");
+    var validOrigin = Set.of("https://client.example");
+    var getMethod = Set.of(HttpMethods.GET);
+    var emptyHeaders = Set.<HttpHeaders>of();
+    var wildcardHeader = Set.of(HttpHeaders.of("*"));
     assertThrows(
         IllegalArgumentException.class,
-        () -> new CorsPolicy(Set.of("*"), Set.of(HttpMethods.GET), Set.of(), true, Set.of(), 5));
+        () -> new CorsPolicy(wildcardOrigin, getMethod, emptyHeaders, true, emptyHeaders, 5));
     assertThrows(
         IllegalArgumentException.class,
-        () ->
-            new CorsPolicy(
-                Set.of("https://client.example"),
-                Set.of(HttpMethods.GET),
-                Set.of(),
-                false,
-                Set.of(),
-                -1));
+        () -> new CorsPolicy(validOrigin, getMethod, emptyHeaders, false, emptyHeaders, -1));
     assertThrows(
         IllegalArgumentException.class,
-        () ->
-            new CorsPolicy(
-                Set.of("https://client.example"),
-                Set.of(HttpMethods.GET),
-                Set.of(HttpHeaders.of("*")),
-                false,
-                Set.of(),
-                5));
+        () -> new CorsPolicy(validOrigin, getMethod, wildcardHeader, false, emptyHeaders, 5));
     assertThrows(
         IllegalArgumentException.class,
-        () ->
-            new CorsPolicy(
-                Set.of("https://client.example"),
-                Set.of(HttpMethods.GET),
-                Set.of(),
-                false,
-                Set.of(HttpHeaders.of("*")),
-                5));
+        () -> new CorsPolicy(validOrigin, getMethod, emptyHeaders, false, wildcardHeader, 5));
     for (var origin :
         Set.of(
             "",
@@ -214,7 +198,8 @@ class CorsTest {
             "file://host",
             "https://client.example\r\nX-Header: injected",
             "https://*.example")) {
-      assertThrows(IllegalArgumentException.class, () -> new CorsPolicy(Set.of(origin)), origin);
+      var origins = Set.of(origin);
+      assertThrows(IllegalArgumentException.class, () -> new CorsPolicy(origins), origin);
     }
   }
 
@@ -572,10 +557,14 @@ class CorsTest {
     methods.clear();
     headers.clear();
     exposed.clear();
-    assertThrows(UnsupportedOperationException.class, () -> policy.origins().clear());
-    assertThrows(UnsupportedOperationException.class, () -> policy.methods().clear());
-    assertThrows(UnsupportedOperationException.class, () -> policy.headers().clear());
-    assertThrows(UnsupportedOperationException.class, () -> policy.exposedHeaders().clear());
+    var retainedOrigins = policy.origins();
+    var retainedMethods = policy.methods();
+    var retainedHeaders = policy.headers();
+    var retainedExposedHeaders = policy.exposedHeaders();
+    assertThrows(UnsupportedOperationException.class, retainedOrigins::clear);
+    assertThrows(UnsupportedOperationException.class, retainedMethods::clear);
+    assertThrows(UnsupportedOperationException.class, retainedHeaders::clear);
+    assertThrows(UnsupportedOperationException.class, retainedExposedHeaders::clear);
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient();

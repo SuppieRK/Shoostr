@@ -30,6 +30,7 @@ public final class TestServer implements Closeable {
    * @throws Exception if configuration or startup fails
    * @throws NullPointerException if configure is null
    */
+  @SuppressWarnings("java:S1181") // Startup failure must close the acquired server even for Error.
   public static TestServer start(Consumer<Shoostr> configure) throws Exception {
     Objects.requireNonNull(configure);
     var app = new Shoostr(Options.defaults().withPort(0));

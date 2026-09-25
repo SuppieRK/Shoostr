@@ -12,6 +12,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -127,7 +128,8 @@ class RouteCompositionTest {
   @Test
   void exposesParametersFromParentAndChildScopesWithHandlerLifetime() throws Exception {
     assertEquals("a:42", send("/api/accounts/a/orders/42", HttpMethods.GET).body());
-    assertThrows(IllegalStateException.class, () -> retainedRequest.get().pathParam("id"));
+    var closedRequest = retainedRequest.get();
+    assertThrows(IllegalStateException.class, () -> closedRequest.pathParam("id"));
     assertEquals("checked", send("/unknown-param", HttpMethods.GET).body());
   }
 
@@ -178,13 +180,13 @@ class RouteCompositionTest {
 
   @Test
   void freezesRetainedScopesAndRejectsEvenEmptyGroupsAfterStartup() {
+    var scope = retainedScope.get();
+    var routes = app.routes();
+    assertThrows(IllegalStateException.class, () -> scope.get("later", (req, res) -> {}));
+    assertThrows(IllegalStateException.class, () -> scope.path("later", group -> {}));
+    assertThrows(IllegalStateException.class, () -> routes.path("later", group -> {}));
     assertThrows(
-        IllegalStateException.class, () -> retainedScope.get().get("later", (req, res) -> {}));
-    assertThrows(
-        IllegalStateException.class, () -> retainedScope.get().path("later", routes -> {}));
-    assertThrows(IllegalStateException.class, () -> app.routes().path("later", routes -> {}));
-    assertThrows(
-        IllegalStateException.class, () -> app.routes().route("GET", "/later", (req, res) -> {}));
+        IllegalStateException.class, () -> routes.route("GET", "/later", (req, res) -> {}));
   }
 
   @Test
@@ -215,9 +217,9 @@ class RouteCompositionTest {
       strings = {"", "get", "Get", " GET", "GET ", "CUSTOM", "*", "BASELINE_CONTROL", "GET\r\n"})
   void rejectsUnrecognizedWireMethodsDuringRegistration(String method) throws Exception {
     try (var candidate = new Shoostr()) {
+      var routes = candidate.routes();
       assertThrows(
-          IllegalArgumentException.class,
-          () -> candidate.routes().route(method, "/", (req, res) -> {}));
+          IllegalArgumentException.class, () -> routes.route(method, "/", (req, res) -> {}));
     }
   }
 
@@ -225,23 +227,21 @@ class RouteCompositionTest {
   @NullSource
   void rejectsNullStringMethod(String method) throws Exception {
     try (var candidate = new Shoostr()) {
-      assertThrows(
-          NullPointerException.class,
-          () -> candidate.routes().route(method, "/", (req, res) -> {}));
+      var routes = candidate.routes();
+      assertThrows(NullPointerException.class, () -> routes.route(method, "/", (req, res) -> {}));
     }
   }
 
   @Test
   void validatesComposedParametersAndEquivalentRouteShapes() throws Exception {
     try (var candidate = new Shoostr()) {
+      var routes = candidate.routes();
+      Consumer<Routes> duplicateParameter = group -> group.get("/{id}", (req, res) -> {});
+      assertThrows(IllegalArgumentException.class, () -> routes.path("/{id}", duplicateParameter));
+      routes.path("/api", group -> group.get("/{id}", (req, res) -> {}));
       assertThrows(
-          IllegalArgumentException.class,
-          () -> candidate.routes().path("/{id}", group -> group.get("/{id}", (req, res) -> {})));
-      candidate.routes().path("/api", group -> group.get("/{id}", (req, res) -> {}));
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> candidate.routes().get("/api/{name}", (req, res) -> {}));
-      candidate.routes().post("/api/{name}", (req, res) -> {});
+          IllegalArgumentException.class, () -> routes.get("/api/{name}", (req, res) -> {}));
+      routes.post("/api/{name}", (req, res) -> {});
       candidate
           .routes()
           .path("/api", group -> assertThrows(IllegalStateException.class, candidate::start));

@@ -59,9 +59,10 @@ class CookieTest {
               assertNull(request.cookie("missing"));
               assertEquals(List.of(), request.cookies("missing"));
               assertEquals("first", request.cookieMap().get("token"));
-              assertThrows(UnsupportedOperationException.class, () -> request.cookieMap().clear());
-              assertThrows(
-                  UnsupportedOperationException.class, () -> request.cookies("token").add("bad"));
+              var cookieMap = request.cookieMap();
+              var tokens = request.cookies("token");
+              assertThrows(UnsupportedOperationException.class, cookieMap::clear);
+              assertThrows(UnsupportedOperationException.class, () -> tokens.add("bad"));
               response.text("ok");
             });
     app.start();
@@ -114,9 +115,10 @@ class CookieTest {
         send(request("/capture").header("Cookie", "quoted=\"quoted\"; invalid")).body());
     assertEquals("empty", send(request("/empty")).body());
     assertEquals(Map.of("quoted", "quoted"), snapshot.get());
-    assertThrows(IllegalStateException.class, () -> retained.get().cookie("quoted"));
-    assertThrows(IllegalStateException.class, () -> retained.get().cookies("quoted"));
-    assertThrows(IllegalStateException.class, () -> retained.get().cookieMap());
+    var closedRequest = retained.get();
+    assertThrows(IllegalStateException.class, () -> closedRequest.cookie("quoted"));
+    assertThrows(IllegalStateException.class, () -> closedRequest.cookies("quoted"));
+    assertThrows(IllegalStateException.class, closedRequest::cookieMap);
   }
 
   @Test
@@ -242,11 +244,10 @@ class CookieTest {
         .get(
             "/security",
             (request, response) -> {
+              var insecure = new Cookie("id", "value");
               assertThrows(
                   IllegalArgumentException.class,
-                  () ->
-                      response.cookie(
-                          new Cookie("id", "value").withSameSite(Cookie.SameSite.NONE)));
+                  () -> insecure.withSameSite(Cookie.SameSite.NONE));
               for (var name : List.of("__Secure-id", "__sEcUrE-id", "__Host-id", "__HOST-id")) {
                 assertThrows(IllegalArgumentException.class, () -> response.cookie(name, "value"));
               }
@@ -310,22 +311,15 @@ class CookieTest {
                       "example.test; Secure",
                       "é.test",
                       "a".repeat(64) + ".test")) {
-                assertThrows(
-                    IllegalArgumentException.class, () -> response.cookie(base.withDomain(domain)));
+                assertThrows(IllegalArgumentException.class, () -> base.withDomain(domain));
               }
               for (var path :
                   List.of("", "relative", "/bad; Secure", "/bad\r\n", "/é", "/trailing ")) {
-                assertThrows(
-                    IllegalArgumentException.class, () -> response.cookie(base.withPath(path)));
+                assertThrows(IllegalArgumentException.class, () -> base.withPath(path));
               }
-              assertThrows(
-                  IllegalArgumentException.class, () -> response.cookie(base.withMaxAge(-2)));
-              assertThrows(
-                  IllegalArgumentException.class,
-                  () -> response.cookie(base.withExpires(Instant.MIN)));
-              assertThrows(
-                  IllegalArgumentException.class,
-                  () -> response.cookie(base.withExpires(Instant.MAX)));
+              assertThrows(IllegalArgumentException.class, () -> base.withMaxAge(-2));
+              assertThrows(IllegalArgumentException.class, () -> base.withExpires(Instant.MIN));
+              assertThrows(IllegalArgumentException.class, () -> base.withExpires(Instant.MAX));
               assertThrows(NullPointerException.class, () -> response.cookie((Cookie) null));
               assertThrows(NullPointerException.class, () -> response.cookie(null, "v"));
               assertThrows(NullPointerException.class, () -> response.cookie("id", null));
@@ -450,8 +444,9 @@ class CookieTest {
     var streamed = send(request("/stream"));
     assertEquals("streamed", streamed.body());
     assertEquals(List.of("before=value; Path=/"), streamed.headers().allValues("Set-Cookie"));
-    assertThrows(IllegalStateException.class, () -> retained.get().cookie("late", "value"));
-    assertThrows(IllegalStateException.class, () -> retained.get().removeCookie("before"));
+    var closedResponse = retained.get();
+    assertThrows(IllegalStateException.class, () -> closedResponse.cookie("late", "value"));
+    assertThrows(IllegalStateException.class, () -> closedResponse.removeCookie("before"));
     var failed = send(request("/failed"));
     assertEquals(400, failed.statusCode());
     assertEquals(List.of(), failed.headers().allValues("Set-Cookie"));

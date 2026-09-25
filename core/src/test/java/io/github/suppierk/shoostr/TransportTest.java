@@ -4,6 +4,7 @@ import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -302,7 +303,7 @@ class TransportTest {
                 while (release.getCount() != 0) {
                   try {
                     release.await();
-                  } catch (InterruptedException failure) {
+                  } catch (InterruptedException _) {
                     interrupted.countDown();
                   }
                 }
@@ -358,7 +359,7 @@ class TransportTest {
 
       assertTrue(observed.await(3, TimeUnit.SECONDS));
       assertEquals("/blocked", outcome.get().routePattern());
-      assertTrue(outcome.get().transportFailure() != null);
+      assertNotNull(outcome.get().transportFailure());
     }
   }
 

@@ -40,12 +40,17 @@ public final class MicrometerMetrics implements Function<Request, RequestObserva
     var sample = active.start();
     return outcome -> {
       try {
-        var error =
-            outcome.transportFailure() != null
-                ? "transport"
-                : outcome.applicationFailure() != null
-                    ? "application"
-                    : outcome.statusCode() >= 500 ? "server" : "none";
+        String error;
+        if (outcome.transportFailure() != null) {
+          error = "transport";
+        } else if (outcome.applicationFailure() != null) {
+          error = "application";
+        } else if (outcome.statusCode() >= 500) {
+          error = "server";
+        } else {
+          error = "none";
+        }
+
         Timer.builder("http.server.requests")
             .description("Terminal request count and duration")
             .tags(

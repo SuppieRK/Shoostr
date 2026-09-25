@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
@@ -291,8 +292,8 @@ class CsrfTest {
               HttpResponse.BodyHandlers.ofString());
       assertEquals(200, renewed.statusCode());
       var newCookie = renewed.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-      assertFalse(form.body().equals(renewed.body()));
-      assertFalse(oldCookie.equals(newCookie));
+      assertNotEquals(form.body(), renewed.body());
+      assertNotEquals(oldCookie, newCookie);
       assertEquals(403, post(client, app, newCookie, form.body()).statusCode());
       assertEquals(200, post(client, app, newCookie, renewed.body()).statusCode());
 

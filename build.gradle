@@ -152,6 +152,16 @@ sonar {
 		property 'sonar.host.url', 'https://sonarcloud.io'
 		property 'sonar.gradle.skipCompile', 'true'
 		property 'sonar.qualitygate.wait', 'true'
+		// The public HTTP catalog intentionally retains IANA-obsoleted names for parsing old traffic.
+		// The three-level exception hierarchy is a documented catch contract, so flattening it
+		// would break callers. Keep these exceptions scoped to their exact rules and files.
+		property 'sonar.issue.ignore.multicriteria', 'historicalHeaders,historicalStatus,httpCatchHierarchy'
+		property 'sonar.issue.ignore.multicriteria.historicalHeaders.ruleKey', 'java:S1133'
+		property 'sonar.issue.ignore.multicriteria.historicalHeaders.resourceKey', '**/HttpHeaders.java'
+		property 'sonar.issue.ignore.multicriteria.historicalStatus.ruleKey', 'java:S1133'
+		property 'sonar.issue.ignore.multicriteria.historicalStatus.resourceKey', '**/NotExtendedException.java'
+		property 'sonar.issue.ignore.multicriteria.httpCatchHierarchy.ruleKey', 'java:S110'
+		property 'sonar.issue.ignore.multicriteria.httpCatchHierarchy.resourceKey', '**/http/exceptions/*Exception.java'
 		property 'sonar.coverage.jacoco.xmlReportPaths', frameworkModules.collect {
 			"${it}/build/reports/jacoco/test/jacocoTestReport.xml"
 		}.join(',')

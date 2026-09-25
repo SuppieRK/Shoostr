@@ -203,8 +203,10 @@ class HttpContractTest {
       assertEquals("finished", new String(input.readAllBytes(), StandardCharsets.UTF_8));
     }
 
-    assertThrows(IllegalStateException.class, () -> retainedResponse.get().text("too late"));
-    assertThrows(IllegalStateException.class, () -> retainedRequest.get().path());
+    var closedResponse = retainedResponse.get();
+    var closedRequest = retainedRequest.get();
+    assertThrows(IllegalStateException.class, () -> closedResponse.text("too late"));
+    assertThrows(IllegalStateException.class, closedRequest::path);
   }
 
   @Test
@@ -299,11 +301,13 @@ class HttpContractTest {
 
   @Test
   void freezesRoutesAfterStartup() {
-    assertThrows(IllegalStateException.class, () -> app.routes().get("/later", (req, res) -> {}));
+    var routes = app.routes();
+    assertThrows(IllegalStateException.class, () -> routes.get("/later", (req, res) -> {}));
   }
 
   @ParameterizedTest
   @CsvSource({"false, false", "true, false", "false, true", "true, true"})
+  @SuppressWarnings("java:S2093") // The response must outlive the producer until its callback.
   void completesFiniteResponsesAsynchronously(boolean transportFails, boolean afterFlushFails)
       throws Exception {
     var pending = new AtomicReference<Callback>();

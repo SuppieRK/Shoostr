@@ -14,18 +14,18 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
       - name: Set up Java 25
-        uses: actions/setup-java@v6
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
           java-version: '25'
 
       - name: Set up Gradle and validate the wrapper
-        uses: gradle/actions/setup-gradle@v6
+        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           cache-provider: basic
 
@@ -36,4 +36,70 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew sonar --console=plain
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF_NAME" != "main" ]]; then
+            ./gradlew sonar -Dsonar.branch.name="$GITHUB_REF_NAME" --console=plain
+          else
+            ./gradlew sonar --console=plain
+          fi
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            audit_branch="branch-pr-${PR_NUMBER}-audit"
+          elif [[ "$GITHUB_REF_NAME" != "main" ]]; then
+            audit_branch="branch-${GITHUB_REF_NAME//\//-}-audit"
+          fi
+          if [[ -n "${audit_branch:-}" ]]; then
+            # PR and short-lived branch gates cover new code only; audit the whole project.
+            # A newly created long-lived branch has no computed quality gate on its first scan.
+            ./gradlew sonar -Dsonar.branch.name="$audit_branch" \
+              -Dsonar.qualitygate.wait=false \
+              -Dsonar.scanner.metadataFilePath="$RUNNER_TEMP/sonar-audit-task.txt" \
+              --console=plain
+          fi
+
+      - name: Require zero open Sonar issues
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            audit_branch="branch-pr-${PR_NUMBER}-audit"
+          elif [[ "$GITHUB_REF_NAME" != "main" ]]; then
+            audit_branch="branch-${GITHUB_REF_NAME//\//-}-audit"
+          else
+            audit_branch="main"
+          fi
+          if [[ "$audit_branch" != "main" ]]; then
+            task_id=$(sed -n 's/^ceTaskId=//p' "$RUNNER_TEMP/sonar-audit-task.txt")
+            if [[ -z "$task_id" ]]; then
+              echo '::error::Sonar audit scan did not write a CE task ID'
+              exit 1
+            fi
+            for (( attempt=0; attempt<60; attempt++ )); do
+              task_status=$(curl -fsS -H "Authorization: Bearer $SONAR_TOKEN" --get \
+                --data-urlencode "id=$task_id" \
+                'https://sonarcloud.io/api/ce/task' | jq -er '.task.status')
+              case "$task_status" in
+                SUCCESS) break ;;
+                FAILED|CANCELED)
+                  echo "::error::Sonar audit processing $task_status"
+                  exit 1
+                  ;;
+              esac
+              sleep 5
+            done
+            if [[ "$task_status" != "SUCCESS" ]]; then
+              echo '::error::Sonar audit processing timed out'
+              exit 1
+            fi
+          fi
+          issue_count=$(curl -fsS -H "Authorization: Bearer $SONAR_TOKEN" --get \
+            --data-urlencode 'componentKeys=SuppieRK_Shoostr' \
+            --data-urlencode 'resolved=false' \
+            --data-urlencode 'ps=1' \
+            --data-urlencode "branch=$audit_branch" \
+            'https://sonarcloud.io/api/issues/search' | jq -er '.total')
+          if (( issue_count != 0 )); then
+            echo "::error::SonarQube Cloud reports $issue_count open issues on $audit_branch"
+            exit 1
+          fi

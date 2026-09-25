@@ -79,7 +79,7 @@ class RoutesConcurrencyTest {
                             prefix(index) + "{id" + index + "}",
                             (req, res) -> res.text(Integer.toString(index)));
                     return true;
-                  } catch (IllegalArgumentException duplicate) {
+                  } catch (IllegalArgumentException _) {
                     return false;
                   }
                 }));
@@ -171,20 +171,20 @@ class RoutesConcurrencyTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var rootRoutes = app.routes();
       var first =
           workers.submit(
               () ->
                   assertThrows(
                       IllegalArgumentException.class,
                       () ->
-                          app.routes()
-                              .path(
-                                  "/first",
-                                  routes -> {
-                                    entered.countDown();
-                                    await(firstRelease);
-                                    throw new IllegalArgumentException("registration failed");
-                                  })));
+                          rootRoutes.path(
+                              "/first",
+                              routes -> {
+                                entered.countDown();
+                                await(firstRelease);
+                                throw new IllegalArgumentException("registration failed");
+                              })));
       var second =
           workers.submit(
               () ->
@@ -233,7 +233,7 @@ class RoutesConcurrencyTest {
                         .get(index % scopes.size())
                         .get(prefix(index) + index, (req, res) -> res.text("registered"));
                     return true;
-                  } catch (IllegalStateException frozen) {
+                  } catch (IllegalStateException _) {
                     return false;
                   }
                 }));

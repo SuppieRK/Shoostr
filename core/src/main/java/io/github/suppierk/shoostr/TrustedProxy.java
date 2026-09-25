@@ -24,13 +24,11 @@ final class TrustedProxy {
   private static final String X_FORWARDED_HOST = "X-Forwarded-Host";
   private static final String X_FORWARDED_PORT = "X-Forwarded-Port";
   private static final String X_FORWARDED_PROTO = "X-Forwarded-Proto";
+  private static final String PROTO_FIELD = "proto";
   private static final Pattern TOKEN = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
-  private static final Pattern IPV4 = Pattern.compile("[0-9]{1,3}(?:\\.[0-9]{1,3}){3}");
+  private static final Pattern IPV4 = Pattern.compile("\\d{1,3}(?:\\.\\d{1,3}){3}");
   private static final Pattern OBFUSCATED = Pattern.compile("_[A-Za-z0-9._-]+");
-  private static final Pattern DIGITS = Pattern.compile("[0-9]+");
-  private static final Pattern QUOTED =
-      Pattern.compile(
-          "\"(?:[\\t\\x20\\x21\\x23-\\x5B\\x5D-\\x7E\\x80-\\xFF]|\\\\[\\t\\x20-\\x7E\\x80-\\xFF])*\"");
+  private static final Pattern DIGITS = Pattern.compile("\\d+");
   private static final QuotedStringTokenizer PARAMETERS =
       QuotedStringTokenizer.builder()
           .delimiters(";")
@@ -78,6 +76,16 @@ final class TrustedProxy {
       return;
     }
 
+    applyRfc(request);
+  }
+
+  /**
+   * Applies the RFC 7239 chain from a trusted physical peer.
+   *
+   * @param request live request on the handler thread
+   * @throws BadRequestException if forwarding metadata is malformed
+   */
+  private void applyRfc(Request request) {
     var forwarding = request.headers(HttpHeaders.FORWARDED.value());
     if (forwarding.isEmpty()) {
       return;
@@ -87,39 +95,8 @@ final class TrustedProxy {
     List<InetSocketAddress> addresses = new ArrayList<>();
 
     try {
-      for (var header : forwarding) {
-        var elements = ELEMENTS.tokenize(header);
-        boolean elementExpected = true;
-        while (elements.hasNext()) {
-          var element = elements.next();
-          if (",".equals(element)) {
-            if (elementExpected) {
-              throw new IllegalArgumentException("Empty forwarding element");
-            }
-
-            elementExpected = true;
-            continue;
-          }
-
-          if (!elementExpected) {
-            throw new IllegalArgumentException("Invalid forwarding element");
-          }
-
-          var fields = parameters(element);
-          if (chain.size() == MAX_FORWARDING_ELEMENTS) {
-            throw new IllegalArgumentException("Too many forwarding elements");
-          }
-
-          chain.add(fields);
-          addresses.add(node(fields.get("for")));
-          elementExpected = false;
-        }
-
-        if (elementExpected) {
-          throw new IllegalArgumentException("Empty forwarding element");
-        }
-      }
-    } catch (IllegalArgumentException failure) {
+      parseForwarding(forwarding, chain, addresses);
+    } catch (IllegalArgumentException _) {
       throw new BadRequestException();
     }
 
@@ -133,8 +110,8 @@ final class TrustedProxy {
 
     try {
       var uri = HttpURI.build(request.fullUrl());
-      if (fields.containsKey("proto")) {
-        uri.scheme(fields.get("proto").toLowerCase(Locale.ROOT));
+      if (fields.containsKey(PROTO_FIELD)) {
+        uri.scheme(fields.get(PROTO_FIELD).toLowerCase(Locale.ROOT));
       }
 
       if (fields.containsKey("host")) {
@@ -143,8 +120,65 @@ final class TrustedProxy {
       }
 
       request.forwarded(addresses.get(selected), uri.asString());
-    } catch (IllegalArgumentException failure) {
+    } catch (IllegalArgumentException _) {
       throw new BadRequestException();
+    }
+  }
+
+  /**
+   * Parses each physical header line into matching field and address entries.
+   *
+   * @param forwarding raw Forwarded header lines
+   * @param chain destination for parameter maps
+   * @param addresses destination for node addresses
+   * @throws IllegalArgumentException if a forwarding element or address is malformed
+   */
+  private static void parseForwarding(
+      List<String> forwarding, List<Map<String, String>> chain, List<InetSocketAddress> addresses) {
+    for (var header : forwarding) {
+      parseForwardingHeader(header, chain, addresses);
+    }
+  }
+
+  /**
+   * Parses one physical Forwarded field without resetting the chain-wide size limit.
+   *
+   * @param header raw field value
+   * @param chain destination for parameter maps
+   * @param addresses destination for node addresses
+   * @throws IllegalArgumentException if an element or address is malformed
+   */
+  private static void parseForwardingHeader(
+      String header, List<Map<String, String>> chain, List<InetSocketAddress> addresses) {
+    var elements = ELEMENTS.tokenize(header);
+    boolean elementExpected = true;
+    while (elements.hasNext()) {
+      var element = elements.next();
+      if (",".equals(element)) {
+        if (elementExpected) {
+          throw new IllegalArgumentException("Empty forwarding element");
+        }
+
+        elementExpected = true;
+        continue;
+      }
+
+      if (!elementExpected) {
+        throw new IllegalArgumentException("Invalid forwarding element");
+      }
+
+      var fields = parameters(element);
+      if (chain.size() == MAX_FORWARDING_ELEMENTS) {
+        throw new IllegalArgumentException("Too many forwarding elements");
+      }
+
+      chain.add(fields);
+      addresses.add(node(fields.get("for")));
+      elementExpected = false;
+    }
+
+    if (elementExpected) {
+      throw new IllegalArgumentException("Empty forwarding element");
     }
   }
 
@@ -171,7 +205,7 @@ final class TrustedProxy {
       }
 
       validateLegacyOrigins(hosts, protocols, ports);
-    } catch (IllegalArgumentException failure) {
+    } catch (IllegalArgumentException _) {
       throw new BadRequestException();
     }
 
@@ -195,7 +229,7 @@ final class TrustedProxy {
       }
 
       request.forwarded(addresses.get(selected), uri.asString());
-    } catch (IllegalArgumentException failure) {
+    } catch (IllegalArgumentException _) {
       throw new BadRequestException();
     }
   }
@@ -329,20 +363,18 @@ final class TrustedProxy {
       var name = token.substring(0, equals).toLowerCase(Locale.ROOT);
       var raw = token.substring(equals + 1);
       if (!TOKEN.matcher(name).matches()
-          || !(TOKEN.matcher(raw).matches() || QUOTED.matcher(raw).matches())
+          || !(TOKEN.matcher(raw).matches() || validQuoted(raw))
           || fields.putIfAbsent(name, PARAMETERS.unquote(raw)) != null) {
         throw new IllegalArgumentException("Invalid forwarding parameter");
       }
 
-      if (tokens.hasNext()) {
-        if (!";".equals(tokens.next()) || !tokens.hasNext()) {
-          throw new IllegalArgumentException("Invalid forwarding delimiter");
-        }
+      if (tokens.hasNext() && (!";".equals(tokens.next()) || !tokens.hasNext())) {
+        throw new IllegalArgumentException("Invalid forwarding delimiter");
       }
     }
-    if (fields.containsKey("proto")
-        && !"http".equalsIgnoreCase(fields.get("proto"))
-        && !"https".equalsIgnoreCase(fields.get("proto"))) {
+    if (fields.containsKey(PROTO_FIELD)
+        && !"http".equalsIgnoreCase(fields.get(PROTO_FIELD))
+        && !"https".equalsIgnoreCase(fields.get(PROTO_FIELD))) {
       throw new IllegalArgumentException("Unsupported forwarding scheme");
     }
 
@@ -355,6 +387,51 @@ final class TrustedProxy {
     }
 
     return fields;
+  }
+
+  /**
+   * Validates a quoted forwarding value in one pass, including its permitted escape sequences.
+   *
+   * @param value raw parameter value
+   * @return whether the value follows the HTTP quoted-string grammar
+   */
+  private static boolean validQuoted(String value) {
+    if (value.length() < 2 || value.charAt(0) != '"' || value.charAt(value.length() - 1) != '"') {
+      return false;
+    }
+
+    int end = value.length() - 1;
+    int index = 1;
+    while (index < end) {
+      char character = value.charAt(index);
+      if (character == '\\') {
+        index++;
+        if (index == end || !validQuotedOctet(value.charAt(index), true)) {
+          return false;
+        }
+      } else if (!validQuotedOctet(character, false)) {
+        return false;
+      }
+
+      index++;
+    }
+
+    return true;
+  }
+
+  /**
+   * Checks a quoted-string octet, allowing quote and backslash only after an escape.
+   *
+   * @param character candidate octet
+   * @param escaped whether the preceding octet was a backslash
+   * @return whether the octet is valid in this position
+   */
+  private static boolean validQuotedOctet(char character, boolean escaped) {
+    return character == '\t'
+        || (character >= 0x20
+            && character <= 0xff
+            && character != 0x7f
+            && (escaped || (character != '"' && character != '\\')));
   }
 
   /**

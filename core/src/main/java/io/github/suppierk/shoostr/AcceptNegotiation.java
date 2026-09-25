@@ -147,25 +147,43 @@ final class AcceptNegotiation {
       }
 
       if ("q".equals(name)) {
-        if (qualitySeen) {
-          throw malformed();
-        }
-
-        if (value.charAt(0) == '"') {
-          throw malformed();
-        }
-
-        quality = quality(tokenValue(value));
+        quality = qualityParameter(value, qualitySeen);
         qualitySeen = true;
       } else {
-        var decoded = value.charAt(0) == '"' ? quoted(value) : tokenValue(value);
-        if (values.putIfAbsent(name, decoded) != null) {
-          throw malformed();
-        }
+        putParameter(values, name, value);
       }
     }
 
     return new Parameters(values, quality);
+  }
+
+  /**
+   * Parses the one unquoted quality value permitted in a parameter list.
+   *
+   * @param value raw parameter value
+   * @param alreadySeen whether another quality value preceded it
+   * @return quality in thousandths
+   */
+  private static int qualityParameter(String value, boolean alreadySeen) {
+    if (alreadySeen || value.charAt(0) == '"') {
+      throw malformed();
+    }
+
+    return quality(tokenValue(value));
+  }
+
+  /**
+   * Decodes and inserts one non-quality parameter, rejecting duplicates.
+   *
+   * @param values parsed parameters
+   * @param name normalized parameter name
+   * @param value raw parameter value
+   */
+  private static void putParameter(Map<String, String> values, String name, String value) {
+    var decoded = value.charAt(0) == '"' ? quoted(value) : tokenValue(value);
+    if (values.putIfAbsent(name, decoded) != null) {
+      throw malformed();
+    }
   }
 
   /**
@@ -257,10 +275,6 @@ final class AcceptNegotiation {
    * @return trimmed components
    */
   private static List<String> split(String value, char separator, boolean ignoreEmpty) {
-    if (value == null) {
-      throw malformed();
-    }
-
     var values = new ArrayList<String>();
     int start = 0;
     boolean quoted = false;
@@ -279,7 +293,7 @@ final class AcceptNegotiation {
       }
     }
 
-    if (quoted || escaped) {
+    if (quoted) {
       throw malformed();
     }
 

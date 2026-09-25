@@ -102,13 +102,16 @@ public final class OpenTelemetryTracing implements Function<Request, RequestObse
               || outcome.statusCode() >= 500
               || (outcome.statusCode() == 0 && outcome.applicationFailure() != null)) {
             span.setStatus(StatusCode.ERROR);
-            span.setAttribute(
-                "error.type",
-                outcome.transportFailure() != null
-                    ? "transport"
-                    : outcome.statusCode() >= 500
-                        ? Integer.toString(outcome.statusCode())
-                        : "application");
+            String errorType;
+            if (outcome.transportFailure() != null) {
+              errorType = "transport";
+            } else if (outcome.statusCode() >= 500) {
+              errorType = Integer.toString(outcome.statusCode());
+            } else {
+              errorType = "application";
+            }
+
+            span.setAttribute("error.type", errorType);
           }
         } finally {
           span.end();

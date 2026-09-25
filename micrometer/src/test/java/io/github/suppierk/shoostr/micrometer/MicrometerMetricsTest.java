@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr.micrometer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Options;
@@ -50,9 +51,9 @@ class MicrometerMetricsTest {
                 .build(),
             HttpResponse.BodyHandlers.discarding());
         var outcome = outcomes.poll(5, TimeUnit.SECONDS);
-        assertTrue(outcome != null);
+        assertNotNull(outcome);
         if ("/transport".equals(path)) {
-          assertTrue(outcome.transportFailure() != null);
+          assertNotNull(outcome.transportFailure());
         }
       }
       assertEquals(

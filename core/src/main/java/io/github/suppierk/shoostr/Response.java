@@ -95,8 +95,10 @@ public final class Response implements AutoCloseable {
   private static final ByteRange UNSATISFIABLE_RANGE = new ByteRange(-1, -1);
   private static final SetCookieParser COOKIE_PARSER = SetCookieParser.newInstance();
   private static final Pattern HEADER_NAME = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
+  private static final String TEXT_CONTENT_TYPE = "text/plain; charset=utf-8";
+  private static final String IDENTITY_ENCODING = "identity";
   private static final HttpField TEXT =
-      new PreEncodedHttpField(HttpHeaders.CONTENT_TYPE.value(), "text/plain; charset=utf-8");
+      new PreEncodedHttpField(HttpHeaders.CONTENT_TYPE.value(), TEXT_CONTENT_TYPE);
   private static final HttpField COMPACT_TEXT =
       new PreEncodedHttpField(HttpHeaders.CONTENT_TYPE.value(), "text/plain;charset=utf-8");
   private static final HttpField JSON =
@@ -333,7 +335,7 @@ public final class Response implements AutoCloseable {
    * @return this response
    */
   public Response text(String value) {
-    return body("text/plain; charset=utf-8", value.getBytes(StandardCharsets.UTF_8));
+    return body(TEXT_CONTENT_TYPE, value.getBytes(StandardCharsets.UTF_8));
   }
 
   /**
@@ -516,52 +518,10 @@ public final class Response implements AutoCloseable {
       throw new IllegalArgumentException("Invalid entity tag");
     }
 
-    if (conditionalStatus() && (!matchesIfMatch(tag) || !unmodifiedSince(lastModified))) {
-      status(HttpStatusCodes.PRECONDITION_FAILED.value());
-      delegate.getHeaders().remove(HttpHeader.CONTENT_LENGTH);
-      closeResourceChannel();
-      return this;
+    if (selectResourceInterval(length, tag, lastModified)) {
+      resourceContent = content;
     }
 
-    if (conditionalStatus() && noneMatch(tag)) {
-      status(
-          HttpMethods.GET.value().equals(request().getMethod())
-                  || HttpMethods.HEAD.value().equals(request().getMethod())
-              ? HttpStatusCodes.NOT_MODIFIED.value()
-              : HttpStatusCodes.PRECONDITION_FAILED.value());
-      delegate.getHeaders().remove(HttpHeader.CONTENT_LENGTH);
-      closeResourceChannel();
-      return this;
-    }
-
-    if (conditionalStatus() && notModifiedSince(lastModified)) {
-      status(HttpStatusCodes.NOT_MODIFIED.value());
-      delegate.getHeaders().remove(HttpHeader.CONTENT_LENGTH);
-      closeResourceChannel();
-      return this;
-    }
-
-    var range = range(length, tag);
-    if (UNSATISFIABLE_RANGE.equals(range)) {
-      status(HttpStatusCodes.RANGE_NOT_SATISFIABLE.value());
-      delegate.getHeaders().put(HttpHeaders.CONTENT_RANGE.value(), "bytes */" + length);
-      closeResourceChannel();
-      return this;
-    }
-
-    if (range != null) {
-      status(HttpStatusCodes.PARTIAL_CONTENT.value());
-      delegate
-          .getHeaders()
-          .put(
-              HttpHeaders.CONTENT_RANGE.value(),
-              "bytes " + range.first + "-" + range.last + "/" + length);
-      delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, range.length());
-    }
-
-    resourceContent = content;
-    resourceOffset = range == null ? 0 : range.first;
-    resourceLength = range == null ? length : range.length();
     return this;
   }
 
@@ -603,29 +563,26 @@ public final class Response implements AutoCloseable {
     delegate.getHeaders().put(HttpHeaders.ACCEPT_RANGES.value(), "bytes");
     delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, length);
 
-    if (conditionalStatus() && (!matchesIfMatch(tag) || !unmodifiedSince(effectiveLastModified))) {
-      status(HttpStatusCodes.PRECONDITION_FAILED.value());
-      delegate.getHeaders().remove(HttpHeader.CONTENT_LENGTH);
-      closeResourceChannel();
-      return this;
-    }
+    selectResourceInterval(length, tag, effectiveLastModified);
+    return this;
+  }
 
-    if (conditionalStatus() && noneMatch(tag)) {
-      status(
-          HttpMethods.GET.value().equals(request().getMethod())
-                  || HttpMethods.HEAD.value().equals(request().getMethod())
-              ? HttpStatusCodes.NOT_MODIFIED.value()
-              : HttpStatusCodes.PRECONDITION_FAILED.value());
+  /**
+   * Resolves conditional and range requests for either resource representation.
+   *
+   * @param length full representation length
+   * @param tag selected entity tag, or null
+   * @param lastModified selected modification time, or null
+   * @return whether the selected resource body should be transferred
+   */
+  private boolean selectResourceInterval(
+      long length, @Nullable String tag, @Nullable Instant lastModified) {
+    int conditional = conditionalResourceStatus(tag, lastModified);
+    if (conditional != 0) {
+      status(conditional);
       delegate.getHeaders().remove(HttpHeader.CONTENT_LENGTH);
       closeResourceChannel();
-      return this;
-    }
-
-    if (conditionalStatus() && notModifiedSince(effectiveLastModified)) {
-      status(HttpStatusCodes.NOT_MODIFIED.value());
-      delegate.getHeaders().remove(HttpHeader.CONTENT_LENGTH);
-      closeResourceChannel();
-      return this;
+      return false;
     }
 
     var range = range(length, tag);
@@ -633,7 +590,7 @@ public final class Response implements AutoCloseable {
       status(HttpStatusCodes.RANGE_NOT_SATISFIABLE.value());
       delegate.getHeaders().put(HttpHeaders.CONTENT_RANGE.value(), "bytes */" + length);
       closeResourceChannel();
-      return this;
+      return false;
     }
 
     if (range != null) {
@@ -648,7 +605,33 @@ public final class Response implements AutoCloseable {
 
     resourceOffset = range == null ? 0 : range.first;
     resourceLength = range == null ? length : range.length();
-    return this;
+    return true;
+  }
+
+  /**
+   * Determines whether request preconditions suppress a resource body.
+   *
+   * @param tag selected entity tag, or null
+   * @param lastModified selected modification time, or null
+   * @return HTTP status for a satisfied conditional request, or zero to send the body
+   */
+  private int conditionalResourceStatus(@Nullable String tag, @Nullable Instant lastModified) {
+    if (!conditionalStatus()) {
+      return 0;
+    }
+
+    if (!matchesIfMatch(tag) || !unmodifiedSince(lastModified)) {
+      return HttpStatusCodes.PRECONDITION_FAILED.value();
+    }
+
+    if (noneMatch(tag)) {
+      return HttpMethods.GET.value().equals(request().getMethod())
+              || HttpMethods.HEAD.value().equals(request().getMethod())
+          ? HttpStatusCodes.NOT_MODIFIED.value()
+          : HttpStatusCodes.PRECONDITION_FAILED.value();
+    }
+
+    return notModifiedSince(lastModified) ? HttpStatusCodes.NOT_MODIFIED.value() : 0;
   }
 
   /**
@@ -799,7 +782,7 @@ public final class Response implements AutoCloseable {
    * @throws IllegalStateException if the response is no longer open for mutation
    */
   public Response disableCompression() {
-    return header(HttpHeaders.CONTENT_ENCODING.value(), "identity");
+    return header(HttpHeaders.CONTENT_ENCODING.value(), IDENTITY_ENCODING);
   }
 
   /**
@@ -1112,47 +1095,68 @@ public final class Response implements AutoCloseable {
       throw new IllegalStateException("The framework owns the response lifecycle");
     }
 
-    if (state == State.OPEN) {
-      if (resourceContent != null || resourceChannel != null) {
-        completeResource();
-        return;
-      }
-
-      if (!permitsBody() && !head && body.length != 0) {
-        throw new IllegalStateException("Status does not allow a body");
-      }
-
-      if (permitsBody() && !head) {
-        delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, body.length);
-      } else if (head && headContentLength >= 0) {
-        delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, headContentLength);
-      } else if (head && body.length > 0) {
-        delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, body.length);
-      }
-
-      notifyBeforeFlush(true, body.length);
-      // End application access before handing the buffer to a potentially asynchronous write.
-      state = State.CLOSED;
-      protectRequiredHeaders();
-      var bytes = ByteBuffer.wrap(body);
-      body = EMPTY;
-      var flushing = new FlushCompletion();
-      if (head && compressionEnabled && permitsBody()) {
-        Content.Sink.write(delegate, false, ByteBuffer.wrap(EMPTY));
-      }
-
-      delegate.write(true, bytes, flushing);
-      flushing.afterFlush();
-    } else if (state == State.STREAMING) {
-      var activeStream = Objects.requireNonNull(stream);
-      write(true, activeStream.buffer, activeStream.used);
-      activeStream.used = 0;
-      body = EMPTY;
-      state = State.CLOSED;
-      completion.succeeded();
-    } else {
-      throw new IOException("Response already terminated");
+    switch (state) {
+      case OPEN -> completeOpen();
+      case STREAMING -> completeStreaming();
+      case CLOSED, FAILED -> throw new IOException("Response already terminated");
     }
+  }
+
+  /**
+   * Submits a staged finite body or resource after the handler returns.
+   *
+   * @throws IOException if resource transfer or output submission fails
+   * @throws IllegalStateException if the selected status forbids a staged body
+   */
+  private void completeOpen() throws IOException {
+    if (resourceContent != null || resourceChannel != null) {
+      completeResource();
+      return;
+    }
+
+    if (!permitsBody() && !head && body.length != 0) {
+      throw new IllegalStateException("Status does not allow a body");
+    }
+
+    stageContentLength();
+    notifyBeforeFlush(true, body.length);
+    // End application access before handing the buffer to a potentially asynchronous write.
+    state = State.CLOSED;
+    protectRequiredHeaders();
+    var bytes = ByteBuffer.wrap(body);
+    body = EMPTY;
+    var flushing = new FlushCompletion();
+    if (head && compressionEnabled && permitsBody()) {
+      Content.Sink.write(delegate, false, ByteBuffer.wrap(EMPTY));
+    }
+
+    delegate.write(true, bytes, flushing);
+    flushing.afterFlush();
+  }
+
+  /** Sets the finite representation length when the selected status permits one. */
+  private void stageContentLength() {
+    if (permitsBody() && !head) {
+      delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, body.length);
+    } else if (head && headContentLength >= 0) {
+      delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, headContentLength);
+    } else if (head && body.length > 0) {
+      delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, body.length);
+    }
+  }
+
+  /**
+   * Finishes the bounded streaming buffer and releases the transport callback.
+   *
+   * @throws IOException if the final transport write fails
+   */
+  private void completeStreaming() throws IOException {
+    var activeStream = Objects.requireNonNull(stream);
+    write(true, activeStream.buffer, activeStream.used);
+    activeStream.used = 0;
+    body = EMPTY;
+    state = State.CLOSED;
+    completion.succeeded();
   }
 
   /**
@@ -1207,7 +1211,7 @@ public final class Response implements AutoCloseable {
     validateHeaderValue(value);
     var field =
         switch (value) {
-          case "text/plain; charset=utf-8" -> TEXT;
+          case TEXT_CONTENT_TYPE -> TEXT;
           case "text/plain;charset=utf-8" -> COMPACT_TEXT;
           case "application/json" -> JSON;
           default -> new HttpField(HttpHeader.CONTENT_TYPE, value);
@@ -1428,7 +1432,7 @@ public final class Response implements AutoCloseable {
    * @param tag selected entity tag
    * @return whether the request passes the precondition
    */
-  private boolean matchesIfMatch(String tag) {
+  private boolean matchesIfMatch(@Nullable String tag) {
     var values = request().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value());
     if (values.isEmpty()) {
       return true;
@@ -1478,7 +1482,7 @@ public final class Response implements AutoCloseable {
    * @param tag selected entity tag
    * @return whether any request tag matches
    */
-  private boolean noneMatch(String tag) {
+  private boolean noneMatch(@Nullable String tag) {
     if (tag == null) {
       return false;
     }
@@ -1643,7 +1647,7 @@ public final class Response implements AutoCloseable {
     if (channel != null) {
       try {
         channel.close();
-      } catch (IOException ignored) {
+      } catch (IOException _) {
         // Response cleanup cannot safely report an unsubmitted descriptor close failure.
       }
     }
@@ -1656,7 +1660,7 @@ public final class Response implements AutoCloseable {
    * @param tag selected entity tag
    * @return selected range, unsatisfiable marker, or null when Range is ignored
    */
-  private @Nullable ByteRange range(long length, String tag) {
+  private @Nullable ByteRange range(long length, @Nullable String tag) {
     if (head
         || status() != HttpStatusCodes.OK.value()
         || !HttpMethods.GET.value().equals(request().getMethod())) {
@@ -1682,43 +1686,63 @@ public final class Response implements AutoCloseable {
 
     try {
       if (separator == 0) {
-        var suffixText = value.substring(1);
-        if (!decimal(suffixText)) {
-          return null;
-        }
-
-        var suffix = Long.parseLong(suffixText);
-        if (suffix <= 0 || length == 0) {
-          return UNSATISFIABLE_RANGE;
-        }
-
-        return new ByteRange(Math.max(0, length - suffix), length - 1);
+        return suffixRange(length, value.substring(1));
       }
 
-      var firstText = value.substring(0, separator);
-      var lastText = value.substring(separator + 1);
-      if (!decimal(firstText) || (!lastText.isEmpty() && !decimal(lastText))) {
-        return null;
-      }
-
-      var first = Long.parseLong(firstText);
-      if (lastText.isEmpty() && first >= length) {
-        return UNSATISFIABLE_RANGE;
-      }
-
-      var last = lastText.isEmpty() ? length - 1 : Long.parseLong(lastText);
-      if (last < first) {
-        return null;
-      }
-
-      if (first >= length) {
-        return UNSATISFIABLE_RANGE;
-      }
-
-      return new ByteRange(first, Math.min(last, length - 1));
-    } catch (NumberFormatException ignored) {
+      return explicitRange(length, value.substring(0, separator), value.substring(separator + 1));
+    } catch (NumberFormatException _) {
       return null;
     }
+  }
+
+  /**
+   * Parses a suffix interval after its leading hyphen.
+   *
+   * @param length full representation length
+   * @param suffixText digits after the hyphen
+   * @return selected range, unsatisfiable marker, or null for invalid syntax
+   */
+  private static @Nullable ByteRange suffixRange(long length, String suffixText) {
+    if (!decimal(suffixText)) {
+      return null;
+    }
+
+    var suffix = Long.parseLong(suffixText);
+    if (suffix <= 0 || length == 0) {
+      return UNSATISFIABLE_RANGE;
+    }
+
+    return new ByteRange(Math.max(0, length - suffix), length - 1);
+  }
+
+  /**
+   * Parses a first-last interval, including an omitted final position.
+   *
+   * @param length full representation length
+   * @param firstText first byte position
+   * @param lastText final byte position, or empty for the end of the representation
+   * @return selected range, unsatisfiable marker, or null for invalid syntax
+   */
+  private static @Nullable ByteRange explicitRange(long length, String firstText, String lastText) {
+    if (!decimal(firstText) || (!lastText.isEmpty() && !decimal(lastText))) {
+      return null;
+    }
+
+    var first = Long.parseLong(firstText);
+    if (lastText.isEmpty() && first >= length) {
+      return UNSATISFIABLE_RANGE;
+    }
+
+    var last = lastText.isEmpty() ? length - 1 : Long.parseLong(lastText);
+    if (last < first) {
+      return null;
+    }
+
+    if (first >= length) {
+      return UNSATISFIABLE_RANGE;
+    }
+
+    return new ByteRange(first, Math.min(last, length - 1));
   }
 
   /**
@@ -1747,7 +1771,7 @@ public final class Response implements AutoCloseable {
    * @param tag selected entity tag
    * @return whether Range can select a partial representation
    */
-  private boolean ifRangeMatches(String tag) {
+  private boolean ifRangeMatches(@Nullable String tag) {
     var values = request().getHeaders().getValuesList(HttpHeaders.IF_RANGE.value());
     if (values.isEmpty()) {
       return true;
@@ -1872,13 +1896,13 @@ public final class Response implements AutoCloseable {
         && delegate.getStatus() == HttpStatusCodes.PARTIAL_CONTENT.value()
         && delegate.getHeaders().contains(HttpHeaders.CONTENT_RANGE.value())
         && !delegate.getHeaders().contains(HttpHeaders.CONTENT_ENCODING.value())) {
-      delegate.getHeaders().put(HttpHeaders.CONTENT_ENCODING.value(), "identity");
+      delegate.getHeaders().put(HttpHeaders.CONTENT_ENCODING.value(), IDENTITY_ENCODING);
     }
 
     var contentEncoding = delegate.getHeaders().get(HttpHeaders.CONTENT_ENCODING.value());
     rejectNativeIdentity(last, length, contentEncoding);
     if (((encodingUnacceptable && contentEncoding == null)
-            || (identityUnacceptable && "identity".equalsIgnoreCase(contentEncoding)))
+            || (identityUnacceptable && IDENTITY_ENCODING.equalsIgnoreCase(contentEncoding)))
         && permitsBody()
         && (delegate.getStatus() == 0
             || (delegate.getStatus() >= 200 && delegate.getStatus() < 300))
@@ -1891,16 +1915,23 @@ public final class Response implements AutoCloseable {
         && !head
         && permitsBody()
         && !delegate.getHeaders().contains(HttpHeaders.CONTENT_ENCODING.value())) {
-      delegate.getHeaders().put(HttpHeaders.CONTENT_ENCODING.value(), "identity");
+      delegate.getHeaders().put(HttpHeaders.CONTENT_ENCODING.value(), IDENTITY_ENCODING);
     }
 
-    if (compressionEnabled && head) {
-      delegate.getHeaders().remove(HttpHeaders.CONTENT_LENGTH.value());
-      vary(HttpHeaders.ACCEPT_ENCODING);
-      if (request != null
-          && request.getConnectionMetaData().getHttpVersion() == HttpVersion.HTTP_1_1) {
-        delegate.getHeaders().put(HttpHeader.TRANSFER_ENCODING, "chunked");
-      }
+    configureHeadCompression();
+  }
+
+  /** Adjusts HEAD framing when native compression may change the representation length. */
+  private void configureHeadCompression() {
+    if (!compressionEnabled || !head) {
+      return;
+    }
+
+    delegate.getHeaders().remove(HttpHeaders.CONTENT_LENGTH.value());
+    vary(HttpHeaders.ACCEPT_ENCODING);
+    if (request != null
+        && request.getConnectionMetaData().getHttpVersion() == HttpVersion.HTTP_1_1) {
+      delegate.getHeaders().put(HttpHeader.TRANSFER_ENCODING, "chunked");
     }
   }
 
@@ -1993,24 +2024,41 @@ public final class Response implements AutoCloseable {
       }
     }
 
-    var preferred = config.getCompressPreferredEncodings();
     if (matches.isEmpty()) {
-      if (!wildcardAccepted) {
-        return null;
-      }
-
-      var candidate =
-          preferred.isEmpty()
-              ? encoders.isEmpty() ? null : encoders.firstKey()
-              : preferred.stream().filter(encoders::containsKey).findFirst().orElse(null);
-      return candidate != null && compressionEncodingAllowed(config, candidate)
-          ? encoders.get(candidate)
-          : null;
+      return wildcardCompressor(config, encoders, wildcardAccepted);
     }
 
+    var preferred = config.getCompressPreferredEncodings();
     var selected =
         preferred.stream().filter(matches::contains).findFirst().orElse(matches.getFirst());
     return encoders.get(selected);
+  }
+
+  /**
+   * Selects a compressor when the client accepts only a wildcard encoding.
+   *
+   * @param config selected native compression configuration
+   * @param encoders available compressors by encoding name
+   * @param wildcardAccepted whether the wildcard has positive quality
+   * @return selected compressor, or null when none is permitted
+   */
+  private static @Nullable Compression wildcardCompressor(
+      CompressionConfig config, Map<String, Compression> encoders, boolean wildcardAccepted) {
+    if (!wildcardAccepted) {
+      return null;
+    }
+
+    var preferred = config.getCompressPreferredEncodings();
+    String candidate;
+    if (preferred.isEmpty()) {
+      candidate = encoders.isEmpty() ? null : encoders.keySet().iterator().next();
+    } else {
+      candidate = preferred.stream().filter(encoders::containsKey).findFirst().orElse(null);
+    }
+
+    return candidate != null && compressionEncodingAllowed(config, candidate)
+        ? encoders.get(candidate)
+        : null;
   }
 
   /**
@@ -2070,27 +2118,37 @@ public final class Response implements AutoCloseable {
     for (var header : CORS_RESPONSE_HEADERS) {
       delegate.getHeaders().remove(header.value());
     }
+
     for (var entry : fields.entrySet()) {
-      if (!HttpHeaders.VARY.equalsIgnoreCase(entry.getKey())) {
+      if (HttpHeaders.VARY.equalsIgnoreCase(entry.getKey())) {
+        mergeVary(entry.getValue());
+      } else {
         delegate.getHeaders().put(entry.getKey(), entry.getValue());
-        continue;
       }
+    }
+  }
 
-      var existing = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
-      for (var value : delegate.getHeaders().getValuesList(HttpHeaders.VARY.value())) {
-        for (var token : value.split(",", -1)) {
-          existing.add(token.trim());
-        }
+  /**
+   * Merges the required cache variation without weakening an existing wildcard.
+   *
+   * @param required comma-separated field names selected by policy
+   */
+  private void mergeVary(String required) {
+    var existing = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+    for (var value : delegate.getHeaders().getValuesList(HttpHeaders.VARY.value())) {
+      for (var token : value.split(",", -1)) {
+        existing.add(token.trim());
       }
-      if (existing.contains("*")) {
-        continue;
-      }
+    }
 
-      for (var token : entry.getValue().split(",", -1)) {
-        var name = token.trim();
-        if (existing.add(name)) {
-          delegate.getHeaders().add(HttpHeaders.VARY.value(), name);
-        }
+    if (existing.contains("*")) {
+      return;
+    }
+
+    for (var token : required.split(",", -1)) {
+      var name = token.trim();
+      if (existing.add(name)) {
+        delegate.getHeaders().add(HttpHeaders.VARY.value(), name);
       }
     }
   }

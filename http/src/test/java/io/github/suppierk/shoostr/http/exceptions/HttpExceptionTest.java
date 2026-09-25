@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import java.io.ByteArrayInputStream;
@@ -120,13 +119,13 @@ class HttpExceptionTest {
 
     var unavailable = new ServiceUnavailableException();
 
-    try {
-      throw unavailable;
-    } catch (HttpClientException caught) {
-      fail("A server error must not match the client error family", caught);
-    } catch (HttpServerException caught) {
-      assertSame(unavailable, caught);
-    }
+    assertSame(
+        unavailable,
+        assertThrows(
+            HttpServerException.class,
+            () -> {
+              throw unavailable;
+            }));
 
     for (HttpException exception : new HttpException[] {missing, unavailable}) {
       try {

@@ -7,6 +7,7 @@ import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import java.net.URI;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -99,17 +100,7 @@ public record CorsPolicy(
       return false;
     }
 
-    if (incomingOrigins.size() != 1 || "*".equals(incomingOrigins.getFirst())) {
-      throw new BadRequestException();
-    }
-
-    var origin = incomingOrigins.getFirst();
-
-    try {
-      validateOrigin(origin);
-    } catch (IllegalArgumentException failure) {
-      throw new BadRequestException(failure);
-    }
+    var origin = validatedOrigin(incomingOrigins);
 
     var requestedMethods = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
     boolean preflight = options && !requestedMethods.isEmpty();
@@ -138,6 +129,44 @@ public record CorsPolicy(
       fields.put(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS.value(), "true");
     }
 
+    populateResponseHeaders(fields, request, method, preflight);
+    response.corsHeaders(Map.copyOf(fields));
+    return preflight;
+  }
+
+  /**
+   * Requires exactly one concrete, syntactically valid Origin field.
+   *
+   * @param incomingOrigins raw Origin fields
+   * @return validated serialized origin
+   * @throws BadRequestException if Origin is missing, repeated or malformed
+   */
+  private static String validatedOrigin(List<String> incomingOrigins) {
+    if (incomingOrigins.size() != 1 || "*".equals(incomingOrigins.getFirst())) {
+      throw new BadRequestException();
+    }
+
+    var origin = incomingOrigins.getFirst();
+
+    try {
+      validateOrigin(origin);
+    } catch (IllegalArgumentException failure) {
+      throw new BadRequestException(failure);
+    }
+
+    return origin;
+  }
+
+  /**
+   * Adds response headers that differ between preflight and ordinary CORS requests.
+   *
+   * @param fields mutable response fields
+   * @param request incoming request
+   * @param method validated requested method
+   * @param preflight whether the request is a preflight
+   */
+  private void populateResponseHeaders(
+      Map<String, String> fields, Request request, String method, boolean preflight) {
     if (preflight) {
       var requestedHeaders = requestedHeaders(request);
       fields.put(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS.value(), method);
@@ -152,9 +181,6 @@ public record CorsPolicy(
           HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS.value(),
           String.join(", ", exposedHeaders.stream().map(HttpHeaders::value).sorted().toList()));
     }
-
-    response.corsHeaders(Map.copyOf(fields));
-    return preflight;
   }
 
   /**
@@ -216,9 +242,11 @@ public record CorsPolicy(
    * @return explicit port or scheme default
    */
   private static int effectivePort(URI uri) {
-    return uri.getPort() >= 0
-        ? uri.getPort()
-        : "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    if (uri.getPort() >= 0) {
+      return uri.getPort();
+    }
+
+    return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
   }
 
   /**

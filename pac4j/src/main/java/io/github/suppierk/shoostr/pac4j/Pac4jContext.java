@@ -133,7 +133,11 @@ final class Pac4jContext implements WebContext {
   @Override
   public int getServerPort() {
     var uri = URI.create(request.effectiveUrl());
-    return uri.getPort() >= 0 ? uri.getPort() : ("https".equals(uri.getScheme()) ? 443 : 80);
+    if (uri.getPort() >= 0) {
+      return uri.getPort();
+    }
+
+    return "https".equals(uri.getScheme()) ? 443 : 80;
   }
 
   /** {@inheritDoc} */

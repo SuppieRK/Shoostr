@@ -19,9 +19,10 @@ public abstract class HttpClientException extends HttpException {
    */
   protected HttpClientException(
       HttpStatusCodes statusCode, @Nullable String message, @Nullable Throwable cause) {
-    super(statusCode, message, cause);
     if (!statusCode.isClientError()) {
       throw new IllegalArgumentException("HTTP client exceptions require a client error status");
     }
+
+    super(statusCode, message, cause);
   }
 }

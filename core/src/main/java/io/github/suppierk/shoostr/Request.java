@@ -47,6 +47,7 @@ import org.jspecify.annotations.Nullable;
 public final class Request {
   // Java 25 readNBytes(int) starts with this much temporary storage.
   private static final int DIRECT_BODY_READ_LIMIT = 16_384;
+  private static final String CHARSET_PARAMETER = "charset";
 
   private final org.eclipse.jetty.server.Request delegate;
   private final Response response;
@@ -639,7 +640,7 @@ public final class Request {
       throw new ContentTooLargeException();
     }
 
-    return Objects.requireNonNull(body).clone();
+    return java.util.Arrays.copyOf(body, body.length);
   }
 
   /**
@@ -715,8 +716,8 @@ public final class Request {
    * @throws IOException if multipart input cannot be parsed
    */
   public @Nullable Upload file(String name) throws IOException {
-    var uploads = files(name);
-    return uploads.isEmpty() ? null : uploads.getFirst();
+    var selected = files(name);
+    return selected.isEmpty() ? null : selected.getFirst();
   }
 
   /**
@@ -747,7 +748,7 @@ public final class Request {
           grouped.computeIfAbsent(part.getName(), ignored -> new ArrayList<>()).add(upload);
         }
       }
-      grouped.replaceAll((_, uploads) -> List.copyOf(uploads));
+      grouped.replaceAll((_, values) -> List.copyOf(values));
       files = Collections.unmodifiableMap(grouped);
     }
 
@@ -806,7 +807,7 @@ public final class Request {
     if (input != null) {
       try {
         input.close();
-      } catch (IOException ignored) {
+      } catch (IOException _) {
         // Transport cleanup continues after input-close failure.
       }
     }
@@ -952,29 +953,42 @@ public final class Request {
       Thread.currentThread().interrupt();
       throw new IOException("Interrupted while parsing multipart body", failure);
     } catch (ExecutionException failure) {
-      if (failure.getCause() instanceof CompletionException completion
-          && completion.getCause() instanceof HttpException httpFailure) {
-        throw httpFailure;
-      }
+      throw multipartFailure(failure);
+    }
+  }
 
-      if (failure.getCause() instanceof HttpException httpFailure) {
-        throw httpFailure;
-      }
+  /**
+   * Preserves transport and parser failure types when an asynchronous multipart parse completes.
+   *
+   * @param failure parser completion failure
+   * @return checked I/O failure to propagate
+   * @throws HttpException if parsing failed due to invalid or excessive input
+   * @throws ContentTooLargeException if the configured multipart limit was exceeded
+   * @throws BadRequestException if multipart syntax or metadata is invalid
+   */
+  private static IOException multipartFailure(ExecutionException failure) {
+    if (failure.getCause() instanceof CompletionException completion
+        && completion.getCause() instanceof HttpException httpFailure) {
+      throw httpFailure;
+    }
 
-      if (exceededMultipartLimit(failure)) {
-        throw new ContentTooLargeException();
-      }
+    if (failure.getCause() instanceof HttpException httpFailure) {
+      throw httpFailure;
+    }
 
-      if (failure.getCause() instanceof EOFException) {
-        throw new BadRequestException("Malformed multipart body", failure);
-      }
+    if (exceededMultipartLimit(failure)) {
+      throw new ContentTooLargeException();
+    }
 
-      if (failure.getCause() instanceof IOException ioFailure) {
-        throw ioFailure;
-      }
-
+    if (failure.getCause() instanceof EOFException) {
       throw new BadRequestException("Malformed multipart body", failure);
     }
+
+    if (failure.getCause() instanceof IOException ioFailure) {
+      return ioFailure;
+    }
+
+    throw new BadRequestException("Malformed multipart body", failure);
   }
 
   /**
@@ -1037,8 +1051,8 @@ public final class Request {
     }
 
     try {
-      if (parameters.containsKey("charset")
-          && !StandardCharsets.UTF_8.equals(Charset.forName(parameters.get("charset")))) {
+      if (parameters.containsKey(CHARSET_PARAMETER)
+          && !StandardCharsets.UTF_8.equals(Charset.forName(parameters.get(CHARSET_PARAMETER)))) {
         throw new UnsupportedMediaTypeException();
       }
     } catch (IllegalArgumentException failure) {
@@ -1103,7 +1117,7 @@ public final class Request {
       var type =
           HttpField.getValueParameters(header(HttpHeaders.CONTENT_TYPE.value()), new HashMap<>());
       return "multipart/form-data".equalsIgnoreCase(type);
-    } catch (IllegalArgumentException ignored) {
+    } catch (IllegalArgumentException _) {
       return false;
     }
   }
@@ -1144,8 +1158,8 @@ public final class Request {
         throw new UnsupportedMediaTypeException();
       }
 
-      if (parameters.containsKey("charset")) {
-        var charset = parameters.get("charset");
+      if (parameters.containsKey(CHARSET_PARAMETER)) {
+        var charset = parameters.get(CHARSET_PARAMETER);
         if (charset == null || !StandardCharsets.UTF_8.equals(Charset.forName(charset))) {
           throw new UnsupportedMediaTypeException();
         }

@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -60,7 +61,7 @@ class RequestObservationTest {
       socket.setSoLinger(true, 0);
       socket.close();
       var outcome = terminal.get(5, TimeUnit.SECONDS);
-      assertTrue(outcome.transportFailure() != null);
+      assertNotNull(outcome.transportFailure());
     }
   }
 

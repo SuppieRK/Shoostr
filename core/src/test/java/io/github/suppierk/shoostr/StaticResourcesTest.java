@@ -44,10 +44,11 @@ class StaticResourcesTest {
   @Test
   void rejectsParameterizedFilesystemMounts() {
     var app = new Shoostr();
+    var routes = app.routes();
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> app.routes().staticFiles("/assets/{tenant}", temporaryDirectory));
+        () -> routes.staticFiles("/assets/{tenant}", temporaryDirectory));
   }
 
   @Test
@@ -65,10 +66,11 @@ class StaticResourcesTest {
   @Test
   void rejectsClasspathMountsWhoseDirectoriesAreUnavailable() {
     var app = new Shoostr();
+    var routes = app.routes();
 
     assertThrows(
         IllegalArgumentException.class,
-        () -> app.routes().classpathResources("/assets", "/missing-static-directory"));
+        () -> routes.classpathResources("/assets", "/missing-static-directory"));
   }
 
   @Test
@@ -181,15 +183,10 @@ class StaticResourcesTest {
 
   @Test
   void rejectsUnsafeConfiguredStaticFileNames() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> StaticOptions.defaults().withWelcomeFile("../index.html"));
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> StaticOptions.defaults().withSpaFallback("/index.html"));
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> StaticOptions.defaults().withSpaFallback("index\\.html"));
+    var defaults = StaticOptions.defaults();
+    assertThrows(IllegalArgumentException.class, () -> defaults.withWelcomeFile("../index.html"));
+    assertThrows(IllegalArgumentException.class, () -> defaults.withSpaFallback("/index.html"));
+    assertThrows(IllegalArgumentException.class, () -> defaults.withSpaFallback("index\\.html"));
   }
 
   @Test

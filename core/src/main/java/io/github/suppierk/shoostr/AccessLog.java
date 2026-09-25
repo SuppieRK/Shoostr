@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import java.util.Objects;
 import java.util.function.Consumer;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Safe terminal summaries, registered explicitly with Shoostr.afterRequest. Disabled unless
@@ -37,12 +38,11 @@ public final class AccessLog implements Consumer<RequestOutcome> {
   @Override
   public void accept(RequestOutcome outcome) {
     var method = HttpMethods.httpMethod(outcome.method()).map(HttpMethods::value).orElse("OTHER");
-    var route = Objects.requireNonNullElse(outcome.routePattern(), "UNMATCHED");
     sink.accept(
         "method="
             + method
             + " route="
-            + safe(route)
+            + safe(outcome.routePattern())
             + " status="
             + outcome.statusCode()
             + " duration_ns="
@@ -56,10 +56,14 @@ public final class AccessLog implements Consumer<RequestOutcome> {
   /**
    * Escapes separators and controls in application-configured templates to preserve one log record.
    *
-   * @param value configured template
+   * @param value configured template, or null if no route matched
    * @return printable single-field representation
    */
-  private static String safe(String value) {
+  private static String safe(@Nullable String value) {
+    if (value == null) {
+      return "UNMATCHED";
+    }
+
     var result = new StringBuilder(value.length());
     for (int index = 0; index < value.length(); index++) {
       char character = value.charAt(index);

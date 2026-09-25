@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -387,13 +388,12 @@ public class WebSocketRoutesTest {
       var invalid = handshake(app, 12);
       assertTrue(invalid.getFirst().contains(" 426 "), invalid.toString());
       assertEquals(0, factoryCalls.get());
-      assertTrue(invalid.stream().anyMatch(line -> "Upgrade: websocket".equalsIgnoreCase(line)));
-      assertTrue(
-          invalid.stream().anyMatch(line -> "Sec-WebSocket-Version: 13".equalsIgnoreCase(line)));
+      assertTrue(invalid.stream().anyMatch("Upgrade: websocket"::equalsIgnoreCase));
+      assertTrue(invalid.stream().anyMatch("Sec-WebSocket-Version: 13"::equalsIgnoreCase));
 
       var valid = handshake(app, 13);
       assertTrue(valid.getFirst().contains(" 101 "));
-      assertTrue(valid.stream().anyMatch(line -> "X-Handshake: accepted".equalsIgnoreCase(line)));
+      assertTrue(valid.stream().anyMatch("X-Handshake: accepted"::equalsIgnoreCase));
       assertEquals(1, factoryCalls.get());
     }
   }
@@ -606,6 +606,7 @@ public class WebSocketRoutesTest {
 
       app.close();
       terminated.get(3, TimeUnit.SECONDS);
+      await().atMost(Duration.ofSeconds(3)).until(socket::isOutputClosed);
       socket.abort();
     }
   }
@@ -724,7 +725,7 @@ public class WebSocketRoutesTest {
 
       peer.close();
       assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertTrue(sendFailure.get() != null);
+      assertNotNull(sendFailure.get());
       assertEquals(0, listener.pendingCount());
       assertThrows(IllegalStateException.class, () -> listener.submit("after-disconnect"));
     }

@@ -313,7 +313,7 @@ class MultipartRequestTest {
                   .build(),
               HttpResponse.BodyHandlers.ofString());
       assertEquals(200, result.statusCode());
-      assertThrows(IllegalStateException.class, () -> retained.get().read());
+      assertThrows(IllegalStateException.class, retained.get()::read);
     }
   }
 
@@ -359,8 +359,9 @@ class MultipartRequestTest {
 
       assertEquals(200, result.statusCode());
       assertEquals("ready", result.body());
-      assertThrows(IllegalStateException.class, () -> retained.get().skip(1));
-      assertThrows(IllegalStateException.class, () -> retained.get().skipNBytes(1));
+      var closedInput = retained.get();
+      assertThrows(IllegalStateException.class, () -> closedInput.skip(1));
+      assertThrows(IllegalStateException.class, () -> closedInput.skipNBytes(1));
     }
   }
 
@@ -1046,7 +1047,7 @@ class MultipartRequestTest {
         .getBytes(StandardCharsets.UTF_8);
   }
 
-  private static void awaitFile(Path directory, boolean expected) throws Exception {
+  private static void awaitFile(Path directory, boolean expected) {
     await()
         .pollInterval(Duration.ofMillis(20))
         .atMost(Duration.ofSeconds(1))

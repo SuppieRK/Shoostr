@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.opentelemetry;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Options;
@@ -18,6 +19,7 @@ import io.opentelemetry.context.propagation.ContextPropagators;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.io.IOException;
 import java.net.URI;
@@ -95,7 +97,7 @@ class OpenTelemetryTracingTest {
                 .GET()
                 .build(),
             HttpResponse.BodyHandlers.discarding());
-        assertTrue(outcomes.poll(5, TimeUnit.SECONDS) != null);
+        assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
       }
       var spans = exporter.getFinishedSpanItems();
       assertEquals(3, spans.size());
@@ -172,15 +174,12 @@ class OpenTelemetryTracingTest {
                 .get(5, TimeUnit.SECONDS)
                 .body()
                 .startsWith("00-%032x-".formatted(index)));
-        assertTrue(outcomes.poll(5, TimeUnit.SECONDS) != null);
+        assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
       }
       assertEquals(20, exporter.getFinishedSpanItems().size());
       assertEquals(
           20,
-          exporter.getFinishedSpanItems().stream()
-              .map(span -> span.getTraceId())
-              .distinct()
-              .count());
+          exporter.getFinishedSpanItems().stream().map(SpanData::getTraceId).distinct().count());
     }
   }
 

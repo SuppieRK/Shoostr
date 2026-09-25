@@ -10,5 +10,6 @@ public interface Handler {
    * @param response handler-scoped output
    * @throws Exception if request processing fails
    */
+  @SuppressWarnings("java:S112") // Application callbacks may propagate their own checked failures.
   void handle(Request request, Response response) throws Exception;
 }

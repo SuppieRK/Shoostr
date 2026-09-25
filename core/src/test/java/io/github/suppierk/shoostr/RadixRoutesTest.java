@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -63,19 +64,15 @@ class RadixRoutesTest {
 
   @Test
   void ownsAnImmutableSnapshotOfRegistration() {
-    var methods = new HashMap<>(Map.of(HttpMethods.GET, GET));
+    var methods = new EnumMap<>(Map.of(HttpMethods.GET, GET));
     var routes = new HashMap<String, Map<HttpMethods, Handler>>();
     routes.put("/orders", methods);
     var tree = compile(routes);
     methods.clear();
     routes.clear();
     assertSame(GET, handler(tree, "/orders", HttpMethods.GET));
-    assertThrows(
-        UnsupportedOperationException.class,
-        () ->
-            Objects.requireNonNull(tree.match("/orders", HttpMethods.GET))
-                .parameters()
-                .put("id", 1));
+    var parameters = Objects.requireNonNull(tree.match("/orders", HttpMethods.GET)).parameters();
+    assertThrows(UnsupportedOperationException.class, () -> parameters.put("id", 1));
   }
 
   @Test

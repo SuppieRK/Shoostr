@@ -114,7 +114,7 @@ public final class Upload {
       for (var stream : streams) {
         try {
           stream.close();
-        } catch (IOException ignored) {
+        } catch (IOException _) {
           // Cleanup continues so every resource gets a close attempt.
         }
       }

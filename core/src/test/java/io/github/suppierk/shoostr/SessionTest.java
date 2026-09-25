@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -117,7 +118,7 @@ class SessionTest {
       var renewed = send(client, app, "/renew", Optional.of(oldCookie));
       assertEquals(200, renewed.statusCode());
       var newCookie = renewed.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-      assertFalse(oldCookie.equals(newCookie));
+      assertNotEquals(oldCookie, newCookie);
       assertEquals("absent", send(client, app, "/peek", Optional.of(oldCookie)).body());
       assertEquals("alice", send(client, app, "/peek", Optional.of(newCookie)).body());
     }
@@ -478,10 +479,10 @@ class SessionTest {
               .firstValue("Set-Cookie")
               .orElseThrow()
               .split(";", 2)[0];
-      assertFalse(first.equals(second));
+      assertNotEquals(first, second);
       var ambiguous = send(client, app, "/peek", Optional.of(first + "; " + second));
       assertEquals(400, ambiguous.statusCode());
-      assertFalse("handled".equals(ambiguous.body()));
+      assertNotEquals("handled", ambiguous.body());
     }
   }
 

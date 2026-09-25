@@ -90,7 +90,7 @@ class LifecycleHooksTest {
     var result = send("GET", "/accounts/a/orders/42");
     assertEquals(404, result.statusCode());
     assertEquals("/accounts/{accountId}/orders/{id}", result.body());
-    assertThrows(IllegalStateException.class, () -> retained.get().routePattern());
+    assertThrows(IllegalStateException.class, retained.get()::routePattern);
   }
 
   @Test
@@ -169,7 +169,7 @@ class LifecycleHooksTest {
     var retained = new AtomicReference<Request>();
     app.afterRequest(
         outcome -> {
-          assertThrows(IllegalStateException.class, () -> retained.get().routePattern());
+          assertThrows(IllegalStateException.class, retained.get()::routePattern);
           outcomes.add(outcome);
         });
     app.routes()
@@ -316,7 +316,8 @@ class LifecycleHooksTest {
     assertNotNull(outcome);
     assertEquals(200, outcome.statusCode());
     assertNull(outcome.transportFailure());
-    assertThrows(IllegalStateException.class, () -> retained.get().write("late"));
+    var closedStream = retained.get();
+    assertThrows(IllegalStateException.class, () -> closedStream.write("late"));
     assertTrue(outcomes.isEmpty());
   }
 
@@ -450,7 +451,7 @@ class LifecycleHooksTest {
                   }
 
                   return true;
-                } catch (IllegalStateException rejected) {
+                } catch (IllegalStateException _) {
                   return false;
                 }
               });

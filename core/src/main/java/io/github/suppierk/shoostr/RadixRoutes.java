@@ -2,7 +2,6 @@ package io.github.suppierk.shoostr;
 
 import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpMethods;
-import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -21,7 +20,7 @@ import org.jspecify.annotations.Nullable;
 
 /** Frozen compressed path patterns that prefer complete matches through literal branches. */
 final class RadixRoutes {
-  private static final Pattern PARAMETER =
+  private static final Pattern PARAMETER_PATTERN =
       Pattern.compile(
           "\\"
               + HttpCharacters.OPEN_CURLY_BRACE_STRING
@@ -116,11 +115,10 @@ final class RadixRoutes {
    * @param path request path
    * @param method requested HTTP method
    * @return synthetic static endpoint, or null when no resource matches
-   * @throws IOException if resource metadata cannot be read
    */
-  @Nullable Endpoint staticEndpoint(String path, @Nullable HttpMethods method) throws IOException {
-    for (var staticFiles : staticFiles) {
-      var endpoint = staticFiles.endpoint(path, method);
+  @Nullable Endpoint staticEndpoint(String path, @Nullable HttpMethods method) {
+    for (var mount : staticFiles) {
+      var endpoint = mount.endpoint(path, method);
       if (endpoint != null) {
         return endpoint;
       }
@@ -149,8 +147,8 @@ final class RadixRoutes {
    */
   Set<HttpMethods> allowedMethods(String path) {
     var methods = collectMethods(path, 0, null);
-    for (var staticFiles : staticFiles) {
-      if (staticFiles.exists(path)) {
+    for (var mount : staticFiles) {
+      if (mount.exists(path)) {
         if (methods == null) {
           methods = EnumSet.noneOf(HttpMethods.class);
         }
@@ -174,7 +172,7 @@ final class RadixRoutes {
    */
   static Endpoint endpoint(HttpMethods method, String path, Handler handler) {
     var parameters = parameters(path);
-    var matcher = PARAMETER.matcher(path);
+    var matcher = PARAMETER_PATTERN.matcher(path);
     boolean hasParameter = matcher.find();
     int firstParameterOffset = hasParameter ? matcher.start() : -1;
     int firstParameterSegment = hasParameter ? parameters.get(matcher.group(1)) : 0;
@@ -222,7 +220,7 @@ final class RadixRoutes {
    * @return immutable parameter names and their segment indexes, counting the leading empty segment
    * @throws IllegalArgumentException if the path syntax is invalid or a parameter name is repeated
    */
-  static Map<String, Integer> parameters(String path) {
+  static Map<String, Integer> parameters(@Nullable String path) {
     if (path == null
         || path.isEmpty()
         || path.charAt(0) != HttpCharacters.PATH_SEPARATOR
@@ -235,7 +233,7 @@ final class RadixRoutes {
     var segments = path.split(HttpCharacters.PATH_SEPARATOR_STRING, -1);
     for (int i = 1; i < segments.length; i++) {
       String segment = segments[i];
-      var parameter = PARAMETER.matcher(segment);
+      var parameter = PARAMETER_PATTERN.matcher(segment);
       if (parameter.matches()) {
         if (parameters.putIfAbsent(parameter.group(1), i) != null) {
           throw new IllegalArgumentException("Repeated path parameter: " + parameter.group(1));
@@ -395,17 +393,10 @@ final class RadixRoutes {
     String last = paths[to - 1];
     boolean parameterEdge =
         offset < first.length() && first.charAt(offset) == HttpCharacters.OPEN_CURLY_BRACE;
-    int end = offset;
-    if (parameterEdge) {
-      end += HttpCharacters.CURLY_BRACES.length();
-    } else {
-      while (end < first.length()
-          && end < last.length()
-          && first.charAt(end) != HttpCharacters.OPEN_CURLY_BRACE
-          && first.charAt(end) == last.charAt(end)) {
-        end++;
-      }
-    }
+    int end =
+        parameterEdge
+            ? offset + HttpCharacters.CURLY_BRACES.length()
+            : prefixEnd(first, last, offset);
 
     Map<HttpMethods, Endpoint> endpoints = Map.of();
     if (first.length() == end) {
@@ -436,6 +427,26 @@ final class RadixRoutes {
         children.toArray(RadixRoutes[]::new),
         parameter,
         staticFiles);
+  }
+
+  /**
+   * Finds the end of a literal edge shared by the first and last sorted paths.
+   *
+   * @param first first path in the range
+   * @param last last path in the range
+   * @param offset prefix already consumed by an ancestor
+   * @return first differing character or parameter marker
+   */
+  private static int prefixEnd(String first, String last, int offset) {
+    int end = offset;
+    while (end < first.length()
+        && end < last.length()
+        && first.charAt(end) != HttpCharacters.OPEN_CURLY_BRACE
+        && first.charAt(end) == last.charAt(end)) {
+      end++;
+    }
+
+    return end;
   }
 
   /** Precompiled endpoint metadata shared by all requests matching this registration. */

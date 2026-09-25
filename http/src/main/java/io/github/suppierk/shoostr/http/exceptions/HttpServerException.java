@@ -19,9 +19,10 @@ public abstract class HttpServerException extends HttpException {
    */
   protected HttpServerException(
       HttpStatusCodes statusCode, @Nullable String message, @Nullable Throwable cause) {
-    super(statusCode, message, cause);
     if (!statusCode.isServerError()) {
       throw new IllegalArgumentException("HTTP server exceptions require a server error status");
     }
+
+    super(statusCode, message, cause);
   }
 }

@@ -152,6 +152,10 @@ final class StaticFiles implements Closeable {
    * @throws IOException if a directory descriptor cannot be opened or closed
    * @throws IllegalArgumentException if the filesystem lacks secure directory operations
    */
+  @SuppressWarnings({
+    "java:S1181",
+    "java:S2583"
+  }) // TWR close can fail after retaining the descriptor.
   private static SecureDirectoryStream<Path> openSecureDirectory(Path root) throws IOException {
     SecureDirectoryStream<Path> retained = null;
 
@@ -196,11 +200,9 @@ final class StaticFiles implements Closeable {
    * @param path request path
    * @param method requested HTTP method
    * @return synthetic endpoint, or null when this mount has no matching resource
-   * @throws IOException if resource metadata cannot be read
    */
-  RadixRoutes.@Nullable Endpoint endpoint(String path, @Nullable HttpMethods method)
-      throws IOException {
-    if (method != HttpMethods.GET && method != HttpMethods.HEAD) {
+  RadixRoutes.@Nullable Endpoint endpoint(String path, @Nullable HttpMethods method) {
+    if (method == null || (method != HttpMethods.GET && method != HttpMethods.HEAD)) {
       return null;
     }
 
@@ -251,9 +253,9 @@ final class StaticFiles implements Closeable {
    * @param relative validated resource selected during route matching
    * @param response response receiving the selected resource
    * @throws NotFoundException if the resource disappears after route matching
-   * @throws Exception if the resource cannot be staged
+   * @throws IOException if the resource cannot be staged
    */
-  private void serve(String relative, Response response) throws Exception {
+  private void serve(String relative, Response response) throws IOException {
     if (rootDirectory == null) {
       serveClasspath(relative, response);
       return;
@@ -272,7 +274,7 @@ final class StaticFiles implements Closeable {
               selected.length(),
               selected.lastModified(),
               contentType(selected.name()));
-    } catch (Exception failure) {
+    } catch (IOException | RuntimeException failure) {
       selected.close();
       throw failure;
     }
@@ -284,9 +286,9 @@ final class StaticFiles implements Closeable {
    * @param relative validated resource path
    * @param response response receiving the selected resource
    * @throws NotFoundException if the resource disappears after route matching
-   * @throws Exception if the resource cannot be staged
+   * @throws IOException if the resource cannot be staged
    */
-  private void serveClasspath(String relative, Response response) throws Exception {
+  private void serveClasspath(String relative, Response response) throws IOException {
     var resource = Objects.requireNonNull(source).resolve(relative);
     if (!resource.exists()
         || resource.isDirectory()
@@ -368,7 +370,7 @@ final class StaticFiles implements Closeable {
       }
 
       return filesystemAttributes(relative) != null;
-    } catch (IOException ignored) {
+    } catch (IOException _) {
       return false;
     }
   }
@@ -380,6 +382,7 @@ final class StaticFiles implements Closeable {
    * @return selected resource, or null when unavailable
    * @throws IOException if descriptor-relative access fails
    */
+  @SuppressWarnings("java:S1181") // Fatal failures still require descriptor cleanup before rethrow.
   private @Nullable Selected filesystemResource(String relative) throws IOException {
     synchronized (Objects.requireNonNull(rootDirectory)) {
       var directories = directories(relative);
@@ -524,7 +527,7 @@ final class StaticFiles implements Closeable {
       }
 
       return directories;
-    } catch (NoSuchFileException | NotDirectoryException ignored) {
+    } catch (NoSuchFileException | NotDirectoryException _) {
       closeNestedDirectories(directories);
       return null;
     } catch (IOException | RuntimeException failure) {
@@ -549,7 +552,7 @@ final class StaticFiles implements Closeable {
               Path.of(file), BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
       var attributes = view.readAttributes();
       return attributes.isRegularFile() ? attributes : null;
-    } catch (NoSuchFileException ignored) {
+    } catch (NoSuchFileException _) {
       return null;
     }
   }
@@ -604,10 +607,15 @@ final class StaticFiles implements Closeable {
       return null;
     }
 
-    var encoded =
-        mount.length() == 1
-            ? path.substring(1)
-            : path.equals(mount) ? "" : path.substring(mount.length() + 1);
+    String encoded;
+    if (mount.length() == 1) {
+      encoded = path.substring(1);
+    } else if (path.equals(mount)) {
+      encoded = "";
+    } else {
+      encoded = path.substring(mount.length() + 1);
+    }
+
     String decoded;
 
     try {
@@ -615,7 +623,7 @@ final class StaticFiles implements Closeable {
           URLDecoder.decode(
               encoded.replace(HttpCharacters.PLUS_SIGN_STRING, HttpCharacters.PERCENT_ENCODED_PLUS),
               StandardCharsets.UTF_8);
-    } catch (IllegalArgumentException ignored) {
+    } catch (IllegalArgumentException _) {
       return null;
     }
 

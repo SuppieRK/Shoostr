@@ -79,10 +79,9 @@ class ResponseMetadataTest {
               assertEquals(
                   List.of("first=1; Path=/", "second=2; Path=/"), snapshot.get("SET-COOKIE"));
               assertEquals(List.of(), response.headers("Absent"));
-              assertThrows(UnsupportedOperationException.class, () -> snapshot.clear());
-              assertThrows(
-                  UnsupportedOperationException.class,
-                  () -> response.headers("Set-Cookie").add("x"));
+              assertThrows(UnsupportedOperationException.class, snapshot::clear);
+              var cookieHeaders = response.headers("Set-Cookie");
+              assertThrows(UnsupportedOperationException.class, () -> cookieHeaders.add("x"));
               response.addHeader("X-Values", "a,b").addHeader("X-Values", "c");
               assertNull(snapshot.get("X-Values"));
               assertEquals(List.of("a,b", "c"), response.headers("x-values"));
@@ -224,11 +223,12 @@ class ResponseMetadataTest {
     var result = send("/stream-metadata");
     assertEquals(202, result.statusCode());
     assertEquals("streamed", result.body());
-    assertThrows(IllegalStateException.class, () -> retained.get().status());
-    assertThrows(IllegalStateException.class, () -> retained.get().header("X-Value"));
-    assertThrows(IllegalStateException.class, () -> retained.get().headers("X-Value"));
-    assertThrows(IllegalStateException.class, () -> retained.get().headerMap());
-    assertThrows(IllegalStateException.class, () -> retained.get().isCommitted());
+    var closedResponse = retained.get();
+    assertThrows(IllegalStateException.class, closedResponse::status);
+    assertThrows(IllegalStateException.class, () -> closedResponse.header("X-Value"));
+    assertThrows(IllegalStateException.class, () -> closedResponse.headers("X-Value"));
+    assertThrows(IllegalStateException.class, closedResponse::headerMap);
+    assertThrows(IllegalStateException.class, closedResponse::isCommitted);
   }
 
   @Test
