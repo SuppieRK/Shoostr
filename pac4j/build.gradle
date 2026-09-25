@@ -1,0 +1,12 @@
+plugins {
+	id 'java-library'
+}
+
+dependencies {
+	api project(':core')
+	api 'org.pac4j:pac4j-core:6.5.8'
+	testImplementation 'org.pac4j:pac4j-http:6.5.8'
+	testImplementation 'org.pac4j:pac4j-jwt:6.5.8'
+}
+
+sourceSets.test.resources.srcDir project(':core').file('src/test/resources')

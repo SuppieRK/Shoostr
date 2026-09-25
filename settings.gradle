@@ -1,0 +1,7 @@
+rootProject.name = 'Shoostr'
+include 'http', 'core', 'test-support', 'pac4j', 'benchmarks', 'microbenchmarks'
+
+include 'micrometer', 'opentelemetry'
+
+include 'consumer-smoke'
+project(':consumer-smoke').projectDir = file('examples/consumer-smoke')

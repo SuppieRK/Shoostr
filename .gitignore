@@ -1,0 +1,62 @@
+HELP.md
+.gradle
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+!config/checkstyle/tests/**/build/
+
+### STS ###
+.apt_generated
+.classpath
+.factorypath
+.project
+.settings
+.springBeans
+.sts4-cache
+bin/
+!**/src/main/**/bin/
+!**/src/test/**/bin/
+
+### IntelliJ IDEA ###
+.idea
+*.iws
+*.iml
+*.ipr
+out/
+!**/src/main/**/out/
+!**/src/test/**/out/
+
+### NetBeans ###
+/nbproject/private/
+/nbbuild/
+/dist/
+/nbdist/
+/.nb-gradle/
+
+### VS Code ###
+.vscode/
+
+### Spotless ###
+**/spotless/
+
+### macOS ###
+.DS_Store
+
+### Codex ###
+/.codex/
+
+### cmdshape ###
+/.cmdshape/
+
+### Local AI workflow ###
+/AGENTS.md
+/.agents/
+/docs/
+/.scratch/
+/skills-lock.json
+CONTEXT.md
+
+### Local measurements ###
+/benchmark-results/
+__pycache__/

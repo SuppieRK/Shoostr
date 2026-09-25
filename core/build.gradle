@@ -1,0 +1,17 @@
+plugins {
+	id 'java-library'
+}
+
+dependencies {
+	api project(':http')
+	api 'org.eclipse.jetty:jetty-server:12.1.11'
+	api 'org.eclipse.jetty:jetty-session:12.1.11'
+	api 'org.eclipse.jetty.http2:jetty-http2-server:12.1.11'
+	api 'org.eclipse.jetty:jetty-alpn-server:12.1.11'
+	runtimeOnly 'org.eclipse.jetty:jetty-alpn-java-server:12.1.11'
+	api 'org.eclipse.jetty.compression:jetty-compression-server:12.1.11'
+	api 'org.eclipse.jetty.websocket:jetty-websocket-jetty-server:12.1.11'
+	runtimeOnly 'org.eclipse.jetty.compression:jetty-compression-gzip:12.1.11'
+	testImplementation 'org.eclipse.jetty.compression:jetty-compression-gzip:12.1.11'
+	testImplementation 'org.awaitility:awaitility:4.3.0'
+}

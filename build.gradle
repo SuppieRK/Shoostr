@@ -1,0 +1,214 @@
+import io.github.suppierk.build.StatementSpacingCheck
+
+plugins {
+	id 'java'
+	id 'checkstyle'
+	id 'com.diffplug.spotless' version '8.10.2'
+	id 'net.ltgt.errorprone' version '5.1.0' apply false
+	id 'net.ltgt.nullaway' version '3.2.0' apply false
+	id 'org.sonarqube' version '7.5.0.8588'
+}
+
+allprojects {
+	apply plugin: 'com.diffplug.spotless'
+	apply plugin: 'checkstyle'
+	apply plugin: 'java'
+
+	java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
+	tasks.withType(JavaCompile).configureEach {
+		options.encoding = 'UTF-8'
+		options.release = 25
+		options.compilerArgs.add('-proc:none')
+	}
+	tasks.withType(Test).configureEach { useJUnitPlatform() }
+	repositories { mavenCentral() }
+	spotless {
+		groovyGradle { greclipse() }
+	}
+	checkstyle {
+		toolVersion = '14.1.0'
+		configFile = rootProject.file('config/checkstyle/checkstyle.xml')
+	}
+	dependencies {
+		compileOnly 'org.jspecify:jspecify:1.0.1'
+		testImplementation platform('org.junit:junit-bom:5.14.4')
+		testImplementation 'org.junit.jupiter:junit-jupiter'
+		testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+		checkstyle 'com.puppycrawl.tools:checkstyle:14.1.0'
+		checkstyle files(rootProject.file('buildSrc/build/libs/buildSrc.jar'))
+	}
+}
+
+project(':core') { dependencies { testImplementation gradleTestKit() } }
+
+subprojects {
+	apply plugin: 'java'
+	if (name != 'microbenchmarks') {
+		apply from: rootProject.file('config/gradle/nullaway.gradle')
+	}
+
+	group = 'io.github.suppierk'
+	version = '0.1.0-SNAPSHOT'
+
+	tasks.withType(JavaExec).configureEach {
+		javaLauncher = javaToolchains.launcherFor(java.toolchain)
+	}
+
+	spotless {
+		java {
+			googleJavaFormat()
+			// Bump both Java custom-step versions when StatementSpacingCheck changes.
+			bumpThisNumberIfACustomStepChanges(2)
+			custom 'statement spacing', { source ->
+				StatementSpacingCheck.format(source)
+			}
+		}
+	}
+
+	sourceSets.configureEach { sourceSet ->
+		def javaRules = tasks.register("checkstyle${sourceSet.name.capitalize()}JavaRules", Checkstyle) {
+			description = "Checks ${sourceSet.name} sources with the shared Java rules."
+			source sourceSet.allJava
+			classpath = sourceSet.output + sourceSet.compileClasspath
+			configFile = rootProject.file(
+					sourceSet.name == 'test' ? 'config/checkstyle/java-test.xml' : 'config/checkstyle/java.xml')
+		}
+		tasks.named('check') { dependsOn javaRules }
+	}
+}
+
+spotless {
+	groovyGradle {
+		target '*.gradle', 'buildSrc/*.gradle', 'config/gradle/*.gradle'
+	}
+	java {
+		target 'buildSrc/src/**/*.java', 'config/checkstyle/tests/**/*.java'
+		googleJavaFormat()
+		bumpThisNumberIfACustomStepChanges(2)
+		custom 'statement spacing', { source -> StatementSpacingCheck.format(source) }
+	}
+}
+
+def checkstyleBuildLogic = tasks.register('checkstyleBuildLogic', Checkstyle) {
+	source fileTree('buildSrc/src') { include '**/*.java' }
+	classpath = files()
+	configFile = file('config/checkstyle/java.xml')
+}
+def checkstyleBuildLogicTests = tasks.register('checkstyleBuildLogicTests', Checkstyle) {
+	source fileTree('config/checkstyle/tests') { include '**/*.java' }
+	classpath = files()
+	configFile = file('config/checkstyle/java-test.xml')
+}
+sourceSets.test.java.srcDirs = ['config/checkstyle/tests']
+dependencies {
+	testImplementation 'com.puppycrawl.tools:checkstyle:14.1.0'
+	testImplementation files('buildSrc/build/libs/buildSrc.jar')
+}
+tasks.named('check') {
+	dependsOn checkstyleBuildLogic, checkstyleBuildLogicTests
+}
+
+tasks.named('check') {
+	dependsOn subprojects.collect {
+		it.tasks.named('check')
+	}
+}
+tasks.named('assemble') {
+	dependsOn subprojects.collect {
+		it.tasks.named('assemble')
+	}
+}
+
+def frameworkModules = [
+	'http',
+	'core',
+	'test-support',
+	'pac4j',
+	'micrometer',
+	'opentelemetry'
+]
+configure(frameworkModules.collect { project(":${it}") }) {
+	apply plugin: 'jacoco'
+
+	jacoco { toolVersion = '0.8.15' }
+	tasks.named('jacocoTestReport', JacocoReport) {
+		dependsOn tasks.named('test')
+		reports {
+			xml.required = true
+			html.required = true
+			csv.required = false
+		}
+	}
+}
+
+configure(subprojects.findAll { !(it.name in frameworkModules) }) {
+	sonar { skipProject = true }
+}
+
+sonar {
+	properties {
+		property 'sonar.projectKey', 'SuppieRK_Shoostr'
+		property 'sonar.organization', 'suppierk'
+		property 'sonar.host.url', 'https://sonarcloud.io'
+		property 'sonar.gradle.skipCompile', 'true'
+		property 'sonar.qualitygate.wait', 'true'
+		property 'sonar.coverage.jacoco.xmlReportPaths', frameworkModules.collect {
+			"${it}/build/reports/jacoco/test/jacocoTestReport.xml"
+		}.join(',')
+	}
+}
+
+tasks.named('sonar') {
+	dependsOn frameworkModules.collect { ":${it}:jacocoTestReport" }
+}
+
+configure([
+	project(':http'),
+	project(':core'),
+	project(':test-support'),
+	project(':pac4j'),
+	project(':micrometer'),
+	project(':opentelemetry')
+]) {
+	apply plugin: 'maven-publish'
+	base { archivesName = "shoostr-${project.name}" }
+
+	publishing {
+		publications {
+			mavenJava(MavenPublication) {
+				from components.java
+				artifactId = "shoostr-${project.name}"
+				pom {
+					name = "Shoostr ${project.name}"
+					url = 'https://github.com/SuppieRK/Shoostr'
+					scm {
+						url = 'https://github.com/SuppieRK/Shoostr'
+						connection = 'scm:git:https://github.com/SuppieRK/Shoostr.git'
+					}
+				}
+			}
+		}
+		repositories {
+			maven {
+				name = 'consumer'
+				url = rootProject.layout.buildDirectory.dir('consumer-repository')
+			}
+		}
+	}
+}
+
+tasks.register('consumerSmoke', Exec) {
+	group = 'verification'
+	description = 'Publishes locally and runs the independent consumer smoke build.'
+	dependsOn ':http:publishMavenJavaPublicationToConsumerRepository'
+	dependsOn ':core:publishMavenJavaPublicationToConsumerRepository'
+	dependsOn ':test-support:publishMavenJavaPublicationToConsumerRepository'
+	dependsOn ':pac4j:publishMavenJavaPublicationToConsumerRepository'
+	dependsOn ':micrometer:publishMavenJavaPublicationToConsumerRepository'
+	dependsOn ':opentelemetry:publishMavenJavaPublicationToConsumerRepository'
+	commandLine rootProject.file('gradlew').absolutePath,
+			'-p', rootProject.file('examples/consumer-smoke').absolutePath,
+			'runSmoke',
+			"-PframeworkRepository=${rootProject.layout.buildDirectory.dir('consumer-repository').get().asFile.absolutePath}",
+			'--console=plain'
+}

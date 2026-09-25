@@ -1,0 +1,89 @@
+plugins {
+	id 'java'
+}
+
+def standaloneBuild = project == rootProject
+
+java {
+	toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+
+repositories {
+	if (standaloneBuild) {
+		maven { url = uri(providers.gradleProperty('frameworkRepository').get()) }
+	}
+	mavenCentral()
+}
+
+configurations {
+	baseRuntime {
+		canBeResolved = true
+		canBeConsumed = false
+	}
+}
+
+dependencies {
+	implementation standaloneBuild ? 'io.github.suppierk:shoostr-test-support:0.1.0-SNAPSHOT' : project(':test-support')
+	baseRuntime standaloneBuild ? 'io.github.suppierk:shoostr-core:0.1.0-SNAPSHOT' : project(':core')
+	compileOnly 'org.jspecify:jspecify:1.0.1'
+	testImplementation standaloneBuild ? 'io.github.suppierk:shoostr-pac4j:0.1.0-SNAPSHOT' : project(':pac4j')
+	testImplementation standaloneBuild ? 'io.github.suppierk:shoostr-micrometer:0.1.0-SNAPSHOT' : project(':micrometer')
+	testImplementation standaloneBuild ? 'io.github.suppierk:shoostr-opentelemetry:0.1.0-SNAPSHOT' : project(':opentelemetry')
+	testImplementation 'io.opentelemetry:opentelemetry-sdk:1.66.0'
+	testImplementation 'io.opentelemetry:opentelemetry-sdk-testing:1.66.0'
+	testImplementation 'org.pac4j:pac4j-http:6.5.8'
+	testImplementation platform('org.junit:junit-bom:5.14.4')
+	testImplementation 'org.junit.jupiter:junit-jupiter'
+	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.withType(Test).configureEach { useJUnitPlatform() }
+
+tasks.register('verifyBaseDependencies') {
+	doLast {
+		def modulePrefix = standaloneBuild ? 'shoostr-' : ''
+		def forbiddenGroups = [
+			'org.junit',
+			'org.jspecify',
+			'org.pac4j',
+			'io.micrometer',
+			'io.opentelemetry',
+			'com.fasterxml.jackson',
+			'tools.jackson',
+			'com.google.code.gson',
+			'org.apache.fory',
+			'org.apache.fury'
+		]
+		def forbiddenNames = [
+			'pac4j',
+			'micrometer',
+			'opentelemetry',
+			'test-support'
+		].collect {
+			modulePrefix + it
+		}
+		def modules = configurations.baseRuntime.resolvedConfiguration.resolvedArtifacts.collect {
+			it.moduleVersion.id
+		}
+		assert modules.any {
+			it.group == 'io.github.suppierk' && it.name == modulePrefix + 'core'
+		}
+		assert modules.any {
+			it.group == 'io.github.suppierk' && it.name == modulePrefix + 'http'
+		}
+		assert modules.every { id ->
+			!forbiddenGroups.any {
+				id.group == it || id.group.startsWith(it + '.')
+			}
+		}
+		assert modules.every { id ->
+			id.group != 'io.github.suppierk' || !forbiddenNames.contains(id.name)
+		}
+	}
+}
+
+tasks.register('runSmoke', JavaExec) {
+	dependsOn tasks.named('verifyBaseDependencies'), tasks.named('classes'), tasks.named('test')
+	classpath = sourceSets.main.runtimeClasspath
+	mainClass = 'io.github.suppierk.shoostr.example.ConsumerSmoke'
+}

@@ -1,0 +1,14 @@
+plugins {
+	id 'java-library'
+}
+
+group = 'io.github.suppierk'
+repositories { mavenCentral() }
+java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
+dependencies {
+	implementation 'com.puppycrawl.tools:checkstyle:14.1.0'
+	compileOnly 'org.jspecify:jspecify:1.0.1'
+}
+tasks.withType(JavaCompile).configureEach {
+	options.compilerArgs.add('-proc:none')
+}

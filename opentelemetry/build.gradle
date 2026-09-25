@@ -1,0 +1,7 @@
+plugins { id 'java-library' }
+dependencies {
+	api project(':core')
+	api 'io.opentelemetry:opentelemetry-api:1.66.0'
+	testImplementation 'io.opentelemetry:opentelemetry-sdk:1.66.0'
+	testImplementation 'io.opentelemetry:opentelemetry-sdk-testing:1.66.0'
+}

@@ -1,0 +1,5 @@
+plugins { id 'java-library' }
+dependencies {
+	api project(':core')
+	api 'io.micrometer:micrometer-core:1.17.1'
+}

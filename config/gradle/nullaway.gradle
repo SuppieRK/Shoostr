@@ -1,0 +1,22 @@
+apply plugin: 'net.ltgt.errorprone'
+apply plugin: 'net.ltgt.nullaway'
+
+dependencies {
+	compileOnly 'org.jspecify:jspecify:1.0.1'
+	errorprone 'com.google.errorprone:error_prone_core:2.48.0'
+	errorprone 'com.uber.nullaway:nullaway:0.14.1'
+}
+
+nullaway {
+	onlyNullMarked = true
+	jspecifyMode = true
+}
+
+tasks.withType(JavaCompile).configureEach { task ->
+	if (task.name == 'compileJava') {
+		options.errorprone.error('NullAway')
+		options.errorprone.errorproneArgumentProviders.add({
+			['-Xep:NullAway:ERROR']
+		} as CommandLineArgumentProvider)
+	}
+}
