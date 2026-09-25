@@ -50,7 +50,11 @@ jobs:
           fi
           if [[ -n "${audit_branch:-}" ]]; then
             # PR and short-lived branch gates cover new code only; audit the whole project.
-            ./gradlew sonar -Dsonar.branch.name="$audit_branch" --console=plain
+            # A newly created long-lived branch has no computed quality gate on its first scan.
+            ./gradlew sonar -Dsonar.branch.name="$audit_branch" \
+              -Dsonar.qualitygate.wait=false \
+              -Dsonar.scanner.metadataFilePath="$RUNNER_TEMP/sonar-audit-task.txt" \
+              --console=plain
           fi
 
       - name: Require zero open Sonar issues
@@ -65,7 +69,31 @@ jobs:
           else
             audit_branch="main"
           fi
-          issue_count=$(curl -fsS -u "$SONAR_TOKEN:" --get \
+          if [[ "$audit_branch" != "main" ]]; then
+            task_id=$(sed -n 's/^ceTaskId=//p' "$RUNNER_TEMP/sonar-audit-task.txt")
+            if [[ -z "$task_id" ]]; then
+              echo '::error::Sonar audit scan did not write a CE task ID'
+              exit 1
+            fi
+            for (( attempt=0; attempt<60; attempt++ )); do
+              task_status=$(curl -fsS -H "Authorization: Bearer $SONAR_TOKEN" --get \
+                --data-urlencode "id=$task_id" \
+                'https://sonarcloud.io/api/ce/task' | jq -er '.task.status')
+              case "$task_status" in
+                SUCCESS) break ;;
+                FAILED|CANCELED)
+                  echo "::error::Sonar audit processing $task_status"
+                  exit 1
+                  ;;
+              esac
+              sleep 5
+            done
+            if [[ "$task_status" != "SUCCESS" ]]; then
+              echo '::error::Sonar audit processing timed out'
+              exit 1
+            fi
+          fi
+          issue_count=$(curl -fsS -H "Authorization: Bearer $SONAR_TOKEN" --get \
             --data-urlencode 'componentKeys=SuppieRK_Shoostr' \
             --data-urlencode 'resolved=false' \
             --data-urlencode 'ps=1' \
