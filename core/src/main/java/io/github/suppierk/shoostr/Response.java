@@ -2211,18 +2211,19 @@ public final class Response implements AutoCloseable {
     }
   }
 
-  /** Bounded buffered writes. Full buffers and explicit flushes can emit during the handler. */
+  /** Bounded writes emit when the configured capacity fills or the handler flushes explicitly. */
   public final class Stream {
-    private final byte[] buffer;
+    private static final int INITIAL_BUFFER_BYTES = 256;
+    private byte[] buffer;
     private int used;
 
-    /** Allocates the configured bounded buffer for this handler-scoped stream. */
+    /** Starts with shared empty storage so empty streams allocate no body buffer. */
     private Stream() {
-      buffer = new byte[options.streamBufferBytes()];
+      buffer = EMPTY;
     }
 
     /**
-     * Writes text as UTF-8, flushing full buffers as needed.
+     * Writes text as UTF-8, flushing at the configured capacity as needed.
      *
      * @param value text to write
      * @throws IOException if a transport write fails
@@ -2242,11 +2243,12 @@ public final class Response implements AutoCloseable {
       Objects.requireNonNull(bytes);
       int offset = 0;
       while (offset < bytes.length) {
-        int count = Math.min(buffer.length - used, bytes.length - offset);
+        int count = Math.min(options.streamBufferBytes() - used, bytes.length - offset);
+        ensureStorage(used + count);
         System.arraycopy(bytes, offset, buffer, used, count);
         used += count;
         offset += count;
-        if (used == buffer.length) {
+        if (used == options.streamBufferBytes()) {
           flush();
         }
       }
@@ -2261,6 +2263,24 @@ public final class Response implements AutoCloseable {
       require(State.STREAMING);
       Response.this.write(false, buffer, used);
       used = 0;
+    }
+
+    /**
+     * Grows physical storage without changing the configured automatic-flush boundary.
+     *
+     * @param required bytes that must fit before the next copy
+     */
+    private void ensureStorage(int required) {
+      if (required <= buffer.length) {
+        return;
+      }
+
+      int limit = options.streamBufferBytes();
+      int doubled = buffer.length > limit / 2 ? limit : buffer.length * 2;
+      int capacity = Math.clamp(Math.max(INITIAL_BUFFER_BYTES, doubled), required, limit);
+      var grown = new byte[capacity];
+      System.arraycopy(buffer, 0, grown, 0, used);
+      buffer = grown;
     }
   }
 
