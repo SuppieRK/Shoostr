@@ -111,11 +111,12 @@ class ServerSentEventsTest {
   @Test
   void treatsAnSseRouteAndGetAtTheSamePathAsDuplicates() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().sse("/events", (request, response) -> response.startEventStream().send("ok"));
+      var routes = app.routes();
+      routes.sse("/events", (request, response) -> response.startEventStream().send("ok"));
 
       assertThrows(
           IllegalArgumentException.class,
-          () -> app.routes().get("/events", (request, response) -> response.text("other")));
+          () -> routes.get("/events", (request, response) -> response.text("other")));
     }
   }
 
@@ -276,17 +277,17 @@ class ServerSentEventsTest {
 
   @Test
   void rejectsFieldsThatCouldInjectLinesOrInvalidRetryValues() {
-    assertThrows(IllegalArgumentException.class, () -> SseEvent.of("x").withEvent("a\nb"));
-    assertThrows(IllegalArgumentException.class, () -> SseEvent.of("x").withEvent("a\rb"));
-    assertThrows(IllegalArgumentException.class, () -> SseEvent.of("x").withEvent("a\0b"));
-    assertThrows(IllegalArgumentException.class, () -> SseEvent.of("x").withId("a\nb"));
-    assertThrows(IllegalArgumentException.class, () -> SseEvent.of("x").withId("a\rb"));
-    assertThrows(IllegalArgumentException.class, () -> SseEvent.of("x").withId("a\0b"));
-    assertThrows(
-        IllegalArgumentException.class, () -> SseEvent.of("x").withRetry(Duration.ofMillis(-1)));
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> SseEvent.of("x").withRetry(Duration.ofSeconds(Long.MAX_VALUE)));
+    var event = SseEvent.of("x");
+    var negativeRetry = Duration.ofMillis(-1);
+    var overflowingRetry = Duration.ofSeconds(Long.MAX_VALUE);
+    assertThrows(IllegalArgumentException.class, () -> event.withEvent("a\nb"));
+    assertThrows(IllegalArgumentException.class, () -> event.withEvent("a\rb"));
+    assertThrows(IllegalArgumentException.class, () -> event.withEvent("a\0b"));
+    assertThrows(IllegalArgumentException.class, () -> event.withId("a\nb"));
+    assertThrows(IllegalArgumentException.class, () -> event.withId("a\rb"));
+    assertThrows(IllegalArgumentException.class, () -> event.withId("a\0b"));
+    assertThrows(IllegalArgumentException.class, () -> event.withRetry(negativeRetry));
+    assertThrows(IllegalArgumentException.class, () -> event.withRetry(overflowingRetry));
   }
 
   @Test
@@ -348,6 +349,8 @@ class ServerSentEventsTest {
 
   @Test
   @Timeout(10)
+  @SuppressWarnings(
+      "java:S2925") // Heartbeats must be paced while waiting for the peer to disconnect.
   void idleClientDisconnectReleasesHandlerSubscriptionOnHeartbeat() throws Exception {
     var active = new CountDownLatch(1);
     var cleaned = new CountDownLatch(1);

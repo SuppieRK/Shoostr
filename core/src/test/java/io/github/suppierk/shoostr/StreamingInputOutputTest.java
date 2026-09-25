@@ -559,7 +559,7 @@ class StreamingInputOutputTest {
                   .build(),
               HttpResponse.BodyHandlers.ofString());
       assertEquals(200, result.statusCode());
-      assertThrows(IllegalStateException.class, () -> retained.get().read());
+      assertThrows(IllegalStateException.class, retained.get()::read);
     }
   }
 }

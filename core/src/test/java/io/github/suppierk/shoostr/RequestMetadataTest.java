@@ -70,9 +70,8 @@ class RequestMetadataTest {
               assertEquals(List.of("a,b", "c"), fields.get("X-VALUES"));
               assertNull(fields.get("Missing"));
               assertThrows(UnsupportedOperationException.class, fields::clear);
-              assertThrows(
-                  UnsupportedOperationException.class,
-                  () -> Objects.requireNonNull(fields.get("x-values")).clear());
+              var values = Objects.requireNonNull(fields.get("x-values"));
+              assertThrows(UnsupportedOperationException.class, values::clear);
               assertEquals(List.of("a b/", "second"), request.queryParams("q"));
               assertEquals("q=a+b%2F&q=second&empty=", request.queryString());
               response.text("ok");
@@ -460,11 +459,12 @@ class RequestMetadataTest {
     app.routes().get("/other", (request, response) -> response.text("other"));
     app.start();
     assertEquals("streamed", send(request("/lifetime/one").header("X-Value", "kept")).body());
+    var closedRequest = retained.get();
     for (var reader : readers) {
-      assertThrows(IllegalStateException.class, () -> reader.apply(retained.get()));
+      assertThrows(IllegalStateException.class, () -> reader.apply(closedRequest));
     }
-    assertThrows(IllegalStateException.class, () -> retained.get().attribute("state", null));
-    assertThrows(IllegalStateException.class, () -> retained.get().principal(null));
+    assertThrows(IllegalStateException.class, () -> closedRequest.attribute("state", null));
+    assertThrows(IllegalStateException.class, () -> closedRequest.principal(null));
     assertEquals("other", send(request("/other").header("X-Value", "different")).body());
     assertEquals(List.of("kept"), snapshot.get().get("X-VALUE"));
   }

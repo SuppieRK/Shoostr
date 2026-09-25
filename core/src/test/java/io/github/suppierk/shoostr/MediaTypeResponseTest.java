@@ -370,7 +370,8 @@ class MediaTypeResponseTest {
           assertEquals("last", new String(input.readAllBytes(), StandardCharsets.UTF_8));
         }
 
-        assertThrows(IllegalStateException.class, () -> retained.get().write("late"));
+        var closedStream = retained.get();
+        assertThrows(IllegalStateException.class, () -> closedStream.write("late"));
       } finally {
         release.countDown();
       }

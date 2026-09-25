@@ -606,6 +606,7 @@ public class WebSocketRoutesTest {
 
       app.close();
       terminated.get(3, TimeUnit.SECONDS);
+      await().atMost(Duration.ofSeconds(3)).until(socket::isOutputClosed);
       socket.abort();
     }
   }

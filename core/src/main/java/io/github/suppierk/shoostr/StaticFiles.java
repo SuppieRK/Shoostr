@@ -196,10 +196,8 @@ final class StaticFiles implements Closeable {
    * @param path request path
    * @param method requested HTTP method
    * @return synthetic endpoint, or null when this mount has no matching resource
-   * @throws IOException if resource metadata cannot be read
    */
-  RadixRoutes.@Nullable Endpoint endpoint(String path, @Nullable HttpMethods method)
-      throws IOException {
+  RadixRoutes.@Nullable Endpoint endpoint(String path, @Nullable HttpMethods method) {
     if (method == null || (method != HttpMethods.GET && method != HttpMethods.HEAD)) {
       return null;
     }

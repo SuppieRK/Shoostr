@@ -364,24 +364,38 @@ final class TrustedProxy {
       return false;
     }
 
-    for (int index = 1; index < value.length() - 1; index++) {
+    int end = value.length() - 1;
+    int index = 1;
+    while (index < end) {
       char character = value.charAt(index);
       if (character == '\\') {
-        if (++index == value.length() - 1) {
+        index++;
+        if (index == end || !validQuotedOctet(value.charAt(index), true)) {
           return false;
         }
-
-        char escaped = value.charAt(index);
-        if (escaped != '\t' && (escaped < 0x20 || escaped == 0x7f || escaped > 0xff)) {
-          return false;
-        }
-      } else if (character != '\t'
-          && (character < 0x20 || character == 0x7f || character > 0xff || character == '"')) {
+      } else if (!validQuotedOctet(character, false)) {
         return false;
       }
+
+      index++;
     }
 
     return true;
+  }
+
+  /**
+   * Checks a quoted-string octet, allowing quote and backslash only after an escape.
+   *
+   * @param character candidate octet
+   * @param escaped whether the preceding octet was a backslash
+   * @return whether the octet is valid in this position
+   */
+  private static boolean validQuotedOctet(char character, boolean escaped) {
+    return character == '\t'
+        || (character >= 0x20
+            && character <= 0xff
+            && character != 0x7f
+            && (escaped || (character != '"' && character != '\\')));
   }
 
   /**

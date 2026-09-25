@@ -44,9 +44,9 @@ class TestServerTest {
                   app.routes().get("/", (req, res) -> res.text("unused"));
                   throw new IllegalArgumentException("invalid fixture configuration");
                 }));
+    var routes = captured.get().routes();
     assertThrows(
-        IllegalStateException.class,
-        () -> captured.get().routes().get("/later", (req, res) -> res.text("late")));
+        IllegalStateException.class, () -> routes.get("/later", (req, res) -> res.text("late")));
   }
 
   @Test

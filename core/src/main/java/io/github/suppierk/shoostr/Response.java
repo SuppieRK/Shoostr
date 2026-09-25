@@ -1684,43 +1684,63 @@ public final class Response implements AutoCloseable {
 
     try {
       if (separator == 0) {
-        var suffixText = value.substring(1);
-        if (!decimal(suffixText)) {
-          return null;
-        }
-
-        var suffix = Long.parseLong(suffixText);
-        if (suffix <= 0 || length == 0) {
-          return UNSATISFIABLE_RANGE;
-        }
-
-        return new ByteRange(Math.max(0, length - suffix), length - 1);
+        return suffixRange(length, value.substring(1));
       }
 
-      var firstText = value.substring(0, separator);
-      var lastText = value.substring(separator + 1);
-      if (!decimal(firstText) || (!lastText.isEmpty() && !decimal(lastText))) {
-        return null;
-      }
-
-      var first = Long.parseLong(firstText);
-      if (lastText.isEmpty() && first >= length) {
-        return UNSATISFIABLE_RANGE;
-      }
-
-      var last = lastText.isEmpty() ? length - 1 : Long.parseLong(lastText);
-      if (last < first) {
-        return null;
-      }
-
-      if (first >= length) {
-        return UNSATISFIABLE_RANGE;
-      }
-
-      return new ByteRange(first, Math.min(last, length - 1));
+      return explicitRange(length, value.substring(0, separator), value.substring(separator + 1));
     } catch (NumberFormatException _) {
       return null;
     }
+  }
+
+  /**
+   * Parses a suffix interval after its leading hyphen.
+   *
+   * @param length full representation length
+   * @param suffixText digits after the hyphen
+   * @return selected range, unsatisfiable marker, or null for invalid syntax
+   */
+  private static @Nullable ByteRange suffixRange(long length, String suffixText) {
+    if (!decimal(suffixText)) {
+      return null;
+    }
+
+    var suffix = Long.parseLong(suffixText);
+    if (suffix <= 0 || length == 0) {
+      return UNSATISFIABLE_RANGE;
+    }
+
+    return new ByteRange(Math.max(0, length - suffix), length - 1);
+  }
+
+  /**
+   * Parses a first-last interval, including an omitted final position.
+   *
+   * @param length full representation length
+   * @param firstText first byte position
+   * @param lastText final byte position, or empty for the end of the representation
+   * @return selected range, unsatisfiable marker, or null for invalid syntax
+   */
+  private static @Nullable ByteRange explicitRange(long length, String firstText, String lastText) {
+    if (!decimal(firstText) || (!lastText.isEmpty() && !decimal(lastText))) {
+      return null;
+    }
+
+    var first = Long.parseLong(firstText);
+    if (lastText.isEmpty() && first >= length) {
+      return UNSATISFIABLE_RANGE;
+    }
+
+    var last = lastText.isEmpty() ? length - 1 : Long.parseLong(lastText);
+    if (last < first) {
+      return null;
+    }
+
+    if (first >= length) {
+      return UNSATISFIABLE_RANGE;
+    }
+
+    return new ByteRange(first, Math.min(last, length - 1));
   }
 
   /**

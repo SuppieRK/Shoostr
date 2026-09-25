@@ -2,7 +2,6 @@ package io.github.suppierk.shoostr;
 
 import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpMethods;
-import java.io.IOException;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -116,9 +115,8 @@ final class RadixRoutes {
    * @param path request path
    * @param method requested HTTP method
    * @return synthetic static endpoint, or null when no resource matches
-   * @throws IOException if resource metadata cannot be read
    */
-  @Nullable Endpoint staticEndpoint(String path, @Nullable HttpMethods method) throws IOException {
+  @Nullable Endpoint staticEndpoint(String path, @Nullable HttpMethods method) {
     for (var mount : staticFiles) {
       var endpoint = mount.endpoint(path, method);
       if (endpoint != null) {

@@ -36,4 +36,9 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: ./gradlew sonar --console=plain
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF_NAME" != "main" ]]; then
+            ./gradlew sonar -Dsonar.branch.name="$GITHUB_REF_NAME" --console=plain
+          else
+            ./gradlew sonar --console=plain
+          fi

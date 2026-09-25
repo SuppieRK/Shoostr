@@ -66,8 +66,10 @@ class HttpExceptionHandlingTest {
       assertEquals(
           result.body().getBytes(StandardCharsets.UTF_8).length,
           result.headers().firstValueAsLong("Content-Length").orElseThrow());
-      assertThrows(IllegalStateException.class, () -> retainedRequest.get().path());
-      assertThrows(IllegalStateException.class, () -> retainedResponse.get().text("too late"));
+      var closedRequest = retainedRequest.get();
+      var closedResponse = retainedResponse.get();
+      assertThrows(IllegalStateException.class, closedRequest::path);
+      assertThrows(IllegalStateException.class, () -> closedResponse.text("too late"));
     }
   }
 
@@ -166,7 +168,8 @@ class HttpExceptionHandlingTest {
           assertTrue(received.isEmpty(), "No pending bytes or replacement error body may be sent");
         }
 
-        assertThrows(IllegalStateException.class, () -> retainedStream.get().write("too late"));
+        var closedStream = retainedStream.get();
+        assertThrows(IllegalStateException.class, () -> closedStream.write("too late"));
       } finally {
         release.countDown();
       }

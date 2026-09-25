@@ -85,13 +85,13 @@ class RequestParametersTest {
                       "Name",
                       List.of("case")),
                   values);
+              var injected = List.of("x");
               assertThrows(
-                  UnsupportedOperationException.class, () -> values.put("injected", List.of("x")));
-              assertThrows(
-                  UnsupportedOperationException.class,
-                  () -> Objects.requireNonNull(values.get("name")).add("injected"));
-              assertThrows(
-                  UnsupportedOperationException.class, () -> request.queryParams("name").clear());
+                  UnsupportedOperationException.class, () -> values.put("injected", injected));
+              var names = Objects.requireNonNull(values.get("name"));
+              var queryNames = request.queryParams("name");
+              assertThrows(UnsupportedOperationException.class, () -> names.add("injected"));
+              assertThrows(UnsupportedOperationException.class, queryNames::clear);
               assertNull(request.queryParam("NAME"));
               assertEquals(List.of(), request.queryParams("absent"));
               assertEquals("first", request.queryParam("name"));
@@ -128,8 +128,9 @@ class RequestParametersTest {
   @ValueSource(booleans = {false, true})
   void enforcesParameterCountIncludingRepeatedNames(boolean repeated) throws Exception {
     assertEquals(1000, Options.defaults().maxParameters());
-    assertThrows(IllegalArgumentException.class, () -> Options.defaults().withMaxParameters(0));
-    assertThrows(IllegalArgumentException.class, () -> Options.defaults().withMaxParameters(-1));
+    var defaults = Options.defaults();
+    assertThrows(IllegalArgumentException.class, () -> defaults.withMaxParameters(0));
+    assertThrows(IllegalArgumentException.class, () -> defaults.withMaxParameters(-1));
     app.close();
     app = new Shoostr(Options.defaults().withMaxParameters(2).withPort(0));
     app.routes()
@@ -159,8 +160,8 @@ class RequestParametersTest {
               assertEquals(List.of("first,second", "third"), request.headers("x-values"));
               assertEquals("first,second", request.header("X-VALUES"));
               assertEquals(List.of(), request.headers("Absent"));
-              assertThrows(
-                  UnsupportedOperationException.class, () -> request.headers("X-Values").add("x"));
+              var values = request.headers("X-Values");
+              assertThrows(UnsupportedOperationException.class, () -> values.add("x"));
               response.text("ok");
             });
     app.start();
@@ -199,10 +200,10 @@ class RequestParametersTest {
                   request.formParamMap());
               assertNull(request.formParam("Name"));
               assertEquals(List.of(), request.formParams("missing"));
-              assertThrows(
-                  UnsupportedOperationException.class, () -> request.formParamMap().clear());
-              assertThrows(
-                  UnsupportedOperationException.class, () -> request.formParams("name").add("x"));
+              var form = request.formParamMap();
+              var formNames = request.formParams("name");
+              assertThrows(UnsupportedOperationException.class, form::clear);
+              assertThrows(UnsupportedOperationException.class, () -> formNames.add("x"));
               assertEquals("query", request.queryParam("name"));
               assertArrayEquals(encoded.getBytes(StandardCharsets.UTF_8), request.bodyBytes());
               response.text("ok");
