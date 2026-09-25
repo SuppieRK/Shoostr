@@ -953,29 +953,42 @@ public final class Request {
       Thread.currentThread().interrupt();
       throw new IOException("Interrupted while parsing multipart body", failure);
     } catch (ExecutionException failure) {
-      if (failure.getCause() instanceof CompletionException completion
-          && completion.getCause() instanceof HttpException httpFailure) {
-        throw httpFailure;
-      }
+      throw multipartFailure(failure);
+    }
+  }
 
-      if (failure.getCause() instanceof HttpException httpFailure) {
-        throw httpFailure;
-      }
+  /**
+   * Preserves transport and parser failure types when an asynchronous multipart parse completes.
+   *
+   * @param failure parser completion failure
+   * @return checked I/O failure to propagate
+   * @throws HttpException if parsing failed due to invalid or excessive input
+   * @throws ContentTooLargeException if the configured multipart limit was exceeded
+   * @throws BadRequestException if multipart syntax or metadata is invalid
+   */
+  private static IOException multipartFailure(ExecutionException failure) {
+    if (failure.getCause() instanceof CompletionException completion
+        && completion.getCause() instanceof HttpException httpFailure) {
+      throw httpFailure;
+    }
 
-      if (exceededMultipartLimit(failure)) {
-        throw new ContentTooLargeException();
-      }
+    if (failure.getCause() instanceof HttpException httpFailure) {
+      throw httpFailure;
+    }
 
-      if (failure.getCause() instanceof EOFException) {
-        throw new BadRequestException("Malformed multipart body", failure);
-      }
+    if (exceededMultipartLimit(failure)) {
+      throw new ContentTooLargeException();
+    }
 
-      if (failure.getCause() instanceof IOException ioFailure) {
-        throw ioFailure;
-      }
-
+    if (failure.getCause() instanceof EOFException) {
       throw new BadRequestException("Malformed multipart body", failure);
     }
+
+    if (failure.getCause() instanceof IOException ioFailure) {
+      return ioFailure;
+    }
+
+    throw new BadRequestException("Malformed multipart body", failure);
   }
 
   /**

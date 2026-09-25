@@ -28,6 +28,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.Test;
@@ -49,9 +50,11 @@ class Pac4jTest {
 
   @Test
   void preservesSecurePrefixedCookiesEmittedByTheProvider() throws Exception {
+    var expectedPort = new AtomicInteger();
     var provider =
         new DirectBasicAuthClient(
             (context, supplied) -> {
+              assertEquals(expectedPort.get(), context.webContext().getServerPort());
               for (String name : List.of("__Host-token", "__Secure-token")) {
                 var cookie = new Cookie(name, "token");
                 cookie.setPath("/");
@@ -73,6 +76,7 @@ class Pac4jTest {
               new Pac4j(provider, "Basic"),
               routes -> routes.get("/me", (request, response) -> response.text("authenticated")));
       app.start();
+      expectedPort.set(app.port());
 
       var encoded =
           Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));

@@ -58,6 +58,32 @@ public record Cookie(
     }
 
     validateValue(value);
+    validatePath(path);
+    domain = normalizeDomain(domain);
+    if (maxAge < -1) {
+      throw new IllegalArgumentException("Cookie age must be -1 or nonnegative");
+    }
+
+    validatePolicy(name, path, domain, secure, sameSite);
+    expires = normalizeExpiry(expires);
+  }
+
+  /**
+   * Creates a root-path, host-only session cookie without security attributes.
+   *
+   * @param name cookie name
+   * @param value already encoded cookie value
+   */
+  public Cookie(String name, String value) {
+    this(name, value, HttpCharacters.PATH_SEPARATOR_STRING, null, -1, false, false, null, null);
+  }
+
+  /**
+   * Validates a root-relative ASCII cookie path.
+   *
+   * @param path cookie path
+   */
+  private static void validatePath(String path) {
     if (path.isEmpty()
         || path.charAt(0) != HttpCharacters.PATH_SEPARATOR
         || path.charAt(path.length() - 1) == ' ') {
@@ -71,18 +97,43 @@ public record Cookie(
         throw new IllegalArgumentException("Invalid cookie path");
       }
     }
+  }
 
-    if (domain != null) {
-      domain = (domain.startsWith(".") ? domain.substring(1) : domain).toLowerCase(Locale.ROOT);
-      if (domain.length() > 253 || !validDomain(domain)) {
-        throw new IllegalArgumentException("Invalid cookie domain");
-      }
+  /**
+   * Canonicalizes and validates an optional domain attribute.
+   *
+   * @param domain supplied domain, or null for host-only
+   * @return normalized domain, or null
+   */
+  private static @Nullable String normalizeDomain(@Nullable String domain) {
+    if (domain == null) {
+      return null;
     }
 
-    if (maxAge < -1) {
-      throw new IllegalArgumentException("Cookie age must be -1 or nonnegative");
+    var normalized =
+        (domain.startsWith(".") ? domain.substring(1) : domain).toLowerCase(Locale.ROOT);
+    if (normalized.length() > 253 || !validDomain(normalized)) {
+      throw new IllegalArgumentException("Invalid cookie domain");
     }
 
+    return normalized;
+  }
+
+  /**
+   * Enforces cookie prefix and SameSite security requirements.
+   *
+   * @param name cookie name
+   * @param path normalized path
+   * @param domain normalized domain, or null
+   * @param secure whether Secure is enabled
+   * @param sameSite optional SameSite policy
+   */
+  private static void validatePolicy(
+      String name,
+      String path,
+      @Nullable String domain,
+      boolean secure,
+      @Nullable SameSite sameSite) {
     boolean hostPrefix = name.regionMatches(true, 0, HOST_PREFIX, 0, HOST_PREFIX.length());
     boolean securePrefix = name.regionMatches(true, 0, SECURE_PREFIX, 0, SECURE_PREFIX.length());
     if (!secure && (sameSite == SameSite.NONE || hostPrefix || securePrefix)) {
@@ -92,23 +143,25 @@ public record Cookie(
     if (hostPrefix && (domain != null || !HttpCharacters.PATH_SEPARATOR_STRING.equals(path))) {
       throw new IllegalArgumentException("Host-prefixed cookies require root path and no Domain");
     }
-
-    if (expires != null) {
-      expires = expires.truncatedTo(ChronoUnit.SECONDS);
-      if (expires.isBefore(MIN_EXPIRY) || expires.isAfter(MAX_EXPIRY)) {
-        throw new IllegalArgumentException("Cookie expiry must be within years 1601 through 9999");
-      }
-    }
   }
 
   /**
-   * Creates a root-path, host-only session cookie without security attributes.
+   * Truncates a representable expiry to seconds.
    *
-   * @param name cookie name
-   * @param value already encoded cookie value
+   * @param expires optional supplied expiry
+   * @return normalized expiry, or null
    */
-  public Cookie(String name, String value) {
-    this(name, value, HttpCharacters.PATH_SEPARATOR_STRING, null, -1, false, false, null, null);
+  private static @Nullable Instant normalizeExpiry(@Nullable Instant expires) {
+    if (expires == null) {
+      return null;
+    }
+
+    var normalized = expires.truncatedTo(ChronoUnit.SECONDS);
+    if (normalized.isBefore(MIN_EXPIRY) || normalized.isAfter(MAX_EXPIRY)) {
+      throw new IllegalArgumentException("Cookie expiry must be within years 1601 through 9999");
+    }
+
+    return normalized;
   }
 
   /**

@@ -152,6 +152,10 @@ final class StaticFiles implements Closeable {
    * @throws IOException if a directory descriptor cannot be opened or closed
    * @throws IllegalArgumentException if the filesystem lacks secure directory operations
    */
+  @SuppressWarnings({
+    "java:S1181",
+    "java:S2583"
+  }) // TWR close can fail after retaining the descriptor.
   private static SecureDirectoryStream<Path> openSecureDirectory(Path root) throws IOException {
     SecureDirectoryStream<Path> retained = null;
 
@@ -249,9 +253,9 @@ final class StaticFiles implements Closeable {
    * @param relative validated resource selected during route matching
    * @param response response receiving the selected resource
    * @throws NotFoundException if the resource disappears after route matching
-   * @throws Exception if the resource cannot be staged
+   * @throws IOException if the resource cannot be staged
    */
-  private void serve(String relative, Response response) throws Exception {
+  private void serve(String relative, Response response) throws IOException {
     if (rootDirectory == null) {
       serveClasspath(relative, response);
       return;
@@ -270,7 +274,7 @@ final class StaticFiles implements Closeable {
               selected.length(),
               selected.lastModified(),
               contentType(selected.name()));
-    } catch (Exception failure) {
+    } catch (IOException | RuntimeException failure) {
       selected.close();
       throw failure;
     }
@@ -282,9 +286,9 @@ final class StaticFiles implements Closeable {
    * @param relative validated resource path
    * @param response response receiving the selected resource
    * @throws NotFoundException if the resource disappears after route matching
-   * @throws Exception if the resource cannot be staged
+   * @throws IOException if the resource cannot be staged
    */
-  private void serveClasspath(String relative, Response response) throws Exception {
+  private void serveClasspath(String relative, Response response) throws IOException {
     var resource = Objects.requireNonNull(source).resolve(relative);
     if (!resource.exists()
         || resource.isDirectory()
@@ -378,6 +382,7 @@ final class StaticFiles implements Closeable {
    * @return selected resource, or null when unavailable
    * @throws IOException if descriptor-relative access fails
    */
+  @SuppressWarnings("java:S1181") // Fatal failures still require descriptor cleanup before rethrow.
   private @Nullable Selected filesystemResource(String relative) throws IOException {
     synchronized (Objects.requireNonNull(rootDirectory)) {
       var directories = directories(relative);

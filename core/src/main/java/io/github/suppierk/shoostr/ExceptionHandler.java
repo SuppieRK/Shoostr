@@ -16,5 +16,6 @@ public interface ExceptionHandler<E extends Exception> {
    * @param response response with failed output cleared and the error status initialized
    * @throws Exception if error handling fails; the framework applies its safe fallback
    */
+  @SuppressWarnings("java:S112") // Applications retain their checked exception contracts.
   void handle(E exception, Request request, Response response) throws Exception;
 }

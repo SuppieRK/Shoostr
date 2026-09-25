@@ -393,17 +393,10 @@ final class RadixRoutes {
     String last = paths[to - 1];
     boolean parameterEdge =
         offset < first.length() && first.charAt(offset) == HttpCharacters.OPEN_CURLY_BRACE;
-    int end = offset;
-    if (parameterEdge) {
-      end += HttpCharacters.CURLY_BRACES.length();
-    } else {
-      while (end < first.length()
-          && end < last.length()
-          && first.charAt(end) != HttpCharacters.OPEN_CURLY_BRACE
-          && first.charAt(end) == last.charAt(end)) {
-        end++;
-      }
-    }
+    int end =
+        parameterEdge
+            ? offset + HttpCharacters.CURLY_BRACES.length()
+            : prefixEnd(first, last, offset);
 
     Map<HttpMethods, Endpoint> endpoints = Map.of();
     if (first.length() == end) {
@@ -434,6 +427,26 @@ final class RadixRoutes {
         children.toArray(RadixRoutes[]::new),
         parameter,
         staticFiles);
+  }
+
+  /**
+   * Finds the end of a literal edge shared by the first and last sorted paths.
+   *
+   * @param first first path in the range
+   * @param last last path in the range
+   * @param offset prefix already consumed by an ancestor
+   * @return first differing character or parameter marker
+   */
+  private static int prefixEnd(String first, String last, int offset) {
+    int end = offset;
+    while (end < first.length()
+        && end < last.length()
+        && first.charAt(end) != HttpCharacters.OPEN_CURLY_BRACE
+        && first.charAt(end) == last.charAt(end)) {
+      end++;
+    }
+
+    return end;
   }
 
   /** Precompiled endpoint metadata shared by all requests matching this registration. */

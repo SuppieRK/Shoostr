@@ -138,6 +138,21 @@ public record CorsPolicy(
       fields.put(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS.value(), "true");
     }
 
+    populateResponseHeaders(fields, request, method, preflight);
+    response.corsHeaders(Map.copyOf(fields));
+    return preflight;
+  }
+
+  /**
+   * Adds response headers that differ between preflight and ordinary CORS requests.
+   *
+   * @param fields mutable response fields
+   * @param request incoming request
+   * @param method validated requested method
+   * @param preflight whether the request is a preflight
+   */
+  private void populateResponseHeaders(
+      Map<String, String> fields, Request request, String method, boolean preflight) {
     if (preflight) {
       var requestedHeaders = requestedHeaders(request);
       fields.put(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS.value(), method);
@@ -152,9 +167,6 @@ public record CorsPolicy(
           HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS.value(),
           String.join(", ", exposedHeaders.stream().map(HttpHeaders::value).sorted().toList()));
     }
-
-    response.corsHeaders(Map.copyOf(fields));
-    return preflight;
   }
 
   /**

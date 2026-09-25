@@ -76,6 +76,16 @@ final class TrustedProxy {
       return;
     }
 
+    applyRfc(request);
+  }
+
+  /**
+   * Applies the RFC 7239 chain from a trusted physical peer.
+   *
+   * @param request live request on the handler thread
+   * @throws BadRequestException if forwarding metadata is malformed
+   */
+  private void applyRfc(Request request) {
     var forwarding = request.headers(HttpHeaders.FORWARDED.value());
     if (forwarding.isEmpty()) {
       return;
@@ -85,38 +95,7 @@ final class TrustedProxy {
     List<InetSocketAddress> addresses = new ArrayList<>();
 
     try {
-      for (var header : forwarding) {
-        var elements = ELEMENTS.tokenize(header);
-        boolean elementExpected = true;
-        while (elements.hasNext()) {
-          var element = elements.next();
-          if (",".equals(element)) {
-            if (elementExpected) {
-              throw new IllegalArgumentException("Empty forwarding element");
-            }
-
-            elementExpected = true;
-            continue;
-          }
-
-          if (!elementExpected) {
-            throw new IllegalArgumentException("Invalid forwarding element");
-          }
-
-          var fields = parameters(element);
-          if (chain.size() == MAX_FORWARDING_ELEMENTS) {
-            throw new IllegalArgumentException("Too many forwarding elements");
-          }
-
-          chain.add(fields);
-          addresses.add(node(fields.get("for")));
-          elementExpected = false;
-        }
-
-        if (elementExpected) {
-          throw new IllegalArgumentException("Empty forwarding element");
-        }
-      }
+      parseForwarding(forwarding, chain, addresses);
     } catch (IllegalArgumentException _) {
       throw new BadRequestException();
     }
@@ -143,6 +122,50 @@ final class TrustedProxy {
       request.forwarded(addresses.get(selected), uri.asString());
     } catch (IllegalArgumentException _) {
       throw new BadRequestException();
+    }
+  }
+
+  /**
+   * Parses each physical header line into matching field and address entries.
+   *
+   * @param forwarding raw Forwarded header lines
+   * @param chain destination for parameter maps
+   * @param addresses destination for node addresses
+   * @throws IllegalArgumentException if a forwarding element or address is malformed
+   */
+  private static void parseForwarding(
+      List<String> forwarding, List<Map<String, String>> chain, List<InetSocketAddress> addresses) {
+    for (var header : forwarding) {
+      var elements = ELEMENTS.tokenize(header);
+      boolean elementExpected = true;
+      while (elements.hasNext()) {
+        var element = elements.next();
+        if (",".equals(element)) {
+          if (elementExpected) {
+            throw new IllegalArgumentException("Empty forwarding element");
+          }
+
+          elementExpected = true;
+          continue;
+        }
+
+        if (!elementExpected) {
+          throw new IllegalArgumentException("Invalid forwarding element");
+        }
+
+        var fields = parameters(element);
+        if (chain.size() == MAX_FORWARDING_ELEMENTS) {
+          throw new IllegalArgumentException("Too many forwarding elements");
+        }
+
+        chain.add(fields);
+        addresses.add(node(fields.get("for")));
+        elementExpected = false;
+      }
+
+      if (elementExpected) {
+        throw new IllegalArgumentException("Empty forwarding element");
+      }
     }
   }
 
