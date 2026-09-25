@@ -2277,7 +2277,7 @@ public final class Response implements AutoCloseable {
 
       int limit = options.streamBufferBytes();
       int doubled = buffer.length > limit / 2 ? limit : buffer.length * 2;
-      int capacity = Math.min(limit, Math.max(required, Math.max(INITIAL_BUFFER_BYTES, doubled)));
+      int capacity = Math.clamp(Math.max(INITIAL_BUFFER_BYTES, doubled), required, limit);
       var grown = new byte[capacity];
       System.arraycopy(buffer, 0, grown, 0, used);
       buffer = grown;
