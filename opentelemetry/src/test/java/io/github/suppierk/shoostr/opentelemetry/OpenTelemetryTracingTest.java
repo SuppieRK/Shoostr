@@ -36,6 +36,37 @@ import org.junit.jupiter.api.Test;
 
 class OpenTelemetryTracingTest {
   @Test
+  void recordsExplicitServerErrorResponsesWithoutApplicationFailures() throws Exception {
+    var exporter = InMemorySpanExporter.create();
+    var completed = new CompletableFuture<Void>();
+
+    try (var provider =
+            SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                .build();
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.observe(
+          new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build()));
+      app.afterRequest(outcome -> completed.complete(null));
+      app.routes().get("/explicit", (request, response) -> response.status(500).text("explicit"));
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/explicit"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.discarding());
+      assertEquals(500, result.statusCode());
+      completed.get(5, TimeUnit.SECONDS);
+      assertEquals(1, exporter.getFinishedSpanItems().size());
+      var span = exporter.getFinishedSpanItems().getFirst();
+      assertEquals(StatusCode.ERROR, span.getStatus().getStatusCode());
+      assertEquals("500", span.getAttributes().get(AttributeKey.stringKey("error.type")));
+    }
+  }
+
+  @Test
   void noOpTracingDoesNotChangeRequestHandlingOrInstallCurrentSpans() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
@@ -111,6 +142,13 @@ class OpenTelemetryTracingTest {
           spans.stream()
               .filter(span -> span.getStatus().getStatusCode() == StatusCode.ERROR)
               .count());
+      var transport =
+          spans.stream()
+              .filter(span -> "GET /transport".equals(span.getName()))
+              .findFirst()
+              .orElseThrow();
+      assertEquals(
+          "transport", transport.getAttributes().get(AttributeKey.stringKey("error.type")));
       for (var span : spans) {
         assertFalse(span.getAttributes().toString().contains("private"));
         assertFalse(span.getAttributes().toString().contains("secret"));

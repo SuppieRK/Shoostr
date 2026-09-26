@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -14,11 +15,26 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SecureDirectoryStream;
 import java.time.Duration;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class RoutePolicyTest {
   @TempDir Path directory;
+
+  @Test
+  void rejectsProtectionCallbacksAfterRegistrationCloses() throws Exception {
+    var invoked = new AtomicBoolean();
+
+    try (var app = new Shoostr()) {
+      var routes = app.routes();
+      routes.close();
+      assertThrows(
+          IllegalStateException.class,
+          () -> routes.protect((request, response) -> {}, scope -> invoked.set(true)));
+      assertFalse(invoked.get());
+    }
+  }
 
   @Test
   void protectionPreservesTheAlreadyComposedGroupEndpoint() throws Exception {

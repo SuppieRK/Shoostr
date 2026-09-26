@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.http;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -85,6 +86,12 @@ class HttpHeadersTest {
     assertEquals("X-Tenant", TENANT.value());
     assertTrue(TENANT.equalsIgnoreCase("x-tenant"));
     assertTrue(HttpHeaders.httpHeader("X-Tenant").isEmpty());
+  }
+
+  @Test
+  void distinguishesHeadersWithDifferentNames() {
+    assertNotEquals(TENANT, HttpHeaders.of("X-Other"));
+    assertNotEquals(HttpHeaders.CONTENT_TYPE, HttpHeaders.CONTENT_LENGTH);
   }
 
   @Test

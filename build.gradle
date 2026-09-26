@@ -7,6 +7,7 @@ plugins {
 	id 'net.ltgt.errorprone' version '5.1.1' apply false
 	id 'net.ltgt.nullaway' version '3.2.0' apply false
 	id 'org.sonarqube' version '7.5.0.8588'
+	id 'info.solidsoft.pitest' version '1.19.0' apply false
 }
 
 allprojects {
@@ -129,6 +130,18 @@ def frameworkModules = [
 ]
 configure(frameworkModules.collect { project(":${it}") }) {
 	apply plugin: 'jacoco'
+	apply plugin: 'info.solidsoft.pitest'
+
+	pitest {
+		pitestVersion = '1.30.0'
+		junit5PluginVersion = '1.2.3'
+		targetClasses = ['io.github.suppierk.*']
+		targetTests = ['io.github.suppierk.*']
+		mutators = ['DEFAULTS']
+		threads = 2
+		outputFormats = ['HTML', 'XML']
+		timestampedReports = true
+	}
 
 	jacoco { toolVersion = '0.8.15' }
 	tasks.named('jacocoTestReport', JacocoReport) {
@@ -139,6 +152,12 @@ configure(frameworkModules.collect { project(":${it}") }) {
 			csv.required = false
 		}
 	}
+}
+
+tasks.register('mutationTest') {
+	group = 'verification'
+	description = 'Runs diagnostic mutation analysis for all six client-facing libraries (not part of build).'
+	dependsOn frameworkModules.collect { ":${it}:pitest" }
 }
 
 configure(subprojects.findAll { !(it.name in frameworkModules) }) {

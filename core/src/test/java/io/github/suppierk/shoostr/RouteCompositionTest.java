@@ -202,6 +202,16 @@ class RouteCompositionTest {
   }
 
   @ParameterizedTest
+  @ValueSource(strings = {"/}id", "/<id", "/>id"})
+  void rejectsIsolatedUnsupportedSymbolsDuringRouteRegistration(String pattern) throws Exception {
+    try (var candidate = new Shoostr()) {
+      var routes = candidate.routes();
+      assertThrows(
+          IllegalArgumentException.class, () -> routes.get(pattern, (request, response) -> {}));
+    }
+  }
+
+  @ParameterizedTest
   @EnumSource(HttpMethods.class)
   void treatsStringAndEnumRegistrationsAsTheSameMethod(HttpMethods method) throws Exception {
     try (var candidate = new Shoostr()) {

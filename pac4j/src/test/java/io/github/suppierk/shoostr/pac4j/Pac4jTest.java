@@ -1,6 +1,8 @@
 package io.github.suppierk.shoostr.pac4j;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
@@ -203,6 +205,124 @@ class Pac4jTest {
                   .build(),
               HttpResponse.BodyHandlers.ofString());
       assertEquals(401, result.statusCode());
+    }
+  }
+
+  @Test
+  void exposesOrderedQueryAndFormValuesToTheConfiguredProvider() throws Exception {
+    var provider =
+        new DirectBasicAuthClient(
+            (context, supplied) -> {
+              var parameters = context.webContext().getRequestParameters();
+              assertArrayEquals(new String[] {"query", "form"}, parameters.get("shared"));
+              assertArrayEquals(new String[] {"query-only"}, parameters.get("query"));
+              assertArrayEquals(new String[] {"form-only"}, parameters.get("form"));
+              assertEquals(
+                  Optional.of("query"), context.webContext().getRequestParameter("shared"));
+              var profile = new CommonProfile();
+              profile.setId("alice");
+              supplied.setUserProfile(profile);
+              return Optional.of(supplied);
+            });
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .protect(
+              new Pac4j(provider, "Basic"),
+              routes -> routes.post("/me", (request, response) -> response.text("authenticated")));
+      app.start();
+      var encoded =
+          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create(
+                          "http://127.0.0.1:" + app.port() + "/me?shared=query&query=query-only"))
+                  .timeout(Duration.ofSeconds(5))
+                  .header("Authorization", "Basic " + encoded)
+                  .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                  .POST(HttpRequest.BodyPublishers.ofString("shared=form&form=form-only"))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("authenticated", result.body());
+    }
+  }
+
+  @Test
+  void leavesNonFormBodiesAvailableWhileExposingQueryCredentials() throws Exception {
+    var provider =
+        new DirectBasicAuthClient(
+            (context, supplied) -> {
+              assertEquals(Optional.of("query"), context.webContext().getRequestParameter("token"));
+              assertEquals(Optional.empty(), context.webContext().getRequestParameter("other"));
+              var profile = new CommonProfile();
+              profile.setId("alice");
+              supplied.setUserProfile(profile);
+              return Optional.of(supplied);
+            });
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .protect(
+              new Pac4j(provider, "Basic"),
+              routes ->
+                  routes.post("/me", (request, response) -> response.text(request.bodyText())));
+      app.start();
+      var encoded =
+          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/me?token=query"))
+                  .timeout(Duration.ofSeconds(5))
+                  .header("Authorization", "Basic " + encoded)
+                  .header("Content-Type", "text/plain")
+                  .POST(HttpRequest.BodyPublishers.ofString("token=body&other=form"))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("token=body&other=form", result.body());
+    }
+  }
+
+  @Test
+  void exposesProviderRequestMetadataAndRemovesEmptyResponseHeaders() throws Exception {
+    var provider =
+        new DirectBasicAuthClient(
+            (context, supplied) -> {
+              assertEquals("GET", context.webContext().getRequestMethod());
+              context.webContext().setResponseHeader("X-Provider", "present");
+              assertEquals(
+                  Optional.of("present"), context.webContext().getResponseHeader("X-Provider"));
+              context.webContext().setResponseHeader("X-Provider", "");
+              var profile = new CommonProfile();
+              profile.setId("alice");
+              supplied.setUserProfile(profile);
+              return Optional.of(supplied);
+            });
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .protect(
+              new Pac4j(provider, "Basic"),
+              routes -> routes.get("/me", (request, response) -> response.text("authenticated")));
+      app.start();
+      var encoded =
+          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
+                  .timeout(Duration.ofSeconds(5))
+                  .header("Authorization", "Basic " + encoded)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertTrue(result.headers().allValues("X-Provider").isEmpty());
     }
   }
 
