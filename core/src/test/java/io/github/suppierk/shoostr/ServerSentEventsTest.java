@@ -276,6 +276,14 @@ class ServerSentEventsTest {
   }
 
   @Test
+  void rejectsEventMetadataBeginningWithLineBreaksOrNullCharacters() {
+    for (var value : new String[] {"\rname", "\nname", "\0name"}) {
+      assertThrows(IllegalArgumentException.class, () -> SseEvent.of("data").withEvent(value));
+      assertThrows(IllegalArgumentException.class, () -> SseEvent.of("data").withId(value));
+    }
+  }
+
+  @Test
   void rejectsFieldsThatCouldInjectLinesOrInvalidRetryValues() {
     var event = SseEvent.of("x");
     var negativeRetry = Duration.ofMillis(-1);

@@ -275,6 +275,33 @@ class StreamingInputOutputTest {
   }
 
   @Test
+  void rejectsOversizedFiniteBodiesWithoutChangingThePreviouslyStagedBody() throws Exception {
+    var options = new Options("127.0.0.1", 0, 1024, 3, 2, 5000);
+
+    try (var app = new Shoostr(options);
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .get(
+              "/finite",
+              (request, response) -> {
+                response.body("text/plain", "abc".getBytes(StandardCharsets.UTF_8));
+                assertThrows(
+                    IllegalArgumentException.class,
+                    () -> response.body("text/plain", "abcd".getBytes(StandardCharsets.UTF_8)));
+              });
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/finite"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("abc", result.body());
+    }
+  }
+
+  @Test
   void streamsOutputLargerThanTheFiniteResponseLimit() throws Exception {
     var options = new Options("127.0.0.1", 0, 1_048_576, 3, 2, 30_000);
 

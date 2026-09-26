@@ -19,8 +19,25 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class HttpExceptionTest {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"", " ", "Bearer\r", "Bearer\n", "\tBasic", "Basic\u007f", "Bearer\u0080"})
+  void rejectsUnsafeAuthenticationChallengesDuringConstruction(String challenge) {
+    assertThrows(
+        IllegalArgumentException.class, () -> new AuthenticationRequiredException(challenge));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"Basic realm=\"api\"", "Basic realm=\"api~\""})
+  void preservesTheAuthenticationChallengeAndUnauthorizedStatus(String challenge) {
+    var exception = new AuthenticationRequiredException(challenge);
+    assertEquals(challenge, exception.challenge());
+    assertSame(HttpStatusCodes.UNAUTHORIZED, exception.statusCode());
+  }
+
   @ParameterizedTest
   @MethodSource("errors")
   void exposesFixedStatusAndCorrectCatchFamily(

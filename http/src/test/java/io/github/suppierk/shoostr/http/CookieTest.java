@@ -5,8 +5,17 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class CookieTest {
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"a b", "a;b", "a,b", "a\\b", "a\"b", "\rvalue", "\nvalue", "\u007f", "\u0080"})
+  void rejectsUnsafeCookieValuesDuringConstruction(String value) {
+    assertThrows(IllegalArgumentException.class, () -> new Cookie("session", value));
+  }
+
   @Test
   void constructorNormalizesDomainAndExpiryBeforeFormatting() {
     var expiry = Instant.parse("2030-01-01T00:00:00.987Z");

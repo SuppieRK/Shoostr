@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -166,6 +167,14 @@ class CorsTest {
       assertEquals(
           "ETag", actual.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
     }
+  }
+
+  @Test
+  void acceptsTheLargestOriginPortAndRejectsNonExactPortSpelling() {
+    assertDoesNotThrow(() -> new CorsPolicy(Set.of("https://client.example:65535")));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> new CorsPolicy(Set.of("https://client.example:00080")));
   }
 
   @Test
@@ -650,6 +659,17 @@ class CorsTest {
                   "POST",
                   "Origin",
                   "https://api.example:8443",
+                  "Forwarded",
+                  "for=192.0.2.1;proto=https;host=api.example")
+              .statusCode());
+      assertEquals(
+          403,
+          send(
+                  client,
+                  app,
+                  "POST",
+                  "Origin",
+                  "https://api.example:0",
                   "Forwarded",
                   "for=192.0.2.1;proto=https;host=api.example")
               .statusCode());

@@ -18,8 +18,45 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class MicrometerMetricsTest {
+  @ParameterizedTest
+  @CsvSource({"499, none", "500, server"})
+  void classifiesExplicitResponseStatusesWithoutApplicationFailures(int status, String error)
+      throws Exception {
+    var registry = new SimpleMeterRegistry();
+    var completed = new CompletableFuture<Void>();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.observe(new MicrometerMetrics(registry));
+      app.afterRequest(outcome -> completed.complete(null));
+      app.routes()
+          .get("/explicit", (request, response) -> response.status(status).text("explicit"));
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/explicit"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.discarding());
+      assertEquals(status, result.statusCode());
+      completed.get(5, TimeUnit.SECONDS);
+      assertEquals(
+          1,
+          registry
+              .get("http.server.requests")
+              .tag("route", "/explicit")
+              .tag("error", error)
+              .timer()
+              .count());
+    } finally {
+      registry.close();
+    }
+  }
+
   @Test
   void recordsMissesApplicationErrorsAndTerminalTransportFailuresWithFiniteLabels()
       throws Exception {

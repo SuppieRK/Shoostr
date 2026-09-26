@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -80,6 +81,9 @@ class ResponseMetadataTest {
                   List.of("first=1; Path=/", "second=2; Path=/"), snapshot.get("SET-COOKIE"));
               assertEquals(List.of(), response.headers("Absent"));
               assertThrows(UnsupportedOperationException.class, snapshot::clear);
+              assertThrows(
+                  UnsupportedOperationException.class,
+                  () -> Objects.requireNonNull(snapshot.get("SET-COOKIE")).add("x"));
               var cookieHeaders = response.headers("Set-Cookie");
               assertThrows(UnsupportedOperationException.class, () -> cookieHeaders.add("x"));
               response.addHeader("X-Values", "a,b").addHeader("X-Values", "c");
