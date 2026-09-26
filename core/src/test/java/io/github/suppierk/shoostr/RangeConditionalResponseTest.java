@@ -280,6 +280,28 @@ class RangeConditionalResponseTest {
   }
 
   @Test
+  void servesTheCurrentFileWhenModifiedAfterTheIfModifiedSinceDate() throws Exception {
+    var file = temporaryDirectory.resolve("modified.txt");
+    Files.writeString(file, "current", StandardCharsets.US_ASCII);
+    Files.setLastModifiedTime(file, FileTime.from(Instant.parse("2024-01-02T00:00:00Z")));
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(uri(app))
+                  .header(HttpHeaders.IF_MODIFIED_SINCE.value(), "Mon, 01 Jan 2024 00:00:00 GMT")
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("current", result.body());
+    }
+  }
+
+  @Test
   void rejectsAnOlderIfUnmodifiedSinceDate() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);

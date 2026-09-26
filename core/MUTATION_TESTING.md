@@ -166,3 +166,22 @@ A surviving mutation is not automatically a bug: record the changed
 behavior, the input that would expose it, and whether it is a missing regression,
 equivalent behavior, unreachable through the chosen public contract, or outside
 this ticket's selected paths. Do not weaken production contracts to improve a score.
+
+## Individual survivor follow-up
+
+The first individual follow-up protects conditional file responses through a real
+HTTP request: a file modified on 2024-01-02 must return `200` and its current body
+when `If-Modified-Since` is 2024-01-01. The existing unchanged-file test returned
+`304` with either calculation and could not detect this fault. Production code
+remains unchanged.
+
+| Survivor | Native identity | Before | Focused result | Regression test |
+| --- | --- | --- | --- | --- |
+| S0232 | `Response.notModifiedSince(Instant)`, line 1520, `MathMutator`, index 76, block 29: division replaced with multiplication | Survived | Killed | `RangeConditionalResponseTest.servesTheCurrentFileWhenModifiedAfterTheIfModifiedSinceDate` |
+
+The focused run generated one mutation and killed it in 28 seconds. Its temporary
+Gradle init script selected that method, the `MATH` mutator and its module-local
+test class; the permanent full-suite configuration is unchanged. Native HTML/XML,
+the selection script and logs are retained locally under
+`.scratch/java25-web-framework/mutation/issue65/s0232/`. This is incremental evidence,
+not a new full-suite count; the 573-survivor snapshot above remains historical.
