@@ -81,9 +81,9 @@ class ResponseMetadataTest {
                   List.of("first=1; Path=/", "second=2; Path=/"), snapshot.get("SET-COOKIE"));
               assertEquals(List.of(), response.headers("Absent"));
               assertThrows(UnsupportedOperationException.class, snapshot::clear);
+              var snapshotCookieHeaders = Objects.requireNonNull(snapshot.get("SET-COOKIE"));
               assertThrows(
-                  UnsupportedOperationException.class,
-                  () -> Objects.requireNonNull(snapshot.get("SET-COOKIE")).add("x"));
+                  UnsupportedOperationException.class, () -> snapshotCookieHeaders.add("x"));
               var cookieHeaders = response.headers("Set-Cookie");
               assertThrows(UnsupportedOperationException.class, () -> cookieHeaders.add("x"));
               response.addHeader("X-Values", "a,b").addHeader("X-Values", "c");

@@ -171,10 +171,9 @@ class CorsTest {
 
   @Test
   void acceptsTheLargestOriginPortAndRejectsNonExactPortSpelling() {
+    var nonExactOrigin = Set.of("https://client.example:00080");
     assertDoesNotThrow(() -> new CorsPolicy(Set.of("https://client.example:65535")));
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> new CorsPolicy(Set.of("https://client.example:00080")));
+    assertThrows(IllegalArgumentException.class, () -> new CorsPolicy(nonExactOrigin));
   }
 
   @Test

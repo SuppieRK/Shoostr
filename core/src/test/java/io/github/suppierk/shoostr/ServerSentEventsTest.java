@@ -277,9 +277,10 @@ class ServerSentEventsTest {
 
   @Test
   void rejectsEventMetadataBeginningWithLineBreaksOrNullCharacters() {
+    var event = SseEvent.of("data");
     for (var value : new String[] {"\rname", "\nname", "\0name"}) {
-      assertThrows(IllegalArgumentException.class, () -> SseEvent.of("data").withEvent(value));
-      assertThrows(IllegalArgumentException.class, () -> SseEvent.of("data").withId(value));
+      assertThrows(IllegalArgumentException.class, () -> event.withEvent(value));
+      assertThrows(IllegalArgumentException.class, () -> event.withId(value));
     }
   }
 

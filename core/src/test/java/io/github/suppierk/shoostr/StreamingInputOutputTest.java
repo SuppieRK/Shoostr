@@ -277,6 +277,7 @@ class StreamingInputOutputTest {
   @Test
   void rejectsOversizedFiniteBodiesWithoutChangingThePreviouslyStagedBody() throws Exception {
     var options = new Options("127.0.0.1", 0, 1024, 3, 2, 5000);
+    var oversizedBody = "abcd".getBytes(StandardCharsets.UTF_8);
 
     try (var app = new Shoostr(options);
         var client = HttpClient.newHttpClient()) {
@@ -287,7 +288,7 @@ class StreamingInputOutputTest {
                 response.body("text/plain", "abc".getBytes(StandardCharsets.UTF_8));
                 assertThrows(
                     IllegalArgumentException.class,
-                    () -> response.body("text/plain", "abcd".getBytes(StandardCharsets.UTF_8)));
+                    () -> response.body("text/plain", oversizedBody));
               });
       app.start();
       var result =

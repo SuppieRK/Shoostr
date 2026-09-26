@@ -150,6 +150,13 @@ matches mutations using class, method descriptor, line, mutator, bytecode indexe
 and blocks; it retains exact statuses and killing tests. Archive these before
 cleaning; their locations are local evidence, not Git-tracked artifacts.
 
+These mutation counts were measured before a subsequent Sonar test-only cleanup:
+fixture construction was moved outside exception-assertion lambdas so each lambda
+contains just the operation expected to throw. Inputs, expected exceptions and
+production Java remain unchanged. The complete build is rerun for that cleanup;
+the mutation counts above describe the retained measured snapshot, not a further
+full-suite execution on the final PR commit.
+
 `Killed` means the native `KILLED` status; PIT's detected score also includes
 `TIMED_OUT`. Keep timeouts separate when assessing whether assertions protect a
 contract. The scope remains module-local: focused HTTP tests protect important
