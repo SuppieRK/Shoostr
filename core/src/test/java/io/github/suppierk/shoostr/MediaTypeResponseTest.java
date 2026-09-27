@@ -27,6 +27,40 @@ import org.junit.jupiter.params.provider.MethodSource;
 @Timeout(15)
 class MediaTypeResponseTest {
   @Test
+  @SuppressWarnings("NullAway") // Deliberately verifies invalid inputs at the public API boundary.
+  void rejectsNullNegotiationInputsWithoutChangingStagedResponse() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .get(
+              "/invalid-candidates",
+              (_, response) -> {
+                response
+                    .status(202)
+                    .header("Vary", "Origin")
+                    .body(MediaType.APPLICATION_JSON, "\"kept\"".getBytes(StandardCharsets.UTF_8));
+                assertThrows(
+                    NullPointerException.class, () -> response.negotiate((MediaType) null));
+                assertThrows(
+                    NullPointerException.class,
+                    () -> response.negotiate(MediaType.APPLICATION_JSON, (MediaType[]) null));
+                assertThrows(
+                    NullPointerException.class,
+                    () ->
+                        response.negotiate(
+                            MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN, (MediaType) null));
+              });
+      app.start();
+      var result =
+          client.send(request(app, "/invalid-candidates"), HttpResponse.BodyHandlers.ofString());
+      assertEquals(202, result.statusCode());
+      assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
+      assertEquals(List.of("Origin"), result.headers().allValues("Vary"));
+      assertEquals("\"kept\"", result.body());
+    }
+  }
+
+  @Test
   void keepsConcurrentRequestNegotiationIndependent() throws Exception {
     var ready = new CountDownLatch(2);
 

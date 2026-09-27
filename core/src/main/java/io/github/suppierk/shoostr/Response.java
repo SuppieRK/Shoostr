@@ -317,33 +317,30 @@ public final class Response implements AutoCloseable {
    * varying by Accept. The returned candidate only labels bytes; callers remain responsible for
    * generating and sending the representation. A missing Accept field selects the first candidate.
    *
-   * @param candidates representations this handler can generate, in server preference order
+   * @param first most preferred representation this handler can generate
+   * @param additional other representations, in server preference order
    * @return selected original candidate
    * @throws NotAcceptableException if an explicit Accept field excludes every candidate
    * @throws io.github.suppierk.shoostr.http.exceptions.BadRequestException if an Accept field is
    *     malformed
-   * @throws IllegalArgumentException if candidates is empty
-   * @throws NullPointerException if candidates or a candidate is null
+   * @throws NullPointerException if first, additional, or an additional candidate is null
    * @throws IllegalStateException if the response is unavailable for mutation
    */
-  public MediaType negotiate(MediaType... candidates) {
+  public MediaType negotiate(MediaType first, MediaType... additional) {
     require(State.OPEN);
-    Objects.requireNonNull(candidates);
-    if (candidates.length == 0) {
-      throw new IllegalArgumentException("At least one media type is required");
-    }
-
-    for (var candidate : candidates) {
+    Objects.requireNonNull(first);
+    Objects.requireNonNull(additional);
+    for (var candidate : additional) {
       Objects.requireNonNull(candidate);
     }
 
     var fields = request.headers(HttpHeaders.ACCEPT.value());
     if (fields.isEmpty()) {
       variedByAccept();
-      return candidates[0];
+      return first;
     }
 
-    var selected = AcceptNegotiation.select(fields, candidates);
+    var selected = AcceptNegotiation.select(fields, first, additional);
     variedByAccept();
     if (selected != null) {
       return selected;

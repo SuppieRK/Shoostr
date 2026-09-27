@@ -19,15 +19,16 @@ final class AcceptNegotiation {
    * Selects the highest-quality compatible candidate, retaining caller order for a complete tie.
    *
    * @param fields repeated {@code Accept} field values in wire order
-   * @param candidates nonempty server-preference-ordered representations
+   * @param first most preferred representation
+   * @param additional other representations in server preference order
    * @return original selected candidate, or null when every candidate is unacceptable
    * @throws BadRequestException if an {@code Accept} field is malformed
    */
-  static @Nullable MediaType select(List<String> fields, MediaType[] candidates) {
+  static @Nullable MediaType select(List<String> fields, MediaType first, MediaType[] additional) {
     var ranges = ranges(fields);
-    MediaType selected = null;
-    int selectedQuality = 0;
-    for (var candidate : candidates) {
+    MediaType selected = first;
+    int selectedQuality = quality(first, ranges);
+    for (var candidate : additional) {
       var quality = quality(candidate, ranges);
       if (quality > selectedQuality) {
         selected = candidate;
@@ -35,7 +36,7 @@ final class AcceptNegotiation {
       }
     }
 
-    return selected;
+    return selectedQuality == 0 ? null : selected;
   }
 
   /**

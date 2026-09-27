@@ -302,11 +302,13 @@ Applications own serialization/deserialization through bytes and UTF-8 strings; 
 Each HTTP handling path receives a bound `Request`/`Response` pair, constructed and
 validated before application hooks run. Both retain their associated peer internally;
 response operations use that request without accepting a request argument. Negotiation
-uses its immutable header snapshot. The former `negotiate(Request, MediaType...)` signature
-has been replaced; consumers must update their calls and recompile.
+uses its immutable header snapshot. The signature is
+`negotiate(MediaType first, MediaType... additional)`: at least one media type must be
+supplied. Consumers of the former request-taking or array-only signatures must update
+their calls and recompile. Null candidates and a null additional-candidates array are rejected.
 
 For an endpoint that can produce more than one already-encoded representation, call
-`response.negotiate(candidates)` before setting bytes or starting a stream. It returns
+`response.negotiate(first, additional...)` before setting bytes or starting a stream. It returns
 one supplied `MediaType`, adds `Vary: Accept`, and throws `NotAcceptableException` for a valid
 explicit preference that excludes every candidate. A missing `Accept` selects the first candidate.
 The selector handles repeated fields, comma lists, wildcards, q weights and media parameters; its
