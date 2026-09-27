@@ -1236,34 +1236,22 @@ public final class Shoostr implements Closeable {
           observation == null
               ? callback
               : Callback.from(callback, observation::recordTransportFailure);
-      var response =
-          new Response(
-              rawResponse,
-              options,
-              responseCallback,
-              HttpMethods.HEAD.value().equals(rawRequest.getMethod()),
-              rawRequest);
-      if (compressionHandler != null) {
-        response.compression(compressionHandler);
-        configureEncoding(response, rawRequest);
-      }
-
       Request request;
 
       try {
-        request =
-            new Request(
-                rawRequest,
-                response,
-                options.maxRequestBytes(),
-                options.maxParameters(),
-                options.multipart());
+        request = Request.create(rawRequest, rawResponse, options, responseCallback);
       } catch (RuntimeException | Error failure) {
         if (observation != null) {
           observation.finish(null, failure);
         }
 
         throw failure;
+      }
+
+      var response = request.response();
+      if (compressionHandler != null) {
+        response.compression(compressionHandler);
+        configureEncoding(response, rawRequest);
       }
 
       response.flushHooks(

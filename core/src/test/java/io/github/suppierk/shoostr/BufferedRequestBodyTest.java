@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.io.Content;
+import org.eclipse.jetty.server.Response;
 import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -220,6 +221,7 @@ class BufferedRequestBodyTest {
                 (proxy, method, arguments) ->
                     switch (method.getName()) {
                       case "getHeaders" -> HttpFields.EMPTY;
+                      case "getMethod" -> "GET";
                       case "getLength" -> declaredLength;
                       case "read" -> {
                         var failed = failure.get();
@@ -252,19 +254,23 @@ class BufferedRequestBodyTest {
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
     var sink =
-        (org.eclipse.jetty.server.Response)
+        (Response)
             Proxy.newProxyInstance(
                 BufferedRequestBodyTest.class.getClassLoader(),
-                new Class<?>[] {org.eclipse.jetty.server.Response.class},
+                new Class<?>[] {Response.class},
                 (proxy, method, arguments) -> {
                   throw new UnsupportedOperationException(method.getName());
                 });
 
-    return new Request(
-        delegate,
-        new Response(sink, Options.defaults(), Callback.NOOP),
-        limit,
-        1000,
-        MultipartOptions.defaults());
+    var defaults = Options.defaults();
+    var options =
+        new Options(
+            defaults.host(),
+            defaults.port(),
+            limit,
+            defaults.maxResponseBytes(),
+            defaults.streamBufferBytes(),
+            defaults.idleTimeoutMillis());
+    return Request.create(delegate, sink, options, Callback.NOOP);
   }
 }

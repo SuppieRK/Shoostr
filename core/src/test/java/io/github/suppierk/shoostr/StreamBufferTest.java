@@ -20,6 +20,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Test;
 
@@ -234,7 +235,21 @@ class StreamBufferTest {
             defaults.maxResponseBytes(),
             capacity,
             defaults.idleTimeoutMillis());
-    return new Response(delegate, options, Callback.NOOP);
+    var nativeRequest =
+        (Request)
+            Proxy.newProxyInstance(
+                StreamBufferTest.class.getClassLoader(),
+                new Class<?>[] {Request.class},
+                (proxy, method, arguments) ->
+                    switch (method.getName()) {
+                      case "getMethod" -> "GET";
+                      case "getHeaders" -> HttpFields.EMPTY;
+                      case "addHttpStreamWrapper" -> null;
+                      default -> throw new UnsupportedOperationException(method.getName());
+                    });
+    return io.github.suppierk.shoostr.Request.create(
+            nativeRequest, delegate, options, Callback.NOOP)
+        .response();
   }
 
   private static final class Write {

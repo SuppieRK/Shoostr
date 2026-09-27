@@ -106,7 +106,7 @@ public final class Response implements AutoCloseable {
   private final Callback completion;
   private final Thread owner;
   private final boolean head;
-  private final org.eclipse.jetty.server.@Nullable Request request;
+  private final Request request;
   private Runnable beforeFlush;
   private Runnable afterFlush;
   private State state;
@@ -136,53 +136,28 @@ public final class Response implements AutoCloseable {
   private @Nullable Throwable afterFlushFailure;
 
   /**
-   * Creates handler-thread-owned output with an empty staged body.
+   * Creates a response while its request is privately under construction. Retains the peer without
+   * reading it; framework dispatch sees only the completed pair.
    *
-   * @param delegate transport response receiving headers and bytes
-   * @param options finite-body and streaming-buffer limits
-   * @param completion callback completing the transport exchange exactly once
-   */
-  Response(org.eclipse.jetty.server.Response delegate, Options options, Callback completion) {
-    this(delegate, options, completion, false, null);
-  }
-
-  /**
-   * Creates handler-thread-owned output with request-method body semantics.
-   *
-   * @param delegate transport response receiving headers and bytes
-   * @param options finite-body and streaming-buffer limits
-   * @param completion callback completing the transport exchange exactly once
-   * @param head whether the request method suppresses response content
-   */
-  Response(
-      org.eclipse.jetty.server.Response delegate,
-      Options options,
-      Callback completion,
-      boolean head) {
-    this(delegate, options, completion, head, null);
-  }
-
-  /**
-   * Creates handler-thread-owned output with the transport request needed for file semantics.
-   *
-   * @param delegate transport response receiving headers and bytes
-   * @param options finite-body and streaming-buffer limits
-   * @param completion callback completing the transport exchange exactly once
-   * @param head whether the request method suppresses response content
-   * @param request transport request supplying range and condition fields
+   * @param delegate native output receiving headers and bytes
+   * @param options validated response limits
+   * @param completion callback completing the exchange exactly once
+   * @param head whether the method suppresses response content
+   * @param request the one request being paired with this response
+   * @throws NullPointerException if a reference input is null
    */
   Response(
       org.eclipse.jetty.server.Response delegate,
       Options options,
       Callback completion,
       boolean head,
-      org.eclipse.jetty.server.@Nullable Request request) {
-    this.delegate = delegate;
-    this.options = options;
-    this.completion = completion;
+      Request request) {
+    this.delegate = Objects.requireNonNull(delegate);
+    this.options = Objects.requireNonNull(options);
+    this.completion = Objects.requireNonNull(completion);
     this.owner = Thread.currentThread();
     this.head = head;
-    this.request = request;
+    this.request = Objects.requireNonNull(request);
     this.beforeFlush = () -> {};
     this.afterFlush = () -> {};
     this.flushCallback = false;
@@ -284,11 +259,10 @@ public final class Response implements AutoCloseable {
    * Renews a live Jetty session using this response before it is committed.
    *
    * @param session existing session
-   * @param request transport request that owns it
    */
-  void renewSessionId(Session session, org.eclipse.jetty.server.Request request) {
+  void renewSessionId(Session session) {
     require(State.OPEN);
-    session.renewId(request, delegate);
+    session.renewId(nativeRequest(), delegate);
   }
 
   /**
@@ -341,22 +315,17 @@ public final class Response implements AutoCloseable {
    * varying by Accept. The returned candidate only labels bytes; callers remain responsible for
    * generating and sending the representation. A missing Accept field selects the first candidate.
    *
-   * <p>TODO Response should use builder method and tie Request and Response together explicitly
-   * during request creation, if possible
-   *
-   * @param request request whose Accept fields constrain the selection
    * @param candidates representations this handler can generate, in server preference order
    * @return selected original candidate
    * @throws NotAcceptableException if an explicit Accept field excludes every candidate
    * @throws io.github.suppierk.shoostr.http.exceptions.BadRequestException if an Accept field is
    *     malformed
    * @throws IllegalArgumentException if candidates is empty
-   * @throws NullPointerException if request, candidates, or a candidate is null
+   * @throws NullPointerException if candidates or a candidate is null
    * @throws IllegalStateException if the response is unavailable for mutation
    */
-  public MediaType negotiate(Request request, MediaType... candidates) {
+  public MediaType negotiate(MediaType... candidates) {
     require(State.OPEN);
-    Objects.requireNonNull(request);
     Objects.requireNonNull(candidates);
     if (candidates.length == 0) {
       throw new IllegalArgumentException("At least one media type is required");
@@ -428,9 +397,37 @@ public final class Response implements AutoCloseable {
    * @param contentType response media type
    * @return this response
    * @throws IOException if reading or output fails
+   * @throws IllegalStateException if file output is already selected
    */
   public Response input(InputStream source, String contentType) throws IOException {
-    return input(source, contentType, -1);
+    Objects.requireNonNull(source);
+
+    try (source) {
+      require(State.OPEN);
+      if (fileSelected) {
+        throw new IllegalStateException("Response already has file output");
+      }
+
+      if (!permitsBody()) {
+        return this;
+      }
+
+      if (head) {
+        contentType(contentType);
+        headContentLength = -1;
+        return this;
+      }
+
+      var output = startStream(contentType);
+      var buffer = new byte[options.streamBufferBytes()];
+      for (int read; (read = source.read(buffer)) >= 0; ) {
+        if (read > 0) {
+          output.write(read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read));
+        }
+      }
+
+      return this;
+    }
   }
 
   /**
@@ -450,11 +447,6 @@ public final class Response implements AutoCloseable {
     require(State.OPEN);
     if (gating || body.length != 0 || fileSelected) {
       throw new IllegalStateException("Response cannot become a file");
-    }
-
-    if (request == null) {
-      var length = Files.size(resource);
-      return input(Files.newInputStream(resource), contentType, length);
     }
 
     if (!Files.isRegularFile(resource) || !Files.isReadable(resource)) {
@@ -631,8 +623,8 @@ public final class Response implements AutoCloseable {
     }
 
     if (noneMatch(tag)) {
-      return HttpMethods.GET.value().equals(request().getMethod())
-              || HttpMethods.HEAD.value().equals(request().getMethod())
+      return HttpMethods.GET.value().equals(nativeRequest().getMethod())
+              || HttpMethods.HEAD.value().equals(nativeRequest().getMethod())
           ? HttpStatusCodes.NOT_MODIFIED.value()
           : HttpStatusCodes.PRECONDITION_FAILED.value();
     }
@@ -1038,11 +1030,7 @@ public final class Response implements AutoCloseable {
    * @return session cookie values already set by Jetty
    */
   private List<String> sessionCookies() {
-    if (request == null) {
-      return List.of();
-    }
-
-    var session = request.getSession(false);
+    var session = nativeRequest().getSession(false);
     if (!(session instanceof ManagedSession managed)
         || !(managed.getSessionManager() instanceof AbstractSessionManager manager)) {
       return List.of();
@@ -1425,8 +1413,8 @@ public final class Response implements AutoCloseable {
    *
    * @return the request retained for the selected file response
    */
-  private org.eclipse.jetty.server.Request request() {
-    return Objects.requireNonNull(request);
+  private org.eclipse.jetty.server.Request nativeRequest() {
+    return request.nativeRequest();
   }
 
   /**
@@ -1451,7 +1439,7 @@ public final class Response implements AutoCloseable {
    * @return whether the request passes the precondition
    */
   private boolean matchesIfMatch(@Nullable String tag) {
-    var values = request().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value());
+    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value());
     if (values.isEmpty()) {
       return true;
     }
@@ -1481,11 +1469,12 @@ public final class Response implements AutoCloseable {
    */
   private boolean unmodifiedSince(@Nullable Instant lastModified) {
     if (lastModified == null
-        || !request().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value()).isEmpty()) {
+        || !nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value()).isEmpty()) {
       return true;
     }
 
-    var values = request().getHeaders().getValuesList(HttpHeaders.IF_UNMODIFIED_SINCE.value());
+    var values =
+        nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_UNMODIFIED_SINCE.value());
     if (values.size() != 1) {
       return true;
     }
@@ -1506,7 +1495,7 @@ public final class Response implements AutoCloseable {
     }
 
     for (var candidate :
-        entityTags(request().getHeaders().getValuesList(HttpHeaders.IF_NONE_MATCH.value()))) {
+        entityTags(nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_NONE_MATCH.value()))) {
       if (HttpCharacters.ASTERISK_STRING.equals(candidate)
           || weakTag(candidate).equals(weakTag(tag))) {
         return true;
@@ -1524,13 +1513,13 @@ public final class Response implements AutoCloseable {
    */
   private boolean notModifiedSince(@Nullable Instant lastModified) {
     if (lastModified == null
-        || !request().getHeaders().getValuesList(HttpHeaders.IF_NONE_MATCH.value()).isEmpty()
-        || (!HttpMethods.GET.value().equals(request().getMethod())
-            && !HttpMethods.HEAD.value().equals(request().getMethod()))) {
+        || !nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_NONE_MATCH.value()).isEmpty()
+        || (!HttpMethods.GET.value().equals(nativeRequest().getMethod())
+            && !HttpMethods.HEAD.value().equals(nativeRequest().getMethod()))) {
       return false;
     }
 
-    var values = request().getHeaders().getValuesList(HttpHeaders.IF_MODIFIED_SINCE.value());
+    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_MODIFIED_SINCE.value());
     if (values.size() != 1) {
       return false;
     }
@@ -1682,7 +1671,7 @@ public final class Response implements AutoCloseable {
   private @Nullable ByteRange range(long length, @Nullable String tag) {
     if (head
         || status() != HttpStatusCodes.OK.value()
-        || !HttpMethods.GET.value().equals(request().getMethod())) {
+        || !HttpMethods.GET.value().equals(nativeRequest().getMethod())) {
       return null;
     }
 
@@ -1690,7 +1679,7 @@ public final class Response implements AutoCloseable {
       return null;
     }
 
-    var values = request().getHeaders().getValuesList(HttpHeaders.RANGE.value());
+    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.RANGE.value());
     if (values.size() != 1
         || !values.getFirst().startsWith("bytes=")
         || values.getFirst().contains(HttpCharacters.COMMA_SIGN_STRING)) {
@@ -1791,7 +1780,7 @@ public final class Response implements AutoCloseable {
    * @return whether Range can select a partial representation
    */
   private boolean ifRangeMatches(@Nullable String tag) {
-    var values = request().getHeaders().getValuesList(HttpHeaders.IF_RANGE.value());
+    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_RANGE.value());
     if (values.isEmpty()) {
       return true;
     }
@@ -1802,48 +1791,6 @@ public final class Response implements AutoCloseable {
 
     var validator = values.getFirst();
     return tag != null && !tag.startsWith("W/") && validator.equals(tag);
-  }
-
-  /**
-   * Streams a source or publishes only its known representation metadata for a HEAD request.
-   *
-   * @param source application input source
-   * @param contentType response media type
-   * @param knownLength source length when known, otherwise a negative value
-   * @return this response
-   * @throws IOException if reading or output fails
-   * @throws IllegalStateException if file output is already selected
-   */
-  private Response input(InputStream source, String contentType, long knownLength)
-      throws IOException {
-    Objects.requireNonNull(source);
-
-    try (source) {
-      require(State.OPEN);
-      if (fileSelected) {
-        throw new IllegalStateException("Response already has file output");
-      }
-
-      if (!permitsBody()) {
-        return this;
-      }
-
-      if (head) {
-        contentType(contentType);
-        headContentLength = knownLength;
-        return this;
-      }
-
-      var output = startStream(contentType);
-      var buffer = new byte[options.streamBufferBytes()];
-      for (int read; (read = source.read(buffer)) >= 0; ) {
-        if (read > 0) {
-          output.write(read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read));
-        }
-      }
-
-      return this;
-    }
   }
 
   /**
@@ -1948,8 +1895,7 @@ public final class Response implements AutoCloseable {
 
     delegate.getHeaders().remove(HttpHeaders.CONTENT_LENGTH.value());
     vary(HttpHeaders.ACCEPT_ENCODING);
-    if (request != null
-        && request.getConnectionMetaData().getHttpVersion() == HttpVersion.HTTP_1_1) {
+    if (nativeRequest().getConnectionMetaData().getHttpVersion() == HttpVersion.HTTP_1_1) {
       delegate.getHeaders().put(HttpHeader.TRANSFER_ENCODING, "chunked");
     }
   }
@@ -2000,7 +1946,11 @@ public final class Response implements AutoCloseable {
     }
 
     if (contentLength >= 0) {
-      var encoder = selectedCompressor(handler, config, selected.getRequest());
+      var encoder =
+          selectedCompressor(
+              handler,
+              config,
+              selected.getRequest().getHeaders().getValuesList(HttpHeader.ACCEPT_ENCODING));
       if (encoder == null || contentLength < encoder.getMinCompressSize()) {
         encodingRejected = true;
         throw new NotAcceptableException();
@@ -2013,20 +1963,18 @@ public final class Response implements AutoCloseable {
    *
    * @param handler active native compression handler
    * @param config native configuration matched for the outer request path
-   * @param request request at the compression handler's context boundary
+   * @param acceptEncoding raw field values at the compression handler's context boundary
    * @return selected native compressor, or null if no registered compressor matches
    */
   private static @Nullable Compression selectedCompressor(
-      CompressionHandler handler,
-      CompressionConfig config,
-      org.eclipse.jetty.server.Request request) {
+      CompressionHandler handler, CompressionConfig config, List<String> acceptEncoding) {
     var encoders = new TreeMap<String, Compression>(String.CASE_INSENSITIVE_ORDER);
     for (var encoder : handler.getBeans(Compression.class)) {
       encoders.put(encoder.getEncodingName(), encoder);
     }
 
     var parser = new QuotedQualityCSV();
-    for (var value : request.getHeaders().getValuesList(HttpHeader.ACCEPT_ENCODING)) {
+    for (var value : acceptEncoding) {
       parser.addValue(value);
     }
 

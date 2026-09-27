@@ -299,15 +299,21 @@ The default listener uses Jetty 12.1.11 HTTP/1.1 and virtual-thread handlers. Ro
 
 Applications own serialization/deserialization through bytes and UTF-8 strings; JSON fixtures use pre-encoded bytes. `Request.input()` is one-shot and mutually exclusive with cached `bodyBytes()` and multipart access; it counts bytes as they are consumed, including chunked input, and the framework closes it at handler completion. `Response.body(MediaType, byte[])` and `startStream(MediaType)` accept the immutable [`MediaType` primitive](http/README.md#media-types), while String overloads remain available for other parameters. Media types label bytes without converting them; `text(String)` and `Stream.write(String)` always encode UTF-8. Built-in serializers and template rendering are outside the current scope. Catch-all paths and wildcard patterns remain deferred. Production code and examples use only standard Java annotations; test sources additionally use JUnit 5 annotations, and the isolated `microbenchmarks` module uses JMH annotations. Minimize custom classes, apply YAGNI/KISS, and order methods from high-level operations down to their helpers.
 
+Each HTTP handling path receives a bound `Request`/`Response` pair, constructed and
+validated before application hooks run. Both retain their associated peer internally;
+response operations use that request without accepting a request argument. Negotiation
+uses its immutable header snapshot. The former `negotiate(Request, MediaType...)` signature
+has been replaced; consumers must update their calls and recompile.
+
 For an endpoint that can produce more than one already-encoded representation, call
-`response.negotiate(request, candidates)` before setting bytes or starting a stream. It returns
+`response.negotiate(candidates)` before setting bytes or starting a stream. It returns
 one supplied `MediaType`, adds `Vary: Accept`, and throws `NotAcceptableException` for a valid
 explicit preference that excludes every candidate. A missing `Accept` selects the first candidate.
 The selector handles repeated fields, comma lists, wildcards, q weights and media parameters; its
 strict malformed-field policy produces 400. It never serializes, decodes, or transcodes bytes.
 
 ```java
-var type = response.negotiate(request, MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
+var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
 if (type.equals(MediaType.APPLICATION_JSON)) {
     response.body(type, jsonBytes);
 } else {

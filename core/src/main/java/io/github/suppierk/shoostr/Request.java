@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
+import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException;
@@ -39,6 +40,7 @@ import org.eclipse.jetty.http.MultiPartConfig;
 import org.eclipse.jetty.http.MultiPartFormData;
 import org.eclipse.jetty.io.Content;
 import org.eclipse.jetty.server.Session;
+import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.Promise;
 import org.eclipse.jetty.util.UrlEncoded;
 import org.jspecify.annotations.Nullable;
@@ -81,28 +83,27 @@ public final class Request {
   private boolean multipartClosed;
 
   /**
-   * Captures headers and cookies before application hooks, binding request access to the handler
-   * thread and the configured read limit. Native cookie policy can reject construction.
+   * Captures validated inbound data and creates its response before publishing either peer.
    *
-   * @param delegate transport request whose input lifecycle remains owned by Jetty
-   * @param response framework response used when renewing a session identifier
-   * @param limit maximum buffered request-body size in bytes
-   * @param maxParameters maximum decoded pairs per query or form
-   * @param multipartOptions multipart parsing configuration
-   * @throws org.eclipse.jetty.http.HttpException.RuntimeException if native cookie policy rejects
-   *     malformed input
+   * @param delegate native request whose lifecycle remains owned by Jetty
+   * @param nativeResponse native output for the same exchange
+   * @param options validated configuration for both peers
+   * @param completion transport completion callback
+   * @throws NullPointerException if a construction input is null
+   * @throws org.eclipse.jetty.http.HttpException.RuntimeException if cookie validation fails
    */
-  Request(
+  private Request(
       org.eclipse.jetty.server.Request delegate,
-      Response response,
-      int limit,
-      int maxParameters,
-      MultipartOptions multipartOptions) {
-    this.delegate = delegate;
-    this.response = response;
-    this.limit = limit;
-    this.maxParameters = maxParameters;
-    this.multipartOptions = multipartOptions;
+      org.eclipse.jetty.server.Response nativeResponse,
+      Options options,
+      Callback completion) {
+    Objects.requireNonNull(options);
+    Objects.requireNonNull(nativeResponse);
+    Objects.requireNonNull(completion);
+    this.delegate = Objects.requireNonNull(delegate);
+    this.limit = options.maxRequestBytes();
+    this.maxParameters = options.maxParameters();
+    this.multipartOptions = options.multipart();
     this.uploads = new ArrayList<>();
     this.webSocketProtocols = List.of();
     this.owner = Thread.currentThread();
@@ -110,7 +111,51 @@ public final class Request {
     this.headers = parseHeaders(delegate);
     this.cookies =
         headers.containsKey(HttpHeaders.COOKIE.value()) ? parseCookies(delegate) : Map.of();
+    this.response =
+        new Response(
+            nativeResponse,
+            options,
+            completion,
+            HttpMethods.HEAD.value().equals(delegate.getMethod()),
+            this);
     org.eclipse.jetty.server.Request.addCompletionListener(delegate, _ -> closeMultipart());
+  }
+
+  /**
+   * Creates a complete pair before returning either peer to framework dispatch.
+   *
+   * @param delegate native inbound exchange
+   * @param nativeResponse native output for the same exchange
+   * @param options validated configuration for both peers
+   * @param completion callback ending the native exchange
+   * @return request whose response is fully initialized
+   * @throws NullPointerException if a construction input is null
+   * @throws org.eclipse.jetty.http.HttpException.RuntimeException if cookie validation fails
+   */
+  static Request create(
+      org.eclipse.jetty.server.Request delegate,
+      org.eclipse.jetty.server.Response nativeResponse,
+      Options options,
+      Callback completion) {
+    return new Request(delegate, nativeResponse, options, completion);
+  }
+
+  /**
+   * Returns the single response paired with this request for framework dispatch.
+   *
+   * @return associated response
+   */
+  Response response() {
+    return response;
+  }
+
+  /**
+   * Returns native metadata for framework use through terminal response completion.
+   *
+   * @return native request, whose lifetime is managed by Jetty
+   */
+  org.eclipse.jetty.server.Request nativeRequest() {
+    return delegate;
   }
 
   /**
@@ -156,7 +201,7 @@ public final class Request {
       throw new IllegalStateException("No session exists to renew");
     }
 
-    response.renewSessionId(session, delegate);
+    response.renewSessionId(session);
     return session.getId();
   }
 

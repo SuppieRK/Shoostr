@@ -17,6 +17,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
+import org.eclipse.jetty.http.HttpFields;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -25,6 +26,96 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 @Timeout(15)
 class MediaTypeResponseTest {
+  @Test
+  void keepsConcurrentRequestNegotiationIndependent() throws Exception {
+    var ready = new CountDownLatch(2);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .get(
+              "/concurrent",
+              (_, response) -> {
+                ready.countDown();
+                if (!ready.await(3, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("Requests did not overlap");
+                }
+
+                var selected = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
+                response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
+              });
+      app.start();
+      var uri = URI.create("http://127.0.0.1:" + app.port() + "/concurrent");
+      var json =
+          client.sendAsync(
+              HttpRequest.newBuilder(uri)
+                  .header("Accept", "application/json")
+                  .timeout(Duration.ofSeconds(5))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      var text =
+          client.sendAsync(
+              HttpRequest.newBuilder(uri)
+                  .header("Accept", "text/plain")
+                  .timeout(Duration.ofSeconds(5))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      var jsonResult = json.get(5, TimeUnit.SECONDS);
+      var textResult = text.get(5, TimeUnit.SECONDS);
+
+      assertEquals(200, jsonResult.statusCode());
+      assertEquals("application/json", jsonResult.body());
+      assertEquals(
+          "application/json", jsonResult.headers().firstValue("Content-Type").orElseThrow());
+      assertEquals(200, textResult.statusCode());
+      assertEquals("text/plain", textResult.body());
+      assertEquals("text/plain", textResult.headers().firstValue("Content-Type").orElseThrow());
+    }
+  }
+
+  @Test
+  void negotiatesUsingItsBoundRequestHeaderSnapshot() throws Exception {
+    var transportHeaders = new AtomicReference<HttpFields.Mutable>();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.modifyHttpConfiguration(
+          configuration ->
+              configuration.addCustomizer(
+                  (nativeRequest, _) -> {
+                    var fields = HttpFields.build(nativeRequest.getHeaders());
+                    transportHeaders.set(fields);
+                    return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
+                      @Override
+                      public HttpFields getHeaders() {
+                        return fields;
+                      }
+                    };
+                  }));
+      app.onRequestHeaders((_, _) -> transportHeaders.get().put("Accept", "text/plain"));
+      app.routes()
+          .get(
+              "/bound",
+              (_, response) -> {
+                var selected = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
+                response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
+              });
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/bound"))
+                  .header("Accept", "application/json")
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals("application/json", result.body());
+      assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
+      assertEquals(List.of("Accept"), result.headers().allValues("Vary"));
+    }
+  }
+
   @Test
   void negotiatesMetadataWithoutTranscodingCallerBytes() throws Exception {
     var latin = MediaType.TEXT_PLAIN.withCharset(StandardCharsets.ISO_8859_1);
@@ -35,7 +126,7 @@ class MediaTypeResponseTest {
           .get(
               "/bytes",
               (request, response) -> {
-                var type = response.negotiate(request, latin, MediaType.APPLICATION_JSON);
+                var type = response.negotiate(latin, MediaType.APPLICATION_JSON);
                 var bytes = type.equals(latin) ? new byte[] {(byte) 0xe9} : new byte[] {'{', '}'};
                 response.body(type, bytes);
                 bytes[0] = 0;
@@ -64,7 +155,7 @@ class MediaTypeResponseTest {
               (request, response) -> {
                 response.addHeader("Vary", "Origin, aCcEpT");
                 response.addHeader("Vary", "User-Agent");
-                var type = response.negotiate(request, MediaType.APPLICATION_JSON);
+                var type = response.negotiate(MediaType.APPLICATION_JSON);
                 response.body(type, new byte[] {1});
               });
       app.routes()
@@ -72,7 +163,7 @@ class MediaTypeResponseTest {
               "/wildcard",
               (request, response) -> {
                 response.header("Vary", "*");
-                var type = response.negotiate(request, MediaType.APPLICATION_JSON);
+                var type = response.negotiate(MediaType.APPLICATION_JSON);
                 response.body(type, new byte[] {1});
               });
       app.start();
@@ -232,7 +323,7 @@ class MediaTypeResponseTest {
                 failure.set(
                     assertThrows(
                         IllegalStateException.class,
-                        () -> response.negotiate(request, MediaType.TEXT_PLAIN)));
+                        () -> response.negotiate(MediaType.TEXT_PLAIN)));
               });
       app.start();
       var result = client.send(request(app, "/stream"), HttpResponse.BodyHandlers.ofString());
@@ -251,7 +342,7 @@ class MediaTypeResponseTest {
               "/negotiated",
               (request, response) -> {
                 response.addHeader("Vary", "Origin");
-                var type = response.negotiate(request, MediaType.APPLICATION_JSON);
+                var type = response.negotiate(MediaType.APPLICATION_JSON);
                 response.body(type, new byte[] {1});
               });
       app.start();
@@ -274,8 +365,7 @@ class MediaTypeResponseTest {
           .get(
               "/negotiated",
               (request, response) -> {
-                var type =
-                    response.negotiate(request, MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
+                var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
                 response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
               });
       app.start();
@@ -299,8 +389,7 @@ class MediaTypeResponseTest {
           .get(
               "/negotiated",
               (request, response) -> {
-                var type =
-                    response.negotiate(request, MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
+                var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
                 response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
               });
       app.start();
@@ -405,7 +494,6 @@ class MediaTypeResponseTest {
   private static void negotiate(Request request, Response response) {
     var type =
         response.negotiate(
-            request,
             MediaType.APPLICATION_JSON,
             MediaType.TEXT_PLAIN,
             MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
@@ -413,8 +501,7 @@ class MediaTypeResponseTest {
   }
 
   private static void negotiateUtf8Text(Request request, Response response) {
-    var type =
-        response.negotiate(request, MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
+    var type = response.negotiate(MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
     response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
   }
 

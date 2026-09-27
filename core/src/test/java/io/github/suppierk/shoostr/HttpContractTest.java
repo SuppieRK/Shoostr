@@ -364,7 +364,7 @@ class HttpContractTest {
         Thread.startVirtualThread(
             () -> {
               try {
-                var response = new Response(sink, Options.defaults(), completion);
+                var response = response(sink, completion);
                 response.flushHooks(
                     () -> {},
                     () -> {
@@ -446,7 +446,7 @@ class HttpContractTest {
                     });
     var completion =
         Callback.from(successes::incrementAndGet, ignored -> failures.incrementAndGet());
-    var response = new Response(sink, Options.defaults(), completion);
+    var response = response(sink, completion);
     response.flushHooks(
         () -> events.add("before"),
         () -> {
@@ -460,6 +460,22 @@ class HttpContractTest {
     assertEquals(List.of("before", "after"), events);
     assertEquals(0, successes.get());
     assertEquals(1, failures.get());
+  }
+
+  private static Response response(org.eclipse.jetty.server.Response sink, Callback completion) {
+    var nativeRequest =
+        (org.eclipse.jetty.server.Request)
+            Proxy.newProxyInstance(
+                HttpContractTest.class.getClassLoader(),
+                new Class<?>[] {org.eclipse.jetty.server.Request.class},
+                (proxy, method, arguments) ->
+                    switch (method.getName()) {
+                      case "getMethod" -> "GET";
+                      case "getHeaders" -> HttpFields.EMPTY;
+                      case "addHttpStreamWrapper" -> null;
+                      default -> throw new UnsupportedOperationException(method.getName());
+                    });
+    return Request.create(nativeRequest, sink, Options.defaults(), completion).response();
   }
 
   private HttpResponse<String> send(String path) throws Exception {

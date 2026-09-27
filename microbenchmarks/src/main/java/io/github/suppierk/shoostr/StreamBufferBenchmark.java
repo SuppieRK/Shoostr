@@ -5,6 +5,7 @@ import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.util.Callback;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -39,6 +40,7 @@ public class StreamBufferBenchmark {
   private byte[] singleByte;
   private Options growthOptions;
   private org.eclipse.jetty.server.Response delegate;
+  private Request nativeRequest;
   private Response response;
   private Response growthResponse;
   private int bytesWritten;
@@ -60,6 +62,19 @@ public class StreamBufferBenchmark {
             defaults.maxResponseBytes(),
             GROWTH_BYTES,
             defaults.idleTimeoutMillis());
+    var inbound =
+        (Request)
+            Proxy.newProxyInstance(
+                StreamBufferBenchmark.class.getClassLoader(),
+                new Class<?>[] {Request.class},
+                (proxy, method, arguments) ->
+                    switch (method.getName()) {
+                      case "getMethod" -> "GET";
+                      case "getHeaders" -> HttpFields.EMPTY;
+                      case "addHttpStreamWrapper" -> null;
+                      default -> throw new UnsupportedOperationException(method.getName());
+                    });
+    nativeRequest = inbound;
     var headers = HttpFields.build();
     delegate =
         (org.eclipse.jetty.server.Response)
@@ -81,13 +96,19 @@ public class StreamBufferBenchmark {
                     });
   }
 
-  /** Creates a fresh response before each measured stream lifetime. */
+  /** Creates fresh bound pairs before each measured stream lifetime. */
   @Setup(Level.Invocation)
   public void setupInvocation() {
     bytesWritten = 0;
     writes = 0;
-    response = new Response(delegate, Options.defaults(), Callback.NOOP);
-    growthResponse = new Response(delegate, growthOptions, Callback.NOOP);
+    response =
+        io.github.suppierk.shoostr.Request.create(
+                nativeRequest, delegate, Options.defaults(), Callback.NOOP)
+            .response();
+    growthResponse =
+        io.github.suppierk.shoostr.Request.create(
+                nativeRequest, delegate, growthOptions, Callback.NOOP)
+            .response();
   }
 
   /**
