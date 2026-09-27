@@ -6,12 +6,11 @@
 var app = new Shoostr();
 var routes = app.routes();
 routes.get("/hello", (request, response) -> response.text("Hello"));
-routes.get("/progress", (request, response) -> {
-    var stream = response.startStream("text/plain; charset=utf-8");
-    stream.write("started\n");
-    stream.flush();
-    stream.write("finished\n");
-});
+routes.get("/progress", (request, response) -> response
+    .startStream("text/plain; charset=utf-8")
+    .write("started\n")
+    .flush()
+    .write("finished\n"));
 app.start();
 ```
 
@@ -98,15 +97,20 @@ Tests use JUnit Jupiter 5.14.4 through Gradle's standard `test` tasks, including
 
 Finite output is staged and sent after successful handler return. `startStream` commits headers immediately; full buffers or `flush()` emit during the handler. `Response.input(InputStream, contentType)` reads through the bounded streaming buffer and closes its supplied source on success or failure without staging full content. `Response.file(Path, contentType)` instead stages a Jetty resource transfer, so the framework owns reading and terminal completion after the handler returns. The framework sends remaining buffered data and terminates the stream when the handler returns; bodyless statuses and HEAD requests close supplied input sources without reading them. `Response` implements `AutoCloseable`, but application code must not close it. Request, response, and stream access is confined to the handler's thread and lifetime. A handler failure discards an uncommitted response and sends an error; a committed stream is aborted.
 
+Both `Stream.write` overloads and `flush()` return the same stream for chaining.
+Both `EventStream.send` overloads, `comment()` and `heartbeat()` return the same event
+writer. Chaining preserves buffering, blocking flushes, and error propagation; the
+framework still completes output when the handler returns. Consumers compiled against
+the earlier `void` signatures must recompile.
+
 `Routes.sse` registers a GET endpoint and composes under `Routes.path(...)`. It requires the
 handler to start a UTF-8 event stream or return 204 to stop browser reconnection:
 
 ```java
-app.routes().sse("/events", (request, response) -> {
-    var events = response.startEventStream();
-    events.send(SseEvent.of("ready").withEvent("update").withId("cursor-1"));
-    events.heartbeat();
-});
+app.routes().sse("/events", (request, response) -> response
+    .startEventStream()
+    .send(SseEvent.of("ready").withEvent("update").withId("cursor-1"))
+    .heartbeat());
 ```
 
 The event writer frames multiline data, comments, IDs and retry delays. `send`, `comment`, and

@@ -180,16 +180,16 @@ public final class Response implements AutoCloseable {
     this.delegate = delegate;
     this.options = options;
     this.completion = completion;
-    owner = Thread.currentThread();
+    this.owner = Thread.currentThread();
     this.head = head;
     this.request = request;
-    beforeFlush = () -> {};
-    afterFlush = () -> {};
-    flushCallback = false;
-    beforeFlushFailed = false;
-    headContentLength = -1;
-    state = State.OPEN;
-    body = EMPTY;
+    this.beforeFlush = () -> {};
+    this.afterFlush = () -> {};
+    this.flushCallback = false;
+    this.beforeFlushFailed = false;
+    this.headContentLength = -1;
+    this.state = State.OPEN;
+    this.body = EMPTY;
   }
 
   /**
@@ -340,6 +340,9 @@ public final class Response implements AutoCloseable {
    * Selects one candidate compatible with the request's Accept field and marks this response as
    * varying by Accept. The returned candidate only labels bytes; callers remain responsible for
    * generating and sending the representation. A missing Accept field selects the first candidate.
+   *
+   * <p>TODO Response should use builder method and tie Request and Response together explicitly
+   * during request creation, if possible
    *
    * @param request request whose Accept fields constrain the selection
    * @param candidates representations this handler can generate, in server preference order
@@ -2242,19 +2245,21 @@ public final class Response implements AutoCloseable {
      * Writes text as UTF-8, flushing at the configured capacity as needed.
      *
      * @param value text to write
+     * @return this stream
      * @throws IOException if a transport write fails
      */
-    public void write(String value) throws IOException {
-      write(value.getBytes(StandardCharsets.UTF_8));
+    public Stream write(String value) throws IOException {
+      return write(value.getBytes(StandardCharsets.UTF_8));
     }
 
     /**
      * Copies bytes into the bounded buffer, blocking on full-buffer writes.
      *
      * @param bytes bytes to write
+     * @return this stream
      * @throws IOException if a transport write fails
      */
-    public void write(byte[] bytes) throws IOException {
+    public Stream write(byte[] bytes) throws IOException {
       require(State.STREAMING);
       Objects.requireNonNull(bytes);
       int offset = 0;
@@ -2268,17 +2273,21 @@ public final class Response implements AutoCloseable {
           flush();
         }
       }
+
+      return this;
     }
 
     /**
      * Sends pending bytes and waits for the transport to finish using the buffer.
      *
+     * @return this stream
      * @throws IOException if the transport write fails
      */
-    public void flush() throws IOException {
+    public Stream flush() throws IOException {
       require(State.STREAMING);
       Response.this.write(false, buffer, used);
       used = 0;
+      return this;
     }
 
     /**
@@ -2317,19 +2326,21 @@ public final class Response implements AutoCloseable {
      * Sends one UTF-8 data event, including its dispatching blank line.
      *
      * @param data event payload; each line becomes a data field
+     * @return this event stream
      * @throws IOException if the transport write fails
      */
-    public void send(String data) throws IOException {
-      send(SseEvent.of(data));
+    public EventStream send(String data) throws IOException {
+      return send(SseEvent.of(data));
     }
 
     /**
      * Sends an event with optional name, ID and retry metadata.
      *
      * @param event immutable event to send
+     * @return this event stream
      * @throws IOException if the transport write fails
      */
-    public void send(SseEvent event) throws IOException {
+    public EventStream send(SseEvent event) throws IOException {
       Objects.requireNonNull(event);
       if (event.event() != null) {
         output.write("event: " + event.event() + "\n");
@@ -2345,28 +2356,33 @@ public final class Response implements AutoCloseable {
 
       writeData(event.data());
       output.flush();
+      return this;
     }
 
     /**
      * Sends one comment block without dispatching an event.
      *
      * @param value comment text, split safely at every event-stream line ending
+     * @return this event stream
      * @throws IOException if the transport write fails
      */
-    public void comment(String value) throws IOException {
+    public EventStream comment(String value) throws IOException {
       writeLines(Objects.requireNonNull(value), ": ");
       output.write("\n");
       output.flush();
+      return this;
     }
 
     /**
      * Sends a minimal comment heartbeat without dispatching an event.
      *
+     * @return this event stream
      * @throws IOException if the transport write fails
      */
-    public void heartbeat() throws IOException {
+    public EventStream heartbeat() throws IOException {
       output.write(":\n\n");
       output.flush();
+      return this;
     }
 
     /**

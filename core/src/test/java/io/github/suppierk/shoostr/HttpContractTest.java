@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -98,6 +99,18 @@ class HttpContractTest {
               }
 
               stream.write("last\n");
+            });
+    app.routes()
+        .get(
+            "/fluent-stream",
+            (req, res) -> {
+              var stream = res.startStream("text/plain; charset=utf-8");
+              assertSame(stream, stream.write("café"));
+              assertSame(stream, stream.write(new byte[] {'!'}));
+              assertSame(stream, stream.write(""));
+              assertSame(stream, stream.write(new byte[0]));
+              assertSame(stream, stream.flush());
+              stream.write("012345678").flush().write("tail");
             });
     app.routes()
         .get(
@@ -221,6 +234,14 @@ class HttpContractTest {
       releaseStream.countDown();
       assertEquals("last\n", new String(input.readAllBytes(), StandardCharsets.UTF_8));
     }
+  }
+
+  @Test
+  void chainsStreamWritesAndFlushesOnTheSameWriter() throws Exception {
+    var result = send("/fluent-stream");
+
+    assertEquals(200, result.statusCode());
+    assertEquals("café!012345678tail", result.body());
   }
 
   @Test
