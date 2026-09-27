@@ -1541,8 +1541,8 @@ public final class Shoostr implements Closeable {
         return true;
       }
 
-      response.header(HttpHeader.UPGRADE.asString(), "websocket");
-      response.header(
+      response.setHeader(HttpHeader.UPGRADE.asString(), "websocket");
+      response.setHeader(
           HttpHeader.SEC_WEBSOCKET_VERSION.asString(), WebSocketConstants.SPEC_VERSION_STRING);
       generated(
           statuses,

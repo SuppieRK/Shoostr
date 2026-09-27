@@ -46,7 +46,7 @@ class CorsTest {
       app.routes()
           .get(
               "/data",
-              (request, response) -> response.header("Vary", "Accept-Encoding").text("data"));
+              (request, response) -> response.setHeader("Vary", "Accept-Encoding").text("data"));
       app.start();
       var result = send(client, app, "GET", "Origin", "https://client.example");
       assertEquals(200, result.statusCode());
@@ -329,15 +329,17 @@ class CorsTest {
       app.cors(new CorsPolicy(Set.of("https://client.example")));
       Handler conflictingHeaders =
           (request, response) -> {
-            response.header("Vary", "Accept-Encoding, origin").addHeader("Vary", "Accept-Language");
             response
-                .header("Access-Control-Allow-Origin", "https://attacker.example")
+                .setHeader("Vary", "Accept-Encoding, origin")
+                .addHeader("Vary", "Accept-Language");
+            response
+                .setHeader("Access-Control-Allow-Origin", "https://attacker.example")
                 .addHeader("Access-Control-Allow-Origin", "*")
-                .header("Access-Control-Allow-Credentials", "true")
-                .header("Access-Control-Allow-Methods", "*")
-                .header("Access-Control-Allow-Headers", "*")
-                .header("Access-Control-Expose-Headers", "*")
-                .header("Access-Control-Max-Age", "999");
+                .setHeader("Access-Control-Allow-Credentials", "true")
+                .setHeader("Access-Control-Allow-Methods", "*")
+                .setHeader("Access-Control-Allow-Headers", "*")
+                .setHeader("Access-Control-Expose-Headers", "*")
+                .setHeader("Access-Control-Max-Age", "999");
           };
       app.onRequestHeaders(conflictingHeaders);
       app.exception(
@@ -492,7 +494,7 @@ class CorsTest {
         var client = HttpClient.newHttpClient()) {
       app.cors(new CorsPolicy(Set.of("https://client.example")));
       app.onRequestHeaders(
-          (request, response) -> response.header("X-Admission", "checked").text("staged"));
+          (request, response) -> response.setHeader("X-Admission", "checked").text("staged"));
       app.start();
       var result =
           send(
@@ -530,7 +532,7 @@ class CorsTest {
           .options(
               "/data",
               (request, response) ->
-                  response.header("Access-Control-Allow-Origin", "manual").text("explicit"));
+                  response.setHeader("Access-Control-Allow-Origin", "manual").text("explicit"));
       app.start();
       var result =
           enabled
@@ -715,7 +717,7 @@ class CorsTest {
               true,
               Set.of(),
               5));
-      app.onRequestHeaders((request, response) -> response.header("Vary", "*"));
+      app.onRequestHeaders((request, response) -> response.setHeader("Vary", "*"));
       if (expected == 405) {
         app.routes().post("/data", (request, response) -> response.text("post"));
       }
@@ -761,7 +763,7 @@ class CorsTest {
       app.cors(new CorsPolicy(Set.of("https://client.example")));
       app.onRequestHeaders(
           (request, response) -> {
-            response.header("Vary", vary);
+            response.setHeader("Vary", vary);
             throw new ForbiddenException();
           });
       app.start();

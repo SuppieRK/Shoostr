@@ -225,7 +225,7 @@ class CookieTest {
         .get(
             "/attributes",
             (request, response) ->
-                response.header("Expires", "Thu, 01 Jan 1970 00:00:00 GMT").cookie(configured));
+                response.setHeader("Expires", "Thu, 01 Jan 1970 00:00:00 GMT").cookie(configured));
     app.start();
     var result = send(request("/attributes"));
     assertEquals(200, result.statusCode());

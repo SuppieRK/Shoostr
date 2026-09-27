@@ -70,7 +70,7 @@ class HttpContractTest {
         .get(
             "/failure",
             (req, res) -> {
-              res.status(201).header("X-Leak", "secret").text("must not escape");
+              res.status(201).setHeader("X-Leak", "secret").text("must not escape");
               throw new IllegalArgumentException("secret details");
             });
     app.routes()
@@ -146,8 +146,8 @@ class HttpContractTest {
             "/invalid-type", (req, res) -> res.body("text/plain\r\nX-Leak: injected", new byte[0]));
     app.routes()
         .get("/invalid-stream-type", (req, res) -> res.startStream("text/plain\nX-Leak: injected"));
-    app.routes().get("/invalid-header", (req, res) -> res.header("Bad Header", "value"));
-    app.routes().get("/invalid-framing", (req, res) -> res.header("content-length", "12"));
+    app.routes().get("/invalid-header", (req, res) -> res.setHeader("Bad Header", "value"));
+    app.routes().get("/invalid-framing", (req, res) -> res.setHeader("content-length", "12"));
     app.routes()
         .get("/custom-type", (req, res) -> res.body("application/vnd.example+json", new byte[0]));
     app.start();

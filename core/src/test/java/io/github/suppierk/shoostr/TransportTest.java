@@ -509,7 +509,7 @@ class TransportTest {
               "/custom",
               (request, response) ->
                   response
-                      .header("Content-Encoding", "br")
+                      .setHeader("Content-Encoding", "br")
                       .body("application/octet-stream", new byte[] {1}));
       app.start();
       var base = "http://127.0.0.1:" + app.port();

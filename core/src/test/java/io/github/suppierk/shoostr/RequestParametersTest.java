@@ -113,7 +113,7 @@ class RequestParametersTest {
         BadRequestException.class,
         (failure, request, response) -> {
           assertThrows(BadRequestException.class, request::queryParamMap);
-          response.header("X-Handled", "bad-query").text("bad input");
+          response.setHeader("X-Handled", "bad-query").text("bad input");
         });
     app.routes()
         .get(

@@ -101,7 +101,7 @@ class LifecycleHooksTest {
     app.beforeRouteHandler(
         (request, response) -> {
           calls.add("first:" + request.routePattern().orElseThrow());
-          response.header("X-Staged", "discard");
+          response.setHeader("X-Staged", "discard");
           if (request.header("Authorization").isEmpty()) {
             throw new UnauthorizedException();
           }
@@ -115,7 +115,7 @@ class LifecycleHooksTest {
         UnauthorizedException.class,
         (failure, request, response) -> {
           calls.add("error");
-          response.header("WWW-Authenticate", "Bearer").text("denied");
+          response.setHeader("WWW-Authenticate", "Bearer").text("denied");
         });
     app.routes()
         .get(
@@ -640,7 +640,8 @@ class LifecycleHooksTest {
     var calls = new CopyOnWriteArrayList<String>();
     app.onRequestHeaders((request, response) -> calls.add("headers"));
     app.onRouteMatched((request, response) -> calls.add("matched"));
-    app.status(404, (request, response) -> response.header("X-Status", "custom").text("missing"));
+    app.status(
+        404, (request, response) -> response.setHeader("X-Status", "custom").text("missing"));
     app.start();
 
     var result = send("GET", "/missing");
@@ -657,8 +658,8 @@ class LifecycleHooksTest {
         405,
         (request, response) -> {
           response.removeHeader("Allow");
-          response.header("Allow", "POST");
-          response.header("X-Status", "custom-method").text("wrong method");
+          response.setHeader("Allow", "POST");
+          response.setHeader("X-Status", "custom-method").text("wrong method");
         });
     app.routes().get("/known", (request, response) -> response.text("ok"));
     app.start();
@@ -850,7 +851,7 @@ class LifecycleHooksTest {
     var flushed = new CountDownLatch(1);
     app.afterResponseFlush(
         (request, response) -> {
-          assertThrows(IllegalStateException.class, () -> response.header("X-Late", "value"));
+          assertThrows(IllegalStateException.class, () -> response.setHeader("X-Late", "value"));
           rejected.set(true);
           flushed.countDown();
         });

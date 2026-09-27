@@ -225,7 +225,7 @@ class BufferedRequestLifecycleTest {
         (failure, request, response) -> {
           rejections.add(failure);
           assertThrows(ContentTooLargeException.class, request::bodyBytes);
-          response.header("X-Peer-Port", peerPort(request));
+          response.setHeader("X-Peer-Port", peerPort(request));
           response.text("too large");
         });
     app.routes().post("/body", (request, response) -> response.text(request.bodyText()));

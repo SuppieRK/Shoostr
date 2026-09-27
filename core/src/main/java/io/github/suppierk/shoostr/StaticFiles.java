@@ -269,7 +269,7 @@ final class StaticFiles implements Closeable {
 
     try {
       response
-          .header(HttpHeaders.CACHE_CONTROL.value(), "no-cache")
+          .setHeader(HttpHeaders.CACHE_CONTROL.value(), "no-cache")
           .resource(
               selected.channel(),
               selected.length(),
@@ -299,7 +299,7 @@ final class StaticFiles implements Closeable {
     }
 
     response
-        .header(HttpHeaders.CACHE_CONTROL.value(), "no-cache")
+        .setHeader(HttpHeaders.CACHE_CONTROL.value(), "no-cache")
         .resource(resource, contentType(resource.getFileName()));
   }
 

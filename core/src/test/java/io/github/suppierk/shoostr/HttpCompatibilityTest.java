@@ -58,7 +58,7 @@ class HttpCompatibilityTest {
             method,
             "/dispatch",
             (request, response) ->
-                response.header("X-Handled-Method", request.method()).text(request.method()));
+                response.setHeader("X-Handled-Method", request.method()).text(request.method()));
     app.start();
     var response =
         send(
@@ -176,8 +176,8 @@ class HttpCompatibilityTest {
             (request, response) -> {
               assertTrue(request.header("X-Absent").isEmpty());
               response
-                  .header("X-Result", "obsolete")
-                  .header("x-result", request.header("x-ReQuEsT-vAlUe").orElseThrow())
+                  .setHeader("X-Result", "obsolete")
+                  .setHeader("x-result", request.header("x-ReQuEsT-vAlUe").orElseThrow())
                   .status(201)
                   .text("café");
             });
@@ -198,7 +198,7 @@ class HttpCompatibilityTest {
             "/tenant",
             (request, response) ->
                 response
-                    .header(tenant.value(), request.header(tenant.value()).orElseThrow())
+                    .setHeader(tenant.value(), request.header(tenant.value()).orElseThrow())
                     .text("ok"));
     app.start();
 

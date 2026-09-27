@@ -107,20 +107,20 @@ final class Pac4jContext implements WebContext {
     if (value.isEmpty()) {
       response.removeHeader(name);
     } else {
-      response.header(name, value);
+      response.setHeader(name, value);
     }
   }
 
   /** {@inheritDoc} */
   @Override
   public Optional<String> getResponseHeader(String name) {
-    return Optional.ofNullable(response.header(name));
+    return Optional.ofNullable(response.setHeader(name));
   }
 
   /** {@inheritDoc} */
   @Override
   public void setResponseContentType(String content) {
-    response.header(HttpHeaders.CONTENT_TYPE.value(), content);
+    response.setHeader(HttpHeaders.CONTENT_TYPE.value(), content);
   }
 
   /** {@inheritDoc} */

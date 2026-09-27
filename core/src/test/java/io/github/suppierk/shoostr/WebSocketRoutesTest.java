@@ -413,7 +413,7 @@ public class WebSocketRoutesTest {
       app.exception(
           BadRequestException.class,
           (failure, request, response) ->
-              response.status(422).header("X-Error-Mapped", "yes").text("mapped"));
+              response.status(422).setHeader("X-Error-Mapped", "yes").text("mapped"));
       app.afterRequest(
           result -> {
             notifications.incrementAndGet();

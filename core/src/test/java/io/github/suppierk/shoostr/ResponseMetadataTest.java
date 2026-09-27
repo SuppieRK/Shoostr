@@ -55,10 +55,10 @@ class ResponseMetadataTest {
             "/metadata",
             (request, response) -> {
               assertEquals(200, response.status());
-              assertNull(response.header("Absent"));
-              response.status(202).header("X-Value", "first");
+              assertNull(response.setHeader("Absent"));
+              response.status(202).setHeader("X-Value", "first");
               assertEquals(202, response.status());
-              assertEquals("first", response.header("x-value"));
+              assertEquals("first", response.setHeader("x-value"));
               response.text("ok");
             });
     app.start();
@@ -128,11 +128,11 @@ class ResponseMetadataTest {
               response
                   .addHeader("X-Value", "one")
                   .addHeader("x-value", "two")
-                  .header("X-VALUE", "replacement")
-                  .header("X-Keep", "kept");
+                  .setHeader("X-VALUE", "replacement")
+                  .setHeader("X-Keep", "kept");
               assertEquals(List.of("replacement"), response.headers("x-value"));
               response.removeHeader("x-VaLuE").removeHeader("Absent");
-              assertNull(response.header("X-Value"));
+              assertNull(response.setHeader("X-Value"));
               assertEquals(List.of(), response.headers("X-Value"));
               assertNull(response.headerMap().get("X-Value"));
               response.text("ok");
@@ -150,11 +150,11 @@ class ResponseMetadataTest {
         .get(
             "/invalid",
             (request, response) -> {
-              response.header("X-Value", "kept");
+              response.setHeader("X-Value", "kept");
               for (var invalid :
                   List.of("bad\rvalue", "bad\nvalue", "bad" + (char) 0, "bad" + (char) 127)) {
                 assertThrows(
-                    IllegalArgumentException.class, () -> response.header("X-Value", invalid));
+                    IllegalArgumentException.class, () -> response.setHeader("X-Value", invalid));
                 assertThrows(
                     IllegalArgumentException.class, () -> response.addHeader("X-Value", invalid));
                 assertEquals(List.of("kept"), response.headers("X-Value"));
@@ -174,7 +174,7 @@ class ResponseMetadataTest {
         .get(
             "/framing",
             (request, response) -> {
-              response.header("X-Value", "kept");
+              response.setHeader("X-Value", "kept");
               for (var name :
                   List.of(
                       "",
@@ -183,16 +183,16 @@ class ResponseMetadataTest {
                       "bad\r\nname",
                       "content-length",
                       "TRANSFER-ENCODING")) {
-                assertThrows(IllegalArgumentException.class, () -> response.header(name, "x"));
+                assertThrows(IllegalArgumentException.class, () -> response.setHeader(name, "x"));
                 assertThrows(IllegalArgumentException.class, () -> response.addHeader(name, "x"));
                 assertThrows(IllegalArgumentException.class, () -> response.removeHeader(name));
               }
               assertThrows(NullPointerException.class, () -> response.addHeader(null, "x"));
               assertThrows(NullPointerException.class, () -> response.removeHeader(null));
-              assertThrows(NullPointerException.class, () -> response.header("X-Value", null));
+              assertThrows(NullPointerException.class, () -> response.setHeader("X-Value", null));
               assertThrows(NullPointerException.class, () -> response.addHeader("X-Value", null));
-              response.header("X-Tab", "a\tb").text("ok");
-              assertEquals("a\tb", response.header("X-Tab"));
+              response.setHeader("X-Tab", "a\tb").text("ok");
+              assertEquals("a\tb", response.setHeader("X-Tab"));
             });
     app.start();
     var result = send("/framing");
@@ -210,7 +210,7 @@ class ResponseMetadataTest {
             "/stream-metadata",
             (request, response) -> {
               retained.set(response);
-              response.status(202).header("X-Value", "kept");
+              response.status(202).setHeader("X-Value", "kept");
               assertFalse(response.isCommitted());
 
               try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -219,7 +219,7 @@ class ResponseMetadataTest {
                         () -> {
                           assertThrows(IllegalStateException.class, response::status);
                           assertThrows(
-                              IllegalStateException.class, () -> response.header("X-Value"));
+                              IllegalStateException.class, () -> response.setHeader("X-Value"));
                           assertThrows(
                               IllegalStateException.class, () -> response.headers("X-Value"));
                           assertThrows(IllegalStateException.class, response::headerMap);
@@ -236,7 +236,7 @@ class ResponseMetadataTest {
               var stream = response.startStream("text/plain");
               assertTrue(response.isCommitted());
               assertEquals(202, response.status());
-              assertEquals("kept", response.header("X-Value"));
+              assertEquals("kept", response.setHeader("X-Value"));
               assertEquals(List.of("kept"), response.headers("X-Value"));
               assertEquals(List.of("kept"), response.headerMap().get("x-value"));
               assertThrows(IllegalStateException.class, () -> response.addHeader("X-Value", "bad"));
@@ -249,7 +249,7 @@ class ResponseMetadataTest {
     assertEquals("streamed", result.body());
     var closedResponse = retained.get();
     assertThrows(IllegalStateException.class, closedResponse::status);
-    assertThrows(IllegalStateException.class, () -> closedResponse.header("X-Value"));
+    assertThrows(IllegalStateException.class, () -> closedResponse.setHeader("X-Value"));
     assertThrows(IllegalStateException.class, () -> closedResponse.headers("X-Value"));
     assertThrows(IllegalStateException.class, closedResponse::headerMap);
     assertThrows(IllegalStateException.class, closedResponse::isCommitted);
@@ -266,7 +266,7 @@ class ResponseMetadataTest {
               response
                   .text("obsolete")
                   .redirect("/next?value=%2F#top")
-                  .header("X-After", "continued");
+                  .setHeader("X-After", "continued");
               assertFalse(response.isCommitted());
               assertEquals(302, response.status());
               entered.countDown();
@@ -344,7 +344,7 @@ class ResponseMetadataTest {
         .get(
             "/invalid-redirect",
             (request, response) -> {
-              response.status(202).header("Location", "/original").text("kept");
+              response.status(202).setHeader("Location", "/original").text("kept");
               for (var location :
                   List.of(
                       "",
@@ -357,7 +357,7 @@ class ResponseMetadataTest {
                       "https://example.test:65536/")) {
                 assertThrows(IllegalArgumentException.class, () -> response.redirect(location));
                 assertEquals(202, response.status());
-                assertEquals("/original", response.header("Location"));
+                assertEquals("/original", response.setHeader("Location"));
               }
               for (var code :
                   List.of(
@@ -413,7 +413,7 @@ class ResponseMetadataTest {
             (request, response) -> {
               var stream = response.startStream("text/plain");
               assertThrows(IllegalStateException.class, () -> response.redirect("/late"));
-              assertNull(response.header("Location"));
+              assertNull(response.setHeader("Location"));
               stream.write("original");
             });
     app.routes()

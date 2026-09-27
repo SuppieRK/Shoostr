@@ -474,7 +474,7 @@ public final class Response implements AutoCloseable {
   public Response attachment(Path source, String contentType, String filename) throws IOException {
     var disposition = attachmentDisposition(filename);
     file(source, contentType);
-    return header(HttpHeaders.CONTENT_DISPOSITION.value(), disposition);
+    return setHeader(HttpHeaders.CONTENT_DISPOSITION.value(), disposition);
   }
 
   /**
@@ -721,7 +721,7 @@ public final class Response implements AutoCloseable {
    * @return first value, or null when absent
    * @throws IllegalStateException if accessed outside the response thread or lifetime
    */
-  public @Nullable String header(String name) {
+  public @Nullable String setHeader(String name) {
     checkReadable();
     return delegate.getHeaders().get(Objects.requireNonNull(name));
   }
@@ -780,7 +780,7 @@ public final class Response implements AutoCloseable {
    * @throws IllegalStateException if the response is no longer open for mutation
    */
   public Response disableCompression() {
-    return header(HttpHeaders.CONTENT_ENCODING.value(), IDENTITY_ENCODING);
+    return setHeader(HttpHeaders.CONTENT_ENCODING.value(), IDENTITY_ENCODING);
   }
 
   /**
@@ -791,7 +791,7 @@ public final class Response implements AutoCloseable {
    * @return this response
    * @throws IllegalArgumentException if the name or value is invalid or the field controls framing
    */
-  public Response header(String name, String value) {
+  public Response setHeader(String name, String value) {
     require(State.OPEN);
     validateHeaderName(name);
     validateHeaderValue(value);
@@ -947,7 +947,7 @@ public final class Response implements AutoCloseable {
       throw new IllegalArgumentException("Invalid redirect destination");
     }
 
-    header(HttpHeaders.LOCATION.value(), destination.toASCIIString());
+    setHeader(HttpHeaders.LOCATION.value(), destination.toASCIIString());
     status(code.value());
     if (fileSelected) {
       resourceContent = null;

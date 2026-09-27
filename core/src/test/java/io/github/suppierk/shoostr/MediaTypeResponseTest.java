@@ -70,7 +70,7 @@ class MediaTypeResponseTest {
               (_, response) -> {
                 response
                     .status(202)
-                    .header("Vary", "Origin")
+                    .setHeader("Vary", "Origin")
                     .body(MediaType.APPLICATION_JSON, "\"kept\"".getBytes(StandardCharsets.UTF_8));
                 assertThrows(
                     NullPointerException.class, () -> response.negotiate((MediaType) null));
@@ -226,7 +226,7 @@ class MediaTypeResponseTest {
           .get(
               "/wildcard",
               (request, response) -> {
-                response.header("Vary", "*");
+                response.setHeader("Vary", "*");
                 var type = response.negotiate(MediaType.APPLICATION_JSON);
                 response.body(type, new byte[] {1});
               });
