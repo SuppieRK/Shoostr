@@ -305,8 +305,10 @@ public final class Response implements AutoCloseable {
    *
    * @param value response text
    * @return this response
+   * @throws NullPointerException if value is null
    */
   public Response text(String value) {
+    Objects.requireNonNull(value);
     return body(TEXT_CONTENT_TYPE, value.getBytes(StandardCharsets.UTF_8));
   }
 

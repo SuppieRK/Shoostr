@@ -11,6 +11,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -65,6 +66,25 @@ class ResponseMetadataTest {
     assertEquals(202, result.statusCode());
     assertEquals("first", result.headers().firstValue("X-Value").orElseThrow());
     assertEquals("ok", result.body());
+  }
+
+  @Test
+  @SuppressWarnings("NullAway") // Deliberately verifies rejection of an invalid public API input.
+  void rejectsNullTextWithoutChangingStagedResponse() throws Exception {
+    app.routes()
+        .get(
+            "/null-text",
+            (request, response) -> {
+              response
+                  .status(202)
+                  .body("application/json", "\"kept\"".getBytes(StandardCharsets.UTF_8));
+              assertThrows(NullPointerException.class, () -> response.text(null));
+            });
+    app.start();
+    var result = send("/null-text");
+    assertEquals(202, result.statusCode());
+    assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
+    assertEquals("\"kept\"", result.body());
   }
 
   @Test
