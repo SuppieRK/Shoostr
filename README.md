@@ -127,7 +127,7 @@ app.routes().websocket("/chat/{room}", (request, upgrade) -> {
     if (request.webSocketProtocols().contains("chat.v1")) {
         upgrade.setAcceptedSubProtocol("chat.v1");
     }
-    return new ChatListener(request.pathParam("room"));
+    return new ChatListener(request.pathParam("room").orElseThrow());
 });
 ```
 
@@ -239,7 +239,7 @@ and an optional pac4j `Authorizer`:
 var client = new HeaderClient("Authorization", "Bearer ", jwtAuthenticator);
 var security = new Pac4j(client, "Bearer", authorizer);
 app.routes().protect(security, secured ->
-    secured.get("/me", (request, response) -> response.text(Objects.requireNonNull(request.principal()).getName())));
+    secured.get("/me", (request, response) -> response.text(request.principal().orElseThrow().getName())));
 ```
 
 Import `io.github.suppierk.shoostr.pac4j.Pac4j`. Configure the client, authenticator, and authorizer
@@ -348,7 +348,7 @@ app.afterRequest(outcome -> {
 });
 ```
 
-`authorize` and `metrics` represent application code, not bundled integrations. `Request.routePattern()` exposes the original composed template, such as `/accounts/{accountId}/orders/{id}`, for route-aware policy and bounded metric labels. It returns null without a selected endpoint and follows the existing request thread/lifetime rules. The template is retained at registration, not reconstructed per request. Never substitute a concrete request URL when a metric's route template is absent; normalize unfamiliar methods and failure labels in the chosen metrics adapter.
+`authorize` and `metrics` represent application code, not bundled integrations. `Request.routePattern()` exposes the original composed template, such as `/accounts/{accountId}/orders/{id}`, for route-aware policy and bounded metric labels. It returns `Optional.empty()` without a selected endpoint and follows the existing request thread/lifetime rules. The template is retained at registration, not reconstructed per request. Never substitute a concrete request URL when a metric's route template is absent; normalize unfamiliar methods and failure labels in the chosen metrics adapter.
 
 `beforeRouteHandler(Handler)` runs gates in registration order after matching and the known Content-Length limit check. Gates are skipped for generated 404/405 responses. They may read bounded request data and stage finite output; setting status/body does not skip the endpoint. Throwing an exception skips subsequent gates and the endpoint, then invokes the existing global error handling. Gate headers/body are cleared on failure, so a 401 challenge belongs in its exception callback. Gates cannot start streams or close the response. Error handlers retain their existing streaming capabilities.
 
@@ -372,7 +372,7 @@ Query and form access stays explicit and separate:
 
 ```java
 app.routes().post("/orders", (request, response) -> {
-    String firstTag = request.queryParam("tag");
+    Optional<String> firstTag = request.queryParam("tag");
     List<String> allTags = request.queryParams("tag");
     Map<String, List<String>> fields = request.formParamMap();
     List<String> requestIds = request.headers("X-Request-Id");
@@ -380,7 +380,7 @@ app.routes().post("/orders", (request, response) -> {
 });
 ```
 
-`queryParam` / `formParam` return the first value or null; `queryParams` / `formParams` return all values in arrival order or an empty list. `queryParamMap` / `formParamMap` expose deeply immutable snapshots. Parameter names are case-sensitive. Both parsers decode UTF-8 percent escapes once and turn `+` into a space. Empty names and values are retained; empty pairs between `&` separators are ignored. `headers(name)` returns immutable raw field values with case-insensitive name lookup and does not split commas. `header(name)` still returns the first value.
+`queryParam` / `formParam` return an Optional containing the first value, or empty when absent; `queryParams` / `formParams` return all values in arrival order or an empty list. `queryParamMap` / `formParamMap` expose deeply immutable snapshots. Parameter names are case-sensitive. Both parsers decode UTF-8 percent escapes once and turn `+` into a space. Empty names and values are retained; empty pairs between `&` separators are ignored. `headers(name)` returns immutable raw field values with case-insensitive name lookup and does not split commas. `header(name)` still returns the first value.
 
 Parsing is lazy and cached. Forms support `application/x-www-form-urlencoded` with absent or UTF-8 charset metadata (including Java's UTF-8 aliases), and multipart text fields. Multipart files use `request.file(name)` or `request.files(name)`; `Upload.content()` is handler-lifetime only and `persistTo(Path)` transfers content to application ownership. Multipart defaults are 10 MiB total, 5 MiB per part, 100 parts, 8 KiB headers and 16 KiB in memory per part; `Options.withMultipart(MultipartOptions)` overrides them. Multipart and raw body access are mutually exclusive. Missing/unsupported Content-Type or charset produces `UnsupportedMediaTypeException` (415) on form access; malformed form data produces `BadRequestException` (400), and size limits produce `ContentTooLargeException` (413). Failures never expose partial maps.
 
@@ -396,7 +396,7 @@ routes.path("/api", api -> {
         orders.get((request, response) -> response.text("all orders"));
         orders.post(OrderHandlers::create);
         orders.path("/{id}", order -> {
-            order.get((request, response) -> response.text(request.pathParam("id")));
+            order.get((request, response) -> response.text(request.pathParam("id").orElseThrow()));
             order.patch(OrderHandlers::update);
             order.delete(OrderHandlers::delete);
         });
@@ -414,7 +414,7 @@ routes.route(HttpMethods.PROPFIND, "/properties", PropertyHandlers::find);
 
 **Literal segments win over parameter segments at each path position**, regardless of registration order. A literal branch that cannot complete the full path and method falls back to a matching parameter branch. Nested callbacks preserve their ordinary execution order. If no endpoint accepts the method, a matching path produces 405 and the sorted union of allowed methods; otherwise the result is 404.
 
-`{name}` matches one nonempty segment. Names may contain ASCII letters, digits, underscores and hyphens, beginning with a letter or underscore. Parent-group names are available through `request.pathParam(name)` in descendants. Values are extracted on demand and UTF-8 percent-decoded once; plus signs remain literal. Unknown parameter names throw `IllegalArgumentException`; access from another thread or after handler return throws `IllegalStateException`. Matching uses the path provided by Jetty's existing URI handling; the transport's URI validation remains in effect.
+`{name}` matches one nonempty segment. Names may contain ASCII letters, digits, underscores and hyphens, beginning with a letter or underscore. Parent-group names are available through `request.pathParam(name)` in descendants. Values are extracted on demand and UTF-8 percent-decoded once; plus signs remain literal. Unknown parameter names and access before route selection return `Optional.empty()`; access from another thread or after handler return throws `IllegalStateException`. Matching uses the path provided by Jetty's existing URI handling; the transport's URI validation remains in effect.
 
 Duplicate parameter names in a composed path and equivalent patterns for the same method are rejected during registration (`GET /orders/{id}` conflicts with `GET /orders/{name}`). Different methods may use different names. Partial-segment parameters, regex constraints, `<catch-all>` and `*` syntax are not supported in this version.
 
@@ -527,7 +527,7 @@ and [RFC 9110 HEAD semantics](https://www.rfc-editor.org/rfc/rfc9110.html#sectio
 
 Sessions are opt-in. `app.sessions()` installs Jetty 12.1.11's core session handler with an
 in-memory, nonpersistent store. `request.session(false)` looks up without creating;
-`request.session(true)` creates lazily before response commitment and returns Jetty's `Session`
+`request.session(true)` creates lazily before response commitment and returns an `Optional<Session>` containing Jetty's `Session`
 for attributes, per-session idle expiry and invalidation. Call `request.renewSessionId()` after
 login or a privilege change, before response commitment. It preserves attributes and changes the browser cookie. On logout,
 invalidate the session and expire the cookie with `response.removeCookie("JSESSIONID")` (or the
@@ -572,12 +572,12 @@ and [OWASP CSRF guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cross-S
 
 ## Cookies
 
-Request headers and cookies are parsed into deeply immutable maps during request construction, after native Jetty customization and before application hooks. Accessors share those snapshots and remain handler-confined. `request.cookie(name)` returns the first value or null; `cookies(name)` returns every occurrence, and `cookieMap()` returns `Map<String, List<String>>` containing all values. Cookie names are case-sensitive; plus signs and percent sequences are literal. Incoming parsing follows Jetty's configured cookie compliance policy; its default RFC6265 policy can discard malformed cookies and remove outer quotes. A configured strict policy rejects malformed cookies before application hooks run, even when the handler never reads cookies. Construction failures are rendered by Jetty and reported to completion observers; application exception handlers require a constructed Request and do not run for these failures.
+Request headers and cookies are parsed into deeply immutable maps during request construction, after native Jetty customization and before application hooks. Accessors share those snapshots and remain handler-confined. `request.cookie(name)` returns an `Optional` containing the first value, or empty when absent; `cookies(name)` returns every occurrence, and `cookieMap()` returns `Map<String, List<String>>` containing all values. Cookie names are case-sensitive; plus signs and percent sequences are literal. Incoming parsing follows Jetty's configured cookie compliance policy; its default RFC6265 policy can discard malformed cookies and remove outer quotes. A configured strict policy rejects malformed cookies before application hooks run, even when the handler never reads cookies. Construction failures are rendered by Jetty and reported to completion observers; application exception handlers require a constructed Request and do not run for these failures.
 
 ```java
 app.routes().get("/preferences", (request, response) -> {
   var theme = request.cookie("theme");
-  response.cookie(new Cookie("theme", theme == null ? "light" : theme)
+  response.cookie(new Cookie("theme", theme.orElse("light"))
       .withHttpOnly(true)
       .withSameSite(Cookie.SameSite.LAX));
   response.text("saved");
@@ -590,7 +590,11 @@ Use the dependency-free [`Cookie` value](http/README.md#cookies) from `io.github
 
 ## Request metadata and local state
 
-`queryString()` exposes the encoded query without its `?`: null when absent, empty when the target ends in `?`. It does not parse parameter values. `headerMap()` returns the deeply immutable, case-insensitive snapshot captured at request construction, preserving separate repeated values. `header(name)` and `headers(name)` read that same snapshot; later changes made by custom native wrappers do not affect it. `pathParamMap()` snapshots all named captures, including composed path groups, using the same single percent-decoding step as `pathParam(name)`.
+Request accessors for potentially absent values return non-null JDK `Optional` objects. This includes named query/path/form values, headers, cookies, uploads, session, principal, attributes, route pattern, URI scheme/authority/server name, and socket/client addresses. Present empty strings remain present; malformed input, null names, and request thread/lifetime violations still throw. Lists and maps remain non-null collections, with empty collections representing absence.
+
+This changes the source and binary interface: use `.orElseThrow()` where a value is required, `.orElse(defaultValue)` for a default, and `.map(...)` or `.ifPresent(...)` for conditional use. No nullable compatibility aliases are provided.
+
+`queryString()` exposes the encoded query without its `?`: `Optional.empty()` when absent, `Optional.of("")` when the target ends in `?`. It does not parse parameter values. `headerMap()` returns the deeply immutable, case-insensitive snapshot captured at request construction, preserving separate repeated values. `header(name)` and `headers(name)` read that same snapshot; later changes made by custom native wrappers do not affect it. `pathParamMap()` snapshots all named captures, including composed path groups, using the same single percent-decoding step as `pathParam(name)`.
 
 | Accessors | Meaning |
 | --- | --- |
@@ -610,10 +614,10 @@ app.beforeRouteHandler((request, response) -> {
   request.attribute("request-label", "application-value");
 });
 app.routes().get("/me", (request, response) ->
-    response.text(request.principal().getName()));
+    response.text(request.principal().orElseThrow().getName()));
 ```
 
-`authenticate` is application code that returns an identity or rejects the request; the framework adds no credential parsing or provider here. `principal()` starts null, and `principal(null)` clears it. `attribute(name)` returns an Object or null; `attribute(name, value)` replaces a binding and null removes it. Names are case-sensitive. `attributeMap()` is an immutable snapshot of bindings; values and Principal objects remain application-owned references, not deep copies or automatically thread-safe objects. Attribute storage is allocated only when needed, and framework finalization drops its state references.
+`authenticate` is application code that returns an identity or rejects the request; the framework adds no credential parsing or provider here. `principal()` starts empty, and `principal(null)` clears it. `attribute(name)` returns an `Optional<Object>`; `attribute(name, value)` replaces a binding and null removes it. Names are case-sensitive. `attributeMap()` is an immutable snapshot of bindings; values and Principal objects remain application-owned references, not deep copies or automatically thread-safe objects. Attribute storage is allocated only when needed, and framework finalization drops its state references.
 
 All accessors and mutations require the live handler thread, including during global error handling or an active stream. Retained immutable snapshots remain readable after completion; retained Request objects do not. Concurrent requests have independent state.
 

@@ -1345,7 +1345,7 @@ public final class Shoostr implements Closeable {
         }
       }
 
-      var routePattern = observation == null ? null : request.routePattern();
+      var routePattern = observation == null ? null : request.routePattern().orElse(null);
       if (observation != null) {
         observation.closeScopes();
       }

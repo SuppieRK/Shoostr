@@ -84,10 +84,10 @@ public final class Csrf {
    * @throws IllegalStateException if sessions are not enabled
    */
   public String token(Request request) {
-    var session = Objects.requireNonNull(request).session(true);
-    if (session == null) {
-      throw new IllegalStateException("CSRF requires enabled sessions");
-    }
+    var session =
+        Objects.requireNonNull(request)
+            .session(true)
+            .orElseThrow(() -> new IllegalStateException("CSRF requires enabled sessions"));
 
     synchronized (session) {
       var current = session.getAttribute(ATTRIBUTE);
@@ -124,10 +124,7 @@ public final class Csrf {
       throw new ForbiddenException();
     }
 
-    Session session = request.session(false);
-    if (session == null) {
-      throw new ForbiddenException();
-    }
+    Session session = request.session(false).orElseThrow(ForbiddenException::new);
 
     List<String> presented = presented(request);
     if (presented.size() != 1) {
@@ -158,7 +155,7 @@ public final class Csrf {
     var headers = request.headers(HEADER);
     var type =
         HttpField.getValueParameters(
-            request.header(HttpHeaders.CONTENT_TYPE.value()), new HashMap<>());
+            request.header(HttpHeaders.CONTENT_TYPE.value()).orElse(null), new HashMap<>());
     if (!MediaType.APPLICATION_FORM_URLENCODED.value().equalsIgnoreCase(type)
         && !"multipart/form-data".equalsIgnoreCase(type)) {
       return headers;

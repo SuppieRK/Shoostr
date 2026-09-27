@@ -21,7 +21,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
-import java.util.Objects;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.jetty.http.HttpTester;
@@ -234,8 +233,7 @@ class BufferedRequestLifecycleTest {
   }
 
   private static String peerPort(Request request) {
-    return Integer.toString(
-        Objects.requireNonNull((InetSocketAddress) request.remoteAddress()).getPort());
+    return Integer.toString(((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort());
   }
 
   private static void connect(Socket socket, int port) throws IOException {

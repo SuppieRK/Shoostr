@@ -27,6 +27,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -45,7 +46,8 @@ import org.jspecify.annotations.Nullable;
 /**
  * Inbound data scoped to the route handler and its application-wide error handler on the same
  * thread. Headers and cookies are immutable construction-time snapshots. Body reads are lazy,
- * bounded, and cached; access ends after framework finalization.
+ * bounded, and cached; access ends after framework finalization. Potentially absent values are
+ * returned as non-null JDK Optionals; a present empty string is distinct from absence.
  */
 public final class Request {
   // Java 25 readNBytes(int) starts with this much temporary storage.
@@ -126,18 +128,18 @@ public final class Request {
    * are available only when enabled on the application.
    *
    * @param create whether an absent session should be created
-   * @return the session, or null when absent or session support is disabled
+   * @return the session, or empty when absent or session support is disabled
    * @throws IllegalStateException if creation is requested after response commitment
    */
-  public @Nullable Session session(boolean create) {
+  public Optional<Session> session(boolean create) {
     check();
     var existing = delegate.getSession(false);
     if (existing != null || !create) {
-      return existing;
+      return Optional.ofNullable(existing);
     }
 
     response.checkSessionCreation();
-    return delegate.getSession(true);
+    return Optional.ofNullable(delegate.getSession(true));
   }
 
   /**
@@ -193,32 +195,32 @@ public final class Request {
    * Reads the request URI scheme. Absolute request targets can supply this value; it does not prove
    * transport security. Proxy headers do not alter it by default.
    *
-   * @return scheme supplied by the transport
+   * @return scheme supplied by the transport, or empty when unavailable
    */
-  public String scheme() {
+  public Optional<String> scheme() {
     check();
-    return delegate.getHttpURI().getScheme();
+    return Optional.ofNullable(delegate.getHttpURI().getScheme());
   }
 
   /**
    * Reads the transport-normalized request authority, retaining IPv6 brackets. A scheme's default
    * port can be omitted even when present in Host. This is distinct from the local socket address.
    *
-   * @return authority represented by the transport URI
+   * @return authority represented by the transport URI, or empty when unavailable
    */
-  public String authority() {
+  public Optional<String> authority() {
     check();
-    return delegate.getHttpURI().getAuthority();
+    return Optional.ofNullable(delegate.getHttpURI().getAuthority());
   }
 
   /**
    * Reads the logical server host from the request authority, with the transport's fallback.
    *
-   * @return logical host; IPv6 literals retain brackets
+   * @return logical host, or empty when unavailable; IPv6 literals retain brackets
    */
-  public String serverName() {
+  public Optional<String> serverName() {
     check();
-    return org.eclipse.jetty.server.Request.getServerName(delegate);
+    return Optional.ofNullable(org.eclipse.jetty.server.Request.getServerName(delegate));
   }
 
   /**
@@ -257,21 +259,23 @@ public final class Request {
    * Reads the actual transport peer, bypassing logical/proxy address wrappers. The returned JDK
    * address can be retained after this request ends and does not trigger reverse DNS lookup.
    *
-   * @return direct remote socket address, or null if the transport does not expose one
+   * @return direct remote socket address, or empty if the transport does not expose one
    */
-  public @Nullable SocketAddress remoteAddress() {
+  public Optional<SocketAddress> remoteAddress() {
     check();
-    return delegate.getConnectionMetaData().getConnection().getEndPoint().getRemoteSocketAddress();
+    return Optional.ofNullable(
+        delegate.getConnectionMetaData().getConnection().getEndPoint().getRemoteSocketAddress());
   }
 
   /**
    * Reads the actual local transport endpoint, independently of the requested authority.
    *
-   * @return direct local socket address, or null if the transport does not expose one
+   * @return direct local socket address, or empty if the transport does not expose one
    */
-  public @Nullable SocketAddress localAddress() {
+  public Optional<SocketAddress> localAddress() {
     check();
-    return delegate.getConnectionMetaData().getConnection().getEndPoint().getLocalSocketAddress();
+    return Optional.ofNullable(
+        delegate.getConnectionMetaData().getConnection().getEndPoint().getLocalSocketAddress());
   }
 
   /**
@@ -298,44 +302,47 @@ public final class Request {
   /**
    * Reads the effective client address, defaulting to the direct physical IP peer.
    *
-   * @return IP socket address, or null when unavailable
+   * @return IP socket address, or empty when unavailable
    */
-  public @Nullable InetSocketAddress clientAddress() {
+  public Optional<InetSocketAddress> clientAddress() {
     check();
     if (effectiveUrl != null) {
-      return clientAddress;
+      return Optional.ofNullable(clientAddress);
     }
 
-    var address = remoteAddress();
-    return address instanceof InetSocketAddress inet ? inet : null;
+    return remoteAddress()
+        .filter(InetSocketAddress.class::isInstance)
+        .map(InetSocketAddress.class::cast);
   }
 
   /**
    * Reads the original composed route template, without substituting captured values.
    *
-   * @return named route template, or null if no endpoint was selected
+   * @return named route template, or empty if no endpoint was selected
    * @throws IllegalStateException if accessed outside the handler thread or lifetime
    */
-  public @Nullable String routePattern() {
+  public Optional<String> routePattern() {
     check();
-    return endpoint == null ? null : endpoint.routePattern();
+    return endpoint == null ? Optional.empty() : Optional.of(endpoint.routePattern());
   }
 
   /**
    * Reads a named single-segment path parameter from the selected route.
    *
    * @param name parameter name, including names inherited from parent groups
-   * @return UTF-8 percent-decoded value; literal plus signs remain plus signs
-   * @throws IllegalArgumentException if the selected route has no such parameter
+   * @return UTF-8 percent-decoded value, or empty when no selected route declares the name; literal
+   *     plus signs remain plus signs
+   * @throws IllegalArgumentException if the parameter's encoding is invalid
    * @throws IllegalStateException if accessed outside the handler's thread or lifetime
    */
-  public String pathParam(String name) {
+  public Optional<String> pathParam(String name) {
     check();
-    if (endpoint == null) {
-      throw new IllegalArgumentException("No route parameters are available");
+    Objects.requireNonNull(name);
+    if (endpoint == null || !endpoint.parameters().containsKey(name)) {
+      return Optional.empty();
     }
 
-    return endpoint.parameter(path(), name);
+    return Optional.of(endpoint.parameter(path(), name));
   }
 
   /**
@@ -361,22 +368,22 @@ public final class Request {
   /**
    * Reads the query component without decoding, including its original percent escapes.
    *
-   * @return raw query without the question mark, or null when absent
+   * @return raw query without the question mark, or empty when absent
    */
-  public @Nullable String queryString() {
+  public Optional<String> queryString() {
     check();
-    return delegate.getHttpURI().getQuery();
+    return Optional.ofNullable(delegate.getHttpURI().getQuery());
   }
 
   /**
    * Reads the first UTF-8 query value for a case-sensitive decoded name.
    *
    * @param name decoded parameter name
-   * @return first value, or null when absent
+   * @return first value, or empty when absent; an empty submitted value remains present
    */
-  public @Nullable String queryParam(String name) {
+  public Optional<String> queryParam(String name) {
     var values = queryParams(name);
-    return values.isEmpty() ? null : values.getFirst();
+    return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
   }
 
   /**
@@ -410,12 +417,12 @@ public final class Request {
    * Reads the first UTF-8 form value for a case-sensitive decoded name.
    *
    * @param name decoded parameter name
-   * @return first value, or null when absent
+   * @return first value, or empty when absent
    * @throws IOException if input fails
    */
-  public @Nullable String formParam(String name) throws IOException {
+  public Optional<String> formParam(String name) throws IOException {
     var values = formParams(name);
-    return values.isEmpty() ? null : values.getFirst();
+    return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
   }
 
   /**
@@ -469,11 +476,11 @@ public final class Request {
    * Reads the first value for a header.
    *
    * @param name case-insensitive field name
-   * @return the field value, or null when absent
+   * @return the field value, or empty when absent
    */
-  public @Nullable String header(String name) {
+  public Optional<String> header(String name) {
     var values = headers(name);
-    return values.isEmpty() ? null : values.getFirst();
+    return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
   }
 
   /**
@@ -513,11 +520,11 @@ public final class Request {
    * Reads the first cookie with the exact case-sensitive name, without URL decoding.
    *
    * @param name cookie name
-   * @return first value, or null when absent
+   * @return first value, or empty when absent
    */
-  public @Nullable String cookie(String name) {
+  public Optional<String> cookie(String name) {
     var values = cookies(name);
-    return values.isEmpty() ? null : values.getFirst();
+    return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
   }
 
   /**
@@ -547,11 +554,11 @@ public final class Request {
    * Reads the identity explicitly assigned by application authentication logic. The framework does
    * not infer an identity from request headers or verify credentials in this accessor.
    *
-   * @return application principal, or null when none was assigned
+   * @return application principal, or empty when none was assigned
    */
-  public @Nullable Principal principal() {
+  public Optional<Principal> principal() {
     check();
-    return principal;
+    return Optional.ofNullable(principal);
   }
 
   /**
@@ -571,12 +578,12 @@ public final class Request {
    * Reads an application-owned value stored for this request. Keys are case-sensitive.
    *
    * @param name attribute key
-   * @return stored value, or null when absent
+   * @return stored value, or empty when absent
    */
-  public @Nullable Object attribute(String name) {
+  public Optional<Object> attribute(String name) {
     check();
     Objects.requireNonNull(name);
-    return attributes == null ? null : attributes.get(name);
+    return attributes == null ? Optional.empty() : Optional.ofNullable(attributes.get(name));
   }
 
   /**
@@ -731,15 +738,15 @@ public final class Request {
   }
 
   /**
-   * Reads the first multipart upload with the exact field name, or null when absent.
+   * Reads the first multipart upload with the exact field name, or empty when absent.
    *
    * @param name exact multipart field name
-   * @return first upload, or null
+   * @return first upload, or empty
    * @throws IOException if multipart input cannot be parsed
    */
-  public @Nullable Upload file(String name) throws IOException {
+  public Optional<Upload> file(String name) throws IOException {
     var selected = files(name);
-    return selected.isEmpty() ? null : selected.getFirst();
+    return selected.isEmpty() ? Optional.empty() : Optional.of(selected.getFirst());
   }
 
   /**
@@ -953,7 +960,7 @@ public final class Request {
         MultiPartFormData.onParts(
             delegate,
             delegate,
-            Objects.requireNonNull(header(HttpHeaders.CONTENT_TYPE.value())),
+            header(HttpHeaders.CONTENT_TYPE.value()).orElseThrow(),
             multipartConfig(),
             Promise.Invocable.toPromise(parsed));
       } catch (RuntimeException failure) {
@@ -1137,7 +1144,8 @@ public final class Request {
   private boolean isMultipart() {
     try {
       var type =
-          HttpField.getValueParameters(header(HttpHeaders.CONTENT_TYPE.value()), new HashMap<>());
+          HttpField.getValueParameters(
+              header(HttpHeaders.CONTENT_TYPE.value()).orElse(null), new HashMap<>());
       return "multipart/form-data".equalsIgnoreCase(type);
     } catch (IllegalArgumentException _) {
       return false;
@@ -1175,7 +1183,9 @@ public final class Request {
     var parameters = new TreeMap<String, String>(String.CASE_INSENSITIVE_ORDER);
 
     try {
-      var type = HttpField.getValueParameters(header(HttpHeaders.CONTENT_TYPE.value()), parameters);
+      var type =
+          HttpField.getValueParameters(
+              header(HttpHeaders.CONTENT_TYPE.value()).orElse(null), parameters);
       if (!MediaType.APPLICATION_FORM_URLENCODED.value().equalsIgnoreCase(type)) {
         throw new UnsupportedMediaTypeException();
       }

@@ -11,6 +11,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
@@ -38,6 +39,11 @@ class RouteCompositionTest {
   @BeforeEach
   void start() throws Exception {
     app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
+    app.onRequestHeaders(
+        (request, response) -> {
+          assertTrue(request.pathParam("id").isEmpty());
+          assertTrue(request.routePattern().isEmpty());
+        });
     client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     app.routes()
         .path(
@@ -55,16 +61,26 @@ class RouteCompositionTest {
                                   (req, res) -> {
                                     retainedRequest.set(req);
                                     res.text(
-                                        req.pathParam("accountId") + ":" + req.pathParam("id"));
+                                        req.pathParam("accountId").orElseThrow()
+                                            + ":"
+                                            + req.pathParam("id").orElseThrow());
                                   })));
             });
     app.routes().path("v2/orders/", RouteCompositionTest::orders);
-    app.routes().get("/flat/{id}", (req, res) -> res.text(req.pathParam("id")));
+    app.routes()
+        .get(
+            "/flat/{id}",
+            (req, res) -> {
+              assertTrue(req.pathParam("missing").isEmpty());
+              res.text(req.pathParam("id").orElseThrow());
+            });
     app.routes()
         .path(
             "/order",
             group -> {
-              group.get("/{id}", (req, res) -> res.text("parameter:" + req.pathParam("id")));
+              group.get(
+                  "/{id}",
+                  (req, res) -> res.text("parameter:" + req.pathParam("id").orElseThrow()));
               group.get("/latest", (req, res) -> res.text("literal"));
               group.post("/latest", (req, res) -> res.text("post"));
             });
@@ -73,10 +89,13 @@ class RouteCompositionTest {
             "/reverse-order",
             group -> {
               group.get("/latest", (req, res) -> res.text("literal"));
-              group.get("/{id}", (req, res) -> res.text("parameter:" + req.pathParam("id")));
+              group.get(
+                  "/{id}",
+                  (req, res) -> res.text("parameter:" + req.pathParam("id").orElseThrow()));
             });
     app.routes().get("/fallback/fixed/x", (req, res) -> res.text("x"));
-    app.routes().get("/fallback/{name}/y", (req, res) -> res.text(req.pathParam("name")));
+    app.routes()
+        .get("/fallback/{name}/y", (req, res) -> res.text(req.pathParam("name").orElseThrow()));
     app.routes().route(HttpMethods.PROPFIND, "/properties", (req, res) -> res.text(req.method()));
     app.routes().route("PROPFIND", "/string-properties", (req, res) -> res.text(req.method()));
     app.routes()
@@ -84,7 +103,8 @@ class RouteCompositionTest {
             "/string",
             group -> {
               group.route("GET", (req, res) -> res.text("group"));
-              group.route("POST", "/{id}", (req, res) -> res.text(req.pathParam("id")));
+              group.route(
+                  "POST", "/{id}", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
               group.route(HttpMethods.DELETE, (req, res) -> res.status(204));
             });
     app.routes().path("/", root -> root.get((req, res) -> res.text("root")));
@@ -92,7 +112,7 @@ class RouteCompositionTest {
         .get(
             "/unknown-param",
             (req, res) -> {
-              assertThrows(IllegalArgumentException.class, () -> req.pathParam("missing"));
+              assertEquals(Optional.empty(), req.pathParam("missing"));
               res.text("checked");
             });
     app.start();
@@ -129,7 +149,7 @@ class RouteCompositionTest {
   void exposesParametersFromParentAndChildScopesWithHandlerLifetime() throws Exception {
     assertEquals("a:42", send("/api/accounts/a/orders/42", HttpMethods.GET).body());
     var closedRequest = retainedRequest.get();
-    assertThrows(IllegalStateException.class, () -> closedRequest.pathParam("id"));
+    assertThrows(IllegalStateException.class, () -> closedRequest.pathParam("id").orElseThrow());
     assertEquals("checked", send("/unknown-param", HttpMethods.GET).body());
   }
 
@@ -309,8 +329,8 @@ class RouteCompositionTest {
     orders.path(
         "/{id}",
         order -> {
-          order.get((req, res) -> res.text(req.pathParam("id")));
-          order.patch((req, res) -> res.text("update:" + req.pathParam("id")));
+          order.get((req, res) -> res.text(req.pathParam("id").orElseThrow()));
+          order.patch((req, res) -> res.text("update:" + req.pathParam("id").orElseThrow()));
           order.delete((req, res) -> res.status(204));
         });
   }

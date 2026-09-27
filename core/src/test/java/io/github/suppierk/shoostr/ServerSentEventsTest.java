@@ -310,14 +310,12 @@ class ServerSentEventsTest {
               "/events",
               (request, response) -> {
                 var previous = request.header(HttpHeaders.LAST_EVENT_ID.value());
-                if (previous != null) {
-                  lastEventId.set(previous);
-                }
+                previous.ifPresent(lastEventId::set);
 
                 response
                     .startEventStream()
                     .send(
-                        previous == null
+                        previous.isEmpty()
                             ? SseEvent.of("first").withId("cursor-1")
                             : SseEvent.of("current").withId(""));
               });

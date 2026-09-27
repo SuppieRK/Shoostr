@@ -350,11 +350,11 @@ class CorsTest {
           .get(
               "/data",
               (request, response) -> {
-                if ("error".equals(request.header("X-Test-Mode"))) {
+                if (request.header("X-Test-Mode").filter("error"::equals).isPresent()) {
                   throw new IllegalStateException("failure");
                 }
 
-                if ("stream".equals(request.header("X-Test-Mode"))) {
+                if (request.header("X-Test-Mode").filter("stream"::equals).isPresent()) {
                   response.startStream("text/plain").write("stream");
                 } else {
                   response.text("finite");
@@ -445,7 +445,7 @@ class CorsTest {
       app.onRequestHeaders(
           (request, response) -> {
             assertThrows(IllegalStateException.class, () -> response.startStream("text/plain"));
-            if (request.header("X-Deny") != null) {
+            if (request.header("X-Deny").isPresent()) {
               throw new ForbiddenException();
             }
           });
@@ -820,7 +820,7 @@ class CorsTest {
               "/raw",
               (request, response) -> {
                 executions.incrementAndGet();
-                response.text(Objects.requireNonNull(request.queryString()));
+                response.text(request.queryString().orElseThrow());
               });
       app.start();
 

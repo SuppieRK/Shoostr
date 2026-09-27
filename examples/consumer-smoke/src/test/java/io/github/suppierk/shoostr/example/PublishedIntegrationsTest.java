@@ -20,7 +20,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -52,8 +51,7 @@ class PublishedIntegrationsTest {
                                     "/secure",
                                     (request, response) ->
                                         response.text(
-                                            Objects.requireNonNull(request.principal())
-                                                .getName()))))) {
+                                            request.principal().orElseThrow().getName()))))) {
       var target = server.baseUri().resolve("secure");
       var missing =
           client.send(

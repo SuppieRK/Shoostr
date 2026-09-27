@@ -72,7 +72,7 @@ class LifecycleHooksTest {
     app.exception(
         NotFoundException.class,
         (failure, request, response) -> {
-          response.text(Objects.requireNonNull(request.routePattern()));
+          response.text(request.routePattern().orElseThrow());
         });
     app.routes()
         .path(
@@ -82,8 +82,10 @@ class LifecycleHooksTest {
                     "/orders/{id}",
                     (request, response) -> {
                       retained.set(request);
-                      assertEquals("/accounts/{accountId}/orders/{id}", request.routePattern());
-                      assertEquals("42", request.pathParam("id"));
+                      assertEquals(
+                          "/accounts/{accountId}/orders/{id}",
+                          request.routePattern().orElseThrow());
+                      assertEquals("42", request.pathParam("id").orElseThrow());
                       throw new NotFoundException();
                     }));
     app.start();
@@ -98,9 +100,9 @@ class LifecycleHooksTest {
     var calls = new CopyOnWriteArrayList<String>();
     app.beforeRouteHandler(
         (request, response) -> {
-          calls.add("first:" + request.routePattern());
+          calls.add("first:" + request.routePattern().orElseThrow());
           response.header("X-Staged", "discard");
-          if (request.header("Authorization") == null) {
+          if (request.header("Authorization").isEmpty()) {
             throw new UnauthorizedException();
           }
         });
@@ -616,7 +618,8 @@ class LifecycleHooksTest {
   void runsLiveStagesInRequestOrderForMatchedRoutes() throws Exception {
     var calls = new CopyOnWriteArrayList<String>();
     app.onRequestHeaders((request, response) -> calls.add("headers"));
-    app.onRouteMatched((request, response) -> calls.add("matched:" + request.routePattern()));
+    app.onRouteMatched(
+        (request, response) -> calls.add("matched:" + request.routePattern().orElseThrow()));
     app.beforeRouteHandler((request, response) -> calls.add("before"));
     app.routes()
         .get(

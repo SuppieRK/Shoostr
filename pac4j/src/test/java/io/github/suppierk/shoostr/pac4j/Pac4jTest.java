@@ -161,7 +161,8 @@ class Pac4jTest {
         var client = HttpClient.newHttpClient()) {
       app.exception(
           AuthenticationRequiredException.class,
-          (failure, request, response) -> response.text(String.valueOf(request.principal())));
+          (failure, request, response) ->
+              response.text(request.principal().map(Object::toString).orElse("null")));
       app.routes()
           .protect(
               new Pac4j(provider, "Basic"),
@@ -579,10 +580,12 @@ class Pac4jTest {
                   routes.get(
                       "/me",
                       (request, response) ->
-                          response.text(Objects.requireNonNull(request.principal()).getName())));
+                          response.text(request.principal().orElseThrow().getName())));
       app.routes()
           .get(
-              "/public", (request, response) -> response.text(String.valueOf(request.principal())));
+              "/public",
+              (request, response) ->
+                  response.text(request.principal().map(Object::toString).orElse("null")));
       app.start();
 
       var requests = new ArrayList<CompletableFuture<HttpResponse<String>>>();
@@ -643,7 +646,7 @@ class Pac4jTest {
                   routes.get(
                       "/me",
                       (request, response) ->
-                          response.text(Objects.requireNonNull(request.principal()).getName())));
+                          response.text(request.principal().orElseThrow().getName())));
       app.start();
 
       var uri = URI.create("http://127.0.0.1:" + app.port() + "/me");
@@ -748,7 +751,7 @@ class Pac4jTest {
                   routes.get(
                       "/me",
                       (request, response) ->
-                          response.text(Objects.requireNonNull(request.principal()).getName())));
+                          response.text(request.principal().orElseThrow().getName())));
       app.start();
 
       var request =

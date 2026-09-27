@@ -57,7 +57,12 @@ class ExceptionHandlerTest {
             response
                 .status(401)
                 .header(HttpHeaders.WWW_AUTHENTICATE.value(), "Bearer realm=\"api\"")
-                .text(request.method() + " " + request.pathParam("id") + " " + request.bodyText()));
+                .text(
+                    request.method()
+                        + " "
+                        + request.pathParam("id").orElseThrow()
+                        + " "
+                        + request.bodyText()));
     app.routes()
         .post(
             "/orders/{id}",
@@ -160,7 +165,8 @@ class ExceptionHandlerTest {
     app = new Shoostr(new Options("127.0.0.1", 0, 4, 1024, 8, 5000));
     app.exception(
         ContentTooLargeException.class,
-        (failure, request, response) -> response.text("too large: " + request.pathParam("id")));
+        (failure, request, response) ->
+            response.text("too large: " + request.pathParam("id").orElseThrow()));
     app.routes().post("/orders/{id}", (request, response) -> response.text("must not run"));
     app.start();
     var result =

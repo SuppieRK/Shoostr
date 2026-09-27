@@ -26,7 +26,7 @@ The target is complete framework feature coverage relative to Javalin and Jooby,
 
 | Contract | Current implementation and evidence | Javalin comparison | Disposition |
 | --- | --- | --- | --- |
-| Query/form value shape | First/null, repeated ordered values, case-sensitive names, separate query/form maps; deeply immutable returned collections. `RequestParametersTest`. | Similar first/list/map accessors. [Context][context], [request tests][requesttests] | Aligned basic API; local immutability is our own guarantee. |
+| Query/form value shape | First/empty Optional, repeated ordered values, case-sensitive names, separate query/form maps; deeply immutable returned collections. `RequestParametersTest`. | Similar first/list/map accessors. [Context][context], [request tests][requesttests] | Same value semantics; Optional results and collection immutability are chosen local interface differences. |
 | Query/form decoding | UTF-8, `+` → space, decode once, first equals delimiter; empty values/names preserved; empty `&` pairs ignored. | Request charset can influence decoding; empty split segments retained. [Context][context], [servlet utilities][servletutil], [encoding tests][encodingtests] | Different edge cases; retain deterministic UTF-8 and ignored empty pairs. |
 | Malformed parameters | Bad percent or UTF-8 rejects the entire accessed collection with400; no partial maps. | Malformed percent pairs can be omitted while other pairs survive. [Request tests][requesttests], [servlet utilities][servletutil] | Different intentional strictness. |
 | Form representations | UTF-8 URL-encoded and multipart text fields; `Upload` exposes repeated file parts and explicit persistence. Multipart and raw body access are exclusive; temporary parts close at transport completion. | Multipart supported; strict-content-type setting affects form handling. [Context][context], [HttpConfig][httpconfig] | Local bounded multipart contract; no built-in object conversion. |
@@ -125,7 +125,7 @@ Prefix and SameSite invariants follow [draft6265bis22](https://datatracker.ietf.
 
 `url/fullUrl/scheme/authority/serverName/serverPort` expose Jetty's parsed request URI metadata, which can incorporate client-supplied Host or an absolute target. Default ports may be removed and legacy missing Host uses the listener authority. `isSecure` instead reads the physical endpoint: Jetty's request-level flag is derived from URI scheme, which the absolute-target test demonstrated can say HTTPS on plain TCP. Direct local/remote addresses likewise bypass metadata wrappers. Verified against pinned [HttpConnection](https://github.com/jetty/jetty.project/blob/jetty-12.1.11/jetty-core/jetty-server/src/main/java/org/eclipse/jetty/server/internal/HttpConnection.java), [ChannelRequest](https://github.com/jetty/jetty.project/blob/jetty-12.1.11/jetty-core/jetty-server/src/main/java/org/eclipse/jetty/server/internal/HttpChannelState.java), and [ConnectionMetaData](https://github.com/jetty/jetty.project/blob/jetty-12.1.11/jetty-core/jetty-server/src/main/java/org/eclipse/jetty/server/ConnectionMetaData.java). These HTTP-only metadata tests are supplemented by native TLS coverage below.
 
-Attributes are application-owned Objects with null-as-removal; map snapshots freeze bindings without copying values. Principal is an explicitly assigned JDK Principal, null by default and clearable. Both are thread/lifetime confined and released by request finalization. Neither state nor identity is inferred from headers by these accessors; optional authentication and tracing adapters have separate contracts.
+Attributes are application-owned Objects with null-as-removal; map snapshots freeze bindings without copying values. Principal is an explicitly assigned JDK Principal, exposed as an empty Optional by default and clearable with a null setter input. Both are thread/lifetime confined and released by request finalization. Neither state nor identity is inferred from headers by these accessors; optional authentication and tracing adapters have separate contracts.
 
 ## Trusted reverse-proxy metadata
 
@@ -154,7 +154,7 @@ route gates and application-wide exception handlers under the normal request lif
 RFC 7239 elements are parsed in arrival order, including repeated field lines. Starting with the
 rightmost assertion from the trusted physical peer, the framework walks left only through trusted
 literal predecessors and selects client identity and origin from the same boundary element.
-Missing, `unknown`, or obfuscated identities stop traversal and yield a null client address. A
+Missing, `unknown`, or obfuscated identities stop traversal and yield an empty client-address Optional. A
 literal client without a supplied source port uses port 0; it never borrows the proxy's port.
 Malformed configured fields, duplicate parameters, unsupported schemes, empty elements, and more
 than 64 elements return 400 before gates and handlers. Header input is parsed as literals with
@@ -179,8 +179,8 @@ coverage is `TrustedProxyTest`; it does not prove firewall or reverse-proxy conf
 
 Sessions are disabled until `Shoostr.sessions()` or `Shoostr.sessions(Consumer<SessionHandler>)` is called
 before startup. The Jetty core `ContextHandler → SessionHandler` chain wraps the application's
-handler, and Shoostr owns its lifecycle. `Request.session(false)` returns null without creating a
-session; `session(true)` creates one before response commitment. Jetty's `Session` owns ID, attributes, per-session idle
+handler, and Shoostr owns its lifecycle. `Request.session(false)` returns an empty Optional without creating a
+session when none exists; `session(true)` creates one before response commitment. Jetty's `Session` owns ID, attributes, per-session idle
 expiry and invalidation. `Request.renewSessionId()` uses the current transport response and must
 run before commitment. The old ID stops resolving. Invalidating server state does not itself
 delete the browser cookie; the application also calls `Response.removeCookie` with the configured
@@ -249,3 +249,9 @@ connection into native TLS. `TransportTest` covers
 real HTTPS, ALPN, same-connection concurrent HTTP/2 streams, h2c, proxy metadata, gzip
 wire bytes, ranges, HEAD and startup cleanup. Sources: [Jetty server guide](https://jetty.org/docs/jetty/12.1/programming-guide/server/http.html)
 and [RFC 9110 section 8.6](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.6).
+
+## Optional request retrieval
+
+All17 potentially absent Request accessors return non-null JDK Optionals. Missing named path parameters and access before route selection return empty; null names still reject, and decoding failures remain failures. Present empty query, form, header and cookie values remain present. Raw query absence differs from an explicitly empty query. Native URI/address absence is represented without inventing metadata or changing Jetty fallbacks.
+
+Session creation restrictions, multipart ownership, body limits, parsing and handler confinement are unchanged. Attribute/principal setter nulls retain removal/clearing semantics; internal nullable state and RequestOutcome/Response interfaces are unaffected. This is a source and binary interface change without aliases.

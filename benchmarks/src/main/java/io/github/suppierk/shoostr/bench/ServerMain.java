@@ -451,14 +451,20 @@ public final class ServerMain {
                   orders -> {
                     orders.get(
                         "/latest", (req, res) -> res.body("text/plain;charset=utf-8", PLAIN));
-                    orders.get("/{id}", (req, res) -> res.text(req.pathParam("id")));
-                    orders.post("/{orderId}", (req, res) -> res.text(req.pathParam("orderId")));
+                    orders.get("/{id}", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
+                    orders.post(
+                        "/{orderId}",
+                        (req, res) -> res.text(req.pathParam("orderId").orElseThrow()));
                     orders.get("/fixed/details", (req, res) -> res.text("details"));
-                    orders.get("/{id}/events", (req, res) -> res.text(req.pathParam("id")));
+                    orders.get(
+                        "/{id}/events", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
                     orders.get(
                         "/{id}/items/{itemId}",
                         (req, res) ->
-                            res.text(req.pathParam("id") + "/" + req.pathParam("itemId")));
+                            res.text(
+                                req.pathParam("id").orElseThrow()
+                                    + "/"
+                                    + req.pathParam("itemId").orElseThrow()));
                     orders.get("/shadowed", (req, res) -> res.text("literal"));
                     orders.post("/latest", (req, res) -> res.text("latest"));
                   }));

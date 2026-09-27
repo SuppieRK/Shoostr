@@ -243,7 +243,7 @@ class StaticResourcesTest {
           .protect(
               (request, response) -> {
                 admissions.incrementAndGet();
-                if (!"Bearer allowed".equals(request.header("Authorization"))) {
+                if (!request.header("Authorization").filter("Bearer allowed"::equals).isPresent()) {
                   throw new UnauthorizedException();
                 }
               },

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.Cookie;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
@@ -57,12 +58,12 @@ class CookieTest {
         .get(
             "/cookies",
             (request, response) -> {
-              assertEquals("first", request.cookie("token"));
+              assertEquals("first", request.cookie("token").orElseThrow());
               assertEquals(List.of("first", "second"), request.cookies("token"));
-              assertEquals("upper", request.cookie("Token"));
-              assertEquals("", request.cookie("empty"));
-              assertEquals("a+b%2F", request.cookie("encoded"));
-              assertNull(request.cookie("missing"));
+              assertEquals("upper", request.cookie("Token").orElseThrow());
+              assertEquals("", request.cookie("empty").orElseThrow());
+              assertEquals("a+b%2F", request.cookie("encoded").orElseThrow());
+              assertTrue(request.cookie("missing").isEmpty());
               assertEquals(List.of(), request.cookies("missing"));
               assertEquals(List.of("first", "second"), request.cookieMap().get("token"));
               var cookieMap = request.cookieMap();
@@ -147,7 +148,7 @@ class CookieTest {
             (request, response) -> {
               retained.set(request);
               snapshot.set(request.cookieMap());
-              assertEquals("quoted", request.cookie("quoted"));
+              assertEquals("quoted", request.cookie("quoted").orElseThrow());
 
               try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                 executor
@@ -168,7 +169,7 @@ class CookieTest {
             "/empty",
             (request, response) -> {
               assertEquals(Map.of(), request.cookieMap());
-              assertNull(request.cookie("quoted"));
+              assertTrue(request.cookie("quoted").isEmpty());
               response.text("empty");
             });
     app.start();
@@ -460,7 +461,7 @@ class CookieTest {
         (failure, request, response) ->
             response
                 .status(409)
-                .cookie("mapped", Objects.requireNonNull(request.cookie("incoming")))
+                .cookie("mapped", request.cookie("incoming").orElseThrow())
                 .text("mapped"));
     app.routes()
         .get(
@@ -534,8 +535,7 @@ class CookieTest {
         .get(
             "/read",
             (request, response) -> {
-              var value = request.cookie("id");
-              response.text(value == null ? "missing" : value);
+              response.text(request.cookie("id").orElse("missing"));
             });
     app.routes().get("/delete", (request, response) -> response.removeCookie("id"));
     app.start();

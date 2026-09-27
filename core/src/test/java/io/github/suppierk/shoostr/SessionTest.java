@@ -14,7 +14,6 @@ import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -36,7 +35,7 @@ class SessionTest {
           .get(
               "/peek",
               (request, response) ->
-                  response.text(request.session(true) == null ? "disabled" : "created"));
+                  response.text(request.session(true).isEmpty() ? "disabled" : "created"));
       app.start();
       var result = send(client, app, "/peek", Optional.empty());
       assertEquals("disabled", result.body());
@@ -54,12 +53,13 @@ class SessionTest {
               "/peek",
               (request, response) -> {
                 var session = request.session(false);
-                response.text(session == null ? "absent" : (String) session.getAttribute("name"));
+                response.text(
+                    session.map(value -> (String) value.getAttribute("name")).orElse("absent"));
               })
           .get(
               "/create",
               (request, response) -> {
-                var session = Objects.requireNonNull(request.session(true));
+                var session = request.session(true).orElseThrow();
                 session.setAttribute("name", "alice");
                 response.text(session.getId());
               });
@@ -97,7 +97,7 @@ class SessionTest {
           .get(
               "/create",
               (request, response) -> {
-                Objects.requireNonNull(request.session(true)).setAttribute("name", "alice");
+                request.session(true).orElseThrow().setAttribute("name", "alice");
                 response.text("created");
               })
           .get("/renew", (request, response) -> response.text(request.renewSessionId()))
@@ -105,7 +105,8 @@ class SessionTest {
               "/peek",
               (request, response) -> {
                 var session = request.session(false);
-                response.text(session == null ? "absent" : (String) session.getAttribute("name"));
+                response.text(
+                    session.map(value -> (String) value.getAttribute("name")).orElse("absent"));
               });
       app.start();
 
@@ -132,16 +133,15 @@ class SessionTest {
       app.routes()
           .get(
               "/create",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.session(true)).getId()))
+              (request, response) -> response.text(request.session(true).orElseThrow().getId()))
           .get(
               "/peek",
               (request, response) ->
-                  response.text(request.session(false) == null ? "absent" : "present"))
+                  response.text(request.session(false).isEmpty() ? "absent" : "present"))
           .get(
               "/logout",
               (request, response) -> {
-                Objects.requireNonNull(request.session(false)).invalidate();
+                request.session(false).orElseThrow().invalidate();
                 response.text("logged out");
               });
       app.start();
@@ -171,8 +171,7 @@ class SessionTest {
       app.routes()
           .get(
               "/create",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.session(true)).getId()));
+              (request, response) -> response.text(request.session(true).orElseThrow().getId()));
       app.start();
 
       var cookie =
@@ -199,12 +198,11 @@ class SessionTest {
       app.routes()
           .get(
               "/create",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.session(true)).getId()))
+              (request, response) -> response.text(request.session(true).orElseThrow().getId()))
           .get(
               "/peek",
               (request, response) ->
-                  response.text(request.session(false) == null ? "absent" : "present"));
+                  response.text(request.session(false).isEmpty() ? "absent" : "present"));
       app.start();
       cookie =
           send(client, app, "/create", Optional.empty())
@@ -229,7 +227,7 @@ class SessionTest {
           .get(
               "/peek",
               (request, response) ->
-                  response.text(request.session(false) == null ? "absent" : "present"));
+                  response.text(request.session(false).isEmpty() ? "absent" : "present"));
       restarted.start();
       assertEquals("absent", send(client, restarted, "/peek", Optional.of(cookie)).body());
     }
@@ -247,8 +245,7 @@ class SessionTest {
       app.routes()
           .get(
               "/create",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.session(true)).getId()));
+              (request, response) -> response.text(request.session(true).orElseThrow().getId()));
       app.start();
       cookie =
           send(client, app, "/create", Optional.empty())
@@ -274,7 +271,7 @@ class SessionTest {
           .get(
               "/peek",
               (request, response) ->
-                  response.text(request.session(false) == null ? "absent" : "present"));
+                  response.text(request.session(false).isEmpty() ? "absent" : "present"));
       restarted.start();
       assertEquals("absent", send(client, restarted, "/peek", Optional.of(cookie)).body());
     }
@@ -292,7 +289,7 @@ class SessionTest {
           .get(
               "/start",
               (request, response) -> {
-                Objects.requireNonNull(request.session(true)).setAttribute("name", "alice");
+                request.session(true).orElseThrow().setAttribute("name", "alice");
                 response.cookie("discard", "unsafe");
                 throw new IllegalArgumentException("failure after session creation");
               })
@@ -300,7 +297,8 @@ class SessionTest {
               "/peek",
               (request, response) -> {
                 var session = request.session(false);
-                response.text(session == null ? "absent" : (String) session.getAttribute("name"));
+                response.text(
+                    session.map(value -> (String) value.getAttribute("name")).orElse("absent"));
               });
       app.start();
 
@@ -324,7 +322,7 @@ class SessionTest {
           .get(
               "/create",
               (request, response) -> {
-                Objects.requireNonNull(request.session(true)).setAttribute("name", "alice");
+                request.session(true).orElseThrow().setAttribute("name", "alice");
                 response.text("created");
               });
       app.start();
@@ -345,7 +343,8 @@ class SessionTest {
               "/peek",
               (request, response) -> {
                 var session = request.session(false);
-                response.text(session == null ? "absent" : (String) session.getAttribute("name"));
+                response.text(
+                    session.map(value -> (String) value.getAttribute("name")).orElse("absent"));
               });
       restarted.start();
       assertEquals("alice", send(client, restarted, "/peek", Optional.of(cookie)).body());
@@ -406,12 +405,11 @@ class SessionTest {
       app.routes()
           .get(
               "/create",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.session(true)).getId()))
+              (request, response) -> response.text(request.session(true).orElseThrow().getId()))
           .get(
               "/write/{key}",
               (request, response) -> {
-                var session = Objects.requireNonNull(request.session(false));
+                var session = request.session(false).orElseThrow();
                 ready.countDown();
                 if (!release.await(5, TimeUnit.SECONDS)) {
                   throw new IllegalStateException("Concurrent writers did not arrive");
@@ -425,9 +423,7 @@ class SessionTest {
               (request, response) ->
                   response.text(
                       Integer.toString(
-                          Objects.requireNonNull(request.session(false))
-                              .getAttributeNameSet()
-                              .size())));
+                          request.session(false).orElseThrow().getAttributeNameSet().size())));
       app.start();
       var cookie =
           send(client, app, "/create", Optional.empty())
@@ -463,8 +459,7 @@ class SessionTest {
       app.routes()
           .get(
               "/create",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.session(true)).getId()))
+              (request, response) -> response.text(request.session(true).orElseThrow().getId()))
           .get("/peek", (request, response) -> response.text("handled"));
       app.start();
       var first =

@@ -45,11 +45,11 @@ class NullAwayFixtureTest {
 
         import io.github.suppierk.shoostr.http.HttpHeaders;
         import io.github.suppierk.shoostr.http.HttpMethods;
-        import io.github.suppierk.shoostr.Request;
+        import io.github.suppierk.shoostr.Response;
 
         final class UnsafeNull {
-          static void reject(Request request) {
-            request.header("X-Request").trim();
+          static void reject(Response response) {
+            response.header("X-Response").trim();
           }
 
           static void acceptNullableInputs() {
@@ -66,7 +66,7 @@ class NullAwayFixtureTest {
             .buildAndFail();
 
     assertTrue(
-        result.getOutput().contains("[NullAway] dereferenced expression 'request.header"),
+        result.getOutput().contains("[NullAway] dereferenced expression 'response.header"),
         result.getOutput());
     assertFalse(result.getOutput().contains("[NullAway] passing @Nullable"), result.getOutput());
   }

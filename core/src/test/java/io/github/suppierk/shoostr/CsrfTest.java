@@ -12,7 +12,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.List;
-import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -271,7 +270,7 @@ class CsrfTest {
                 routes.post(
                     "/logout",
                     (request, response) -> {
-                      Objects.requireNonNull(request.session(false)).invalidate();
+                      request.session(false).orElseThrow().invalidate();
                       response.removeCookie("JSESSIONID").text("logged out");
                     });
               });

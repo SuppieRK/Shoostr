@@ -3,7 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
@@ -15,7 +15,6 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -86,7 +85,9 @@ class HttpCompatibilityTest {
   @ValueSource(strings = {"MiXeD", "M%C3%BCnchen", "one+two"})
   void preservesParameterValuesAtTheHttpBoundary(String raw) throws Exception {
     app.routes()
-        .get("/values/{item}", (request, response) -> response.text(request.pathParam("item")));
+        .get(
+            "/values/{item}",
+            (request, response) -> response.text(request.pathParam("item").orElseThrow()));
     app.start();
     String expected =
         switch (raw) {
@@ -107,7 +108,7 @@ class HttpCompatibilityTest {
             "/values/{item}",
             (request, response) -> {
               invoked.set(true);
-              response.text(request.pathParam("item"));
+              response.text(request.pathParam("item").orElseThrow());
             });
     app.start();
     assertEquals(400, send(request("/values/rate%25done").build()).statusCode());
@@ -173,10 +174,10 @@ class HttpCompatibilityTest {
         .get(
             "/headers",
             (request, response) -> {
-              assertNull(request.header("X-Absent"));
+              assertTrue(request.header("X-Absent").isEmpty());
               response
                   .header("X-Result", "obsolete")
-                  .header("x-result", Objects.requireNonNull(request.header("x-ReQuEsT-vAlUe")))
+                  .header("x-result", request.header("x-ReQuEsT-vAlUe").orElseThrow())
                   .status(201)
                   .text("café");
             });
@@ -197,7 +198,7 @@ class HttpCompatibilityTest {
             "/tenant",
             (request, response) ->
                 response
-                    .header(tenant.value(), Objects.requireNonNull(request.header(tenant.value())))
+                    .header(tenant.value(), request.header(tenant.value()).orElseThrow())
                     .text("ok"));
     app.start();
 

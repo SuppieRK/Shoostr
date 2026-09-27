@@ -66,7 +66,7 @@ final class TrustedProxy {
    * @throws BadRequestException if trusted forwarding metadata is malformed
    */
   void apply(Request request) {
-    if (!(request.remoteAddress() instanceof InetSocketAddress peer)
+    if (!(request.remoteAddress().orElse(null) instanceof InetSocketAddress peer)
         || !trusted.test(peer.getAddress())) {
       return;
     }
