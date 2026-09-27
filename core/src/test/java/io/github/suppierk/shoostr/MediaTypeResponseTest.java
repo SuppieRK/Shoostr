@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -26,6 +27,38 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 @Timeout(15)
 class MediaTypeResponseTest {
+  @ParameterizedTest
+  @MethodSource("nullAdditionalAcceptCases")
+  void treatsNullAdditionalCandidatesAsOnlyTheFirstCandidate(
+      String accept, int status, String body, List<String> vary) throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .get(
+              "/null-additional",
+              (_, response) -> {
+                var selected = response.negotiate(MediaType.APPLICATION_JSON, (MediaType[]) null);
+                assertSame(MediaType.APPLICATION_JSON, selected);
+                response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
+              });
+      app.start();
+      var outgoing =
+          HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/null-additional"))
+              .timeout(Duration.ofSeconds(3));
+      if (!accept.isEmpty()) {
+        outgoing.header("Accept", accept);
+      }
+
+      var result = client.send(outgoing.build(), HttpResponse.BodyHandlers.ofString());
+      assertEquals(status, result.statusCode());
+      assertEquals(body, result.body());
+      assertEquals(vary, result.headers().allValues("Vary"));
+      if (status == 200) {
+        assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
+      }
+    }
+  }
+
   @Test
   @SuppressWarnings("NullAway") // Deliberately verifies invalid inputs at the public API boundary.
   void rejectsNullNegotiationInputsWithoutChangingStagedResponse() throws Exception {
@@ -41,9 +74,6 @@ class MediaTypeResponseTest {
                     .body(MediaType.APPLICATION_JSON, "\"kept\"".getBytes(StandardCharsets.UTF_8));
                 assertThrows(
                     NullPointerException.class, () -> response.negotiate((MediaType) null));
-                assertThrows(
-                    NullPointerException.class,
-                    () -> response.negotiate(MediaType.APPLICATION_JSON, (MediaType[]) null));
                 assertThrows(
                     NullPointerException.class,
                     () ->
@@ -537,6 +567,14 @@ class MediaTypeResponseTest {
   private static void negotiateUtf8Text(Request request, Response response) {
     var type = response.negotiate(MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
     response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static Stream<Arguments> nullAdditionalAcceptCases() {
+    return Stream.of(
+        Arguments.of("", 200, "application/json", List.of("Accept")),
+        Arguments.of("application/json", 200, "application/json", List.of("Accept")),
+        Arguments.of("application/json;q=0", 406, "Not Acceptable", List.of("Accept")),
+        Arguments.of("bad", 400, "Bad Request", List.of()));
   }
 
   private static Stream<Arguments> acceptCases() {

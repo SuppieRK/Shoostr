@@ -305,7 +305,8 @@ response operations use that request without accepting a request argument. Negot
 uses its immutable header snapshot. The signature is
 `negotiate(MediaType first, MediaType... additional)`: at least one media type must be
 supplied. Consumers of the former request-taking or array-only signatures must update
-their calls and recompile. Null candidates and a null additional-candidates array are rejected.
+their calls and recompile. Null candidates are rejected; a null additional-candidates
+array means no additional candidates, just like the empty array supplied by `negotiate(first)`.
 
 For an endpoint that can produce more than one already-encoded representation, call
 `response.negotiate(first, additional...)` before setting bytes or starting a stream. It returns

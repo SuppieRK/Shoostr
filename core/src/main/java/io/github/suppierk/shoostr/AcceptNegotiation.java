@@ -20,19 +20,22 @@ final class AcceptNegotiation {
    *
    * @param fields repeated {@code Accept} field values in wire order
    * @param first most preferred representation
-   * @param additional other representations in server preference order
+   * @param additional other representations in server preference order, or null for none
    * @return original selected candidate, or null when every candidate is unacceptable
    * @throws BadRequestException if an {@code Accept} field is malformed
    */
-  static @Nullable MediaType select(List<String> fields, MediaType first, MediaType[] additional) {
+  static @Nullable MediaType select(
+      List<String> fields, MediaType first, MediaType @Nullable [] additional) {
     var ranges = ranges(fields);
     MediaType selected = first;
     int selectedQuality = quality(first, ranges);
-    for (var candidate : additional) {
-      var quality = quality(candidate, ranges);
-      if (quality > selectedQuality) {
-        selected = candidate;
-        selectedQuality = quality;
+    if (additional != null) {
+      for (var candidate : additional) {
+        var quality = quality(candidate, ranges);
+        if (quality > selectedQuality) {
+          selected = candidate;
+          selectedQuality = quality;
+        }
       }
     }
 
