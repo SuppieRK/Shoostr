@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 424: Failed Dependency.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#FAILED_DEPENDENCY
  */
+@SuppressWarnings("squid:S110")
 public class FailedDependencyException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

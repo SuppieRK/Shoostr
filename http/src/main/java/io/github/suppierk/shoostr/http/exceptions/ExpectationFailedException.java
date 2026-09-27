@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 417: Expectation Failed.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#EXPECTATION_FAILED
  */
+@SuppressWarnings("squid:S110")
 public class ExpectationFailedException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

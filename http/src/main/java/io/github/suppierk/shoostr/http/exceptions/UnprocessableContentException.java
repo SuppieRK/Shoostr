@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 422: Unprocessable Content.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#UNPROCESSABLE_CONTENT
  */
+@SuppressWarnings("squid:S110")
 public class UnprocessableContentException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

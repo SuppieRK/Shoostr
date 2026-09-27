@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import java.util.ArrayList;
@@ -17,10 +18,10 @@ final class AcceptNegotiation {
   /**
    * Selects the highest-quality compatible candidate, retaining caller order for a complete tie.
    *
-   * @param fields repeated Accept field values in wire order
+   * @param fields repeated {@code Accept} field values in wire order
    * @param candidates nonempty server-preference-ordered representations
    * @return original selected candidate, or null when every candidate is unacceptable
-   * @throws BadRequestException if an Accept field is malformed
+   * @throws BadRequestException if an {@code Accept} field is malformed
    */
   static @Nullable MediaType select(List<String> fields, MediaType[] candidates) {
     var ranges = ranges(fields);
@@ -46,7 +47,7 @@ final class AcceptNegotiation {
   private static List<Range> ranges(List<String> fields) {
     var ranges = new ArrayList<Range>();
     for (var field : fields) {
-      for (var item : split(field, ',', true)) {
+      for (var item : split(field, HttpCharacters.COMMA_SIGN, true)) {
         ranges.add(range(item));
       }
     }
@@ -80,26 +81,30 @@ final class AcceptNegotiation {
    * @return parsed range
    */
   private static Range range(String item) {
-    if (item.charAt(0) == ';') {
+    if (item.charAt(0) == HttpCharacters.SEMICOLON_SIGN) {
       throw malformed();
     }
 
-    var pieces = split(item, ';', true);
+    var pieces = split(item, HttpCharacters.SEMICOLON_SIGN, true);
     if (pieces.isEmpty()) {
       throw malformed();
     }
 
     var base = pieces.getFirst().trim();
-    int slash = base.indexOf('/');
-    if (slash < 1 || slash != base.lastIndexOf('/') || slash == base.length() - 1) {
+    int slash = base.indexOf(HttpCharacters.PATH_SEPARATOR);
+    if (slash < 1
+        || slash != base.lastIndexOf(HttpCharacters.PATH_SEPARATOR)
+        || slash == base.length() - 1) {
       throw malformed();
     }
 
     var type = base.substring(0, slash).toLowerCase(Locale.ROOT);
     var subtype = base.substring(slash + 1).toLowerCase(Locale.ROOT);
-    if (!("*".equals(type) || token(type))
-        || !("*".equals(subtype) || token(subtype))
-        || ("*".equals(type) && !"*".equals(subtype))) {
+    if (!(HttpCharacters.ASTERISK_STRING.equals(type) || HttpCharacters.isValidHttpToken(type))
+        || !(HttpCharacters.ASTERISK_STRING.equals(subtype)
+            || HttpCharacters.isValidHttpToken(subtype))
+        || (HttpCharacters.ASTERISK_STRING.equals(type)
+            && !HttpCharacters.ASTERISK_STRING.equals(subtype))) {
       throw malformed();
     }
 
@@ -114,9 +119,9 @@ final class AcceptNegotiation {
    * @return concrete representation
    */
   private static Representation representation(String value) {
-    var pieces = split(value, ';', false);
+    var pieces = split(value, HttpCharacters.SEMICOLON_SIGN, false);
     var base = pieces.getFirst().trim();
-    int slash = base.indexOf('/');
+    int slash = base.indexOf(HttpCharacters.PATH_SEPARATOR);
     return new Representation(
         base.substring(0, slash).trim().toLowerCase(Locale.ROOT),
         base.substring(slash + 1).trim().toLowerCase(Locale.ROOT),
@@ -135,14 +140,14 @@ final class AcceptNegotiation {
     boolean qualitySeen = false;
     for (int index = 1; index < pieces.size(); index++) {
       var parameter = pieces.get(index);
-      int equals = parameter.indexOf('=');
+      int equals = parameter.indexOf(HttpCharacters.EQUALS_SIGN);
       if (equals < 1) {
         throw malformed();
       }
 
       var name = parameter.substring(0, equals).toLowerCase(Locale.ROOT);
       var value = parameter.substring(equals + 1);
-      if (!token(name) || value.isEmpty()) {
+      if (!HttpCharacters.isValidHttpToken(name) || value.isEmpty()) {
         throw malformed();
       }
 
@@ -165,7 +170,7 @@ final class AcceptNegotiation {
    * @return quality in thousandths
    */
   private static int qualityParameter(String value, boolean alreadySeen) {
-    if (alreadySeen || value.charAt(0) == '"') {
+    if (alreadySeen || value.charAt(0) == HttpCharacters.DOUBLE_QUOTE) {
       throw malformed();
     }
 
@@ -180,7 +185,8 @@ final class AcceptNegotiation {
    * @param value raw parameter value
    */
   private static void putParameter(Map<String, String> values, String name, String value) {
-    var decoded = value.charAt(0) == '"' ? quoted(value) : tokenValue(value);
+    var decoded =
+        value.charAt(0) == HttpCharacters.DOUBLE_QUOTE ? quoted(value) : tokenValue(value);
     if (values.putIfAbsent(name, decoded) != null) {
       throw malformed();
     }
@@ -193,7 +199,7 @@ final class AcceptNegotiation {
    * @return decoded value
    */
   private static String quoted(String value) {
-    if (value.length() < 2 || value.charAt(value.length() - 1) != '"') {
+    if (value.length() < 2 || value.charAt(value.length() - 1) != HttpCharacters.DOUBLE_QUOTE) {
       throw malformed();
     }
 
@@ -201,16 +207,16 @@ final class AcceptNegotiation {
     boolean escaped = false;
     for (int index = 1; index < value.length() - 1; index++) {
       char character = value.charAt(index);
-      if ((character < 0x20 && character != '\t')
+      if ((character < 0x20 && character != HttpCharacters.TAB)
           || character == 0x7f
-          || (character == '"' && !escaped)) {
+          || (character == HttpCharacters.DOUBLE_QUOTE && !escaped)) {
         throw malformed();
       }
 
       if (escaped) {
         decoded.append(character);
         escaped = false;
-      } else if (character == '\\') {
+      } else if (character == HttpCharacters.BACKSLASH) {
         escaped = true;
       } else {
         decoded.append(character);
@@ -231,7 +237,7 @@ final class AcceptNegotiation {
    * @return validated value
    */
   private static String tokenValue(String value) {
-    if (!token(value)) {
+    if (!HttpCharacters.isValidHttpToken(value)) {
       throw malformed();
     }
 
@@ -249,7 +255,7 @@ final class AcceptNegotiation {
       return "1".equals(value) ? 1000 : 0;
     }
 
-    if (value.length() < 2 || value.charAt(1) != '.' || value.length() > 5) {
+    if (value.length() < 2 || value.charAt(1) != HttpCharacters.DOT || value.length() > 5) {
       throw malformed();
     }
 
@@ -283,9 +289,9 @@ final class AcceptNegotiation {
       char character = value.charAt(index);
       if (escaped) {
         escaped = false;
-      } else if (character == '\\' && quoted) {
+      } else if (character == HttpCharacters.BACKSLASH && quoted) {
         escaped = true;
-      } else if (character == '"') {
+      } else if (character == HttpCharacters.DOUBLE_QUOTE) {
         quoted = !quoted;
       } else if (character == separator && !quoted) {
         add(values, value.substring(start, index), ignoreEmpty);
@@ -322,30 +328,6 @@ final class AcceptNegotiation {
   }
 
   /**
-   * Tests the HTTP token grammar.
-   *
-   * @param value candidate token
-   * @return whether the input is a token
-   */
-  private static boolean token(String value) {
-    if (value.isEmpty()) {
-      return false;
-    }
-
-    for (int index = 0; index < value.length(); index++) {
-      char character = value.charAt(index);
-      if (!(character >= '0' && character <= '9')
-          && !(character >= 'A' && character <= 'Z')
-          && !(character >= 'a' && character <= 'z')
-          && "!#$%&'*+-.^_`|~".indexOf(character) < 0) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  /**
    * Creates the consistent strict malformed-field exception.
    *
    * @return malformed input error
@@ -364,10 +346,11 @@ final class AcceptNegotiation {
      * @throws IllegalArgumentException if quality is outside zero through one thousand
      */
     private Parameters {
-      values = Map.copyOf(values);
       if (quality < 0 || quality > 1000) {
         throw new IllegalArgumentException("Accept quality must be between zero and one");
       }
+
+      values = Map.copyOf(values);
     }
   }
 
@@ -416,8 +399,9 @@ final class AcceptNegotiation {
      * @return whether this range matches
      */
     private boolean matches(Representation representation) {
-      if (!("*".equals(type) || type.equals(representation.type))
-          || !("*".equals(subtype) || subtype.equals(representation.subtype))) {
+      if (!(HttpCharacters.ASTERISK_STRING.equals(type) || type.equals(representation.type))
+          || !(HttpCharacters.ASTERISK_STRING.equals(subtype)
+              || subtype.equals(representation.subtype))) {
         return false;
       }
 
@@ -451,11 +435,11 @@ final class AcceptNegotiation {
      * @return wildcard specificity score
      */
     private int specificity() {
-      if ("*".equals(type)) {
+      if (HttpCharacters.ASTERISK_STRING.equals(type)) {
         return 0;
       }
 
-      return "*".equals(subtype) ? 1 : 2;
+      return HttpCharacters.ASTERISK_STRING.equals(subtype) ? 1 : 2;
     }
 
     /**

@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 405: Method Not Allowed.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#METHOD_NOT_ALLOWED
  */
+@SuppressWarnings("squid:S110")
 public class MethodNotAllowedException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

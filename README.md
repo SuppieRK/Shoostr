@@ -287,6 +287,8 @@ Error headers belong in the callback, not in exception metadata or copied reques
 
 If the reason phrase exceeds `Options.maxResponseBytes`, core sends the selected status with an empty body. HEAD responses omit the body. After streaming has committed, an HTTP exception aborts the stream without changing the status, appending an error body, or flushing pending application bytes. Request-body limit failures use the public `ContentTooLargeException` and produce `413 Content Too Large`; known oversized requests are rejected before entering the handler, while limits reached during a body read can be caught by application code. Applications needing a custom body or headers can catch an HTTP exception and set the response explicitly before commitment.
 
+Buffered request-body reads close their input adapter on success or failure. Oversized bodies remain rejected on repeated access, including from an exception handler. Cleanup failures are suppressed under the original read or validation failure. Jetty handles unread content and connection reuse; a client that has not finished sending the request can receive the rejection with its connection closed.
+
 Finite completion hands the owned body buffer to Jetty's asynchronous write callback after closing application access. The HTTP request completes when that write succeeds or fails; the handler thread does not wait through a blocking adapter. Streaming writes still wait for transport completion before reusing their bounded buffer. The defensive copy of caller-supplied finite bodies remains in place.
 
 The default listener uses Jetty 12.1.11 HTTP/1.1 and virtual-thread handlers. Routes match literal and single-segment parameter patterns against Jetty's canonically encoded path, with 404/405 handling. Defaults bind loopback:8080, cap request reads and finite response bodies at 1 MiB, limit each decoded query or form to 1,000 pairs, buffer streaming output in 8 KiB, and use a 30-second connection idle timeout. Override these through `Options` or native Jetty callbacks for transport settings. Idle timeouts do not interrupt arbitrary application work. Shutdown requests interruption after native draining; this slice does not provide per-handler deadlines or global concurrency admission limits.
@@ -570,7 +572,7 @@ and [OWASP CSRF guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cross-S
 
 ## Cookies
 
-Request cookies are lazy and handler-confined. `request.cookie(name)` returns the first value or null; `cookies(name)` returns an immutable list of all occurrences, and `cookieMap()` returns an immutable first-value snapshot. Names are case-sensitive; plus signs and percent sequences are literal. Incoming parsing uses Jetty's RFC6265 compatibility policy, which can discard malformed cookies and remove outer quotes. Duplicate names are visible so application authentication code can reject ambiguity.
+Request headers and cookies are parsed into deeply immutable maps during request construction, after native Jetty customization and before application hooks. Accessors share those snapshots and remain handler-confined. `request.cookie(name)` returns the first value or null; `cookies(name)` returns every occurrence, and `cookieMap()` returns `Map<String, List<String>>` containing all values. Cookie names are case-sensitive; plus signs and percent sequences are literal. Incoming parsing follows Jetty's configured cookie compliance policy; its default RFC6265 policy can discard malformed cookies and remove outer quotes. A configured strict policy rejects malformed cookies before application hooks run, even when the handler never reads cookies. Construction failures are rendered by Jetty and reported to completion observers; application exception handlers require a constructed Request and do not run for these failures.
 
 ```java
 app.routes().get("/preferences", (request, response) -> {
@@ -588,7 +590,7 @@ Use the dependency-free [`Cookie` value](http/README.md#cookies) from `io.github
 
 ## Request metadata and local state
 
-`queryString()` exposes the encoded query without its `?`: null when absent, empty when the target ends in `?`. It does not parse parameter values. `headerMap()` returns a deeply immutable, case-insensitive snapshot of all parsed header fields, preserving separate repeated values. `pathParamMap()` snapshots all named captures, including composed path groups, using the same single percent-decoding step as `pathParam(name)`.
+`queryString()` exposes the encoded query without its `?`: null when absent, empty when the target ends in `?`. It does not parse parameter values. `headerMap()` returns the deeply immutable, case-insensitive snapshot captured at request construction, preserving separate repeated values. `header(name)` and `headers(name)` read that same snapshot; later changes made by custom native wrappers do not affect it. `pathParamMap()` snapshots all named captures, including composed path groups, using the same single percent-decoding step as `pathParam(name)`.
 
 | Accessors | Meaning |
 | --- | --- |

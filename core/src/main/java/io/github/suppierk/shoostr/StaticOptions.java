@@ -82,10 +82,10 @@ public final class StaticOptions {
   private static String validFileName(String fileName) {
     Objects.requireNonNull(fileName);
     if (fileName.isBlank()
-        || ".".equals(fileName)
-        || "..".equals(fileName)
+        || HttpCharacters.DOT_STRING.equals(fileName)
+        || HttpCharacters.PARENT_DIRECTORY.equals(fileName)
         || fileName.indexOf(HttpCharacters.PATH_SEPARATOR) >= 0
-        || fileName.indexOf('\\') >= 0
+        || fileName.indexOf(HttpCharacters.BACKSLASH) >= 0
         || fileName.indexOf('\u0000') >= 0) {
       throw new IllegalArgumentException("Expected a simple static-resource filename");
     }

@@ -19,10 +19,12 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.security.Principal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
@@ -42,7 +44,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Inbound data scoped to the route handler and its application-wide error handler on the same
- * thread. Body reads are lazy, bounded, and cached; access ends after framework finalization.
+ * thread. Headers and cookies are immutable construction-time snapshots. Body reads are lazy,
+ * bounded, and cached; access ends after framework finalization.
  */
 public final class Request {
   // Java 25 readNBytes(int) starts with this much temporary storage.
@@ -56,6 +59,8 @@ public final class Request {
   private final MultipartOptions multipartOptions;
   private final List<Upload> uploads;
   private final Thread owner;
+  private final Map<String, List<String>> headers;
+  private final Map<String, List<String>> cookies;
   private boolean finished;
   private byte @Nullable [] body;
   private @Nullable InputStream input;
@@ -65,7 +70,6 @@ public final class Request {
   private @Nullable Map<String, List<Upload>> files;
   private MultiPartFormData.@Nullable Parts multipart;
   private @Nullable CompletableFuture<MultiPartFormData.Parts> multipartPublished;
-  private @Nullable Map<String, List<String>> cookies;
   private @Nullable Map<String, Object> attributes;
   private @Nullable Principal principal;
   private @Nullable String effectiveUrl;
@@ -75,13 +79,16 @@ public final class Request {
   private boolean multipartClosed;
 
   /**
-   * Binds lazy request access to the handler thread and the configured read limit.
+   * Captures headers and cookies before application hooks, binding request access to the handler
+   * thread and the configured read limit. Native cookie policy can reject construction.
    *
    * @param delegate transport request whose input lifecycle remains owned by Jetty
    * @param response framework response used when renewing a session identifier
    * @param limit maximum buffered request-body size in bytes
    * @param maxParameters maximum decoded pairs per query or form
    * @param multipartOptions multipart parsing configuration
+   * @throws org.eclipse.jetty.http.HttpException.RuntimeException if native cookie policy rejects
+   *     malformed input
    */
   Request(
       org.eclipse.jetty.server.Request delegate,
@@ -94,10 +101,13 @@ public final class Request {
     this.limit = limit;
     this.maxParameters = maxParameters;
     this.multipartOptions = multipartOptions;
-    uploads = new ArrayList<>();
-    webSocketProtocols = List.of();
-    owner = Thread.currentThread();
-    representation = BodyRepresentation.UNREAD;
+    this.uploads = new ArrayList<>();
+    this.webSocketProtocols = List.of();
+    this.owner = Thread.currentThread();
+    this.representation = BodyRepresentation.UNREAD;
+    this.headers = parseHeaders(delegate);
+    this.cookies =
+        headers.containsKey(HttpHeaders.COOKIE.value()) ? parseCookies(delegate) : Map.of();
     org.eclipse.jetty.server.Request.addCompletionListener(delegate, _ -> closeMultipart());
   }
 
@@ -462,8 +472,8 @@ public final class Request {
    * @return the field value, or null when absent
    */
   public @Nullable String header(String name) {
-    check();
-    return delegate.getHeaders().get(name);
+    var values = headers(name);
+    return values.isEmpty() ? null : values.getFirst();
   }
 
   /**
@@ -474,7 +484,7 @@ public final class Request {
    */
   public List<String> headers(String name) {
     check();
-    return List.copyOf(delegate.getHeaders().getValuesList(Objects.requireNonNull(name)));
+    return headers.getOrDefault(Objects.requireNonNull(name), List.of());
   }
 
   /**
@@ -489,19 +499,14 @@ public final class Request {
   }
 
   /**
-   * Copies all received fields into a deeply immutable, case-insensitive snapshot. Repeated field
-   * lines retain their order and are not split at commas.
+   * Returns the deeply immutable, case-insensitive snapshot captured at construction, after native
+   * customization. Repeated field lines retain their order and are not split at commas.
    *
    * @return immutable names and raw value lists
    */
   public Map<String, List<String>> headerMap() {
     check();
-    Map<String, List<String>> fields = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-    for (var field : delegate.getHeaders()) {
-      fields.computeIfAbsent(field.getName(), ignored -> new ArrayList<>()).add(field.getValue());
-    }
-    fields.replaceAll((_, values) -> List.copyOf(values));
-    return Collections.unmodifiableMap(fields);
+    return headers;
   }
 
   /**
@@ -523,19 +528,19 @@ public final class Request {
    * @return immutable values, empty when absent
    */
   public List<String> cookies(String name) {
-    return cookieValues().getOrDefault(Objects.requireNonNull(name), List.of());
+    check();
+    return cookies.getOrDefault(Objects.requireNonNull(name), List.of());
   }
 
   /**
-   * Takes an immutable first-value snapshot, consistent with cookie(String). Parsing uses Jetty's
-   * RFC6265 compatibility policy; malformed cookies may be discarded and quoted values unquoted.
+   * Returns every cookie captured at request construction. Parsing follows Jetty's configured
+   * cookie policy; its default may discard malformed fragments and unquote values.
    *
-   * @return case-sensitive map with the first value for each name
+   * @return deeply immutable, case-sensitive map with values in arrival order
    */
-  public Map<String, String> cookieMap() {
-    var first = new LinkedHashMap<String, String>();
-    cookieValues().forEach((name, values) -> first.put(name, values.getFirst()));
-    return Collections.unmodifiableMap(first);
+  public Map<String, List<String>> cookieMap() {
+    check();
+    return cookies;
   }
 
   /**
@@ -640,14 +645,14 @@ public final class Request {
       throw new ContentTooLargeException();
     }
 
-    return java.util.Arrays.copyOf(body, body.length);
+    return Arrays.copyOf(body, body.length);
   }
 
   /**
    * Reads a bounded body while avoiding an oversized temporary array for short declared lengths.
-   * The adapter remains owned by the HTTP engine, including its input/draining lifecycle.
+   * Closes its adapter on every exit; Jetty handles unread content and connection reuse.
    *
-   * @return buffered body, including an oversized sentinel for repeatable limit rejection
+   * @return valid buffered body
    * @throws IOException if content ends prematurely or input fails
    * @throws ContentTooLargeException if the body exceeds the configured limit
    * @throws EOFException if the body ends before its declared length
@@ -659,36 +664,53 @@ public final class Request {
       throw new ContentTooLargeException();
     }
 
-    // Do not close this adapter: the HTTP engine owns request input/draining.
-    var source = Content.Source.asInputStream(delegate);
-    if (declaredLength >= 0 && declaredLength <= Math.min(limit, DIRECT_BODY_READ_LIMIT)) {
-      var exact = new byte[(int) declaredLength];
-      if (source.readNBytes(exact, 0, exact.length) != exact.length) {
+    try (var source = bufferedInput()) {
+      if (declaredLength >= 0 && declaredLength <= Math.min(limit, DIRECT_BODY_READ_LIMIT)) {
+        var exact = new byte[(int) declaredLength];
+        if (source.readNBytes(exact, 0, exact.length) != exact.length) {
+          throw new EOFException("Request body ended before its declared length");
+        }
+
+        if (source.read() != -1) {
+          throw new BadRequestException("Request body exceeds its declared length");
+        }
+
+        return exact;
+      }
+
+      var result = source.readNBytes(limit + 1);
+      if (result.length > limit) {
+        // Retain rejection before closing so cleanup cannot replace it or permit a repeated read.
+        body = result;
+        throw new ContentTooLargeException();
+      }
+
+      if (declaredLength >= 0 && result.length < declaredLength) {
         throw new EOFException("Request body ended before its declared length");
       }
 
-      if (source.read() != -1) {
+      if (declaredLength >= 0 && result.length > declaredLength) {
         throw new BadRequestException("Request body exceeds its declared length");
       }
 
-      return exact;
-    }
-
-    var result = source.readNBytes(limit + 1);
-    if (result.length > limit) {
-      // Cache the oversized sentinel so a repeated read cannot appear empty.
       return result;
     }
+  }
 
-    if (declaredLength >= 0 && result.length < declaredLength) {
-      throw new EOFException("Request body ended before its declared length");
-    }
-
-    if (declaredLength >= 0 && result.length > declaredLength) {
-      throw new BadRequestException("Request body exceeds its declared length");
-    }
-
-    return result;
+  /**
+   * Opens the buffered reader without allowing zero-length reads to fetch native content.
+   *
+   * @return adapter owned and closed by the buffered read operation
+   */
+  private InputStream bufferedInput() {
+    return new FilterInputStream(Content.Source.asInputStream(delegate)) {
+      /** Handles zero-length reads without accessing transport content. */
+      @Override
+      public int read(byte[] value, int offset, int length) throws IOException {
+        Objects.checkFromIndexSize(offset, length, value.length);
+        return length == 0 ? 0 : super.read(value, offset, length);
+      }
+    };
   }
 
   /**
@@ -1097,8 +1119,8 @@ public final class Request {
             || message.startsWith("max memory file size exceeded:")
             || message.startsWith("headers max length exceeded:")
             || message.startsWith("Form with too many keys")
-            || message.toLowerCase(java.util.Locale.ROOT).contains("too many parts")
-            || message.toLowerCase(java.util.Locale.ROOT).contains("headers size")) {
+            || message.toLowerCase(Locale.ROOT).contains("too many parts")
+            || message.toLowerCase(Locale.ROOT).contains("headers size")) {
           return true;
         }
       }
@@ -1195,24 +1217,45 @@ public final class Request {
   }
 
   /**
-   * Copies the transport's connection-cached cookie objects into a request-local immutable map.
+   * Groups effective header fields once while retaining case-insensitive lookup and arrival order.
    *
-   * @return repeated values separated by case-sensitive name
+   * @param delegate transport request after native customization
+   * @return deeply immutable header snapshot
    */
-  private Map<String, List<String>> cookieValues() {
-    check();
-    if (cookies == null) {
-      var parsed = new LinkedHashMap<String, List<String>>();
-      for (var cookie : org.eclipse.jetty.server.Request.getCookies(delegate)) {
-        parsed
-            .computeIfAbsent(cookie.getName(), ignored -> new ArrayList<>())
-            .add(cookie.getValue());
-      }
-      parsed.replaceAll((_, values) -> List.copyOf(values));
-      cookies = Collections.unmodifiableMap(parsed);
+  private static Map<String, List<String>> parseHeaders(org.eclipse.jetty.server.Request delegate) {
+    var nativeHeaders = delegate.getHeaders();
+    if (nativeHeaders.size() == 0) {
+      return Map.of();
     }
 
-    return cookies;
+    Map<String, List<String>> fields = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+    for (var field : nativeHeaders) {
+      fields.computeIfAbsent(field.getName(), ignored -> new ArrayList<>()).add(field.getValue());
+    }
+    fields.replaceAll((_, values) -> List.copyOf(values));
+    return Collections.unmodifiableMap(fields);
+  }
+
+  /**
+   * Captures native cookie parsing results without exposing transport-owned cached objects.
+   *
+   * @param delegate transport request after native customization
+   * @return repeated values separated by case-sensitive name
+   * @throws org.eclipse.jetty.http.HttpException.RuntimeException if native cookie policy rejects
+   *     malformed input
+   */
+  private static Map<String, List<String>> parseCookies(org.eclipse.jetty.server.Request delegate) {
+    var nativeCookies = org.eclipse.jetty.server.Request.getCookies(delegate);
+    if (nativeCookies.isEmpty()) {
+      return Map.of();
+    }
+
+    var parsed = new LinkedHashMap<String, List<String>>();
+    for (var cookie : nativeCookies) {
+      parsed.computeIfAbsent(cookie.getName(), ignored -> new ArrayList<>()).add(cookie.getValue());
+    }
+    parsed.replaceAll((_, values) -> List.copyOf(values));
+    return Collections.unmodifiableMap(parsed);
   }
 
   /**

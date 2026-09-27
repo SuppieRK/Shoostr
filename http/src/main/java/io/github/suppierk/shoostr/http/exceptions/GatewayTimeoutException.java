@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 504: Gateway Timeout.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#GATEWAY_TIMEOUT
  */
+@SuppressWarnings("squid:S110")
 public class GatewayTimeoutException extends HttpServerException {
   @Serial private static final long serialVersionUID = 1L;
 

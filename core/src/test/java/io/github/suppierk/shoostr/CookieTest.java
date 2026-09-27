@@ -2,7 +2,10 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.http.Cookie;
@@ -18,8 +21,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.eclipse.jetty.http.CookieCompliance;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -58,9 +64,11 @@ class CookieTest {
               assertEquals("a+b%2F", request.cookie("encoded"));
               assertNull(request.cookie("missing"));
               assertEquals(List.of(), request.cookies("missing"));
-              assertEquals("first", request.cookieMap().get("token"));
+              assertEquals(List.of("first", "second"), request.cookieMap().get("token"));
               var cookieMap = request.cookieMap();
               var tokens = request.cookies("token");
+              assertSame(cookieMap, request.cookieMap());
+              assertSame(tokens, cookieMap.get("token"));
               assertThrows(UnsupportedOperationException.class, cookieMap::clear);
               assertThrows(UnsupportedOperationException.class, () -> tokens.add("bad"));
               response.text("ok");
@@ -76,9 +84,63 @@ class CookieTest {
   }
 
   @Test
+  void exposesEveryCookieValueInCookieMap() throws Exception {
+    app.routes()
+        .get(
+            "/cookies",
+            (request, response) ->
+                response.text(Objects.toString(request.cookieMap().get("token"))));
+    app.start();
+    var result = send(request("/cookies").header("Cookie", "token=first; token=second"));
+    assertEquals(200, result.statusCode());
+    assertEquals("[first, second]", result.body());
+  }
+
+  @Test
+  void rejectsStrictlyInvalidCookiesBeforeHooksAndReportsCompletionOnce() throws Exception {
+    var admissions = new AtomicInteger();
+    var handlers = new AtomicInteger();
+    var outcomes = new LinkedBlockingQueue<RequestOutcome>();
+    app.modifyHttpConfiguration(
+        configuration -> configuration.setRequestCookieCompliance(CookieCompliance.RFC6265_STRICT));
+    app.onRequestHeaders((request, response) -> admissions.incrementAndGet());
+    app.afterRequest(outcomes::add);
+    app.routes()
+        .get(
+            "/cookies",
+            (request, response) -> {
+              handlers.incrementAndGet();
+              response.text("ok");
+            });
+    app.start();
+    var rejected = send(request("/cookies").header("Cookie", "token=first; invalid"));
+    assertEquals(400, rejected.statusCode());
+    assertEquals(0, admissions.get());
+    assertEquals(0, handlers.get());
+    var rejectedOutcome = outcomes.poll(3, TimeUnit.SECONDS);
+    assertNotNull(rejectedOutcome);
+    assertEquals(400, rejectedOutcome.statusCode());
+    assertNull(rejectedOutcome.routePattern());
+    var failure =
+        assertInstanceOf(
+            org.eclipse.jetty.http.HttpException.RuntimeException.class,
+            rejectedOutcome.applicationFailure());
+    assertEquals(400, failure.getCode());
+
+    assertEquals(200, send(request("/cookies").header("Cookie", "token=valid")).statusCode());
+    var acceptedOutcome = outcomes.poll(3, TimeUnit.SECONDS);
+    assertNotNull(acceptedOutcome);
+    assertEquals(200, acceptedOutcome.statusCode());
+    assertNull(acceptedOutcome.applicationFailure());
+    assertEquals(1, admissions.get());
+    assertEquals(1, handlers.get());
+    assertNull(outcomes.poll());
+  }
+
+  @Test
   void snapshotsCookiesAndEnforcesRequestLifetime() throws Exception {
     var retained = new AtomicReference<Request>();
-    var snapshot = new AtomicReference<Map<String, String>>();
+    var snapshot = new AtomicReference<Map<String, List<String>>>();
     app.routes()
         .get(
             "/capture",
@@ -114,7 +176,7 @@ class CookieTest {
         "captured",
         send(request("/capture").header("Cookie", "quoted=\"quoted\"; invalid")).body());
     assertEquals("empty", send(request("/empty")).body());
-    assertEquals(Map.of("quoted", "quoted"), snapshot.get());
+    assertEquals(Map.of("quoted", List.of("quoted")), snapshot.get());
     var closedRequest = retained.get();
     assertThrows(IllegalStateException.class, () -> closedRequest.cookie("quoted"));
     assertThrows(IllegalStateException.class, () -> closedRequest.cookies("quoted"));

@@ -101,7 +101,6 @@ class HttpHeadersTest {
 
     assertEquals(first, second);
     assertEquals(first.hashCode(), second.hashCode());
-    assertTrue(Set.of(first).contains(second));
   }
 
   @Test

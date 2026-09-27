@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr;
 
 import io.github.suppierk.shoostr.http.ForwardedHeaders;
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
@@ -745,7 +746,7 @@ public final class Shoostr implements Closeable {
     SessionHandler installedSessionHandler = null;
     ContextHandler context = null;
     if (sessionConfiguration != null || websocketRoutes != null) {
-      context = new ContextHandler("/");
+      context = new ContextHandler(HttpCharacters.PATH_SEPARATOR_STRING);
     }
 
     if (sessionConfiguration != null) {
@@ -999,7 +1000,7 @@ public final class Shoostr implements Closeable {
       } else if ("identity".equalsIgnoreCase(value.getValue())) {
         identitySpecified = true;
         identityAccepted |= value.isAcceptable();
-      } else if ("*".equals(value.getValue())) {
+      } else if (HttpCharacters.ASTERISK_STRING.equals(value.getValue())) {
         wildcardSpecified = true;
         wildcardAccepted |= value.isAcceptable();
       }
@@ -1203,6 +1204,7 @@ public final class Shoostr implements Closeable {
     /**
      * Dispatches one request and completes it exactly once through the transport callback.
      * Uncommitted failures become safe error responses; committed or fatal failures abort.
+     * Construction failures finalize observation bookkeeping before native Jetty renders the error.
      *
      * @param rawRequest transport-owned input
      * @param rawResponse transport-owned output
@@ -1246,13 +1248,24 @@ public final class Shoostr implements Closeable {
         configureEncoding(response, rawRequest);
       }
 
-      var request =
-          new Request(
-              rawRequest,
-              response,
-              options.maxRequestBytes(),
-              options.maxParameters(),
-              options.multipart());
+      Request request;
+
+      try {
+        request =
+            new Request(
+                rawRequest,
+                response,
+                options.maxRequestBytes(),
+                options.maxParameters(),
+                options.multipart());
+      } catch (RuntimeException | Error failure) {
+        if (observation != null) {
+          observation.finish(null, failure);
+        }
+
+        throw failure;
+      }
+
       response.flushHooks(
           () -> flush(preFlushHooks, request, response),
           () -> flush(postFlushHooks, request, response));

@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 412: Precondition Failed.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#PRECONDITION_FAILED
  */
+@SuppressWarnings("squid:S110")
 public class PreconditionFailedException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

@@ -25,11 +25,11 @@ class MediaTypeTest {
     assertEquals("text/plain", MediaType.TEXT_PLAIN.value());
     assertEquals("text/html", MediaType.TEXT_HTML.value());
     assertEquals(MediaType.APPLICATION_JSON, MediaType.of("APPLICATION/JSON"));
-    var values =
-        new HashSet<>(
-            List.of(
-                MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8),
-                MediaType.of("TEXT/PLAIN").withCharset(Charset.forName("utf8"))));
+
+    var values = new HashSet<MediaType>();
+    values.add(MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
+    values.add(MediaType.of("TEXT/PLAIN").withCharset(Charset.forName("utf8")));
+
     assertEquals(1, values.size());
     assertNotEquals(MediaType.TEXT_PLAIN, MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
     assertNotNull(MediaType.TEXT_PLAIN);
@@ -89,6 +89,7 @@ class MediaTypeTest {
     var base = MediaType.of("text/plain");
     var utf8 = base.withCharset(Charset.forName("utf8"));
     var latin1 = utf8.withCharset(StandardCharsets.ISO_8859_1);
+
     assertEquals("text/plain", base.value());
     assertEquals("text/plain; charset=UTF-8", utf8.value());
     assertEquals("text/plain; charset=ISO-8859-1", latin1.value());

@@ -62,13 +62,13 @@ public record CorsPolicy(
     for (var origin : origins) {
       validateOrigin(origin);
     }
-    if (credentials && origins.contains("*")) {
+    if (credentials && origins.contains(HttpCharacters.ASTERISK_STRING)) {
       throw new IllegalArgumentException("Credentialed CORS requires explicit origins");
     }
 
     if (maxAgeSeconds < 0
-        || headers.contains(HttpHeaders.of("*"))
-        || exposedHeaders.contains(HttpHeaders.of("*"))) {
+        || headers.contains(HttpHeaders.of(HttpCharacters.ASTERISK_STRING))
+        || exposedHeaders.contains(HttpHeaders.of(HttpCharacters.ASTERISK_STRING))) {
       throw new IllegalArgumentException(
           "CORS requires nonnegative max-age and explicit header names");
     }
@@ -114,7 +114,7 @@ public record CorsPolicy(
 
     var method = preflight ? requestedMethods.getFirst() : request.method();
     validateToken(method);
-    if (!origins.contains(origin) && !origins.contains("*")) {
+    if (!origins.contains(origin) && !origins.contains(HttpCharacters.ASTERISK_STRING)) {
       throw new ForbiddenException();
     }
 
@@ -124,7 +124,8 @@ public record CorsPolicy(
 
     Map<String, String> fields = new HashMap<>(variation);
     fields.put(
-        HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN.value(), origins.contains("*") ? "*" : origin);
+        HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN.value(),
+        origins.contains(HttpCharacters.ASTERISK_STRING) ? HttpCharacters.ASTERISK_STRING : origin);
     if (credentials) {
       fields.put(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS.value(), "true");
     }
@@ -142,7 +143,8 @@ public record CorsPolicy(
    * @throws BadRequestException if Origin is missing, repeated or malformed
    */
   private static String validatedOrigin(List<String> incomingOrigins) {
-    if (incomingOrigins.size() != 1 || "*".equals(incomingOrigins.getFirst())) {
+    if (incomingOrigins.size() != 1
+        || HttpCharacters.ASTERISK_STRING.equals(incomingOrigins.getFirst())) {
       throw new BadRequestException();
     }
 
@@ -213,7 +215,7 @@ public record CorsPolicy(
    * @return origin tuple, or null if the URL has no absolute authority
    */
   static @Nullable URI effectiveOrigin(String url) {
-    int schemeEnd = url.indexOf(':');
+    int schemeEnd = url.indexOf(HttpCharacters.COLON_SIGN);
     if (schemeEnd < 0
         || url.length() < schemeEnd + 3
         || url.charAt(schemeEnd + 1) != HttpCharacters.PATH_SEPARATOR
@@ -259,7 +261,7 @@ public record CorsPolicy(
     var values = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value());
     var names = new TreeSet<String>();
     for (var value : values) {
-      for (var token : value.split(",", -1)) {
+      for (var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
         var name = token.trim();
         if (name.isEmpty()) {
           continue;
@@ -281,16 +283,15 @@ public record CorsPolicy(
   }
 
   /**
-   * Uses the existing HTTP field-name primitive to check the shared HTTP token grammar.
+   * Checks the shared HTTP token grammar without constructing a field-name object.
    *
    * @param token untrusted method or header name
    * @throws BadRequestException if the value is not one token
    */
   private static void validateToken(String token) {
-    try {
-      HttpHeaders.of(token);
-    } catch (IllegalArgumentException failure) {
-      throw new BadRequestException(failure);
+    if (!HttpCharacters.isValidHttpToken(token)) {
+      throw new BadRequestException(
+          new IllegalArgumentException("HTTP field name must be an RFC 9110 token"));
     }
   }
 
@@ -301,7 +302,7 @@ public record CorsPolicy(
    * @throws IllegalArgumentException if origin is not an HTTP(S) tuple, null or wildcard
    */
   static void validateOrigin(String origin) {
-    if ("null".equals(origin) || "*".equals(origin)) {
+    if ("null".equals(origin) || HttpCharacters.ASTERISK_STRING.equals(origin)) {
       return;
     }
 
@@ -318,7 +319,7 @@ public record CorsPolicy(
             uri.getScheme()
                 + "://"
                 + uri.getHost()
-                + (uri.getPort() < 0 ? "" : ":" + uri.getPort()))) {
+                + (uri.getPort() < 0 ? "" : HttpCharacters.COLON_SIGN_STRING + uri.getPort()))) {
       throw new IllegalArgumentException("Expected an exact HTTP(S) origin without a path");
     }
   }

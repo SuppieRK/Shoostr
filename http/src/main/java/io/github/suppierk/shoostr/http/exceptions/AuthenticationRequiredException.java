@@ -3,7 +3,12 @@ package io.github.suppierk.shoostr.http.exceptions;
 import java.io.Serial;
 import java.util.Objects;
 
-/** HTTP 401 with an application-configured WWW-Authenticate challenge. */
+/**
+ * HTTP 401 with an application-configured WWW-Authenticate challenge.
+ *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ */
+@SuppressWarnings("squid:S110")
 public final class AuthenticationRequiredException extends UnauthorizedException {
   @Serial private static final long serialVersionUID = 1L;
 
@@ -17,7 +22,7 @@ public final class AuthenticationRequiredException extends UnauthorizedException
    * @throws IllegalArgumentException if the challenge is empty or contains unsafe field characters
    */
   public AuthenticationRequiredException(String challenge) {
-    var value = Objects.requireNonNull(challenge);
+    final var value = Objects.requireNonNull(challenge);
     if (value.isBlank()
         || value.chars().anyMatch(character -> character < 0x20 || character > 0x7e)) {
       throw new IllegalArgumentException("Invalid authentication challenge");

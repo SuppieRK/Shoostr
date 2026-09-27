@@ -24,7 +24,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.regex.Pattern;
 import org.eclipse.jetty.compression.Compression;
 import org.eclipse.jetty.compression.server.CompressionConfig;
 import org.eclipse.jetty.compression.server.CompressionHandler;
@@ -94,7 +93,6 @@ public final class Response implements AutoCloseable {
           HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.ACCESS_CONTROL_MAX_AGE);
   private static final ByteRange UNSATISFIABLE_RANGE = new ByteRange(-1, -1);
   private static final SetCookieParser COOKIE_PARSER = SetCookieParser.newInstance();
-  private static final Pattern HEADER_NAME = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
   private static final String TEXT_CONTENT_TYPE = "text/plain; charset=utf-8";
   private static final String IDENTITY_ENCODING = "identity";
   private static final HttpField TEXT =
@@ -599,7 +597,12 @@ public final class Response implements AutoCloseable {
           .getHeaders()
           .put(
               HttpHeaders.CONTENT_RANGE.value(),
-              "bytes " + range.first + "-" + range.last + "/" + length);
+              "bytes "
+                  + range.first
+                  + HttpCharacters.DASH_STRING
+                  + range.last
+                  + HttpCharacters.PATH_SEPARATOR_STRING
+                  + length);
       delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, range.length());
     }
 
@@ -1042,7 +1045,7 @@ public final class Response implements AutoCloseable {
       return List.of();
     }
 
-    var name = manager.getSessionCookie() + "=";
+    var name = manager.getSessionCookie() + HttpCharacters.EQUALS_SIGN_STRING;
     return delegate.getHeaders().getValuesList(HttpHeaders.SET_COOKIE.value()).stream()
         .filter(value -> value.startsWith(name))
         .toList();
@@ -1193,7 +1196,7 @@ public final class Response implements AutoCloseable {
     }
 
     var domain = previous.getDomain();
-    if (domain != null && domain.startsWith(".")) {
+    if (domain != null && domain.startsWith(HttpCharacters.DOT_STRING)) {
       domain = domain.substring(1);
     }
 
@@ -1231,9 +1234,9 @@ public final class Response implements AutoCloseable {
    */
   private void vary(HttpHeaders header) {
     for (var value : delegate.getHeaders().getValuesList(HttpHeaders.VARY.value())) {
-      for (var token : value.split(",", -1)) {
+      for (var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
         var field = token.trim();
-        if ("*".equals(field) || header.equalsIgnoreCase(field)) {
+        if (HttpCharacters.ASTERISK_STRING.equals(field) || header.equalsIgnoreCase(field)) {
           return;
         }
       }
@@ -1256,7 +1259,7 @@ public final class Response implements AutoCloseable {
    */
   private static void validateHeaderName(String name) {
     Objects.requireNonNull(name);
-    if (!HEADER_NAME.matcher(name).matches()) {
+    if (!HttpCharacters.isValidHttpToken(name)) {
       throw new IllegalArgumentException("Invalid header");
     }
 
@@ -1282,11 +1285,17 @@ public final class Response implements AutoCloseable {
     var fallback = new StringBuilder(value.length());
     for (int index = 0; index < value.length(); index++) {
       var character = value.charAt(index);
-      if (character < 0x20 || character == 0x7f || character == '/' || character == '\\') {
+      if (character < 0x20
+          || character == 0x7f
+          || character == HttpCharacters.PATH_SEPARATOR
+          || character == HttpCharacters.BACKSLASH) {
         throw new IllegalArgumentException("Attachment filename contains an unsafe character");
       }
 
-      fallback.append(character >= 0x20 && character <= 0x7e && character != '"' ? character : '_');
+      fallback.append(
+          character >= 0x20 && character <= 0x7e && character != HttpCharacters.DOUBLE_QUOTE
+              ? character
+              : HttpCharacters.UNDERSCORE);
     }
 
     return "attachment; filename=\"" + fallback + "\"; filename*=UTF-8''" + encodedFilename(value);
@@ -1308,7 +1317,9 @@ public final class Response implements AutoCloseable {
           || "!#$&+-.^_`|~".indexOf(octet) >= 0) {
         encoded.append((char) octet);
       } else {
-        encoded.append('%').append(Character.toUpperCase(Character.forDigit(octet >>> 4, 16)));
+        encoded
+            .append(HttpCharacters.PERCENT_SIGN)
+            .append(Character.toUpperCase(Character.forDigit(octet >>> 4, 16)));
         encoded.append(Character.toUpperCase(Character.forDigit(octet & 0xf, 16)));
       }
     }
@@ -1326,7 +1337,7 @@ public final class Response implements AutoCloseable {
     Objects.requireNonNull(value);
     for (int index = 0; index < value.length(); index++) {
       char character = value.charAt(index);
-      if ((character < 0x20 && character != '\t') || character == 0x7f) {
+      if ((character < 0x20 && character != HttpCharacters.TAB) || character == 0x7f) {
         throw new IllegalArgumentException("Invalid header");
       }
     }
@@ -1423,7 +1434,11 @@ public final class Response implements AutoCloseable {
    * @return valid weak entity tag
    */
   private static String resourceTag(long length, Instant lastModified) {
-    return "W/\"" + length + "-" + lastModified.toEpochMilli() + "\"";
+    return "W/\""
+        + length
+        + HttpCharacters.DASH_STRING
+        + lastModified.toEpochMilli()
+        + HttpCharacters.DOUBLE_QUOTE_STRING;
   }
 
   /**
@@ -1438,7 +1453,7 @@ public final class Response implements AutoCloseable {
       return true;
     }
 
-    if (entityTags(values).contains("*")) {
+    if (entityTags(values).contains(HttpCharacters.ASTERISK_STRING)) {
       return true;
     }
 
@@ -1489,7 +1504,8 @@ public final class Response implements AutoCloseable {
 
     for (var candidate :
         entityTags(request().getHeaders().getValuesList(HttpHeaders.IF_NONE_MATCH.value()))) {
-      if ("*".equals(candidate) || weakTag(candidate).equals(weakTag(tag))) {
+      if (HttpCharacters.ASTERISK_STRING.equals(candidate)
+          || weakTag(candidate).equals(weakTag(tag))) {
         return true;
       }
     }
@@ -1539,14 +1555,14 @@ public final class Response implements AutoCloseable {
   private static boolean entityTag(String value) {
     var start = value.startsWith("W/") ? 2 : 0;
     if (value.length() <= start + 1
-        || value.charAt(start) != '"'
-        || value.charAt(value.length() - 1) != '"') {
+        || value.charAt(start) != HttpCharacters.DOUBLE_QUOTE
+        || value.charAt(value.length() - 1) != HttpCharacters.DOUBLE_QUOTE) {
       return false;
     }
 
     for (int index = start + 1; index < value.length() - 1; index++) {
       var character = value.charAt(index);
-      if (character == '"'
+      if (character == HttpCharacters.DOUBLE_QUOTE
           || character == ' '
           || character < 0x21
           || character == 0x7f
@@ -1571,11 +1587,11 @@ public final class Response implements AutoCloseable {
     for (var value : values) {
       for (int index = 0; index < value.length(); index++) {
         var character = value.charAt(index);
-        if (character == '"') {
+        if (character == HttpCharacters.DOUBLE_QUOTE) {
           quoted = !quoted;
         }
 
-        if (character == ',' && !quoted) {
+        if (character == HttpCharacters.COMMA_SIGN && !quoted) {
           tags.add(current.toString().trim());
           current.setLength(0);
         } else {
@@ -1674,13 +1690,13 @@ public final class Response implements AutoCloseable {
     var values = request().getHeaders().getValuesList(HttpHeaders.RANGE.value());
     if (values.size() != 1
         || !values.getFirst().startsWith("bytes=")
-        || values.getFirst().contains(",")) {
+        || values.getFirst().contains(HttpCharacters.COMMA_SIGN_STRING)) {
       return null;
     }
 
     var value = values.getFirst().substring("bytes=".length());
-    var separator = value.indexOf('-');
-    if (separator < 0 || separator != value.lastIndexOf('-')) {
+    var separator = value.indexOf(HttpCharacters.DASH);
+    if (separator < 0 || separator != value.lastIndexOf(HttpCharacters.DASH)) {
       return null;
     }
 
@@ -2015,7 +2031,7 @@ public final class Response implements AutoCloseable {
     boolean wildcardAccepted = false;
     for (var value : parser.getQualityValues()) {
       var encoding = value.getValue();
-      if ("*".equals(encoding)) {
+      if (HttpCharacters.ASTERISK_STRING.equals(encoding)) {
         wildcardAccepted = value.isAcceptable();
       } else if (value.isAcceptable()
           && encoders.containsKey(encoding)
@@ -2136,16 +2152,16 @@ public final class Response implements AutoCloseable {
   private void mergeVary(String required) {
     var existing = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
     for (var value : delegate.getHeaders().getValuesList(HttpHeaders.VARY.value())) {
-      for (var token : value.split(",", -1)) {
+      for (var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
         existing.add(token.trim());
       }
     }
 
-    if (existing.contains("*")) {
+    if (existing.contains(HttpCharacters.ASTERISK_STRING)) {
       return;
     }
 
-    for (var token : required.split(",", -1)) {
+    for (var token : required.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
       var name = token.trim();
       if (existing.add(name)) {
         delegate.getHeaders().add(HttpHeaders.VARY.value(), name);

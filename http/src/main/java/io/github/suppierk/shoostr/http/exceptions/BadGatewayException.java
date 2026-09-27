@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 502: Bad Gateway.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#BAD_GATEWAY
  */
+@SuppressWarnings("squid:S110")
 public class BadGatewayException extends HttpServerException {
   @Serial private static final long serialVersionUID = 1L;
 

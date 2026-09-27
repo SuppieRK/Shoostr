@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 505: HTTP Version Not Supported.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#HTTP_VERSION_NOT_SUPPORTED
  */
+@SuppressWarnings("squid:S110")
 public class HttpVersionNotSupportedException extends HttpServerException {
   @Serial private static final long serialVersionUID = 1L;
 

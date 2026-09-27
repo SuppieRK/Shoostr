@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 415: Unsupported Media Type.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#UNSUPPORTED_MEDIA_TYPE
  */
+@SuppressWarnings("squid:S110")
 public class UnsupportedMediaTypeException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

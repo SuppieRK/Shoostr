@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.MediaType;
@@ -37,8 +38,8 @@ public final class Csrf {
      * @throws IllegalArgumentException if either part is empty
      */
     private Token {
-      if (Objects.requireNonNull(sessionId).isEmpty() || Objects.requireNonNull(value).isEmpty()) {
-        throw new IllegalArgumentException("CSRF token parts cannot be empty");
+      if (Objects.requireNonNull(sessionId).isBlank() || Objects.requireNonNull(value).isBlank()) {
+        throw new IllegalArgumentException("CSRF token parts cannot be blank");
       }
     }
   }
@@ -64,7 +65,7 @@ public final class Csrf {
   public Csrf(Set<String> trustedOrigins) {
     this.trustedOrigins = Set.copyOf(trustedOrigins);
     for (var origin : this.trustedOrigins) {
-      if ("null".equals(origin) || "*".equals(origin)) {
+      if ("null".equals(origin) || HttpCharacters.ASTERISK_STRING.equals(origin)) {
         throw new IllegalArgumentException("CSRF requires explicit HTTP(S) origins");
       }
 
@@ -215,7 +216,7 @@ public final class Csrf {
         origin = origins.getFirst();
       }
 
-      if ("null".equals(origin) || "*".equals(origin)) {
+      if ("null".equals(origin) || HttpCharacters.ASTERISK_STRING.equals(origin)) {
         return false;
       }
 

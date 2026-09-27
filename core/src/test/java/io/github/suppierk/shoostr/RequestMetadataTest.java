@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import org.eclipse.jetty.http.HttpFields;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,10 +68,12 @@ class RequestMetadataTest {
             (request, response) -> {
               assertEquals("q=a+b%2F&q=second&empty=", request.queryString());
               var fields = request.headerMap();
+              assertSame(fields, request.headerMap());
               assertEquals(List.of("a,b", "c"), fields.get("X-VALUES"));
               assertNull(fields.get("Missing"));
               assertThrows(UnsupportedOperationException.class, fields::clear);
               var values = Objects.requireNonNull(fields.get("x-values"));
+              assertSame(values, request.headers("X-Values"));
               assertThrows(UnsupportedOperationException.class, values::clear);
               assertEquals(List.of("a b/", "second"), request.queryParams("q"));
               assertEquals("q=a+b%2F&q=second&empty=", request.queryString());
@@ -92,6 +95,68 @@ class RequestMetadataTest {
     assertEquals(200, result.statusCode());
     assertEquals("ok", result.body());
     assertEquals("absent", send(request("/absent")).body());
+  }
+
+  @Test
+  void capturesHeadersAndCookiesBeforeAdmissionHooks() throws Exception {
+    var transportHeaders = new AtomicReference<HttpFields.Mutable>();
+    app.modifyHttpConfiguration(
+        configuration ->
+            configuration.addCustomizer(
+                (nativeRequest, responseHeaders) -> {
+                  var fields = HttpFields.build(nativeRequest.getHeaders());
+                  transportHeaders.set(fields);
+                  return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
+                    @Override
+                    public HttpFields getHeaders() {
+                      return fields;
+                    }
+                  };
+                }));
+    app.onRequestHeaders(
+        (request, response) -> {
+          transportHeaders.get().put("X-Snapshot", "changed");
+          transportHeaders.get().put("Cookie", "token=changed");
+        });
+    app.routes()
+        .get(
+            "/snapshot",
+            (request, response) ->
+                response.text(
+                    String.join(
+                        ";",
+                        Objects.toString(request.header("X-Snapshot")),
+                        request.headers("x-snapshot").toString(),
+                        Objects.toString(request.headerMap().get("X-SNAPSHOT")),
+                        Objects.toString(request.cookie("token")),
+                        request.cookies("token").toString(),
+                        Objects.toString(request.cookieMap().get("token")))));
+    app.start();
+    var result =
+        send(request("/snapshot").header("X-Snapshot", "original").header("Cookie", "token=first"));
+    assertEquals(200, result.statusCode());
+    assertEquals("original;[original];[original];first;[first];[first]", result.body());
+  }
+
+  @Test
+  void exposesEmptyMetadataForHeaderlessRequests() throws Exception {
+    app.routes()
+        .get(
+            "/empty",
+            (request, response) ->
+                response.text(
+                    String.join(
+                        ";",
+                        request.headerMap().toString(),
+                        request.cookieMap().toString(),
+                        Objects.toString(request.header("Missing")),
+                        request.headers("Missing").toString(),
+                        Objects.toString(request.cookie("missing")),
+                        request.cookies("missing").toString())));
+    app.start();
+    var result = exchange("GET /empty HTTP/1.0\r\n\r\n");
+    assertEquals("200", result.split(" ", 3)[1]);
+    assertTrue(result.endsWith("{};{};null;[];null;[]"), result);
   }
 
   @Test

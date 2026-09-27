@@ -5,6 +5,7 @@ import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
+import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.io.content.ByteBufferContentSource;
 import org.eclipse.jetty.util.Callback;
 import org.openjdk.jmh.annotations.Benchmark;
@@ -70,6 +71,7 @@ public class BufferedRequestBenchmark {
                 new Class<?>[] {org.eclipse.jetty.server.Request.class},
                 (proxy, method, arguments) ->
                     switch (method.getName()) {
+                      case "getHeaders" -> HttpFields.EMPTY;
                       case "getLength" -> "known".equals(length) ? (long) bytes : -1L;
                       case "read" -> source.read();
                       case "demand" -> {

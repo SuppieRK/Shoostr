@@ -10,7 +10,6 @@ import org.jspecify.annotations.Nullable;
 public final class MediaType {
   private static final String NAME_FRAGMENT = "[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}";
   private static final Pattern BARE_TYPE = Pattern.compile(NAME_FRAGMENT + "/" + NAME_FRAGMENT);
-  private static final Pattern TOKEN = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
 
   /** JSON media type from RFC 8259; no charset parameter is added. */
   public static final MediaType APPLICATION_JSON = of("application/json");
@@ -50,7 +49,7 @@ public final class MediaType {
       this.value = this.name;
     } else {
       var charsetName = charset.name();
-      if (!TOKEN.matcher(charsetName).matches()) {
+      if (!HttpCharacters.isValidHttpToken(charsetName)) {
         throw new IllegalArgumentException("Charset name must be an HTTP token");
       }
 

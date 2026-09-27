@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 401: Unauthorized.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#UNAUTHORIZED
  */
+@SuppressWarnings("squid:S110")
 public class UnauthorizedException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

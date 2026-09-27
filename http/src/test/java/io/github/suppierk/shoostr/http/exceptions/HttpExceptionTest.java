@@ -13,6 +13,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
@@ -115,7 +116,7 @@ class HttpExceptionTest {
             .collect(Collectors.toSet());
     var actual = errors().map(arguments -> (HttpStatusCodes) arguments.get()[0]).toList();
     assertEquals(expected.size(), actual.size());
-    assertEquals(expected, actual.stream().collect(Collectors.toSet()));
+    assertEquals(expected, new HashSet<>(actual));
   }
 
   @Test

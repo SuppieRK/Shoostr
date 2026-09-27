@@ -50,7 +50,7 @@ final class Pac4jContext implements WebContext {
         .forEach((name, values) -> parameters.put(name, values.toArray(String[]::new)));
     var contentType = request.header(HttpHeaders.CONTENT_TYPE.value());
     if (contentType != null) {
-      var separator = contentType.indexOf(';');
+      var separator = contentType.indexOf(HttpCharacters.SEMICOLON_SIGN);
       var mediaType = (separator < 0 ? contentType : contentType.substring(0, separator)).trim();
       if ("application/x-www-form-urlencoded".equalsIgnoreCase(mediaType)
           || "multipart/form-data".equalsIgnoreCase(mediaType)) {
@@ -162,7 +162,7 @@ final class Pac4jContext implements WebContext {
   @Override
   public Collection<Cookie> getRequestCookies() {
     return request.cookieMap().entrySet().stream()
-        .map(entry -> new Cookie(entry.getKey(), entry.getValue()))
+        .flatMap(entry -> entry.getValue().stream().map(value -> new Cookie(entry.getKey(), value)))
         .toList();
   }
 
