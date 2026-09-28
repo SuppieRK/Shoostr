@@ -29,7 +29,7 @@ public final class Pac4j implements Handler {
    * @param challenge WWW-Authenticate value used for missing or invalid credentials
    */
   public Pac4j(DirectClient client, String challenge) {
-    this(client, challenge, (context, session, profiles) -> true);
+    this(client, challenge, (_, _, _) -> true);
   }
 
   /**

@@ -67,7 +67,7 @@ public class StreamBufferBenchmark {
             Proxy.newProxyInstance(
                 StreamBufferBenchmark.class.getClassLoader(),
                 new Class<?>[] {Request.class},
-                (proxy, method, arguments) ->
+                (_, method, _) ->
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> HttpFields.EMPTY;
@@ -81,7 +81,7 @@ public class StreamBufferBenchmark {
             Proxy.newProxyInstance(
                 StreamBufferBenchmark.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (proxy, method, arguments) ->
+                (_, method, arguments) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "getHeaders" -> headers;

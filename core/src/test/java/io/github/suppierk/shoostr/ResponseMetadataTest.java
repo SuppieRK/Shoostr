@@ -53,7 +53,7 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/metadata",
-            (request, response) -> {
+            (_, response) -> {
               assertEquals(200, response.status());
               assertNull(response.setHeader("Absent"));
               response.status(202).setHeader("X-Value", "first");
@@ -74,7 +74,7 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/null-text",
-            (request, response) -> {
+            (_, response) -> {
               response
                   .status(202)
                   .body("application/json", "\"kept\"".getBytes(StandardCharsets.UTF_8));
@@ -92,7 +92,7 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/headers",
-            (request, response) -> {
+            (_, response) -> {
               response
                   .addHeader("Set-Cookie", "first=1; Path=/")
                   .addHeader("set-cookie", "second=2; Path=/");
@@ -124,7 +124,7 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/remove",
-            (request, response) -> {
+            (_, response) -> {
               response
                   .addHeader("X-Value", "one")
                   .addHeader("x-value", "two")
@@ -149,7 +149,7 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/invalid",
-            (request, response) -> {
+            (_, response) -> {
               response.setHeader("X-Value", "kept");
               for (var invalid :
                   List.of("bad\rvalue", "bad\nvalue", "bad" + (char) 0, "bad" + (char) 127)) {
@@ -173,7 +173,7 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/framing",
-            (request, response) -> {
+            (_, response) -> {
               response.setHeader("X-Value", "kept");
               for (var name :
                   List.of(
@@ -208,7 +208,7 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/stream-metadata",
-            (request, response) -> {
+            (_, response) -> {
               retained.set(response);
               response.status(202).setHeader("X-Value", "kept");
               assertFalse(response.isCommitted());
@@ -262,7 +262,7 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/redirect",
-            (request, response) -> {
+            (_, response) -> {
               response
                   .text("obsolete")
                   .redirect("/next?value=%2F#top")
@@ -298,7 +298,7 @@ class ResponseMetadataTest {
   void redirectAfterFileDiscardsTheSelectedRepresentation() throws Exception {
     var file = Files.writeString(temporaryDirectory.resolve("report.txt"), "file contents");
     app.routes()
-        .get("/report", (request, response) -> response.file(file, "text/plain").redirect("/next"));
+        .get("/report", (_, response) -> response.file(file, "text/plain").redirect("/next"));
     app.start();
 
     var result = send("/report");
@@ -324,9 +324,7 @@ class ResponseMetadataTest {
             HttpStatusCodes.PERMANENT_REDIRECT);
     for (var code : codes) {
       app.routes()
-          .get(
-              "/redirect-" + code.value(),
-              (request, response) -> response.redirect("../next", code));
+          .get("/redirect-" + code.value(), (_, response) -> response.redirect("../next", code));
     }
     app.start();
     for (var code : codes) {
@@ -343,7 +341,7 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/invalid-redirect",
-            (request, response) -> {
+            (_, response) -> {
               response.status(202).setHeader("Location", "/original").text("kept");
               for (var location :
                   List.of(
@@ -394,8 +392,7 @@ class ResponseMetadataTest {
     };
     for (int index = 0; index < destinations.length; index++) {
       var destination = destinations[index][0];
-      app.routes()
-          .get("/destination-" + index, (request, response) -> response.redirect(destination));
+      app.routes().get("/destination-" + index, (_, response) -> response.redirect(destination));
     }
     app.start();
     for (int index = 0; index < destinations.length; index++) {
@@ -410,7 +407,7 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/stream-redirect",
-            (request, response) -> {
+            (_, response) -> {
               var stream = response.startStream("text/plain");
               assertThrows(IllegalStateException.class, () -> response.redirect("/late"));
               assertNull(response.setHeader("Location"));
@@ -419,11 +416,11 @@ class ResponseMetadataTest {
     app.routes()
         .get(
             "/failed-redirect",
-            (request, response) -> {
+            (_, response) -> {
               response.redirect("/never");
               throw new IllegalArgumentException("private details");
             });
-    app.routes().head("/head-redirect", (request, response) -> response.redirect("/next"));
+    app.routes().head("/head-redirect", (_, response) -> response.redirect("/next"));
     app.start();
     var streamed = send("/stream-redirect");
     assertEquals(200, streamed.statusCode());

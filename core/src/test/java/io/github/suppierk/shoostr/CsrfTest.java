@@ -33,7 +33,7 @@ class CsrfTest {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
                 routes.post(
                     "/submit",
-                    (request, response) -> {
+                    (_, response) -> {
                       executions.incrementAndGet();
                       response.text("accepted");
                     });
@@ -67,7 +67,7 @@ class CsrfTest {
               csrf::verify,
               routes -> {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
-                routes.post("/submit", (request, response) -> response.text("accepted"));
+                routes.post("/submit", (_, response) -> response.text("accepted"));
               });
       app.start();
 
@@ -120,7 +120,7 @@ class CsrfTest {
               csrf::verify,
               routes -> {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
-                routes.post("/submit", (request, response) -> executions.incrementAndGet());
+                routes.post("/submit", (_, _) -> executions.incrementAndGet());
               });
       app.start();
 
@@ -199,8 +199,7 @@ class CsrfTest {
       app.routes()
           .protect(
               csrf::verify,
-              routes ->
-                  routes.post("/submit", (request, response) -> executions.incrementAndGet()));
+              routes -> routes.post("/submit", (_, _) -> executions.incrementAndGet()));
       app.start();
 
       var result =
@@ -225,8 +224,8 @@ class CsrfTest {
       app.routes()
           .protect(
               csrf::verify,
-              routes -> routes.post("/browser", (request, response) -> response.text("browser")));
-      app.routes().post("/api", (request, response) -> response.text("api"));
+              routes -> routes.post("/browser", (_, response) -> response.text("browser")));
+      app.routes().post("/api", (_, response) -> response.text("api"));
       app.start();
 
       var api =
@@ -266,7 +265,7 @@ class CsrfTest {
                       request.renewSessionId();
                       response.text(csrf.token(request));
                     });
-                routes.post("/submit", (request, response) -> response.text("accepted"));
+                routes.post("/submit", (_, response) -> response.text("accepted"));
                 routes.post(
                     "/logout",
                     (request, response) -> {
@@ -335,7 +334,7 @@ class CsrfTest {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
                 routes.post(
                     "/submit",
-                    (request, response) -> {
+                    (_, response) -> {
                       executions.incrementAndGet();
                       response.text("accepted");
                     });

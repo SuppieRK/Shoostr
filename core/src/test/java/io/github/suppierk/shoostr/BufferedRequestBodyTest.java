@@ -218,7 +218,7 @@ class BufferedRequestBodyTest {
             Proxy.newProxyInstance(
                 BufferedRequestBodyTest.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Request.class},
-                (proxy, method, arguments) ->
+                (_, method, arguments) ->
                     switch (method.getName()) {
                       case "getHeaders" -> HttpFields.EMPTY;
                       case "getMethod" -> "GET";
@@ -258,7 +258,7 @@ class BufferedRequestBodyTest {
             Proxy.newProxyInstance(
                 BufferedRequestBodyTest.class.getClassLoader(),
                 new Class<?>[] {Response.class},
-                (proxy, method, arguments) -> {
+                (_, method, _) -> {
                   throw new UnsupportedOperationException(method.getName());
                 });
 

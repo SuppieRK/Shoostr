@@ -136,7 +136,7 @@ class StaticResourcesTest {
               "/assets",
               temporaryDirectory,
               StaticOptions.defaults().withSpaFallback("index.html"));
-      app.routes().get("/assets/health", (request, response) -> response.text("endpoint"));
+      app.routes().get("/assets/health", (_, response) -> response.text("endpoint"));
       app.start();
 
       assertEquals("<h1>app</h1>", send(client, app, "/assets/orders/42").body());
@@ -197,7 +197,7 @@ class StaticResourcesTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.beforeRouteHandler(
-          (request, response) -> {
+          (request, _) -> {
             if ("/assets/blocked".equals(request.path())) {
               throw new UnauthorizedException();
             }
@@ -241,9 +241,9 @@ class StaticResourcesTest {
               5));
       app.routes()
           .protect(
-              (request, response) -> {
+              (request, _) -> {
                 admissions.incrementAndGet();
-                if (!request.header("Authorization").filter("Bearer allowed"::equals).isPresent()) {
+                if (request.header("Authorization").filter("Bearer allowed"::equals).isEmpty()) {
                   throw new UnauthorizedException();
                 }
               },
@@ -311,7 +311,7 @@ class StaticResourcesTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.beforeRouteHandler((request, response) -> Files.delete(selected));
+      app.beforeRouteHandler((_, _) -> Files.delete(selected));
       app.routes()
           .staticFiles(
               "/assets",
@@ -356,7 +356,7 @@ class StaticResourcesTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.afterRouteHandler((request, response) -> response.redirect("/next"));
+      app.afterRouteHandler((_, response) -> response.redirect("/next"));
       app.start();
 
       var result = send(client, app, "/assets/site.txt", "Range", "bytes=0-3");
@@ -520,7 +520,7 @@ class StaticResourcesTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.routes().get("/assets/site.txt", (request, response) -> response.text("endpoint"));
+      app.routes().get("/assets/site.txt", (_, response) -> response.text("endpoint"));
       app.start();
 
       var result = send(client, app, "/assets/site.txt");
@@ -604,7 +604,7 @@ class StaticResourcesTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.beforeRouteHandler(
-          (request, response) -> {
+          (_, _) -> {
             throw new UnauthorizedException();
           });
       app.routes().staticFiles("/assets", temporaryDirectory);
@@ -669,7 +669,7 @@ class StaticResourcesTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.beforeRouteHandler(
-          (request, response) -> {
+          (_, _) -> {
             Files.move(publicDirectory, relocatedDirectory);
             Files.createSymbolicLink(publicDirectory, externalDirectory);
           });
@@ -716,7 +716,7 @@ class StaticResourcesTest {
         app.routes()
             .get(
                 "/download-" + index,
-                (request, response) -> response.attachment(file, "text/plain", filename));
+                (_, response) -> response.attachment(file, "text/plain", filename));
       }
       app.start();
 
@@ -736,7 +736,7 @@ class StaticResourcesTest {
       app.routes()
           .get(
               "/download",
-              (request, response) -> response.attachment(file, "text/plain", "résumé 2026.txt"));
+              (_, response) -> response.attachment(file, "text/plain", "résumé 2026.txt"));
       app.start();
 
       var result = send(client, app, "/download");

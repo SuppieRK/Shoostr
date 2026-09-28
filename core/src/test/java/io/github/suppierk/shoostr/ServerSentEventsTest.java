@@ -31,8 +31,7 @@ class ServerSentEventsTest {
   void sendsUtf8MultilineDataAsOneCompleteEvent() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .sse("/events", (request, response) -> response.startEventStream().send("café\nnext"));
+      app.routes().sse("/events", (_, response) -> response.startEventStream().send("café\nnext"));
       app.start();
 
       var result =
@@ -56,7 +55,7 @@ class ServerSentEventsTest {
       app.routes()
           .sse(
               "/events",
-              (request, response) -> {
+              (_, response) -> {
                 var events = response.startEventStream();
                 var event =
                     SseEvent.of("ready")
@@ -110,7 +109,7 @@ class ServerSentEventsTest {
   void rejectsFiniteOutputFromAnSseRoute() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().sse("/events", (request, response) -> response.text("not an event stream"));
+      app.routes().sse("/events", (_, response) -> response.text("not an event stream"));
       app.start();
 
       var result =
@@ -128,9 +127,7 @@ class ServerSentEventsTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
-          .sse(
-              "/events",
-              (request, response) -> response.startStream("application/json").write("wrong"));
+          .sse("/events", (_, response) -> response.startStream("application/json").write("wrong"));
       app.start();
 
       var result =
@@ -152,8 +149,7 @@ class ServerSentEventsTest {
               "/api",
               routes ->
                   routes.sse(
-                      "/events",
-                      (request, response) -> response.startEventStream().send("scoped")));
+                      "/events", (_, response) -> response.startEventStream().send("scoped")));
       app.start();
 
       var result =
@@ -170,11 +166,11 @@ class ServerSentEventsTest {
   void treatsAnSseRouteAndGetAtTheSamePathAsDuplicates() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var routes = app.routes();
-      routes.sse("/events", (request, response) -> response.startEventStream().send("ok"));
+      routes.sse("/events", (_, response) -> response.startEventStream().send("ok"));
 
       assertThrows(
           IllegalArgumentException.class,
-          () -> routes.get("/events", (request, response) -> response.text("other")));
+          () -> routes.get("/events", (_, response) -> response.text("other")));
     }
   }
 
@@ -182,7 +178,7 @@ class ServerSentEventsTest {
   void allowsNoContentToStopEventSourceReconnection() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().sse("/events", (request, response) -> response.status(204));
+      app.routes().sse("/events", (_, response) -> response.status(204));
       app.start();
 
       var result =
@@ -202,7 +198,7 @@ class ServerSentEventsTest {
         var client = HttpClient.newHttpClient()) {
       app.exception(
           IllegalArgumentException.class,
-          (failure, request, response) ->
+          (_, _, response) ->
               response
                   .status(422)
                   .startStream("application/json")
@@ -210,7 +206,7 @@ class ServerSentEventsTest {
       app.routes()
           .sse(
               "/events",
-              (request, response) -> {
+              (_, _) -> {
                 throw new IllegalArgumentException("invalid subscription");
               });
       app.start();
@@ -238,7 +234,7 @@ class ServerSentEventsTest {
       app.routes()
           .sse(
               "/events",
-              (request, response) -> {
+              (_, response) -> {
                 try {
                   var events = response.startEventStream();
                   events.send("");
@@ -283,7 +279,7 @@ class ServerSentEventsTest {
       app.routes()
           .get(
               "/events",
-              (request, response) -> {
+              (_, response) -> {
                 var event =
                     SseEvent.of("ready")
                         .withEvent("update")
@@ -310,7 +306,7 @@ class ServerSentEventsTest {
       app.routes()
           .get(
               "/events",
-              (request, response) -> {
+              (_, response) -> {
                 var events = response.startEventStream();
                 events.send(SseEvent.of("first\r\nid: forged\rtail\n").withId("good"));
                 events.comment("note\rretry: 1\n");
@@ -398,7 +394,7 @@ class ServerSentEventsTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()) {
       app.http2();
-      app.routes().get("/events", (request, response) -> response.startEventStream().send("h2"));
+      app.routes().get("/events", (_, response) -> response.startEventStream().send("h2"));
       app.start();
 
       var result =
@@ -426,7 +422,7 @@ class ServerSentEventsTest {
       app.routes()
           .get(
               "/events",
-              (request, response) -> {
+              (_, response) -> {
                 var events = response.startEventStream();
 
                 try {
@@ -473,7 +469,7 @@ class ServerSentEventsTest {
       app.routes()
           .get(
               "/events",
-              (request, response) -> {
+              (_, response) -> {
                 var events = response.startEventStream();
 
                 try {
@@ -526,7 +522,7 @@ class ServerSentEventsTest {
       app.routes()
           .get(
               "/events",
-              (request, response) -> {
+              (_, response) -> {
                 try {
                   response.startEventStream().send("ready");
                   new CountDownLatch(1).await();
@@ -540,12 +536,13 @@ class ServerSentEventsTest {
               HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
                   .build(),
               HttpResponse.BodyHandlers.ofInputStream());
-      assertEquals(
-          "data: ready\n\n", new String(result.body().readNBytes(13), StandardCharsets.UTF_8));
 
-      assertThrows(IOException.class, app::close);
-      assertTrue(cleaned.await(3, TimeUnit.SECONDS));
-      result.body().close();
+      try (var body = result.body()) {
+        assertEquals("data: ready\n\n", new String(body.readNBytes(13), StandardCharsets.UTF_8));
+
+        assertThrows(IOException.class, app::close);
+        assertTrue(cleaned.await(3, TimeUnit.SECONDS));
+      }
     }
   }
 }

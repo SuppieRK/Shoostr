@@ -80,7 +80,7 @@ class HttpExceptionHandlingTest {
       app.routes()
           .get(
               "/error",
-              (request, response) -> {
+              (_, _) -> {
                 throw new CompletionException(new NotFoundException("secret"));
               });
       app.start();
@@ -101,7 +101,7 @@ class HttpExceptionHandlingTest {
       app.routes()
           .get(
               "/error",
-              (request, response) -> {
+              (_, response) -> {
                 response.text("x");
                 if (httpFailure) {
                   throw new ServiceUnavailableException("secret");
@@ -130,7 +130,7 @@ class HttpExceptionHandlingTest {
       app.routes()
           .get(
               "/stream",
-              (request, response) -> {
+              (_, response) -> {
                 var stream = response.startStream("text/plain; charset=utf-8");
                 retainedStream.set(stream);
                 stream.write("partial\n");
@@ -165,7 +165,8 @@ class HttpExceptionHandlingTest {
                   received.append((char) value);
                 }
               });
-          assertTrue(received.isEmpty(), "No pending bytes or replacement error body may be sent");
+          assertEquals(
+              "", received.toString(), "No pending bytes or replacement error body may be sent");
         }
 
         var closedStream = retainedStream.get();
@@ -207,7 +208,7 @@ class HttpExceptionHandlingTest {
       app.routes()
           .head(
               "/error",
-              (request, response) -> {
+              (_, _) -> {
                 throw new NotFoundException("secret");
               });
       app.start();

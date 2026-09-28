@@ -56,12 +56,11 @@ public final class ConsumerSmoke {
                                   stopped.incrementAndGet();
                                 }
                               }));
-                  app.routes().get("/value", (request, response) -> response.text("first"));
+                  app.routes().get("/value", (_, response) -> response.text("first"));
                 });
         var second =
             TestServer.start(
-                app ->
-                    app.routes().get("/value", (request, response) -> response.text("second")))) {
+                app -> app.routes().get("/value", (_, response) -> response.text("second")))) {
       firstUri = first.baseUri();
       require(firstUri.getPort() != second.baseUri().getPort(), "fixtures share a port");
       require("first".equals(body(client, firstUri.resolve("value"))), "first route failed");
@@ -89,7 +88,7 @@ public final class ConsumerSmoke {
         TestServer.start(
             app ->
                 app.modifyServer(
-                    server -> {
+                    _ -> {
                       throw new IllegalStateException("invalid native configuration");
                     }))) {
       throw new AssertionError("invalid native configuration unexpectedly started");

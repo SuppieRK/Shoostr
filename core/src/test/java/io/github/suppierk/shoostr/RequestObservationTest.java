@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -29,7 +30,7 @@ class RequestObservationTest {
     try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 16 * 1024 * 1024, 1024, 10000));
         var socket = new Socket()) {
       app.observe(
-          request ->
+          _ ->
               new RequestObservation() {
                 @Override
                 public void close() {
@@ -44,7 +45,7 @@ class RequestObservationTest {
       app.routes()
           .get(
               "/large",
-              (request, response) ->
+              (_, response) ->
                   response.body("application/octet-stream", new byte[16 * 1024 * 1024]));
       app.start();
       socket.setReceiveBufferSize(1024);
@@ -57,7 +58,7 @@ class RequestObservationTest {
                   .getBytes(StandardCharsets.US_ASCII));
       socket.getOutputStream().flush();
       assertTrue(scopeClosed.await(5, TimeUnit.SECONDS));
-      assertTrue(!terminal.isDone());
+      assertFalse(terminal.isDone());
       socket.setSoLinger(true, 0);
       socket.close();
       var outcome = terminal.get(5, TimeUnit.SECONDS);
@@ -73,11 +74,11 @@ class RequestObservationTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.observe(
-          request -> {
+          _ -> {
             throw new IllegalStateException("factory failed");
           });
       app.observe(
-          request ->
+          _ ->
               new RequestObservation() {
                 @Override
                 public void close() {
@@ -90,7 +91,7 @@ class RequestObservationTest {
                 }
               });
       app.observe(
-          request ->
+          _ ->
               new RequestObservation() {
                 @Override
                 public void close() {
@@ -102,7 +103,7 @@ class RequestObservationTest {
                   result.complete(outcome);
                 }
               });
-      app.routes().get("/ok", (request, response) -> response.text("ok"));
+      app.routes().get("/ok", (_, response) -> response.text("ok"));
       app.start();
       var response =
           client.send(
@@ -127,7 +128,7 @@ class RequestObservationTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.observe(
-          request -> {
+          _ -> {
             current.set("observed");
             return new RequestObservation() {
               @Override
@@ -144,7 +145,7 @@ class RequestObservationTest {
               }
             };
           });
-      app.onRequestHeaders((request, response) -> assertEquals("observed", current.get()));
+      app.onRequestHeaders((_, _) -> assertEquals("observed", current.get()));
       app.start();
 
       var response =
@@ -156,7 +157,7 @@ class RequestObservationTest {
       assertEquals(404, response.statusCode());
       assertEquals(404, result.get(5, TimeUnit.SECONDS).statusCode());
       assertNull(result.get().routePattern());
-      assertThrows(IllegalStateException.class, () -> app.observe(request -> outcome -> {}));
+      assertThrows(IllegalStateException.class, () -> app.observe(_ -> _ -> {}));
     }
   }
 }

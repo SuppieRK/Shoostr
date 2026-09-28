@@ -24,7 +24,7 @@ class AccessLogTest {
       app.routes()
           .post(
               "/orders/{id}",
-              (request, response) -> {
+              (_, _) -> {
                 throw new IllegalStateException("private failure details");
               });
       app.start();

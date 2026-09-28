@@ -1,7 +1,8 @@
 package io.github.suppierk.shoostr;
 
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.stream.Stream;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -23,10 +24,10 @@ class RouteLookupBenchmarkTest {
     for (int i = 0; i < expected.length; i++) {
       expected[i] = fixture.mapReused();
       switch (outcome) {
-        case "hit" -> assertTrue(expected[i] instanceof Handler);
+        case "hit" -> assertInstanceOf(Handler.class, expected[i]);
         case "earlyMiss", "lateMiss" -> assertSame(RouteLookupBenchmark.NOT_FOUND, expected[i]);
         case "wrongMethod" -> assertSame(RouteLookupBenchmark.METHOD_NOT_ALLOWED, expected[i]);
-        default -> assertTrue(expected[i] != null);
+        default -> assertNotNull(expected[i]);
       }
     }
     for (Object value : expected) {

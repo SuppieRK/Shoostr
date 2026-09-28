@@ -283,8 +283,7 @@ class SessionTest {
         var client = HttpClient.newHttpClient()) {
       app.sessions();
       app.exception(
-          IllegalArgumentException.class,
-          (failure, request, response) -> response.status(409).text("handled"));
+          IllegalArgumentException.class, (_, _, response) -> response.status(409).text("handled"));
       app.routes()
           .get(
               "/start",
@@ -377,7 +376,7 @@ class SessionTest {
           .routes()
           .protect(
               csrf::verify,
-              routes -> routes.post("/submit", (request, response) -> response.text("accepted")));
+              routes -> routes.post("/submit", (_, response) -> response.text("accepted")));
       restarted.start();
       var response =
           client.send(
@@ -460,7 +459,7 @@ class SessionTest {
           .get(
               "/create",
               (request, response) -> response.text(request.session(true).orElseThrow().getId()))
-          .get("/peek", (request, response) -> response.text("handled"));
+          .get("/peek", (_, response) -> response.text("handled"));
       app.start();
       var first =
           send(client, app, "/create", Optional.empty())

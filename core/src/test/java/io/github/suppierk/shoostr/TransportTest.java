@@ -161,7 +161,7 @@ class TransportTest {
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app, tlsContext);
       app.http2().modifyServer(nativeServer::set);
-      app.routes().get("/warmup", (request, response) -> response.text("ready"));
+      app.routes().get("/warmup", (_, response) -> response.text("ready"));
       app.routes()
           .get(
               "/hold/{id}",
@@ -290,7 +290,7 @@ class TransportTest {
       app.routes()
           .get(
               "/blocked",
-              (request, response) -> {
+              (_, response) -> {
                 if (streaming) {
                   var stream = response.startStream("text/plain");
                   stream.write("prefix");
@@ -378,7 +378,7 @@ class TransportTest {
       app.routes()
           .get(
               "/hold",
-              (request, response) -> {
+              (_, response) -> {
                 entered.countDown();
                 release.await();
                 response.text("complete");
@@ -438,7 +438,7 @@ class TransportTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.compression();
-      app.routes().get("/data", (request, response) -> response.text(payload));
+      app.routes().get("/data", (_, response) -> response.text(payload));
       app.start();
       var uri = URI.create("http://127.0.0.1:" + app.port() + "/data");
 
@@ -491,23 +491,22 @@ class TransportTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.compression();
-      app.routes().get("/finite", (request, response) -> response.text("body"));
-      app.routes().head("/finite", (request, response) -> response.text("body"));
+      app.routes().get("/finite", (_, response) -> response.text("body"));
+      app.routes().head("/finite", (_, response) -> response.text("body"));
       app.routes()
           .get(
               "/stream",
-              (request, response) -> {
+              (_, response) -> {
                 var stream = response.startStream("text/plain");
                 stream.write("body");
                 stream.flush();
               });
-      app.routes().get("/empty", (request, response) -> response.status(204));
-      app.routes()
-          .get("/opt-out", (request, response) -> response.disableCompression().text("body"));
+      app.routes().get("/empty", (_, response) -> response.status(204));
+      app.routes().get("/opt-out", (_, response) -> response.disableCompression().text("body"));
       app.routes()
           .get(
               "/custom",
-              (request, response) ->
+              (_, response) ->
                   response
                       .setHeader("Content-Encoding", "br")
                       .body("application/octet-stream", new byte[] {1}));
@@ -573,7 +572,7 @@ class TransportTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.compression();
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
 
       var result =
@@ -596,12 +595,11 @@ class TransportTest {
         var client = HttpClient.newHttpClient()) {
       app.compression();
       app.exception(
-          NotFoundException.class,
-          (failure, request, response) -> response.status(200).text("recovered"));
+          NotFoundException.class, (_, _, response) -> response.status(200).text("recovered"));
       app.routes()
           .get(
               "/failure",
-              (request, response) -> {
+              (_, _) -> {
                 throw new NotFoundException();
               });
       app.start();
@@ -625,8 +623,7 @@ class TransportTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.compression();
-      app.routes()
-          .get("/opt-out", (request, response) -> response.disableCompression().text(payload));
+      app.routes().get("/opt-out", (_, response) -> response.disableCompression().text(payload));
       app.start();
       var uri = URI.create("http://127.0.0.1:" + app.port() + "/opt-out");
 
@@ -655,10 +652,10 @@ class TransportTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.compression();
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
-      app.routes().head("/file", (request, response) -> response.file(file, "text/plain"));
-      app.routes().get("/empty", (request, response) -> response.status(204));
-      app.routes().head("/empty", (request, response) -> response.status(204));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+      app.routes().head("/file", (_, response) -> response.file(file, "text/plain"));
+      app.routes().get("/empty", (_, response) -> response.status(204));
+      app.routes().head("/empty", (_, response) -> response.status(204));
       app.start();
       var base = "http://127.0.0.1:" + app.port();
 
@@ -722,8 +719,8 @@ class TransportTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.compression();
-      app.routes().get("/head-gzip", (request, response) -> response.file(file, "text/plain"));
-      app.routes().head("/head-gzip", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/head-gzip", (_, response) -> response.file(file, "text/plain"));
+      app.routes().head("/head-gzip", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var uri = URI.create("http://127.0.0.1:" + app.port() + "/head-gzip");
       var get =
@@ -769,7 +766,7 @@ class TransportTest {
             tls.setKeyStorePath(keyStore.toString());
             tls.setKeyStorePassword("wrong-password");
           });
-      app.routes().get("/", (request, response) -> response.text("never"));
+      app.routes().get("/", (_, response) -> response.text("never"));
 
       assertThrows(Exception.class, app::start);
       assertThrows(IllegalStateException.class, app::start);
@@ -858,8 +855,8 @@ class TransportTest {
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app);
       app.http2().compression();
-      app.routes().get("/data", (request, response) -> response.text(payload));
-      app.routes().head("/data", (request, response) -> response.text(payload));
+      app.routes().get("/data", (_, response) -> response.text(payload));
+      app.routes().head("/data", (_, response) -> response.text(payload));
       app.start();
       var uri = URI.create("https://localhost:" + app.port() + "/data");
 
@@ -924,9 +921,8 @@ class TransportTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.compression();
-      app.routes().get("/image", (request, response) -> response.body("image/png", content));
-      app.routes()
-          .get("/events", (request, response) -> response.body("text/event-stream", content));
+      app.routes().get("/image", (_, response) -> response.body("image/png", content));
+      app.routes().get("/events", (_, response) -> response.body("text/event-stream", content));
       app.start();
       var base = "http://127.0.0.1:" + app.port();
 
@@ -949,7 +945,7 @@ class TransportTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.compression();
-      app.routes().get("/image", (request, response) -> response.body("image/png", new byte[2048]));
+      app.routes().get("/image", (_, response) -> response.body("image/png", new byte[2048]));
       app.start();
 
       var result =
@@ -970,7 +966,7 @@ class TransportTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.compression();
-      app.routes().get("/small", (request, response) -> response.text("tiny"));
+      app.routes().get("/small", (_, response) -> response.text("tiny"));
       app.start();
 
       var result =
@@ -1005,7 +1001,7 @@ class TransportTest {
                     .compressExcludeMimeType("text/plain")
                     .build());
           });
-      app.routes().get("/text", (request, response) -> response.text(payload));
+      app.routes().get("/text", (_, response) -> response.text(payload));
       app.start();
 
       var result =
@@ -1043,7 +1039,7 @@ class TransportTest {
             context.setHandler(compressor.getHandler());
             compressor.setHandler(context);
           });
-      app.routes().get("/text", (request, response) -> response.text(payload));
+      app.routes().get("/text", (_, response) -> response.text(payload));
       app.start();
 
       var result =
@@ -1081,7 +1077,7 @@ class TransportTest {
             unselected.setMinCompressSize(10000);
             compressor.putCompression(unselected);
           });
-      app.routes().get("/selected", (request, response) -> response.text(payload));
+      app.routes().get("/selected", (_, response) -> response.text(payload));
       app.start();
 
       var result =
@@ -1105,7 +1101,7 @@ class TransportTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.compression();
-      app.routes().put("/data", (request, response) -> response.text("method response"));
+      app.routes().put("/data", (_, response) -> response.text("method response"));
       app.start();
 
       var result =
@@ -1131,7 +1127,7 @@ class TransportTest {
       app.routes()
           .get(
               "/stream",
-              (request, response) -> {
+              (_, response) -> {
                 var stream = response.startStream("text/plain");
                 stream.write(payload);
                 stream.flush();
@@ -1140,7 +1136,7 @@ class TransportTest {
       app.routes()
           .get(
               "/plain",
-              (request, response) -> {
+              (_, response) -> {
                 var stream = response.disableCompression().startStream("text/plain");
                 stream.write(payload);
                 stream.flush();
@@ -1179,12 +1175,11 @@ class TransportTest {
         var client = HttpClient.newHttpClient()) {
       app.compression();
       app.exception(
-          IllegalStateException.class,
-          (failure, request, response) -> response.status(200).text(payload));
+          IllegalStateException.class, (_, _, response) -> response.status(200).text(payload));
       app.routes()
           .get(
               "/recover",
-              (request, response) -> {
+              (_, _) -> {
                 throw new IllegalStateException("recoverable");
               });
       app.start();
@@ -1223,7 +1218,7 @@ class TransportTest {
       app.http2();
       app.exception(
           NotFoundException.class,
-          (failure, request, response) -> {
+          (_, _, _) -> {
             throw new Error("secret mapper diagnostic");
           });
       app.routes()
@@ -1246,7 +1241,7 @@ class TransportTest {
       app.routes()
           .get(
               "/fatal",
-              (request, response) -> {
+              (_, _) -> {
                 if (mapper) {
                   throw new NotFoundException();
                 }
@@ -1294,11 +1289,11 @@ class TransportTest {
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app);
       app.http2();
-      app.routes().get("/warmup", (request, response) -> response.text("ready"));
+      app.routes().get("/warmup", (_, response) -> response.text("ready"));
       app.routes()
           .get(
               "/good",
-              (request, response) -> {
+              (_, response) -> {
                 entered.countDown();
                 assertTrue(release.await(3, TimeUnit.SECONDS));
                 response.text("survived");
@@ -1306,7 +1301,7 @@ class TransportTest {
       app.routes()
           .get(
               "/fatal",
-              (request, response) -> {
+              (_, response) -> {
                 var stream = response.startStream("text/plain");
                 stream.write("prefix");
                 stream.flush();

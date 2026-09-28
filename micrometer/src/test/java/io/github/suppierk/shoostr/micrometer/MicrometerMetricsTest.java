@@ -32,9 +32,8 @@ class MicrometerMetricsTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.observe(new MicrometerMetrics(registry));
-      app.afterRequest(outcome -> completed.complete(null));
-      app.routes()
-          .get("/explicit", (request, response) -> response.status(status).text("explicit"));
+      app.afterRequest(_ -> completed.complete(null));
+      app.routes().get("/explicit", (_, response) -> response.status(status).text("explicit"));
       app.start();
       var result =
           client.send(
@@ -70,12 +69,12 @@ class MicrometerMetricsTest {
       app.routes()
           .get(
               "/failure",
-              (request, response) -> {
+              (_, _) -> {
                 throw new IllegalStateException("private");
               });
-      app.routes().get("/transport", (request, response) -> response.text("ok"));
+      app.routes().get("/transport", (_, response) -> response.text("ok"));
       app.afterResponseFlush(
-          (request, response) -> {
+          (request, _) -> {
             if (request.routePattern().filter("/transport"::equals).isPresent()) {
               throw new IOException("private");
             }
@@ -139,11 +138,11 @@ class MicrometerMetricsTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.observe(new MicrometerMetrics(registry));
-      app.afterRequest(outcome -> completed.complete(null));
+      app.afterRequest(_ -> completed.complete(null));
       app.routes()
           .get(
               "/orders/{id}",
-              (request, response) -> {
+              (_, response) -> {
                 entered.countDown();
                 assertTrue(release.await(5, TimeUnit.SECONDS));
                 response.text("ok");

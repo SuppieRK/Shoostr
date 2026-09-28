@@ -32,7 +32,7 @@ class PublishedIntegrationsTest {
   void publishedPac4jPolicyAuthenticatesAConsumerRequest() throws Exception {
     var provider =
         new DirectBasicAuthClient(
-            (context, credentials) -> {
+            (_, credentials) -> {
               var profile = new CommonProfile();
               profile.setId("consumer");
               credentials.setUserProfile(profile);
@@ -82,8 +82,8 @@ class PublishedIntegrationsTest {
             TestServer.start(
                 app -> {
                   app.observe(new MicrometerMetrics(registry));
-                  app.afterRequest(outcome -> completed.countDown());
-                  app.routes().get("/metered", (request, response) -> response.text("ok"));
+                  app.afterRequest(_ -> completed.countDown());
+                  app.routes().get("/metered", (_, response) -> response.text("ok"));
                 })) {
       var response =
           client.send(
@@ -115,8 +115,8 @@ class PublishedIntegrationsTest {
                 app -> {
                   var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
                   app.observe(new OpenTelemetryTracing(telemetry));
-                  app.afterRequest(outcome -> completed.countDown());
-                  app.routes().get("/traced", (request, response) -> response.text("ok"));
+                  app.afterRequest(_ -> completed.countDown());
+                  app.routes().get("/traced", (_, response) -> response.text("ok"));
                 })) {
       var response =
           client.send(

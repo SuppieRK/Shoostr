@@ -80,7 +80,7 @@ public class BufferedRequestBenchmark {
             Proxy.newProxyInstance(
                 BufferedRequestBenchmark.class.getClassLoader(),
                 new Class<?>[] {Request.class},
-                (proxy, method, arguments) ->
+                (_, method, arguments) ->
                     switch (method.getName()) {
                       case "getHeaders" -> HttpFields.EMPTY;
                       case "getMethod" -> "GET";
@@ -98,7 +98,7 @@ public class BufferedRequestBenchmark {
             Proxy.newProxyInstance(
                 BufferedRequestBenchmark.class.getClassLoader(),
                 new Class<?>[] {Response.class},
-                (proxy, method, arguments) -> {
+                (_, method, _) -> {
                   throw new UnsupportedOperationException(method.getName());
                 });
   }
