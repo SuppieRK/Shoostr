@@ -78,11 +78,11 @@ public class WebSocketRoutesTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/echo", (request, response) -> response.text("ordinary"));
+      app.routes().get("/echo", (_, response) -> response.text("ordinary"));
       app.routes()
           .websocket(
               "/echo",
-              (request, upgrade) -> {
+              (_, _) -> {
                 factoryCalls.incrementAndGet();
                 return new EchoListener("", completedSends, sendFailure);
               });
@@ -157,7 +157,7 @@ public class WebSocketRoutesTest {
       app.routes()
           .websocket(
               "/secure",
-              (request, upgrade) -> {
+              (request, _) -> {
                 assertTrue(request.isSecure());
                 assertEquals("https", request.scheme().orElseThrow());
                 return new EchoListener("secure:");
@@ -247,9 +247,9 @@ public class WebSocketRoutesTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> literal =
-          (request, upgrade) -> new EchoListener("literal:");
+          (_, _) -> new EchoListener("literal:");
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> parameter =
-          (request, upgrade) ->
+          (request, _) ->
               new EchoListener("parameter:" + request.pathParam("id").orElseThrow() + ":");
       if (literalFirst) {
         app.routes().websocket("/rooms/latest", literal);
@@ -259,12 +259,11 @@ public class WebSocketRoutesTest {
         app.routes().websocket("/rooms/latest", literal);
       }
 
-      app.routes().websocket("/fallback/fixed/x", (request, upgrade) -> new EchoListener("x:"));
+      app.routes().websocket("/fallback/fixed/x", (_, _) -> new EchoListener("x:"));
       app.routes()
           .websocket(
               "/fallback/{name}/y",
-              (request, upgrade) ->
-                  new EchoListener(request.pathParam("name").orElseThrow() + ":"));
+              (request, _) -> new EchoListener(request.pathParam("name").orElseThrow() + ":"));
       app.start();
 
       assertEquals("literal:ping", sendAndReceive(client, app, "/rooms/latest"));
@@ -282,18 +281,15 @@ public class WebSocketRoutesTest {
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .protect(
-              (request, response) -> {
-                if (!request
-                    .header("Origin")
-                    .filter("https://allowed.example"::equals)
-                    .isPresent()) {
+              (request, _) -> {
+                if (request.header("Origin").filter("https://allowed.example"::equals).isEmpty()) {
                   throw new ForbiddenException();
                 }
               },
               routes ->
                   routes.websocket(
                       "/private",
-                      (request, upgrade) -> {
+                      (_, _) -> {
                         factoryCalls.incrementAndGet();
                         return new EchoListener();
                       }));
@@ -328,8 +324,8 @@ public class WebSocketRoutesTest {
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .protect(
-              (request, response) -> {
-                if (!request.header("Authorization").filter("Bearer secret"::equals).isPresent()) {
+              (request, _) -> {
+                if (request.header("Authorization").filter("Bearer secret"::equals).isEmpty()) {
                   throw new AuthenticationRequiredException("Bearer realm=\"chat\"");
                 }
 
@@ -338,7 +334,7 @@ public class WebSocketRoutesTest {
               routes ->
                   routes.websocket(
                       "/authenticated",
-                      (request, upgrade) ->
+                      (request, _) ->
                           new EchoListener(request.principal().orElseThrow().getName() + ":")));
       app.start();
 
@@ -382,7 +378,7 @@ public class WebSocketRoutesTest {
       app.routes()
           .websocket(
               "/wire",
-              (request, upgrade) -> {
+              (_, upgrade) -> {
                 factoryCalls.incrementAndGet();
                 upgrade.getHeaders().put("X-Handshake", "accepted");
                 return new EchoListener();
@@ -412,7 +408,7 @@ public class WebSocketRoutesTest {
         var client = HttpClient.newHttpClient()) {
       app.exception(
           BadRequestException.class,
-          (failure, request, response) ->
+          (_, _, response) ->
               response.status(422).setHeader("X-Error-Mapped", "yes").text("mapped"));
       app.afterRequest(
           result -> {
@@ -422,7 +418,7 @@ public class WebSocketRoutesTest {
       app.routes()
           .websocket(
               "/reject",
-              (request, upgrade) -> {
+              (_, _) -> {
                 throw new BadRequestException();
               });
       app.start();
@@ -463,15 +459,14 @@ public class WebSocketRoutesTest {
             outcome.complete(result);
           });
       app.afterResponseFlush(
-          (request, response) -> {
+          (_, _) -> {
             throw postFlush;
           });
-      app.exception(
-          BadRequestException.class, (failure, request, response) -> response.text("mapped"));
+      app.exception(BadRequestException.class, (_, _, response) -> response.text("mapped"));
       app.routes()
           .websocket(
               "/flush-failure",
-              (request, upgrade) -> {
+              (_, _) -> {
                 throw original;
               });
       app.start();
@@ -505,14 +500,14 @@ public class WebSocketRoutesTest {
       app.routes()
           .websocket(
               "/failure",
-              (request, upgrade) -> {
+              (_, _) -> {
                 throw new IllegalStateException("broken factory");
               });
-      app.routes().websocket("/null", (request, upgrade) -> null);
+      app.routes().websocket("/null", (_, _) -> null);
       app.routes()
           .websocket(
               "/protocol",
-              (request, upgrade) -> {
+              (_, upgrade) -> {
                 upgrade.setAcceptedSubProtocol("not-offered");
                 return new EchoListener();
               });
@@ -533,7 +528,7 @@ public class WebSocketRoutesTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().websocket("/binary", (request, upgrade) -> new BinaryEchoListener());
+      app.routes().websocket("/binary", (_, _) -> new BinaryEchoListener());
       app.start();
       var socket =
           client
@@ -586,7 +581,7 @@ public class WebSocketRoutesTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().websocket("/live", (request, upgrade) -> new EchoListener());
+      app.routes().websocket("/live", (_, _) -> new EchoListener());
       app.start();
       var socket =
           client
@@ -628,8 +623,7 @@ public class WebSocketRoutesTest {
       app.routes()
           .websocket(
               "/bounded",
-              (request, upgrade) ->
-                  new LimitedListener(defaultOutgoing, configuredOutgoing, accepted));
+              (_, _) -> new LimitedListener(defaultOutgoing, configuredOutgoing, accepted));
       app.start();
       var socket =
           client
@@ -671,7 +665,7 @@ public class WebSocketRoutesTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var peer = new Socket()) {
       app.modifyServer(server::set);
-      app.routes().websocket("/slow", (request, upgrade) -> new SlowPeerListener(opened, terminal));
+      app.routes().websocket("/slow", (_, _) -> new SlowPeerListener(opened, terminal));
       app.start();
       var container =
           server.get().getContainedBeans(ServerWebSocketContainer.class).iterator().next();
@@ -715,8 +709,7 @@ public class WebSocketRoutesTest {
       app.routes()
           .websocket(
               "/producer",
-              (request, upgrade) ->
-                  new SerializedProducerListener(opened, completed, sendFailure, 2));
+              (_, _) -> new SerializedProducerListener(opened, completed, sendFailure, 2));
       app.start();
       upgradeUnreadPeer(peer, app.port(), "/producer");
 
@@ -749,8 +742,7 @@ public class WebSocketRoutesTest {
         var producers = Executors.newFixedThreadPool(4)) {
       app.routes()
           .websocket(
-              "/ordered",
-              (request, upgrade) -> new SerializedProducerListener(opened, completed, sendFailure));
+              "/ordered", (_, _) -> new SerializedProducerListener(opened, completed, sendFailure));
       app.start();
       var socket =
           client

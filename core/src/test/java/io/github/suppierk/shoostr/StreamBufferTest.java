@@ -191,7 +191,7 @@ class StreamBufferTest {
   }
 
   private Response response(int capacity, List<Write> writes, int failureWrite) {
-    return response(capacity, writes, failureWrite, (index, callback) -> callback.succeeded());
+    return response(capacity, writes, failureWrite, (_, callback) -> callback.succeeded());
   }
 
   private Response response(
@@ -205,7 +205,7 @@ class StreamBufferTest {
             Proxy.newProxyInstance(
                 getClass().getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (proxy, method, arguments) ->
+                (_, method, arguments) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "getHeaders" -> headers;
@@ -240,7 +240,7 @@ class StreamBufferTest {
             Proxy.newProxyInstance(
                 StreamBufferTest.class.getClassLoader(),
                 new Class<?>[] {Request.class},
-                (proxy, method, arguments) ->
+                (_, method, _) ->
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> HttpFields.EMPTY;

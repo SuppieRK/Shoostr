@@ -32,7 +32,7 @@ import org.openjdk.jmh.infra.Blackhole;
 @Threads(1)
 public class RoutePatternBenchmark {
   private static final int QUERY_COUNT = 16384;
-  private static final Handler HANDLER = (request, response) -> {};
+  private static final Handler HANDLER = (_, _) -> {};
 
   @Param({"1", "100", "1000"})
   public int groups;

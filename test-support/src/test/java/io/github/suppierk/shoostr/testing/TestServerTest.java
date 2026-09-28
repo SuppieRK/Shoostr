@@ -19,9 +19,8 @@ class TestServerTest {
     TestServer first;
 
     try (var running =
-            TestServer.start(app -> app.routes().get("/id", (req, res) -> res.text("one")));
-        var second =
-            TestServer.start(app -> app.routes().get("/id", (req, res) -> res.text("two")));
+            TestServer.start(app -> app.routes().get("/id", (_, res) -> res.text("one")));
+        var second = TestServer.start(app -> app.routes().get("/id", (_, res) -> res.text("two")));
         var client = HttpClient.newHttpClient()) {
       first = running;
       assertNotEquals(running.baseUri().getPort(), second.baseUri().getPort());
@@ -41,12 +40,12 @@ class TestServerTest {
             TestServer.start(
                 app -> {
                   captured.set(app);
-                  app.routes().get("/", (req, res) -> res.text("unused"));
+                  app.routes().get("/", (_, res) -> res.text("unused"));
                   throw new IllegalArgumentException("invalid fixture configuration");
                 }));
     var routes = captured.get().routes();
     assertThrows(
-        IllegalStateException.class, () -> routes.get("/later", (req, res) -> res.text("late")));
+        IllegalStateException.class, () -> routes.get("/later", (_, res) -> res.text("late")));
   }
 
   @Test
@@ -63,7 +62,7 @@ class TestServerTest {
                               throw new IOException("forced native stop failure");
                             }
                           }));
-              app.routes().get("/", (request, response) -> response.text("ready"));
+              app.routes().get("/", (_, response) -> response.text("ready"));
             });
 
     var failure = assertThrows(IOException.class, server::close);

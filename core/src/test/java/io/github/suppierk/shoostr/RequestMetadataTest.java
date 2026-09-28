@@ -72,8 +72,7 @@ class RequestMetadataTest {
   @NullSource
   void rejectsNullPathNamesBeforeAndAfterRouteSelection(String name) throws Exception {
     app.onRequestHeaders(
-        (request, response) ->
-            assertThrows(NullPointerException.class, () -> request.pathParam(name)));
+        (request, _) -> assertThrows(NullPointerException.class, () -> request.pathParam(name)));
     app.routes()
         .get(
             "/null-name/{id}",
@@ -92,7 +91,7 @@ class RequestMetadataTest {
     app.modifyHttpConfiguration(
         configuration ->
             configuration.addCustomizer(
-                (nativeRequest, responseHeaders) -> {
+                (nativeRequest, _) -> {
                   var uri =
                       HttpURI.build(nativeRequest.getHttpURI())
                           .scheme((String) null)
@@ -140,7 +139,7 @@ class RequestMetadataTest {
     app.modifyHttpConfiguration(
         configuration ->
             configuration.addCustomizer(
-                (nativeRequest, responseHeaders) -> {
+                (nativeRequest, _) -> {
                   var nativeMetadata = nativeRequest.getConnectionMetaData();
                   var nativeConnection = nativeMetadata.getConnection();
                   var nativeEndpoint = nativeConnection.getEndPoint();
@@ -242,7 +241,7 @@ class RequestMetadataTest {
     app.modifyHttpConfiguration(
         configuration ->
             configuration.addCustomizer(
-                (nativeRequest, responseHeaders) -> {
+                (nativeRequest, _) -> {
                   var fields = HttpFields.build(nativeRequest.getHeaders());
                   transportHeaders.set(fields);
                   return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
@@ -253,7 +252,7 @@ class RequestMetadataTest {
                   };
                 }));
     app.onRequestHeaders(
-        (request, response) -> {
+        (_, _) -> {
           transportHeaders.get().put("X-Snapshot", "changed");
           transportHeaders.get().put("Cookie", "token=changed");
         });
@@ -421,7 +420,7 @@ class RequestMetadataTest {
     var retained = new AtomicReference<Map<String, Object>>();
     var value = new Object();
     app.beforeRouteHandler(
-        (request, response) -> {
+        (request, _) -> {
           assertTrue(request.attribute("value").isEmpty());
           assertEquals(Map.of(), request.attributeMap());
           assertSame(request, request.attribute("value", value));
@@ -455,7 +454,7 @@ class RequestMetadataTest {
   void propagatesPrincipalAndStateThroughErrorHandling() throws Exception {
     var retained = new AtomicReference<Principal>();
     app.beforeRouteHandler(
-        (request, response) -> {
+        (request, _) -> {
           assertTrue(request.principal().isEmpty());
           if (request.routePattern().filter("/users/{id}"::equals).isPresent()) {
             var name = request.pathParam("id").orElseThrow();
@@ -467,7 +466,7 @@ class RequestMetadataTest {
         });
     app.exception(
         IllegalArgumentException.class,
-        (failure, request, response) -> {
+        (_, request, response) -> {
           assertEquals("/users/{id}", request.routePattern().orElseThrow());
           assertEquals(Map.of("id", "alice"), request.pathParamMap());
           assertEquals("alice", request.principal().orElseThrow().getName());
@@ -477,7 +476,7 @@ class RequestMetadataTest {
     app.routes()
         .get(
             "/users/{id}",
-            (request, response) -> {
+            (request, _) -> {
               assertSame(retained.get(), request.principal().orElseThrow());
               throw new IllegalArgumentException("business failure");
             });
@@ -505,7 +504,7 @@ class RequestMetadataTest {
     var entered = new CountDownLatch(8);
     var release = new CountDownLatch(1);
     app.beforeRouteHandler(
-        (request, response) -> {
+        (request, _) -> {
           assertTrue(request.principal().isEmpty());
           assertEquals(Map.of(), request.attributeMap());
           var id = request.pathParam("id").orElseThrow();
@@ -669,7 +668,7 @@ class RequestMetadataTest {
               assertEquals(Map.of("id", "one"), request.pathParamMap());
               stream.write("streamed");
             });
-    app.routes().get("/other", (request, response) -> response.text("other"));
+    app.routes().get("/other", (_, response) -> response.text("other"));
     app.start();
     assertEquals("streamed", send(request("/lifetime/one").header("X-Value", "kept")).body());
     var closedRequest = retained.get();

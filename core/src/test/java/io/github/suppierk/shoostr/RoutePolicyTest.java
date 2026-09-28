@@ -30,8 +30,7 @@ class RoutePolicyTest {
       var routes = app.routes();
       routes.close();
       assertThrows(
-          IllegalStateException.class,
-          () -> routes.protect((request, response) -> {}, scope -> invoked.set(true)));
+          IllegalStateException.class, () -> routes.protect((_, _) -> {}, _ -> invoked.set(true)));
       assertFalse(invoked.get());
     }
   }
@@ -43,15 +42,15 @@ class RoutePolicyTest {
         var client = HttpClient.newHttpClient()) {
       plain
           .routes()
-          .path("/api//", routes -> routes.get("", (request, response) -> response.text("plain")));
+          .path("/api//", routes -> routes.get("", (_, response) -> response.text("plain")));
       guarded
           .routes()
           .path(
               "/api//",
               routes ->
                   routes.protect(
-                      (request, response) -> {},
-                      secured -> secured.get("", (request, response) -> response.text("guarded"))));
+                      (_, _) -> {},
+                      secured -> secured.get("", (_, response) -> response.text("guarded"))));
       plain.start();
       guarded.start();
 
@@ -77,10 +76,9 @@ class RoutePolicyTest {
                       "/api",
                       paths ->
                           paths.protect(
-                              (request, response) -> {
-                                request.attribute(
-                                    "order", request.attribute("order").orElseThrow() + ",inner");
-                              },
+                              (request, _) ->
+                                  request.attribute(
+                                      "order", request.attribute("order").orElseThrow() + ",inner"),
                               inner ->
                                   inner.get(
                                       "/order",
@@ -100,13 +98,13 @@ class RoutePolicyTest {
         var client = HttpClient.newHttpClient()) {
       app.exception(
           AuthenticationRequiredException.class,
-          (failure, request, response) -> response.text("login required"));
+          (_, _, response) -> response.text("login required"));
       app.routes()
           .protect(
-              (request, response) -> {
+              (_, _) -> {
                 throw new AuthenticationRequiredException("Bearer realm=\"api\"");
               },
-              secured -> secured.get("/private", (request, response) -> response.text("secret")));
+              secured -> secured.get("/private", (_, response) -> response.text("secret")));
       app.start();
 
       var result = send(client, app, "/private");
@@ -131,7 +129,7 @@ class RoutePolicyTest {
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .protect(
-              (request, response) -> {
+              (_, _) -> {
                 throw new ForbiddenException();
               },
               secured -> secured.staticFiles("/files", directory));
@@ -150,12 +148,11 @@ class RoutePolicyTest {
               "/api",
               routes -> {
                 routes.protect(
-                    (request, response) -> {
+                    (_, _) -> {
                       throw new ForbiddenException();
                     },
-                    secured ->
-                        secured.get("/private", (request, response) -> response.text("secret")));
-                routes.get("/public", (request, response) -> response.text("public"));
+                    secured -> secured.get("/private", (_, response) -> response.text("secret")));
+                routes.get("/public", (_, response) -> response.text("public"));
               });
       app.start();
 

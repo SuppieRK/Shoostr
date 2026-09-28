@@ -48,8 +48,8 @@ class OpenTelemetryTracingTest {
         var client = HttpClient.newHttpClient()) {
       app.observe(
           new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build()));
-      app.afterRequest(outcome -> completed.complete(null));
-      app.routes().get("/explicit", (request, response) -> response.status(500).text("explicit"));
+      app.afterRequest(_ -> completed.complete(null));
+      app.routes().get("/explicit", (_, response) -> response.status(500).text("explicit"));
       app.start();
       var result =
           client.send(
@@ -74,7 +74,7 @@ class OpenTelemetryTracingTest {
       app.routes()
           .get(
               "/ok",
-              (request, response) ->
+              (_, response) ->
                   response.text(Boolean.toString(Span.current().getSpanContext().isValid())));
       app.start();
       var result =
@@ -110,12 +110,12 @@ class OpenTelemetryTracingTest {
       app.routes()
           .get(
               "/failure",
-              (request, response) -> {
+              (_, _) -> {
                 throw new IllegalStateException("private");
               });
-      app.routes().get("/transport", (request, response) -> response.text("ok"));
+      app.routes().get("/transport", (_, response) -> response.text("ok"));
       app.afterResponseFlush(
-          (request, response) -> {
+          (request, _) -> {
             if (request.routePattern().filter("/transport"::equals).isPresent()) {
               throw new IOException("private");
             }
@@ -178,7 +178,7 @@ class OpenTelemetryTracingTest {
       app.routes()
           .get(
               "/context",
-              (request, response) -> {
+              (_, response) -> {
                 var headers = new HashMap<String, String>();
                 telemetry
                     .getPropagators()
@@ -238,11 +238,11 @@ class OpenTelemetryTracingTest {
               .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
               .build();
       app.observe(new OpenTelemetryTracing(telemetry));
-      app.afterRequest(outcome -> completed.complete(null));
+      app.afterRequest(_ -> completed.complete(null));
       app.routes()
           .get(
               "/orders/{id}",
-              (request, response) -> {
+              (_, response) -> {
                 assertTrue(Span.current().getSpanContext().isValid());
                 var child = telemetry.getTracer("test").spanBuilder("child").startSpan();
                 child.end();

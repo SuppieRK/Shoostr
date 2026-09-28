@@ -189,7 +189,7 @@ class MediaTypeResponseTest {
       app.routes()
           .get(
               "/bytes",
-              (request, response) -> {
+              (_, response) -> {
                 var type = response.negotiate(latin, MediaType.APPLICATION_JSON);
                 var bytes = type.equals(latin) ? new byte[] {(byte) 0xe9} : new byte[] {'{', '}'};
                 response.body(type, bytes);
@@ -216,7 +216,7 @@ class MediaTypeResponseTest {
       app.routes()
           .get(
               "/merged",
-              (request, response) -> {
+              (_, response) -> {
                 response.addHeader("Vary", "Origin, aCcEpT");
                 response.addHeader("Vary", "User-Agent");
                 var type = response.negotiate(MediaType.APPLICATION_JSON);
@@ -225,7 +225,7 @@ class MediaTypeResponseTest {
       app.routes()
           .get(
               "/wildcard",
-              (request, response) -> {
+              (_, response) -> {
                 response.setHeader("Vary", "*");
                 var type = response.negotiate(MediaType.APPLICATION_JSON);
                 response.body(type, new byte[] {1});
@@ -382,7 +382,7 @@ class MediaTypeResponseTest {
       app.routes()
           .get(
               "/stream",
-              (request, response) -> {
+              (_, response) -> {
                 response.startStream(MediaType.TEXT_PLAIN).write("ready");
                 failure.set(
                     assertThrows(
@@ -404,7 +404,7 @@ class MediaTypeResponseTest {
       app.routes()
           .get(
               "/negotiated",
-              (request, response) -> {
+              (_, response) -> {
                 response.addHeader("Vary", "Origin");
                 var type = response.negotiate(MediaType.APPLICATION_JSON);
                 response.body(type, new byte[] {1});
@@ -428,7 +428,7 @@ class MediaTypeResponseTest {
       app.routes()
           .get(
               "/negotiated",
-              (request, response) -> {
+              (_, response) -> {
                 var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
                 response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
               });
@@ -452,7 +452,7 @@ class MediaTypeResponseTest {
       app.routes()
           .get(
               "/negotiated",
-              (request, response) -> {
+              (_, response) -> {
                 var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
                 response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
               });
@@ -472,7 +472,7 @@ class MediaTypeResponseTest {
       app.routes()
           .get(
               "/latin",
-              (request, response) -> {
+              (_, response) -> {
                 var bytes = new byte[] {(byte) 0xe9};
                 response.body(MediaType.TEXT_PLAIN.withCharset(StandardCharsets.ISO_8859_1), bytes);
                 bytes[0] = 0;
@@ -497,7 +497,7 @@ class MediaTypeResponseTest {
       app.routes()
           .get(
               "/stream",
-              (request, response) -> {
+              (_, response) -> {
                 var stream =
                     response.startStream(MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
                 retained.set(stream);
@@ -538,7 +538,7 @@ class MediaTypeResponseTest {
       app.routes()
           .get(
               "/custom",
-              (request, response) ->
+              (_, response) ->
                   response.body("application/example; note=\"a b\"", new byte[] {1, 2, 3}));
       app.start();
       var result = client.send(request(app, "/custom"), HttpResponse.BodyHandlers.ofByteArray());

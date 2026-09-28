@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -40,7 +41,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -66,7 +67,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -90,7 +91,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var first =
           client.send(
@@ -121,7 +122,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -145,7 +146,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -169,7 +170,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var commaSeparated =
           client.send(
@@ -204,7 +205,7 @@ class RangeConditionalResponseTest {
       app.routes()
           .get(
               "/file",
-              (request, response) ->
+              (_, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
@@ -231,7 +232,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().head("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().head("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -256,7 +257,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var first =
           client.send(
@@ -287,7 +288,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -308,7 +309,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -334,7 +335,7 @@ class RangeConditionalResponseTest {
       app.routes()
           .get(
               "/file",
-              (request, response) ->
+              (_, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
@@ -374,7 +375,7 @@ class RangeConditionalResponseTest {
       app.routes()
           .get(
               "/file",
-              (request, response) ->
+              (_, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision,1\"")
                       .file(file, "text/plain"));
@@ -403,7 +404,7 @@ class RangeConditionalResponseTest {
       app.routes()
           .post(
               "/file",
-              (request, response) ->
+              (_, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
@@ -432,7 +433,7 @@ class RangeConditionalResponseTest {
       app.routes()
           .get(
               "/file",
-              (request, response) -> {
+              (_, response) -> {
                 response.text("staged");
                 assertThrows(IllegalStateException.class, () -> response.file(file, "text/plain"));
               });
@@ -457,7 +458,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var first =
           client.send(
@@ -488,8 +489,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .get("/file", (request, response) -> response.status(404).file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.status(404).file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -515,7 +515,7 @@ class RangeConditionalResponseTest {
       app.routes()
           .get(
               "/file",
-              (request, response) -> {
+              (_, response) -> {
                 response.file(file, "text/plain");
                 assertThrows(IllegalStateException.class, () -> response.text("replacement"));
                 assertThrows(IllegalStateException.class, () -> response.startStream("text/plain"));
@@ -541,7 +541,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -564,7 +564,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       for (var range : List.of("bytes=99-invalid", "bytes=99-1", "bytes=0-999999999999999999999")) {
         var result =
@@ -589,8 +589,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .post("/file", (request, response) -> response.status(201).file(file, "text/plain"));
+      app.routes().post("/file", (_, response) -> response.status(201).file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -616,7 +615,7 @@ class RangeConditionalResponseTest {
       app.routes()
           .get(
               "/file",
-              (request, response) -> {
+              (_, response) -> {
                 response.file(file, "text/plain");
                 assertThrows(IllegalStateException.class, () -> response.text("replacement"));
                 assertThrows(IllegalStateException.class, () -> response.startStream("text/plain"));
@@ -646,7 +645,7 @@ class RangeConditionalResponseTest {
       app.routes()
           .get(
               "/file",
-              (request, response) ->
+              (_, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision 1\"")
                       .file(file, "text/plain"));
@@ -670,7 +669,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var zeroSuffix = client.send(request(app, "bytes=-0"), HttpResponse.BodyHandlers.ofString());
       var clamped = client.send(request(app, "bytes=7-99"), HttpResponse.BodyHandlers.ofString());
@@ -702,7 +701,7 @@ class RangeConditionalResponseTest {
       app.routes()
           .get(
               "/file",
-              (request, response) ->
+              (_, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
@@ -730,7 +729,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -763,7 +762,7 @@ class RangeConditionalResponseTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result = client.send(request(app, "bytes=0-"), HttpResponse.BodyHandlers.ofString());
       assertEquals(416, result.statusCode());
@@ -780,24 +779,28 @@ class RangeConditionalResponseTest {
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
     var staged = new CountDownLatch(2);
     var release = new CountDownLatch(1);
+    var waitTimedOut = new AtomicBoolean();
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .get(
               "/file",
-              (request, response) -> {
+              (_, response) -> {
                 response.file(file, "text/plain");
                 staged.countDown();
-                release.await(5, TimeUnit.SECONDS);
+                if (!release.await(5, TimeUnit.SECONDS)) {
+                  waitTimedOut.set(true);
+                }
               });
       app.start();
       var first = client.sendAsync(request(app, "bytes=0-2"), HttpResponse.BodyHandlers.ofString());
       var second =
           client.sendAsync(request(app, "bytes=7-9"), HttpResponse.BodyHandlers.ofString());
-      assertEquals(true, staged.await(5, TimeUnit.SECONDS));
+      assertTrue(staged.await(5, TimeUnit.SECONDS));
       release.countDown();
       CompletableFuture.allOf(first, second).join();
+      assertFalse(waitTimedOut.get());
       assertEquals(206, first.join().statusCode());
       assertEquals(206, second.join().statusCode());
       assertEquals("012", first.join().body());
@@ -821,8 +824,7 @@ class RangeConditionalResponseTest {
             outcome.set(value);
             completed.countDown();
           });
-      app.routes()
-          .get("/file", (request, response) -> response.file(file, "application/octet-stream"));
+      app.routes().get("/file", (_, response) -> response.file(file, "application/octet-stream"));
       app.start();
 
       try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
@@ -836,13 +838,13 @@ class RangeConditionalResponseTest {
         var response = new String(initial, StandardCharsets.ISO_8859_1);
         var headerEnd = response.indexOf("\r\n\r\n");
         var contentStart = headerEnd + 4;
-        assertEquals(true, response.startsWith("HTTP/1.1 200"));
+        assertTrue(response.startsWith("HTTP/1.1 200"));
         assertTrue(headerEnd >= 0);
-        assertEquals(true, initial.length > contentStart);
+        assertTrue(initial.length > contentStart);
         socket.setSoLinger(true, 0);
       }
 
-      assertEquals(true, completed.await(5, TimeUnit.SECONDS));
+      assertTrue(completed.await(5, TimeUnit.SECONDS));
       assertEquals(200, outcome.get().statusCode());
       assertNotNull(outcome.get().transportFailure());
       var result = client.send(request(app, "bytes=0-2"), HttpResponse.BodyHandlers.ofString());
@@ -862,7 +864,7 @@ class RangeConditionalResponseTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.afterRequest(ignored -> completed.countDown());
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result = client.send(request(app, "bytes=0-2"), HttpResponse.BodyHandlers.ofString());
       assertEquals(206, result.statusCode());
@@ -889,7 +891,7 @@ class RangeConditionalResponseTest {
       app.routes()
           .get(
               "/file",
-              (request, response) -> {
+              (_, response) -> {
                 response.file(file, "text/plain");
                 Files.delete(file);
               });
@@ -917,7 +919,7 @@ class RangeConditionalResponseTest {
         var client = HttpClient.newHttpClient()) {
       var file = filesystem.getPath("/file.txt");
       Files.writeString(file, "archive", StandardCharsets.US_ASCII);
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result = client.send(request(app, "bytes=0-2"), HttpResponse.BodyHandlers.ofString());
       assertEquals(500, result.statusCode());

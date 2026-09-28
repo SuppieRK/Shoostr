@@ -39,7 +39,7 @@ class RoutesConcurrencyTest {
                   for (int route = 0; route < 8; route++) {
                     String path = index + "/" + route;
                     var scope = scopes.get(index % scopes.size());
-                    scope.route("GET", prefix(index) + path, (req, res) -> res.text(path));
+                    scope.route("GET", prefix(index) + path, (_, res) -> res.text(path));
                   }
                 }));
       }
@@ -77,7 +77,7 @@ class RoutesConcurrencyTest {
                         .get(index % scopes.size())
                         .get(
                             prefix(index) + "{id" + index + "}",
-                            (req, res) -> res.text(Integer.toString(index)));
+                            (_, res) -> res.text(Integer.toString(index)));
                     return true;
                   } catch (IllegalArgumentException _) {
                     return false;
@@ -112,7 +112,7 @@ class RoutesConcurrencyTest {
                     workers.submit(
                         () ->
                             routes.path(
-                                "/nested", nested -> nested.get((req, res) -> res.text("ready"))));
+                                "/nested", nested -> nested.get((_, res) -> res.text("ready"))));
                 assertDoesNotThrow(() -> task.get(3, TimeUnit.SECONDS));
                 var startup =
                     workers.submit(() -> assertThrows(IllegalStateException.class, app::start));
@@ -138,7 +138,7 @@ class RoutesConcurrencyTest {
                       routes -> {
                         entered.countDown();
                         await(release);
-                        routes.get("/ready", (request, response) -> response.text("ready"));
+                        routes.get("/ready", (_, response) -> response.text("ready"));
                       }));
 
       try {
@@ -171,7 +171,7 @@ class RoutesConcurrencyTest {
                             entered.countDown();
                             await(release);
                             assertThrows(
-                                IllegalStateException.class, () -> routes.get((req, res) -> {}));
+                                IllegalStateException.class, () -> routes.get((_, _) -> {}));
                           }));
 
       try {
@@ -211,7 +211,7 @@ class RoutesConcurrencyTest {
                       () ->
                           rootRoutes.path(
                               "/first",
-                              routes -> {
+                              _ -> {
                                 entered.countDown();
                                 await(firstRelease);
                                 throw new IllegalArgumentException("registration failed");
@@ -225,7 +225,7 @@ class RoutesConcurrencyTest {
                           routes -> {
                             entered.countDown();
                             await(secondRelease);
-                            routes.get((req, res) -> {});
+                            routes.get((_, _) -> {});
                           }));
 
       try {
@@ -262,7 +262,7 @@ class RoutesConcurrencyTest {
                   try {
                     scopes
                         .get(index % scopes.size())
-                        .get(prefix(index) + index, (req, res) -> res.text("registered"));
+                        .get(prefix(index) + index, (_, res) -> res.text("registered"));
                     return true;
                   } catch (IllegalStateException _) {
                     return false;

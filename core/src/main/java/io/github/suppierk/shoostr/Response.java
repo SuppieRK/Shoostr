@@ -751,7 +751,7 @@ public final class Response implements AutoCloseable {
     for (var field : delegate.getHeaders()) {
       fields.computeIfAbsent(field.getName(), ignored -> new ArrayList<>()).add(field.getValue());
     }
-    fields.replaceAll((name, values) -> List.copyOf(values));
+    fields.replaceAll((_, values) -> List.copyOf(values));
     return Collections.unmodifiableMap(fields);
   }
 

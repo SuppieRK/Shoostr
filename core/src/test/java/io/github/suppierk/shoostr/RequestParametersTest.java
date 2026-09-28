@@ -111,7 +111,7 @@ class RequestParametersTest {
   void rejectsMalformedQueryEncoding(String encoded) throws Exception {
     app.exception(
         BadRequestException.class,
-        (failure, request, response) -> {
+        (_, request, response) -> {
           assertThrows(BadRequestException.class, request::queryParamMap);
           response.setHeader("X-Handled", "bad-query").text("bad input");
         });
@@ -138,11 +138,10 @@ class RequestParametersTest {
     app.routes()
         .get(
             "/query",
-            (request, response) -> {
-              response.text(
-                  Integer.toString(
-                      request.queryParamMap().values().stream().mapToInt(List::size).sum()));
-            });
+            (request, response) ->
+                response.text(
+                    Integer.toString(
+                        request.queryParamMap().values().stream().mapToInt(List::size).sum())));
     app.start();
     String query = repeated ? "a=1&a=2" : "a=1&b=2";
     var accepted = send(request("/query?" + query).build());
@@ -259,7 +258,7 @@ class RequestParametersTest {
   void rejectsMalformedFormUtf8WithoutPartialValues(boolean encoded) throws Exception {
     app.exception(
         BadRequestException.class,
-        (failure, request, response) -> {
+        (_, request, response) -> {
           assertThrows(BadRequestException.class, request::formParamMap);
           response.text("invalid form");
         });
@@ -287,7 +286,7 @@ class RequestParametersTest {
     app = new Shoostr(new Options("127.0.0.1", 0, 7, 1024, 64, 30_000));
     app.exception(
         ContentTooLargeException.class,
-        (failure, request, response) -> {
+        (_, request, response) -> {
           assertThrows(ContentTooLargeException.class, request::bodyBytes);
           assertThrows(ContentTooLargeException.class, request::formParamMap);
           response.text("still oversized");

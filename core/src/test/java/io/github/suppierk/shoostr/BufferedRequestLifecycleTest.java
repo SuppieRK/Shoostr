@@ -109,7 +109,7 @@ class BufferedRequestLifecycleTest {
       app.modifyHttpConfiguration(
           configuration ->
               configuration.addCustomizer(
-                  (nativeRequest, responseHeaders) -> {
+                  (nativeRequest, _) -> {
                     if (!"/bad".equals(nativeRequest.getHttpURI().getPath())) {
                       return nativeRequest;
                     }
@@ -124,7 +124,7 @@ class BufferedRequestLifecycleTest {
       app.afterRequest(outcomes::add);
       app.exception(
           BadRequestException.class,
-          (failure, request, response) -> {
+          (failure, _, response) -> {
             rejections.add(failure);
             response.text("bad length");
           });

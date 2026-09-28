@@ -60,16 +60,15 @@ class HttpContractTest {
             .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(3))
             .build();
-    app.routes().get("/plain", (req, res) -> res.text("hello"));
+    app.routes().get("/plain", (_, res) -> res.text("hello"));
     app.routes()
         .get(
-            "/virtual",
-            (req, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
+            "/virtual", (_, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
     app.routes().post("/echo", (req, res) -> res.text(req.bodyText()));
     app.routes()
         .get(
             "/failure",
-            (req, res) -> {
+            (_, res) -> {
               res.status(201).setHeader("X-Leak", "secret").text("must not escape");
               throw new IllegalArgumentException("secret details");
             });
@@ -90,7 +89,7 @@ class HttpContractTest {
     app.routes()
         .get(
             "/stream",
-            (req, res) -> {
+            (_, res) -> {
               var stream = res.startStream("text/plain; charset=utf-8");
               stream.write("first\n");
               stream.flush();
@@ -103,7 +102,7 @@ class HttpContractTest {
     app.routes()
         .get(
             "/fluent-stream",
-            (req, res) -> {
+            (_, res) -> {
               var stream = res.startStream("text/plain; charset=utf-8");
               assertSame(stream, stream.write("café"));
               assertSame(stream, stream.write(new byte[] {'!'}));
@@ -115,17 +114,17 @@ class HttpContractTest {
     app.routes()
         .get(
             "/broken-stream",
-            (req, res) -> {
+            (_, res) -> {
               var stream = res.startStream("text/plain; charset=utf-8");
               stream.write("partial\n");
               stream.flush();
               throw new IOException("failed after commitment");
             });
-    app.routes().get("/close", (req, res) -> res.close());
+    app.routes().get("/close", (_, res) -> res.close());
     app.routes()
         .get(
             "/cross-thread",
-            (req, res) -> {
+            (_, res) -> {
               var failure = new AtomicReference<Throwable>();
               var thread =
                   Thread.startVirtualThread(
@@ -139,17 +138,16 @@ class HttpContractTest {
               thread.join();
               res.text(Boolean.toString(failure.get() instanceof IllegalStateException));
             });
-    app.routes().get("/empty", (req, res) -> res.status(204));
-    app.routes().get("/invalid-empty", (req, res) -> res.status(204).text("bad"));
+    app.routes().get("/empty", (_, res) -> res.status(204));
+    app.routes().get("/invalid-empty", (_, res) -> res.status(204).text("bad"));
     app.routes()
-        .get(
-            "/invalid-type", (req, res) -> res.body("text/plain\r\nX-Leak: injected", new byte[0]));
+        .get("/invalid-type", (_, res) -> res.body("text/plain\r\nX-Leak: injected", new byte[0]));
     app.routes()
-        .get("/invalid-stream-type", (req, res) -> res.startStream("text/plain\nX-Leak: injected"));
-    app.routes().get("/invalid-header", (req, res) -> res.setHeader("Bad Header", "value"));
-    app.routes().get("/invalid-framing", (req, res) -> res.setHeader("content-length", "12"));
+        .get("/invalid-stream-type", (_, res) -> res.startStream("text/plain\nX-Leak: injected"));
+    app.routes().get("/invalid-header", (_, res) -> res.setHeader("Bad Header", "value"));
+    app.routes().get("/invalid-framing", (_, res) -> res.setHeader("content-length", "12"));
     app.routes()
-        .get("/custom-type", (req, res) -> res.body("application/vnd.example+json", new byte[0]));
+        .get("/custom-type", (_, res) -> res.body("application/vnd.example+json", new byte[0]));
     app.start();
     base = "http://127.0.0.1:" + app.port();
   }
@@ -323,7 +321,7 @@ class HttpContractTest {
   @Test
   void freezesRoutesAfterStartup() {
     var routes = app.routes();
-    assertThrows(IllegalStateException.class, () -> routes.get("/later", (req, res) -> {}));
+    assertThrows(IllegalStateException.class, () -> routes.get("/later", (_, _) -> {}));
   }
 
   @ParameterizedTest
@@ -345,7 +343,7 @@ class HttpContractTest {
             Proxy.newProxyInstance(
                 HttpContractTest.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (proxy, method, args) ->
+                (_, method, args) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "getHeaders" -> headers;
@@ -433,7 +431,7 @@ class HttpContractTest {
             Proxy.newProxyInstance(
                 HttpContractTest.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (proxy, method, args) ->
+                (_, method, args) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "getHeaders" -> headers;
@@ -468,7 +466,7 @@ class HttpContractTest {
             Proxy.newProxyInstance(
                 HttpContractTest.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Request.class},
-                (proxy, method, arguments) ->
+                (_, method, _) ->
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> HttpFields.EMPTY;

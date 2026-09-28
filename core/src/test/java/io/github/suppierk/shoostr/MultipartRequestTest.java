@@ -24,6 +24,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -747,15 +748,16 @@ class MultipartRequestTest {
   void deletesTemporaryUploadsAfterAHandlerFailure() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
+    var firstByte = new AtomicInteger(-1);
 
     try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .post(
               "/upload",
-              (request, response) -> {
+              (request, _) -> {
                 var content = request.file("document").orElseThrow().content();
-                content.read();
+                firstByte.set(content.read());
                 throw new IllegalStateException("expected failure");
               });
       app.start();
@@ -769,6 +771,7 @@ class MultipartRequestTest {
               HttpResponse.BodyHandlers.ofString());
       assertEquals(500, result.statusCode());
       assertEquals("Internal Server Error", result.body());
+      assertEquals('c', firstByte.get());
       awaitFile(directory, false);
     }
 
@@ -1048,7 +1051,7 @@ class MultipartRequestTest {
         .untilAsserted(
             () -> {
               try (var files = Files.list(directory)) {
-                assertEquals(expected, files.count() > 0);
+                assertEquals(expected, files.findAny().isPresent());
               }
             });
   }

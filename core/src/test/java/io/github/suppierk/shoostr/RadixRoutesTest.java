@@ -21,8 +21,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class RadixRoutesTest {
-  private static final Handler GET = (request, response) -> {};
-  private static final Handler POST = (request, response) -> {};
+  private static final Handler GET = (_, _) -> {};
+  private static final Handler POST = (_, _) -> {};
 
   @Test
   void distinguishesTerminalPathsFromPrefixesAndMissingMethods() {
@@ -49,7 +49,7 @@ class RadixRoutesTest {
     var paths = List.of("/A", "/a", "/a%2Fb", "/a%2fb", "/a/b", "/é", "/😀", "/😁");
     var routes = new HashMap<String, Map<HttpMethods, Handler>>();
     for (String captured : paths) {
-      routes.put(captured, Map.of(HttpMethods.GET, (request, response) -> response.text(captured)));
+      routes.put(captured, Map.of(HttpMethods.GET, (_, response) -> response.text(captured)));
     }
     var tree = compile(routes);
     for (String path : paths) {

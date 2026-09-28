@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.suppierk.shoostr.http.HttpMethods;
@@ -29,6 +30,7 @@ class RoutePatternBenchmarkTest {
             "notFound".equals(workload) ? Set.of() : Set.of(HttpMethods.GET, HttpMethods.POST),
             fixture.router.allowedMethods(path));
       } else {
+        assertNotNull(endpoint);
         var segments = path.split("/");
         int group = Integer.parseInt(segments[3]);
         String patternSuffix =

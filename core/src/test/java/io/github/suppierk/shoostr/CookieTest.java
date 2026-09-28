@@ -104,12 +104,12 @@ class CookieTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     app.modifyHttpConfiguration(
         configuration -> configuration.setRequestCookieCompliance(CookieCompliance.RFC6265_STRICT));
-    app.onRequestHeaders((request, response) -> admissions.incrementAndGet());
+    app.onRequestHeaders((_, _) -> admissions.incrementAndGet());
     app.afterRequest(outcomes::add);
     app.routes()
         .get(
             "/cookies",
-            (request, response) -> {
+            (_, response) -> {
               handlers.incrementAndGet();
               response.text("ok");
             });
@@ -189,7 +189,7 @@ class CookieTest {
     app.routes()
         .get(
             "/set",
-            (request, response) -> {
+            (_, response) -> {
               response.cookie("first", "a+b%2F").cookie(new Cookie("empty", ""));
               response.text("ok");
             });
@@ -224,7 +224,7 @@ class CookieTest {
     app.routes()
         .get(
             "/attributes",
-            (request, response) ->
+            (_, response) ->
                 response.setHeader("Expires", "Thu, 01 Jan 1970 00:00:00 GMT").cookie(configured));
     app.start();
     var result = send(request("/attributes"));
@@ -242,16 +242,16 @@ class CookieTest {
     app.routes()
         .get(
             "/replace",
-            (request, response) -> {
-              response
-                  .cookie("id", "root")
-                  .cookie(new Cookie("id", "path").withPath("/app"))
-                  .cookie(new Cookie("Id", "case"))
-                  .addHeader("Set-Cookie", "id=raw; Domain=.EXAMPLE.test; Path=/app")
-                  .addHeader("Set-Cookie", "malformed")
-                  .cookie("id", "replacement")
-                  .cookie(new Cookie("id", "scoped").withPath("/app").withDomain("example.test"));
-            });
+            (_, response) ->
+                response
+                    .cookie("id", "root")
+                    .cookie(new Cookie("id", "path").withPath("/app"))
+                    .cookie(new Cookie("Id", "case"))
+                    .addHeader("Set-Cookie", "id=raw; Domain=.EXAMPLE.test; Path=/app")
+                    .addHeader("Set-Cookie", "malformed")
+                    .cookie("id", "replacement")
+                    .cookie(
+                        new Cookie("id", "scoped").withPath("/app").withDomain("example.test")));
     app.start();
     var result = send(request("/replace"));
     assertEquals(200, result.statusCode());
@@ -275,7 +275,7 @@ class CookieTest {
     app.routes()
         .get(
             "/delete",
-            (request, response) ->
+            (_, response) ->
                 response
                     .cookie("id", "root")
                     .cookie(new Cookie("id", "keep").withPath("/app"))
@@ -306,7 +306,7 @@ class CookieTest {
     app.routes()
         .get(
             "/security",
-            (request, response) -> {
+            (_, response) -> {
               var insecure = new Cookie("id", "value");
               assertThrows(
                   IllegalArgumentException.class,
@@ -343,7 +343,7 @@ class CookieTest {
     app.routes()
         .get(
             "/invalid",
-            (request, response) -> {
+            (_, response) -> {
               var base = new Cookie("id", "kept");
               response.cookie(base);
               for (var name : List.of("", "bad name", "bad=name", "bad;name", "bad\r\nname", "é")) {
@@ -399,7 +399,7 @@ class CookieTest {
     app.routes()
         .get(
             "/quoted",
-            (request, response) -> {
+            (_, response) -> {
               response.cookie("quoted", "\"abc\"").cookie("empty", "\"\"");
               for (var value :
                   List.of("\"a b\"", "\"a;b\"", "\"a\\b\"", "\"unclosed", "\"a\"b\"")) {
@@ -437,7 +437,7 @@ class CookieTest {
     app.routes()
         .get(
             "/expiry",
-            (request, response) ->
+            (_, response) ->
                 response
                     .cookie(new Cookie("only", "value").withExpires(expiry))
                     .cookie(new Cookie("huge", "value").withMaxAge(Long.MAX_VALUE))
@@ -458,7 +458,7 @@ class CookieTest {
     var retained = new AtomicReference<Response>();
     app.exception(
         IllegalArgumentException.class,
-        (failure, request, response) ->
+        (_, request, response) ->
             response
                 .status(409)
                 .cookie("mapped", request.cookie("incoming").orElseThrow())
@@ -466,7 +466,7 @@ class CookieTest {
     app.routes()
         .get(
             "/stream",
-            (request, response) -> {
+            (_, response) -> {
               retained.set(response);
               response.cookie("before", "value");
 
@@ -491,18 +491,18 @@ class CookieTest {
     app.routes()
         .get(
             "/failed",
-            (request, response) -> {
+            (_, response) -> {
               response.cookie("discarded", "value");
               throw new BadRequestException();
             });
     app.routes()
         .get(
             "/mapped",
-            (request, response) -> {
+            (_, response) -> {
               response.cookie("discarded", "value");
               throw new IllegalArgumentException("private");
             });
-    app.routes().head("/head", (request, response) -> response.cookie("head", "value"));
+    app.routes().head("/head", (_, response) -> response.cookie("head", "value"));
     app.start();
     var streamed = send(request("/stream"));
     assertEquals("streamed", streamed.body());
@@ -530,14 +530,10 @@ class CookieTest {
             .cookieHandler(new CookieManager())
             .connectTimeout(Duration.ofSeconds(3))
             .build();
-    app.routes().get("/set", (request, response) -> response.cookie("id", "value"));
+    app.routes().get("/set", (_, response) -> response.cookie("id", "value"));
     app.routes()
-        .get(
-            "/read",
-            (request, response) -> {
-              response.text(request.cookie("id").orElse("missing"));
-            });
-    app.routes().get("/delete", (request, response) -> response.removeCookie("id"));
+        .get("/read", (request, response) -> response.text(request.cookie("id").orElse("missing")));
+    app.routes().get("/delete", (_, response) -> response.removeCookie("id"));
     app.start();
     assertEquals("missing", send(request("/read")).body());
     assertEquals(200, send(request("/set")).statusCode());

@@ -53,7 +53,7 @@ class ExceptionHandlerTest {
   void writesCustomErrorsWithALiveRequestAndCleanResponse() throws Exception {
     app.exception(
         UnauthorizedException.class,
-        (failure, request, response) ->
+        (_, request, response) ->
             response
                 .status(401)
                 .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Bearer realm=\"api\"")
@@ -66,7 +66,7 @@ class ExceptionHandlerTest {
     app.routes()
         .post(
             "/orders/{id}",
-            (request, response) -> {
+            (_, response) -> {
               response.status(201).setHeader("X-Leak", "secret").text("discard");
               throw new UnauthorizedException("private diagnostics");
             });
@@ -85,20 +85,19 @@ class ExceptionHandlerTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void selectsMostSpecificSuperclass(boolean specificFirst) throws Exception {
-    ExceptionHandler<HttpException> broad = (failure, request, response) -> response.text("broad");
-    ExceptionHandler<HttpClientException> narrow =
-        (failure, request, response) -> response.text("client");
+    ExceptionHandler<HttpException> broad = (_, _, response) -> response.text("broad");
+    ExceptionHandler<HttpClientException> narrow = (_, _, response) -> response.text("client");
     if (specificFirst) {
       app.exception(HttpClientException.class, narrow).exception(HttpException.class, broad);
     } else {
       app.exception(HttpException.class, broad).exception(HttpClientException.class, narrow);
     }
 
-    app.exception(Exception.class, (failure, request, response) -> response.text("catch-all"));
+    app.exception(Exception.class, (_, _, response) -> response.text("catch-all"));
     app.routes()
         .get(
             "/missing",
-            (request, response) -> {
+            (_, _) -> {
               throw new NotFoundException();
             });
     app.start();
@@ -113,7 +112,7 @@ class ExceptionHandlerTest {
     var calls = new AtomicInteger();
     app.exception(
         Exception.class,
-        (failure, request, response) -> {
+        (_, _, response) -> {
           calls.incrementAndGet();
           response.setHeader("X-Leak", "private").text("private body");
           if (failureMode == 0) {
@@ -129,7 +128,7 @@ class ExceptionHandlerTest {
     app.routes()
         .get(
             "/error",
-            (request, response) -> {
+            (_, _) -> {
               throw new NotFoundException();
             });
     app.start();
@@ -143,7 +142,7 @@ class ExceptionHandlerTest {
   @ParameterizedTest
   @ValueSource(ints = {0, 1, 2})
   void rejectsDuplicateOrLateRegistration(int phase) throws Exception {
-    app.exception(Exception.class, (failure, request, response) -> response.text("first"));
+    app.exception(Exception.class, (_, _, response) -> response.text("first"));
     if (phase == 1) {
       app.start();
     } else if (phase == 2) {
@@ -154,9 +153,7 @@ class ExceptionHandlerTest {
         phase == 0 ? IllegalArgumentException.class : IllegalStateException.class;
     assertThrows(
         expected,
-        () ->
-            app.exception(
-                Exception.class, (failure, request, response) -> response.text("second")));
+        () -> app.exception(Exception.class, (_, _, response) -> response.text("second")));
   }
 
   @Test
@@ -165,9 +162,9 @@ class ExceptionHandlerTest {
     app = new Shoostr(new Options("127.0.0.1", 0, 4, 1024, 8, 5000));
     app.exception(
         ContentTooLargeException.class,
-        (failure, request, response) ->
+        (_, request, response) ->
             response.text("too large: " + request.pathParam("id").orElseThrow()));
-    app.routes().post("/orders/{id}", (request, response) -> response.text("must not run"));
+    app.routes().post("/orders/{id}", (_, response) -> response.text("must not run"));
     app.start();
     var result =
         client.send(
@@ -183,7 +180,7 @@ class ExceptionHandlerTest {
     var release = new CountDownLatch(1);
     var calls = new AtomicInteger();
     Handler streamHandler =
-        (request, response) -> {
+        (_, response) -> {
           var stream = response.startStream("text/plain");
           stream.write("visible");
           stream.flush();
@@ -196,7 +193,7 @@ class ExceptionHandlerTest {
         };
     app.exception(
         Exception.class,
-        (failure, request, response) -> {
+        (_, request, response) -> {
           calls.incrementAndGet();
           if (inErrorHandler) {
             streamHandler.handle(request, response);
@@ -233,7 +230,7 @@ class ExceptionHandlerTest {
                 received.append((char) value);
               }
             });
-        assertTrue(received.isEmpty());
+        assertEquals("", received.toString());
       }
 
       assertEquals(inErrorHandler ? 1 : 0, calls.get());
@@ -247,7 +244,7 @@ class ExceptionHandlerTest {
     app.routes()
         .get(
             "/error",
-            (request, response) -> {
+            (_, _) -> {
               throw new NotFoundException();
             });
     var release = new CountDownLatch(1);
@@ -260,8 +257,7 @@ class ExceptionHandlerTest {
 
                 try {
                   app.exception(
-                      NotFoundException.class,
-                      (failure, request, response) -> response.text("registered"));
+                      NotFoundException.class, (_, _, response) -> response.text("registered"));
                   return true;
                 } catch (IllegalStateException _) {
                   return false;
@@ -285,13 +281,12 @@ class ExceptionHandlerTest {
   @ParameterizedTest
   @ValueSource(ints = {404, 405, 500})
   void doesNotMapOrdinaryStatusesOrUnwrapCauses(int status) throws Exception {
-    app.exception(
-        HttpException.class, (failure, request, response) -> response.text("must not run"));
-    app.routes().get("/known", (request, response) -> response.text("ok"));
+    app.exception(HttpException.class, (_, _, response) -> response.text("must not run"));
+    app.routes().get("/known", (_, response) -> response.text("ok"));
     app.routes()
         .get(
             "/wrapped",
-            (request, response) -> {
+            (_, _) -> {
               throw new CompletionException(new NotFoundException());
             });
     app.start();
@@ -318,14 +313,14 @@ class ExceptionHandlerTest {
     var calls = new AtomicInteger();
     app.exception(
         Exception.class,
-        (failure, request, response) -> {
+        (_, _, _) -> {
           calls.incrementAndGet();
           throw new Error("fatal mapper failure");
         });
     app.routes()
         .post(
             "/fatal",
-            (request, response) -> {
+            (_, _) -> {
               if (inErrorHandler) {
                 throw new NotFoundException();
               }
@@ -346,9 +341,8 @@ class ExceptionHandlerTest {
   void handlesInvalidOutputDetectedAfterRouteReturn() throws Exception {
     app.exception(
         IllegalStateException.class,
-        (failure, request, response) -> response.text("invalid response for " + request.path()));
-    app.routes()
-        .get("/invalid", (request, response) -> response.status(204).text("forbidden body"));
+        (_, request, response) -> response.text("invalid response for " + request.path()));
+    app.routes().get("/invalid", (_, response) -> response.status(204).text("forbidden body"));
     app.start();
     var result = client.send(request("/invalid").build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(500, result.statusCode());

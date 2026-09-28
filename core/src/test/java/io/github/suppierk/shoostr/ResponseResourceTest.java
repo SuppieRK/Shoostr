@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -45,6 +46,22 @@ class ResponseResourceTest {
     assertEquals("345", body.toString(java.nio.charset.StandardCharsets.UTF_8));
   }
 
+  @Test
+  void returnsTheStagedResponseForFurtherHeaderConfiguration() throws Exception {
+    var responseHeaders = HttpFields.build();
+    var body = new ByteArrayOutputStream();
+    var channel = new TrackingChannel("0123456789", false);
+    var response = response(HttpFields.build(), responseHeaders, body);
+
+    var chained =
+        response.resource(channel, 10, Instant.EPOCH, "text/plain").setHeader("X-Chain", "ok");
+    response.complete();
+
+    assertSame(response, chained);
+    assertEquals("ok", responseHeaders.get("X-Chain"));
+    assertEquals("0123456789", body.toString(java.nio.charset.StandardCharsets.UTF_8));
+  }
+
   private static Response response(
       HttpFields requestHeaders, HttpFields responseHeaders, ByteArrayOutputStream body) {
     var request =
@@ -52,7 +69,7 @@ class ResponseResourceTest {
             Proxy.newProxyInstance(
                 ResponseResourceTest.class.getClassLoader(),
                 new Class<?>[] {Request.class},
-                (proxy, method, arguments) ->
+                (_, method, _) ->
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> requestHeaders;
@@ -64,7 +81,7 @@ class ResponseResourceTest {
             Proxy.newProxyInstance(
                 ResponseResourceTest.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (proxy, method, arguments) ->
+                (_, method, arguments) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "setStatus" -> null;

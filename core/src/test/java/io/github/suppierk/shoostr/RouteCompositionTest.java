@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -40,7 +41,7 @@ class RouteCompositionTest {
   void start() throws Exception {
     app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
     app.onRequestHeaders(
-        (request, response) -> {
+        (request, _) -> {
           assertTrue(request.pathParam("id").isEmpty());
           assertTrue(request.routePattern().isEmpty());
         });
@@ -81,19 +82,19 @@ class RouteCompositionTest {
               group.get(
                   "/{id}",
                   (req, res) -> res.text("parameter:" + req.pathParam("id").orElseThrow()));
-              group.get("/latest", (req, res) -> res.text("literal"));
-              group.post("/latest", (req, res) -> res.text("post"));
+              group.get("/latest", (_, res) -> res.text("literal"));
+              group.post("/latest", (_, res) -> res.text("post"));
             });
     app.routes()
         .path(
             "/reverse-order",
             group -> {
-              group.get("/latest", (req, res) -> res.text("literal"));
+              group.get("/latest", (_, res) -> res.text("literal"));
               group.get(
                   "/{id}",
                   (req, res) -> res.text("parameter:" + req.pathParam("id").orElseThrow()));
             });
-    app.routes().get("/fallback/fixed/x", (req, res) -> res.text("x"));
+    app.routes().get("/fallback/fixed/x", (_, res) -> res.text("x"));
     app.routes()
         .get("/fallback/{name}/y", (req, res) -> res.text(req.pathParam("name").orElseThrow()));
     app.routes().route(HttpMethods.PROPFIND, "/properties", (req, res) -> res.text(req.method()));
@@ -102,12 +103,12 @@ class RouteCompositionTest {
         .path(
             "/string",
             group -> {
-              group.route("GET", (req, res) -> res.text("group"));
+              group.route("GET", (_, res) -> res.text("group"));
               group.route(
                   "POST", "/{id}", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
-              group.route(HttpMethods.DELETE, (req, res) -> res.status(204));
+              group.route(HttpMethods.DELETE, (_, res) -> res.status(204));
             });
-    app.routes().path("/", root -> root.get((req, res) -> res.text("root")));
+    app.routes().path("/", root -> root.get((_, res) -> res.text("root")));
     app.routes()
         .get(
             "/unknown-param",
@@ -202,16 +203,16 @@ class RouteCompositionTest {
   void freezesRetainedScopesAndRejectsEvenEmptyGroupsAfterStartup() {
     var scope = retainedScope.get();
     var routes = app.routes();
-    assertThrows(IllegalStateException.class, () -> scope.get("later", (req, res) -> {}));
-    assertThrows(IllegalStateException.class, () -> scope.path("later", group -> {}));
-    assertThrows(IllegalStateException.class, () -> routes.path("later", group -> {}));
-    assertThrows(
-        IllegalStateException.class, () -> routes.route("GET", "/later", (req, res) -> {}));
+    assertThrows(IllegalStateException.class, () -> scope.get("later", (_, _) -> {}));
+    assertThrows(IllegalStateException.class, () -> scope.path("later", _ -> {}));
+    assertThrows(IllegalStateException.class, () -> routes.path("later", _ -> {}));
+    assertThrows(IllegalStateException.class, () -> routes.route("GET", "/later", (_, _) -> {}));
   }
 
   @Test
   void exposesOneRootAndRoutesStringMethodsThroughGroupedAndFlatPaths() throws Exception {
-    assertSame(app.routes(), app.routes());
+    var rootRoutes = app.routes();
+    assertSame(rootRoutes, app.routes());
     assertEquals("PROPFIND", send("/string-properties", HttpMethods.PROPFIND).body());
     assertEquals("group", send("/string", HttpMethods.GET).body());
     assertEquals("42", send("/string/42", HttpMethods.POST).body());
@@ -230,7 +231,7 @@ class RouteCompositionTest {
           candidate.routes(
               routes -> {
                 assertSame(candidate.routes(), routes);
-                routes.get("/health", (request, response) -> response.text("ok"));
+                routes.get("/health", (_, response) -> response.text("ok"));
                 routes.path(
                     "/orders",
                     orders -> {
@@ -238,7 +239,7 @@ class RouteCompositionTest {
                           "/{id}",
                           (request, response) ->
                               response.text("order:" + request.pathParam("id").orElseThrow()));
-                      orders.get("/latest", (request, response) -> response.text("latest"));
+                      orders.get("/latest", (_, response) -> response.text("latest"));
                     });
               }));
       candidate.start();
@@ -261,19 +262,19 @@ class RouteCompositionTest {
               () ->
                   candidate.routes(
                       routes -> {
-                        routes.get("/before", (request, response) -> response.text("before"));
+                        routes.get("/before", (_, response) -> response.text("before"));
                         throw failure;
                       })));
 
       assertSame(
           candidate,
           candidate.routes(
-              routes -> routes.get("/after", (request, response) -> response.text("after"))));
+              routes -> routes.get("/after", (_, response) -> response.text("after"))));
       candidate.start();
 
       assertEquals("before", send(candidateClient, candidate, "/before").body());
       assertEquals("after", send(candidateClient, candidate, "/after").body());
-      assertThrows(IllegalStateException.class, () -> candidate.routes(routes -> {}));
+      assertThrows(IllegalStateException.class, () -> candidate.routes(_ -> {}));
     }
   }
 
@@ -282,8 +283,7 @@ class RouteCompositionTest {
   void rejectsIsolatedUnsupportedSymbolsDuringRouteRegistration(String pattern) throws Exception {
     try (var candidate = new Shoostr()) {
       var routes = candidate.routes();
-      assertThrows(
-          IllegalArgumentException.class, () -> routes.get(pattern, (request, response) -> {}));
+      assertThrows(IllegalArgumentException.class, () -> routes.get(pattern, (_, _) -> {}));
     }
   }
 
@@ -292,9 +292,9 @@ class RouteCompositionTest {
   void treatsStringAndEnumRegistrationsAsTheSameMethod(HttpMethods method) throws Exception {
     try (var candidate = new Shoostr()) {
       var routes = candidate.routes();
-      assertSame(routes, routes.route(method.value(), "/{id}", (req, res) -> {}));
+      assertSame(routes, routes.route(method.value(), "/{id}", (_, _) -> {}));
       assertThrows(
-          IllegalArgumentException.class, () -> routes.route(method, "/{name}", (req, res) -> {}));
+          IllegalArgumentException.class, () -> routes.route(method, "/{name}", (_, _) -> {}));
     }
   }
 
@@ -304,8 +304,7 @@ class RouteCompositionTest {
   void rejectsUnrecognizedWireMethodsDuringRegistration(String method) throws Exception {
     try (var candidate = new Shoostr()) {
       var routes = candidate.routes();
-      assertThrows(
-          IllegalArgumentException.class, () -> routes.route(method, "/", (req, res) -> {}));
+      assertThrows(IllegalArgumentException.class, () -> routes.route(method, "/", (_, _) -> {}));
     }
   }
 
@@ -314,7 +313,7 @@ class RouteCompositionTest {
   void rejectsNullStringMethod(String method) throws Exception {
     try (var candidate = new Shoostr()) {
       var routes = candidate.routes();
-      assertThrows(NullPointerException.class, () -> routes.route(method, "/", (req, res) -> {}));
+      assertThrows(NullPointerException.class, () -> routes.route(method, "/", (_, _) -> {}));
     }
   }
 
@@ -322,16 +321,15 @@ class RouteCompositionTest {
   void validatesComposedParametersAndEquivalentRouteShapes() throws Exception {
     try (var candidate = new Shoostr()) {
       var routes = candidate.routes();
-      Consumer<Routes> duplicateParameter = group -> group.get("/{id}", (req, res) -> {});
+      Consumer<Routes> duplicateParameter = group -> group.get("/{id}", (_, _) -> {});
       assertThrows(IllegalArgumentException.class, () -> routes.path("/{id}", duplicateParameter));
-      routes.path("/api", group -> group.get("/{id}", (req, res) -> {}));
-      assertThrows(
-          IllegalArgumentException.class, () -> routes.get("/api/{name}", (req, res) -> {}));
-      routes.post("/api/{name}", (req, res) -> {});
+      routes.path("/api", group -> group.get("/{id}", (_, _) -> {}));
+      assertThrows(IllegalArgumentException.class, () -> routes.get("/api/{name}", (_, _) -> {}));
+      routes.post("/api/{name}", (_, _) -> {});
       candidate
           .routes()
-          .path("/api", group -> assertThrows(IllegalStateException.class, candidate::start));
-      candidate.routes().get("/after", (req, res) -> {});
+          .path("/api", _ -> assertThrows(IllegalStateException.class, candidate::start));
+      candidate.routes().get("/after", (_, _) -> {});
     }
   }
 
@@ -355,7 +353,7 @@ class RouteCompositionTest {
                           }
                         });
                 thread.join();
-                assertTrue(failure.get() instanceof IllegalStateException);
+                assertInstanceOf(IllegalStateException.class, failure.get());
                 res.text("checked");
               });
       candidate.start();
@@ -388,15 +386,15 @@ class RouteCompositionTest {
   }
 
   private static void orders(Routes orders) {
-    orders.get((req, res) -> res.text("list"));
-    orders.post((req, res) -> res.text("create"));
-    orders.get("/", (req, res) -> res.text("slash"));
+    orders.get((_, res) -> res.text("list"));
+    orders.post((_, res) -> res.text("create"));
+    orders.get("/", (_, res) -> res.text("slash"));
     orders.path(
         "/{id}",
         order -> {
           order.get((req, res) -> res.text(req.pathParam("id").orElseThrow()));
           order.patch((req, res) -> res.text("update:" + req.pathParam("id").orElseThrow()));
-          order.delete((req, res) -> res.status(204));
+          order.delete((_, res) -> res.status(204));
         });
   }
 }

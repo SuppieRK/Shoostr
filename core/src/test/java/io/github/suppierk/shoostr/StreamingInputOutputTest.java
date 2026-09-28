@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.ByteArrayInputStream;
@@ -74,12 +75,11 @@ class StreamingInputOutputTest {
           "POST /chunks HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n"
               .getBytes(StandardCharsets.US_ASCII));
       output.flush();
-      assertEquals(true, initialConsumed.await(3, TimeUnit.SECONDS));
+      assertTrue(initialConsumed.await(3, TimeUnit.SECONDS));
       output.write("1\r\nb\r\n0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
       output.flush();
       socket.shutdownOutput();
-      assertEquals(
-          true,
+      assertTrue(
           new String(socket.getInputStream().readAllBytes(), StandardCharsets.US_ASCII)
               .contains("ab"));
     }
@@ -93,7 +93,7 @@ class StreamingInputOutputTest {
           .post(
               "/input",
               (request, response) -> {
-                request.input().read();
+                assertEquals('b', request.input().read());
                 assertThrows(IllegalStateException.class, request::bodyBytes);
                 response.text("exclusive");
               });
@@ -259,7 +259,7 @@ class StreamingInputOutputTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -284,7 +284,7 @@ class StreamingInputOutputTest {
       app.routes()
           .get(
               "/finite",
-              (request, response) -> {
+              (_, response) -> {
                 response.body("text/plain", "abc".getBytes(StandardCharsets.UTF_8));
                 assertThrows(
                     IllegalArgumentException.class,
@@ -311,7 +311,7 @@ class StreamingInputOutputTest {
       app.routes()
           .get(
               "/stream",
-              (request, response) ->
+              (_, response) ->
                   response.input(
                       new ByteArrayInputStream("streamed".getBytes(StandardCharsets.UTF_8)),
                       "text/plain"));
@@ -336,7 +336,7 @@ class StreamingInputOutputTest {
       app.routes()
           .get(
               "/stream",
-              (request, response) ->
+              (_, response) ->
                   response.input(
                       new ByteArrayInputStream("stream output".getBytes(StandardCharsets.UTF_8)) {
                         @Override
@@ -354,7 +354,7 @@ class StreamingInputOutputTest {
               HttpResponse.BodyHandlers.ofString());
       assertEquals(200, result.statusCode());
       assertEquals("stream output", result.body());
-      assertEquals(true, closed.get());
+      assertTrue(closed.get());
     }
   }
 
@@ -365,7 +365,7 @@ class StreamingInputOutputTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().head("/file", (request, response) -> response.file(file, "text/plain"));
+      app.routes().head("/file", (_, response) -> response.file(file, "text/plain"));
       app.start();
       var result =
           client.send(
@@ -391,7 +391,7 @@ class StreamingInputOutputTest {
       app.routes()
           .get(
               "/empty",
-              (request, response) -> {
+              (_, response) -> {
                 response.status(204);
                 response.input(
                     new InputStream() {
@@ -421,7 +421,7 @@ class StreamingInputOutputTest {
               HttpResponse.BodyHandlers.ofString());
       assertEquals(204, result.statusCode());
       assertEquals("", result.body());
-      assertEquals(true, closed.get());
+      assertTrue(closed.get());
     }
   }
 
@@ -434,7 +434,7 @@ class StreamingInputOutputTest {
       app.routes()
           .get(
               "/invalid",
-              (request, response) ->
+              (_, response) ->
                   response.input(
                       new ByteArrayInputStream("body".getBytes(StandardCharsets.UTF_8)) {
                         @Override
@@ -451,7 +451,7 @@ class StreamingInputOutputTest {
                   .build(),
               HttpResponse.BodyHandlers.ofString());
       assertEquals(500, result.statusCode());
-      assertEquals(true, closed.get());
+      assertTrue(closed.get());
     }
   }
 
@@ -464,7 +464,7 @@ class StreamingInputOutputTest {
       app.routes()
           .get(
               "/read-error",
-              (request, response) ->
+              (_, response) ->
                   response.input(
                       new InputStream() {
                         @Override
@@ -494,7 +494,7 @@ class StreamingInputOutputTest {
                       .timeout(Duration.ofSeconds(3))
                       .build(),
                   HttpResponse.BodyHandlers.ofString()));
-      assertEquals(true, closed.get());
+      assertTrue(closed.get());
     }
   }
 
@@ -508,7 +508,7 @@ class StreamingInputOutputTest {
       app.routes()
           .get(
               "/disconnect",
-              (request, response) ->
+              (_, response) ->
                   response.input(
                       new InputStream() {
                         @Override
@@ -538,9 +538,9 @@ class StreamingInputOutputTest {
               "GET /disconnect HTTP/1.1\r\nHost: localhost\r\n\r\n"
                   .getBytes(StandardCharsets.US_ASCII));
       socket.getOutputStream().flush();
-      assertEquals(true, started.await(3, TimeUnit.SECONDS));
+      assertTrue(started.await(3, TimeUnit.SECONDS));
       socket.close();
-      assertEquals(true, closed.await(3, TimeUnit.SECONDS));
+      assertTrue(closed.await(3, TimeUnit.SECONDS));
     }
   }
 
@@ -549,11 +549,7 @@ class StreamingInputOutputTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
-          .head(
-              "/stream",
-              (request, response) -> {
-                response.startStream("text/plain").write("suppressed");
-              });
+          .head("/stream", (_, response) -> response.startStream("text/plain").write("suppressed"));
       app.start();
       var result =
           client.send(
