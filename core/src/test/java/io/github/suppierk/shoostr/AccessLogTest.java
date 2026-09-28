@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
@@ -39,6 +40,7 @@ class AccessLogTest {
               HttpResponse.BodyHandlers.discarding());
       assertEquals(500, result.statusCode());
       var line = lines.poll(5, TimeUnit.SECONDS);
+      assertNotNull(line);
       assertTrue(line.startsWith("method=POST route=/orders/{id} status=500 duration_ns="));
       assertTrue(line.endsWith(" application_failure=true transport_failure=false"));
       assertFalse(line.contains("private"));

@@ -26,6 +26,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -780,6 +781,7 @@ class RangeConditionalResponseTest {
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
     var staged = new CountDownLatch(2);
     var release = new CountDownLatch(1);
+    var waitTimedOut = new AtomicBoolean();
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
@@ -789,7 +791,9 @@ class RangeConditionalResponseTest {
               (request, response) -> {
                 response.file(file, "text/plain");
                 staged.countDown();
-                release.await(5, TimeUnit.SECONDS);
+                if (!release.await(5, TimeUnit.SECONDS)) {
+                  waitTimedOut.set(true);
+                }
               });
       app.start();
       var first = client.sendAsync(request(app, "bytes=0-2"), HttpResponse.BodyHandlers.ofString());
@@ -798,6 +802,7 @@ class RangeConditionalResponseTest {
       assertEquals(true, staged.await(5, TimeUnit.SECONDS));
       release.countDown();
       CompletableFuture.allOf(first, second).join();
+      assertFalse(waitTimedOut.get());
       assertEquals(206, first.join().statusCode());
       assertEquals(206, second.join().statusCode());
       assertEquals("012", first.join().body());
