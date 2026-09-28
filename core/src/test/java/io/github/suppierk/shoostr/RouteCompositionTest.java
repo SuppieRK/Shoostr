@@ -149,7 +149,7 @@ class RouteCompositionTest {
   void exposesParametersFromParentAndChildScopesWithHandlerLifetime() throws Exception {
     assertEquals("a:42", send("/api/accounts/a/orders/42", HttpMethods.GET).body());
     var closedRequest = retainedRequest.get();
-    assertThrows(IllegalStateException.class, () -> closedRequest.pathParam("id").orElseThrow());
+    assertThrows(IllegalStateException.class, () -> closedRequest.pathParam("id"));
     assertEquals("checked", send("/unknown-param", HttpMethods.GET).body());
   }
 
