@@ -56,31 +56,33 @@ public final class ServerMain {
     AutoCloseable close;
     if ("candidate".equals(implementation)) {
       var app = new Shoostr(Options.defaults().withPort(port));
-      app.routes().get("/plaintext", (req, res) -> res.body("text/plain;charset=utf-8", PLAIN));
-      app.routes().get("/json-bytes", (req, res) -> res.body("application/json", JSON));
-      app.routes()
-          .post("/echo", (req, res) -> res.body("application/octet-stream", req.bodyBytes()));
-      app.routes()
-          .get(
-              "/stream",
-              (req, res) -> {
-                var stream = res.startStream("application/octet-stream");
-                for (int i = 0; i < 16; i++) {
-                  stream.write(CHUNK);
-                  stream.flush();
-                }
-              });
-      app.routes()
-          .get(
-              "/virtual",
-              (req, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
-      app.routes().sse("/sse-burst", (req, res) -> sendCandidateEvents(res, 0, EVENT_PAYLOAD));
-      app.routes().sse("/sse-paced", (req, res) -> sendCandidateEvents(res, 20, EVENT_PAYLOAD));
-      app.routes().sse("/sse-slow", (req, res) -> sendCandidateEvents(res, 0, LARGE_EVENT_PAYLOAD));
-      app.routes().websocket("/ws-text", (req, upgrade) -> new EchoListener());
-      app.routes().websocket("/ws-binary", (req, upgrade) -> new EchoListener());
-      registerRouteGroups(app.routes(), routeGroups);
-      app.start();
+      app.routes(
+              routes -> {
+                routes.get("/plaintext", (req, res) -> res.body("text/plain;charset=utf-8", PLAIN));
+                routes.get("/json-bytes", (req, res) -> res.body("application/json", JSON));
+                routes.post(
+                    "/echo", (req, res) -> res.body("application/octet-stream", req.bodyBytes()));
+                routes.get(
+                    "/stream",
+                    (req, res) -> {
+                      var stream = res.startStream("application/octet-stream");
+                      for (int i = 0; i < 16; i++) {
+                        stream.write(CHUNK);
+                        stream.flush();
+                      }
+                    });
+                routes.get(
+                    "/virtual",
+                    (req, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
+                routes.sse("/sse-burst", (req, res) -> sendCandidateEvents(res, 0, EVENT_PAYLOAD));
+                routes.sse("/sse-paced", (req, res) -> sendCandidateEvents(res, 20, EVENT_PAYLOAD));
+                routes.sse(
+                    "/sse-slow", (req, res) -> sendCandidateEvents(res, 0, LARGE_EVENT_PAYLOAD));
+                routes.websocket("/ws-text", (req, upgrade) -> new EchoListener());
+                routes.websocket("/ws-binary", (req, upgrade) -> new EchoListener());
+                registerRouteGroups(routes, routeGroups);
+              })
+          .start();
       close = null;
     } else if ("jooby".equals(implementation)) {
       var virtual = Executors.newVirtualThreadPerTaskExecutor();

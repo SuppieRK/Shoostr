@@ -214,6 +214,21 @@ public final class Shoostr implements Closeable {
   }
 
   /**
+   * Registers routes through the pre-created root scope and returns this application for fluent
+   * startup. The callback runs immediately without holding the registration lock. Startup rejects
+   * an active callback; an exception propagates without undoing routes already registered.
+   *
+   * @param registration callback receiving the same scope as {@link #routes()}
+   * @return this application
+   * @throws IllegalStateException if registration has ended
+   * @throws NullPointerException if registration is null
+   */
+  public Shoostr routes(Consumer<Routes> registration) {
+    routes.register(registration);
+    return this;
+  }
+
+  /**
    * Enables RFC7239 forwarding from explicitly trusted IP peers. Configure before startup. The
    * shared predicate must be thread-safe and nonblocking; it must identify actual proxy addresses.
    * Proxies must remove untrusted input or append truthful forwarding entries.
@@ -467,7 +482,7 @@ public final class Shoostr implements Closeable {
    *
    * @return this application
    * @throws Exception if startup or shutdown-hook registration fails
-   * @throws IllegalStateException if started, closed, or any path registration callback is active
+   * @throws IllegalStateException if started, closed, or a route registration callback is active
    */
   @SuppressWarnings(
       "java:S1181") // Startup cleanup must also run when Jetty or a callback throws Error.

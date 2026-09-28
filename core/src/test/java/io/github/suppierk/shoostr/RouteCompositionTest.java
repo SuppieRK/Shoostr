@@ -221,6 +221,62 @@ class RouteCompositionTest {
     assertEquals("DELETE, GET", rejected.headers().firstValue("Allow").orElseThrow());
   }
 
+  @Test
+  void rootCallbackRegistersFlatAndComposedRoutesAndReturnsApplication() throws Exception {
+    try (var candidate = new Shoostr(Options.defaults().withPort(0));
+        var candidateClient = HttpClient.newHttpClient()) {
+      assertSame(
+          candidate,
+          candidate.routes(
+              routes -> {
+                assertSame(candidate.routes(), routes);
+                routes.get("/health", (request, response) -> response.text("ok"));
+                routes.path(
+                    "/orders",
+                    orders -> {
+                      orders.get(
+                          "/{id}",
+                          (request, response) ->
+                              response.text("order:" + request.pathParam("id").orElseThrow()));
+                      orders.get("/latest", (request, response) -> response.text("latest"));
+                    });
+              }));
+      candidate.start();
+
+      assertEquals("ok", send(candidateClient, candidate, "/health").body());
+      assertEquals("latest", send(candidateClient, candidate, "/orders/latest").body());
+      assertEquals("order:42", send(candidateClient, candidate, "/orders/42").body());
+    }
+  }
+
+  @Test
+  void rootCallbackPropagatesFailureAndKeepsEarlierRegistrations() throws Exception {
+    try (var candidate = new Shoostr(Options.defaults().withPort(0));
+        var candidateClient = HttpClient.newHttpClient()) {
+      var failure = new IllegalArgumentException("registration failed");
+      assertSame(
+          failure,
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  candidate.routes(
+                      routes -> {
+                        routes.get("/before", (request, response) -> response.text("before"));
+                        throw failure;
+                      })));
+
+      assertSame(
+          candidate,
+          candidate.routes(
+              routes -> routes.get("/after", (request, response) -> response.text("after"))));
+      candidate.start();
+
+      assertEquals("before", send(candidateClient, candidate, "/before").body());
+      assertEquals("after", send(candidateClient, candidate, "/after").body());
+      assertThrows(IllegalStateException.class, () -> candidate.routes(routes -> {}));
+    }
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"/}id", "/<id", "/>id"})
   void rejectsIsolatedUnsupportedSymbolsDuringRouteRegistration(String pattern) throws Exception {
@@ -318,6 +374,15 @@ class RouteCompositionTest {
         HttpRequest.newBuilder(URI.create(base + path))
             .timeout(Duration.ofSeconds(5))
             .method(method.value(), HttpRequest.BodyPublishers.noBody())
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static HttpResponse<String> send(HttpClient client, Shoostr app, String path)
+      throws Exception {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
+            .timeout(Duration.ofSeconds(5))
             .build(),
         HttpResponse.BodyHandlers.ofString());
   }

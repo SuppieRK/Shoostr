@@ -124,6 +124,37 @@ class RoutesConcurrencyTest {
   }
 
   @Test
+  void rootCallbackRejectsStartupUntilItFinishes() throws Exception {
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var workers = Executors.newVirtualThreadPerTaskExecutor();
+        var client = HttpClient.newHttpClient()) {
+      var callback =
+          workers.submit(
+              () ->
+                  app.routes(
+                      routes -> {
+                        entered.countDown();
+                        await(release);
+                        routes.get("/ready", (request, response) -> response.text("ready"));
+                      }));
+
+      try {
+        assertTrue(entered.await(3, TimeUnit.SECONDS));
+        assertThrows(IllegalStateException.class, app::start);
+      } finally {
+        release.countDown();
+      }
+
+      assertEquals(app, callback.get(3, TimeUnit.SECONDS));
+      app.start();
+      assertEquals("ready", send(client, app, "/ready").body());
+    }
+  }
+
+  @Test
   void startupRejectsActiveCallbacksAndCloseDoesNotWaitForThem() throws Exception {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);

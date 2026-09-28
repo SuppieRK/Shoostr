@@ -69,6 +69,27 @@ public final class Routes implements Closeable {
   }
 
   /**
+   * Invokes a root registration callback while preventing startup until it returns.
+   *
+   * @param registration callback receiving this pre-created root scope
+   */
+  void register(Consumer<Routes> registration) {
+    synchronized (lock) {
+      requireMutable();
+      Objects.requireNonNull(registration);
+      root.registrationDepth++;
+    }
+
+    try {
+      registration.accept(this);
+    } finally {
+      synchronized (lock) {
+        root.registrationDepth--;
+      }
+    }
+  }
+
+  /**
    * Registers a nested group immediately. The callback runs without holding the registration lock;
    * concurrent groups may interleave their endpoint registrations. Startup is rejected while any
    * callback is active.
@@ -497,13 +518,14 @@ public final class Routes implements Closeable {
    * callbacks are rejected before compilation, allowing startup to be retried once they finish.
    *
    * @return the completed router with literal-first endpoint matching
-   * @throws IllegalStateException if registration is closed or a path callback is active
+   * @throws IllegalStateException if registration is closed or a route registration callback is
+   *     active
    */
   RadixRoutes compile() {
     synchronized (lock) {
       requireMutable();
       if (root.registrationDepth != 0) {
-        throw new IllegalStateException("Finish path group registration before starting");
+        throw new IllegalStateException("Finish route registration callbacks before starting");
       }
 
       var router = RadixRoutes.from(registrations, staticFiles);

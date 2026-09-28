@@ -1,17 +1,17 @@
 # Shoostr
 
-[Shoostr](https://github.com/SuppieRK/Shoostr) is a small experimental Java 25 HTTP framework with separate request/response arguments. The public API lives in `io.github.suppierk.shoostr`; public signatures are provisional. Register routes through `app.routes()`.
+[Shoostr](https://github.com/SuppieRK/Shoostr) is a small experimental Java 25 HTTP framework with separate request/response arguments. The public API lives in `io.github.suppierk.shoostr`; public signatures are provisional. Register routes through `app.routes(routes -> { ... })`.
 
 ```java
 var app = new Shoostr();
-var routes = app.routes();
-routes.get("/hello", (request, response) -> response.text("Hello"));
-routes.get("/progress", (request, response) -> response
-    .startStream("text/plain; charset=utf-8")
-    .write("started\n")
-    .flush()
-    .write("finished\n"));
-app.start();
+app.routes(routes -> {
+    routes.get("/hello", (request, response) -> response.text("Hello"));
+    routes.get("/progress", (request, response) -> response
+        .startStream("text/plain; charset=utf-8")
+        .write("started\n")
+        .flush()
+        .write("finished\n"));
+}).start();
 ```
 
 `Shoostr` implements `java.io.Closeable`. `start()` registers its JVM shutdown hook after starting the listener, so standalone servers need no application-managed hook. `close()` stops the listener and executor and removes that hook; repeated and concurrent close calls are harmless. A listener startup failure after route compilation cleans up acquired resources and prevents restart. A rejected route compilation leaves registration open for retry, including when a path callback is still active. Closing before startup ends registration and prevents startup. Shutdown failures from explicit `close()` are reported as `IOException`, and failures in the JVM hook are logged with the JDK logger.
@@ -401,26 +401,29 @@ Parsing is lazy and cached. Forms support `application/x-www-form-urlencoded` wi
 
 ## Composing routes
 
-`path(...)` executes a scoped registration callback immediately. Scopes can nest or be extracted to a method accepting `Routes`:
+`Shoostr.routes(callback)` receives the pre-created root `Routes` and returns the application for `.start()` chaining. The no-argument `routes()` getter remains available. `path(...)` executes a scoped registration callback immediately. Scopes can nest or be extracted to a method accepting `Routes`:
 
 ```java
-routes.path("/api", api -> {
-    api.path("/orders", orders -> {
-        orders.get((request, response) -> response.text("all orders"));
-        orders.post(OrderHandlers::create);
-        orders.path("/{id}", order -> {
-            order.get((request, response) -> response.text(request.pathParam("id").orElseThrow()));
-            order.patch(OrderHandlers::update);
-            order.delete(OrderHandlers::delete);
+var app = new Shoostr();
+app.routes(routes -> {
+    routes.path("/api", api -> {
+        api.path("/orders", orders -> {
+            orders.get((request, response) -> response.text("all orders"));
+            orders.post(OrderHandlers::create);
+            orders.path("/{id}", order -> {
+                order.get((request, response) -> response.text(request.pathParam("id").orElseThrow()));
+                order.patch(OrderHandlers::update);
+                order.delete(OrderHandlers::delete);
+            });
         });
     });
-});
 
-// A reusable module: static void register(Routes routes) { ... }
-routes.path("/v2/orders", OrderRoutes::register);
+    // A reusable module: static void register(Routes routes) { ... }
+    routes.path("/v2/orders", OrderRoutes::register);
 
-// Explicit methods use the enum from the http module.
-routes.route(HttpMethods.PROPFIND, "/properties", PropertyHandlers::find);
+    // Explicit methods use the enum from the http module.
+    routes.route(HttpMethods.PROPFIND, "/properties", PropertyHandlers::find);
+}).start();
 ```
 
 `Routes` exposes `get`, `post`, `put`, `patch`, `delete`, and explicit `head`/`options` registration. `Routes` also has a pathless overload for each verb, selecting its own group endpoint. A leading slash inside a group remains relative: nesting `/api` and `/orders` registers `/api/orders`. Group prefixes accept an optional trailing slash. An endpoint `get(handler)` matches `/api/orders`, while `get("/", handler)` explicitly matches `/api/orders/`; trailing slashes on endpoints remain significant. No HEAD or OPTIONS handlers are synthesized.
@@ -431,7 +434,7 @@ routes.route(HttpMethods.PROPFIND, "/properties", PropertyHandlers::find);
 
 Duplicate parameter names in a composed path and equivalent patterns for the same method are rejected during registration (`GET /orders/{id}` conflicts with `GET /orders/{name}`). Different methods may use different names. Partial-segment parameters, regex constraints, `<catch-all>` and `*` syntax are not supported in this version.
 
-`Shoostr.routes()` returns the same pre-created root `Routes` instance on every call. `Routes` owns registration, validation, composition, compilation, and registration cleanup. Startup builds and publishes an immutable compressed radix tree from the complete registrations. `Routes` implements `Closeable`: `close()` permanently closes registration and clears temporary endpoint entries and duplicate-detection keys. Closing any child scope closes registration for the whole app. It does not stop a running server or remove compiled routes. Startup uses the internal `compile()` operation under the shared registration lock; successful compilation closes registration before releasing that lock, so accepted registrations cannot slip between compilation and closure. Closing an unstarted app also closes its routes. Closing routes directly before startup prevents startup; application code normally leaves this lifecycle to `Shoostr`. Clearing these collections releases entry references, but retained scopes can still retain their backing capacity. The router prefers literal segments when overlapping branches complete; group scopes add no request-time layer. All registration, including retained scopes and empty groups, is rejected after startup begins. Startup is rejected while any group callback is active, including callbacks on other threads; this rejection leaves registration open so startup can be retried after the callbacks finish. If compilation itself fails, registration stays open until the app or routes are closed. Callbacks execute without holding the registration lock, so they can wait for registration work on another thread. Concurrent groups may interleave without changing precedence; a registration racing with startup is either included in the frozen router or rejected. Close prevents further registrations without waiting for active callbacks. Callback exceptions propagate and registrations already made remain registered. Request-time lookups remain lock-free.
+`Shoostr.routes()` returns the same pre-created root `Routes` instance on every call, including inside the callback overload. `Routes` owns registration, validation, composition, compilation, and registration cleanup. Startup builds and publishes an immutable compressed radix tree from the complete registrations. `Routes` implements `Closeable`: `close()` permanently closes registration and clears temporary endpoint entries and duplicate-detection keys. Closing any child scope closes registration for the whole app. It does not stop a running server or remove compiled routes. Startup uses the internal `compile()` operation under the shared registration lock; successful compilation closes registration before releasing that lock, so accepted registrations cannot slip between compilation and closure. Closing an unstarted app also closes its routes. Closing routes directly before startup prevents startup; application code normally leaves this lifecycle to `Shoostr`. Clearing these collections releases entry references, but retained scopes can still retain their backing capacity. The router prefers literal segments when overlapping branches complete; group scopes add no request-time layer. All registration, including retained scopes and empty groups, is rejected after startup begins. Startup is rejected while any group or root callback is active, including callbacks on other threads; this rejection leaves registration open so startup can be retried after the callbacks finish. If compilation itself fails, registration stays open until the app or routes are closed. Callbacks execute without holding the registration lock, so they can wait for registration work on another thread. Concurrent groups may interleave without changing precedence; a registration racing with startup is either included in the frozen router or rejected. Close prevents further registrations without waiting for active callbacks. Callback exceptions propagate and registrations already made remain registered. Request-time lookups remain lock-free.
 
 Route registration accepts `HttpMethods` or a case-sensitive String wire token, for example `routes.route("PROPFIND", "/properties", handler)`. Both forms share duplicate detection and request-time matching. `route(method, handler)` selects a group’s own endpoint. String lookup happens only during registration; unrecognized, lowercase, whitespace-padded, and enum-identifier spellings such as `BASELINE_CONTROL` are rejected with `IllegalArgumentException`, while null raises `NullPointerException`. Custom unregistered verbs are not supported. Incoming unknown method tokens fail matching without enum lookup exceptions. `Request.method()` continues exposing the raw token. Method lookup is case-sensitive, unlike header-name lookup.
 
