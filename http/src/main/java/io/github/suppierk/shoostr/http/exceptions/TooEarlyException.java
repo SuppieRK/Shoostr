@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 425: Too Early.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#TOO_EARLY
  */
+@SuppressWarnings("squid:S110")
 public class TooEarlyException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

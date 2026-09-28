@@ -5,7 +5,10 @@ import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.concurrent.TimeUnit;
+import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.io.content.ByteBufferContentSource;
+import org.eclipse.jetty.server.Request;
+import org.eclipse.jetty.server.Response;
 import org.eclipse.jetty.util.Callback;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -40,13 +43,13 @@ public class BufferedRequestBenchmark {
   public String length;
 
   private byte[] payload;
-  private org.eclipse.jetty.server.Request delegate;
-  private Response response;
-  private MultipartOptions multipartOptions;
+  private Request delegate;
+  private Response sink;
+  private Options options;
   private ByteBufferContentSource source;
 
   /**
-   * Reads a fresh request body, including framework caching and its defensive public copy.
+   * Reads a freshly paired request body, including peer construction, caching and its public copy.
    *
    * @return owned copy of the bytes read through Jetty's Content.Source adapter
    * @throws IOException if the source fails
@@ -54,7 +57,8 @@ public class BufferedRequestBenchmark {
   @Benchmark
   public byte[] bodyBytes() throws IOException {
     source = new ByteBufferContentSource(ByteBuffer.wrap(payload));
-    return new Request(delegate, response, LIMIT, 1000, multipartOptions).bodyBytes();
+    return io.github.suppierk.shoostr.Request.create(delegate, sink, options, Callback.NOOP)
+        .bodyBytes();
   }
 
   /** Builds reusable payload and transport proxies outside the measured operation. */
@@ -62,14 +66,24 @@ public class BufferedRequestBenchmark {
   public void setup() {
     payload = new byte[bytes];
     Arrays.fill(payload, (byte) 0x5A);
-    multipartOptions = MultipartOptions.defaults();
+    var defaults = Options.defaults();
+    options =
+        new Options(
+            defaults.host(),
+            defaults.port(),
+            LIMIT,
+            defaults.maxResponseBytes(),
+            defaults.streamBufferBytes(),
+            defaults.idleTimeoutMillis());
     delegate =
-        (org.eclipse.jetty.server.Request)
+        (Request)
             Proxy.newProxyInstance(
                 BufferedRequestBenchmark.class.getClassLoader(),
-                new Class<?>[] {org.eclipse.jetty.server.Request.class},
+                new Class<?>[] {Request.class},
                 (proxy, method, arguments) ->
                     switch (method.getName()) {
+                      case "getHeaders" -> HttpFields.EMPTY;
+                      case "getMethod" -> "GET";
                       case "getLength" -> "known".equals(length) ? (long) bytes : -1L;
                       case "read" -> source.read();
                       case "demand" -> {
@@ -79,14 +93,13 @@ public class BufferedRequestBenchmark {
                       case "addHttpStreamWrapper" -> null;
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
-    var sink =
-        (org.eclipse.jetty.server.Response)
+    sink =
+        (Response)
             Proxy.newProxyInstance(
                 BufferedRequestBenchmark.class.getClassLoader(),
-                new Class<?>[] {org.eclipse.jetty.server.Response.class},
+                new Class<?>[] {Response.class},
                 (proxy, method, arguments) -> {
                   throw new UnsupportedOperationException(method.getName());
                 });
-    response = new Response(sink, Options.defaults(), Callback.NOOP);
   }
 }

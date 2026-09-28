@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.MediaType;
@@ -37,8 +38,8 @@ public final class Csrf {
      * @throws IllegalArgumentException if either part is empty
      */
     private Token {
-      if (Objects.requireNonNull(sessionId).isEmpty() || Objects.requireNonNull(value).isEmpty()) {
-        throw new IllegalArgumentException("CSRF token parts cannot be empty");
+      if (Objects.requireNonNull(sessionId).isBlank() || Objects.requireNonNull(value).isBlank()) {
+        throw new IllegalArgumentException("CSRF token parts cannot be blank");
       }
     }
   }
@@ -64,7 +65,7 @@ public final class Csrf {
   public Csrf(Set<String> trustedOrigins) {
     this.trustedOrigins = Set.copyOf(trustedOrigins);
     for (var origin : this.trustedOrigins) {
-      if ("null".equals(origin) || "*".equals(origin)) {
+      if ("null".equals(origin) || HttpCharacters.ASTERISK_STRING.equals(origin)) {
         throw new IllegalArgumentException("CSRF requires explicit HTTP(S) origins");
       }
 
@@ -83,10 +84,10 @@ public final class Csrf {
    * @throws IllegalStateException if sessions are not enabled
    */
   public String token(Request request) {
-    var session = Objects.requireNonNull(request).session(true);
-    if (session == null) {
-      throw new IllegalStateException("CSRF requires enabled sessions");
-    }
+    var session =
+        Objects.requireNonNull(request)
+            .session(true)
+            .orElseThrow(() -> new IllegalStateException("CSRF requires enabled sessions"));
 
     synchronized (session) {
       var current = session.getAttribute(ATTRIBUTE);
@@ -123,10 +124,7 @@ public final class Csrf {
       throw new ForbiddenException();
     }
 
-    Session session = request.session(false);
-    if (session == null) {
-      throw new ForbiddenException();
-    }
+    Session session = request.session(false).orElseThrow(ForbiddenException::new);
 
     List<String> presented = presented(request);
     if (presented.size() != 1) {
@@ -157,7 +155,7 @@ public final class Csrf {
     var headers = request.headers(HEADER);
     var type =
         HttpField.getValueParameters(
-            request.header(HttpHeaders.CONTENT_TYPE.value()), new HashMap<>());
+            request.header(HttpHeaders.CONTENT_TYPE.value()).orElse(null), new HashMap<>());
     if (!MediaType.APPLICATION_FORM_URLENCODED.value().equalsIgnoreCase(type)
         && !"multipart/form-data".equalsIgnoreCase(type)) {
       return headers;
@@ -215,7 +213,7 @@ public final class Csrf {
         origin = origins.getFirst();
       }
 
-      if ("null".equals(origin) || "*".equals(origin)) {
+      if ("null".equals(origin) || HttpCharacters.ASTERISK_STRING.equals(origin)) {
         return false;
       }
 

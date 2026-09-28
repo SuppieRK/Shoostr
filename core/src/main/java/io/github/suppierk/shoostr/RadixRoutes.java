@@ -22,7 +22,7 @@ import org.jspecify.annotations.Nullable;
 final class RadixRoutes {
   private static final Pattern PARAMETER_PATTERN =
       Pattern.compile(
-          "\\"
+          HttpCharacters.BACKSLASH_STRING
               + HttpCharacters.OPEN_CURLY_BRACE_STRING
               + "([A-Za-z_][A-Za-z0-9_-]*)"
               + HttpCharacters.CLOSE_CURLY_BRACE_STRING);

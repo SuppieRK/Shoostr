@@ -56,13 +56,18 @@ class ExceptionHandlerTest {
         (failure, request, response) ->
             response
                 .status(401)
-                .header(HttpHeaders.WWW_AUTHENTICATE.value(), "Bearer realm=\"api\"")
-                .text(request.method() + " " + request.pathParam("id") + " " + request.bodyText()));
+                .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Bearer realm=\"api\"")
+                .text(
+                    request.method()
+                        + " "
+                        + request.pathParam("id").orElseThrow()
+                        + " "
+                        + request.bodyText()));
     app.routes()
         .post(
             "/orders/{id}",
             (request, response) -> {
-              response.status(201).header("X-Leak", "secret").text("discard");
+              response.status(201).setHeader("X-Leak", "secret").text("discard");
               throw new UnauthorizedException("private diagnostics");
             });
     app.start();
@@ -110,7 +115,7 @@ class ExceptionHandlerTest {
         Exception.class,
         (failure, request, response) -> {
           calls.incrementAndGet();
-          response.header("X-Leak", "private").text("private body");
+          response.setHeader("X-Leak", "private").text("private body");
           if (failureMode == 0) {
             throw new IllegalArgumentException("private failure");
           }
@@ -160,7 +165,8 @@ class ExceptionHandlerTest {
     app = new Shoostr(new Options("127.0.0.1", 0, 4, 1024, 8, 5000));
     app.exception(
         ContentTooLargeException.class,
-        (failure, request, response) -> response.text("too large: " + request.pathParam("id")));
+        (failure, request, response) ->
+            response.text("too large: " + request.pathParam("id").orElseThrow()));
     app.routes().post("/orders/{id}", (request, response) -> response.text("must not run"));
     app.start();
     var result =

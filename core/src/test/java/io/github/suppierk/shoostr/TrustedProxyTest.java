@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -16,7 +15,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Collections;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
@@ -58,10 +56,11 @@ class TrustedProxyTest {
             (request, response) -> {
               assertFalse(request.isForwarded());
               assertEquals(request.fullUrl(), request.effectiveUrl());
-              assertEquals(request.remoteAddress(), request.clientAddress());
+              assertEquals(
+                  request.remoteAddress().orElseThrow(), request.clientAddress().orElseThrow());
               assertEquals(
                   "127.0.0.1",
-                  assertInstanceOf(InetSocketAddress.class, request.clientAddress())
+                  assertInstanceOf(InetSocketAddress.class, request.clientAddress().orElseThrow())
                       .getAddress()
                       .getHostAddress());
               response.text("direct");
@@ -82,17 +81,17 @@ class TrustedProxyTest {
               assertTrue(request.isForwarded());
               assertEquals(
                   "203.0.113.7",
-                  Objects.requireNonNull(request.clientAddress()).getAddress().getHostAddress());
-              assertEquals(4123, Objects.requireNonNull(request.clientAddress()).getPort());
+                  request.clientAddress().orElseThrow().getAddress().getHostAddress());
+              assertEquals(4123, request.clientAddress().orElseThrow().getPort());
               assertEquals("https://public.example/forwarded/a+b?raw=%2B", request.effectiveUrl());
               assertEquals(
                   "http://127.0.0.1:" + app.port() + "/forwarded/a+b?raw=%2B", request.fullUrl());
-              assertEquals("http", request.scheme());
+              assertEquals("http", request.scheme().orElseThrow());
               assertFalse(request.isSecure());
-              assertEquals("a+b", request.pathParam("id"));
+              assertEquals("a+b", request.pathParam("id").orElseThrow());
               assertEquals(
                   "127.0.0.1",
-                  assertInstanceOf(InetSocketAddress.class, request.remoteAddress())
+                  assertInstanceOf(InetSocketAddress.class, request.remoteAddress().orElseThrow())
                       .getAddress()
                       .getHostAddress());
               response.text("forwarded");
@@ -115,17 +114,18 @@ class TrustedProxyTest {
               assertTrue(request.isForwarded());
               assertEquals(
                   InetAddress.ofLiteral("2001:db8::7"),
-                  Objects.requireNonNull(request.clientAddress()).getAddress());
-              assertEquals(4123, Objects.requireNonNull(request.clientAddress()).getPort());
+                  request.clientAddress().orElseThrow().getAddress());
+              assertEquals(4123, request.clientAddress().orElseThrow().getPort());
               assertEquals("https://[2001:db8::8]:8443/ipv6?raw=%2B", request.effectiveUrl());
               assertEquals("http://127.0.0.1:" + app.port() + "/ipv6?raw=%2B", request.fullUrl());
-              assertEquals("raw=%2B", request.queryString());
-              assertEquals("127.0.0.1:" + app.port(), request.authority());
-              assertEquals("http", request.scheme());
+              assertEquals("raw=%2B", request.queryString().orElseThrow());
+              assertEquals("127.0.0.1:" + app.port(), request.authority().orElseThrow());
+              assertEquals("http", request.scheme().orElseThrow());
               assertFalse(request.isSecure());
               assertEquals(
                   InetAddress.ofLiteral("127.0.0.1"),
-                  assertInstanceOf(InetSocketAddress.class, request.remoteAddress()).getAddress());
+                  assertInstanceOf(InetSocketAddress.class, request.remoteAddress().orElseThrow())
+                      .getAddress());
               response.text("ipv6");
             });
     app.start();
@@ -147,15 +147,16 @@ class TrustedProxyTest {
               assertTrue(request.isForwarded());
               assertEquals(
                   InetAddress.ofLiteral("203.0.113.7"),
-                  Objects.requireNonNull(request.clientAddress()).getAddress());
-              assertEquals(4123, Objects.requireNonNull(request.clientAddress()).getPort());
+                  request.clientAddress().orElseThrow().getAddress());
+              assertEquals(4123, request.clientAddress().orElseThrow().getPort());
               assertEquals("https://public.example/repeated?raw=%2B", request.effectiveUrl());
               assertEquals(
                   "http://127.0.0.1:" + app.port() + "/repeated?raw=%2B", request.fullUrl());
               assertFalse(request.isSecure());
               assertEquals(
                   InetAddress.ofLiteral("127.0.0.1"),
-                  assertInstanceOf(InetSocketAddress.class, request.remoteAddress()).getAddress());
+                  assertInstanceOf(InetSocketAddress.class, request.remoteAddress().orElseThrow())
+                      .getAddress());
               response.text("boundary");
             });
     app.start();
@@ -179,15 +180,14 @@ class TrustedProxyTest {
           gateInvoked.set(true);
           assertTrue(request.isForwarded());
           assertEquals(
-              "203.0.113.7",
-              Objects.requireNonNull(request.clientAddress()).getAddress().getHostAddress());
+              "203.0.113.7", request.clientAddress().orElseThrow().getAddress().getHostAddress());
           assertEquals("https://public.example/gated", request.effectiveUrl());
         });
     app.exception(
         IllegalStateException.class,
         (failure, request, response) ->
             response.text(
-                Objects.requireNonNull(request.clientAddress()).getAddress().getHostAddress()
+                request.clientAddress().orElseThrow().getAddress().getHostAddress()
                     + "|"
                     + request.effectiveUrl()));
     app.routes()
@@ -237,7 +237,7 @@ class TrustedProxyTest {
             "/legacy",
             (request, response) ->
                 response.text(
-                    Objects.requireNonNull(request.clientAddress()).getAddress().getHostAddress()
+                    request.clientAddress().orElseThrow().getAddress().getHostAddress()
                         + "|"
                         + request.effectiveUrl()));
     app.start();
@@ -279,7 +279,7 @@ class TrustedProxyTest {
             "/legacy-chain",
             (request, response) ->
                 response.text(
-                    Objects.requireNonNull(request.clientAddress()).getAddress().getHostAddress()
+                    request.clientAddress().orElseThrow().getAddress().getHostAddress()
                         + "|"
                         + request.effectiveUrl()));
     app.start();
@@ -305,7 +305,7 @@ class TrustedProxyTest {
                 response.text(
                     request.effectiveUrl()
                         + "|"
-                        + Objects.requireNonNull(request.clientAddress()).getPort()));
+                        + request.clientAddress().orElseThrow().getPort()));
     app.start();
     var result =
         client.send(
@@ -382,9 +382,9 @@ class TrustedProxyTest {
             "/chain",
             (request, response) ->
                 response.text(
-                    Objects.requireNonNull(request.clientAddress()).getAddress().getHostAddress()
+                    request.clientAddress().orElseThrow().getAddress().getHostAddress()
                         + "|"
-                        + Objects.requireNonNull(request.clientAddress()).getPort()
+                        + request.clientAddress().orElseThrow().getPort()
                         + "|"
                         + request.effectiveUrl()));
     app.start();
@@ -451,7 +451,7 @@ class TrustedProxyTest {
             "/unknown",
             (request, response) -> {
               assertTrue(request.isForwarded());
-              assertNull(request.clientAddress());
+              assertTrue(request.clientAddress().isEmpty());
               assertEquals("https://boundary.example/unknown", request.effectiveUrl());
               response.text("unknown");
             });

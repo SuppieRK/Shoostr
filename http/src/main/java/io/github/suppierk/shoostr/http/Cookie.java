@@ -6,7 +6,6 @@ import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -37,7 +36,6 @@ public record Cookie(
     @Nullable Instant expires) {
   private static final String SECURE_PREFIX = "__Secure-";
   private static final String HOST_PREFIX = "__Host-";
-  private static final Pattern NAME_PATTERN = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
   private static final DateTimeFormatter DATE =
       DateTimeFormatter.ofPattern("EEE, dd MMM uuuu HH:mm:ss 'GMT'", Locale.US)
           .withZone(ZoneOffset.UTC);
@@ -53,7 +51,7 @@ public record Cookie(
     Objects.requireNonNull(name);
     Objects.requireNonNull(value);
     Objects.requireNonNull(path);
-    if (!NAME_PATTERN.matcher(name).matches()) {
+    if (!HttpCharacters.isValidHttpToken(name)) {
       throw new IllegalArgumentException("Invalid cookie name");
     }
 
@@ -93,7 +91,7 @@ public record Cookie(
 
     for (int index = 0; index < path.length(); index++) {
       char character = path.charAt(index);
-      if (character < 0x20 || character > 0x7e || character == ';') {
+      if (character < 0x20 || character > 0x7e || character == HttpCharacters.SEMICOLON_SIGN) {
         throw new IllegalArgumentException("Invalid cookie path");
       }
     }
@@ -111,7 +109,8 @@ public record Cookie(
     }
 
     var normalized =
-        (domain.startsWith(".") ? domain.substring(1) : domain).toLowerCase(Locale.ROOT);
+        (domain.startsWith(HttpCharacters.DOT_STRING) ? domain.substring(1) : domain)
+            .toLowerCase(Locale.ROOT);
     if (normalized.length() > 253 || !validDomain(normalized)) {
       throw new IllegalArgumentException("Invalid cookie domain");
     }
@@ -183,7 +182,12 @@ public record Cookie(
    * @return field value without the header name
    */
   public String headerValue() {
-    var header = new StringBuilder(name).append('=').append(value).append("; Path=").append(path);
+    var header =
+        new StringBuilder(name)
+            .append(HttpCharacters.EQUALS_SIGN)
+            .append(value)
+            .append("; Path=")
+            .append(path);
     if (domain != null) {
       header.append("; Domain=").append(domain);
     }
@@ -299,9 +303,9 @@ public record Cookie(
   private static boolean validDomain(String value) {
     int labelStart = 0;
     for (int index = 0; index <= value.length(); index++) {
-      if (index < value.length() && value.charAt(index) != '.') {
+      if (index < value.length() && value.charAt(index) != HttpCharacters.DOT) {
         char character = value.charAt(index);
-        if (!asciiLetterOrDigit(character) && character != '-') {
+        if (!asciiLetterOrDigit(character) && character != HttpCharacters.DASH) {
           return false;
         }
 
@@ -334,16 +338,18 @@ public record Cookie(
    */
   private static void validateValue(String value) {
     boolean quoted =
-        value.length() >= 2 && value.charAt(0) == '"' && value.charAt(value.length() - 1) == '"';
+        value.length() >= 2
+            && value.charAt(0) == HttpCharacters.DOUBLE_QUOTE
+            && value.charAt(value.length() - 1) == HttpCharacters.DOUBLE_QUOTE;
     int end = quoted ? value.length() - 1 : value.length();
     for (int index = quoted ? 1 : 0; index < end; index++) {
       char character = value.charAt(index);
       if (character < 0x21
           || character > 0x7e
-          || character == '"'
-          || character == ','
-          || character == ';'
-          || character == '\\') {
+          || character == HttpCharacters.DOUBLE_QUOTE
+          || character == HttpCharacters.COMMA_SIGN
+          || character == HttpCharacters.SEMICOLON_SIGN
+          || character == HttpCharacters.BACKSLASH) {
         throw new IllegalArgumentException(
             "Invalid cookie value; encode application data explicitly");
       }

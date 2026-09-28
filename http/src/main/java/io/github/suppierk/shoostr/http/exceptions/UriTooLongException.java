@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 414: URI Too Long.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#URI_TOO_LONG
  */
+@SuppressWarnings("squid:S110")
 public class UriTooLongException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

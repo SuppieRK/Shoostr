@@ -22,7 +22,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -44,9 +43,10 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) -> {
-                var upload = Objects.requireNonNull(request.file("document"));
+                var upload = request.file("document").orElseThrow();
+                assertTrue(request.file("missing").isEmpty());
                 response.text(
-                    request.formParam("title")
+                    request.formParam("title").orElseThrow()
                         + "|"
                         + upload.name()
                         + "|"
@@ -78,7 +78,7 @@ class MultipartRequestTest {
               (request, response) -> {
                 assertArrayEquals(
                     BINARY_CONTENT,
-                    Objects.requireNonNull(request.file("document")).content().readAllBytes());
+                    request.file("document").orElseThrow().content().readAllBytes());
                 response.text("binary");
               });
       app.start();
@@ -152,7 +152,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) -> {
-                var upload = Objects.requireNonNull(request.file("document"));
+                var upload = request.file("document").orElseThrow();
                 upload.persistTo(destination);
                 response.text(upload.fileName());
               });
@@ -266,7 +266,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) -> {
-                Objects.requireNonNull(request.file("document")).persistTo(destination);
+                request.file("document").orElseThrow().persistTo(destination);
                 response.text("saved");
               });
       app.start();
@@ -300,7 +300,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) -> {
-                retained.set(Objects.requireNonNull(request.file("document")).content());
+                retained.set(request.file("document").orElseThrow().content());
                 response.text("ready");
               });
       app.start();
@@ -327,7 +327,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) -> {
-                var content = Objects.requireNonNull(request.file("document")).content();
+                var content = request.file("document").orElseThrow().content();
                 retained.set(content);
 
                 try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -374,8 +374,7 @@ class MultipartRequestTest {
       app.routes()
           .post(
               "/upload",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.formParam("title"))));
+              (request, response) -> response.text(request.formParam("title").orElseThrow()));
       app.start();
       var result =
           client.send(
@@ -400,8 +399,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) ->
-                  response.text(
-                      Long.toString(Objects.requireNonNull(request.file("document")).size())));
+                  response.text(Long.toString(request.file("document").orElseThrow().size())));
       app.start();
       var result =
           client.send(
@@ -425,8 +423,7 @@ class MultipartRequestTest {
       app.routes()
           .post(
               "/upload",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.formParam("title"))));
+              (request, response) -> response.text(request.formParam("title").orElseThrow()));
       app.start();
       var result =
           client.send(
@@ -541,7 +538,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) ->
-                  response.text(Objects.requireNonNull(request.file("document")).fileName()));
+                  response.text(request.file("document").orElseThrow().fileName()));
       app.start();
       var result =
           client.send(
@@ -590,7 +587,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) ->
-                  response.text(Objects.requireNonNull(request.file("document")).fileName()));
+                  response.text(request.file("document").orElseThrow().fileName()));
       app.start();
       var result =
           client.send(
@@ -612,8 +609,7 @@ class MultipartRequestTest {
       app.routes()
           .post(
               "/upload",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.formParam("title"))));
+              (request, response) -> response.text(request.formParam("title").orElseThrow()));
       app.start();
       var result =
           client.send(
@@ -635,8 +631,7 @@ class MultipartRequestTest {
       app.routes()
           .post(
               "/upload",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.formParam("title"))));
+              (request, response) -> response.text(request.formParam("title").orElseThrow()));
       app.start();
       var result =
           client.send(
@@ -726,7 +721,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) ->
-                  response.text(Objects.requireNonNull(request.file("document")).fileName()));
+                  response.text(request.file("document").orElseThrow().fileName()));
       app.start();
       var result =
           client.send(
@@ -759,7 +754,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) -> {
-                var content = Objects.requireNonNull(request.file("document")).content();
+                var content = request.file("document").orElseThrow().content();
                 content.read();
                 throw new IllegalStateException("expected failure");
               });
@@ -795,7 +790,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) ->
-                  response.text(Objects.requireNonNull(request.file("document")).fileName()));
+                  response.text(request.file("document").orElseThrow().fileName()));
       app.start();
       var result =
           client.send(
@@ -828,7 +823,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) ->
-                  response.text(Objects.requireNonNull(request.file("document")).fileName()));
+                  response.text(request.file("document").orElseThrow().fileName()));
       app.start();
       var result =
           client.send(
@@ -855,7 +850,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) ->
-                  response.text(Objects.requireNonNull(request.file("document")).fileName()));
+                  response.text(request.file("document").orElseThrow().fileName()));
       app.start();
 
       try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
@@ -913,8 +908,7 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) ->
-                  response.text(
-                      "<" + Objects.requireNonNull(request.file("document")).fileName() + ">"));
+                  response.text("<" + request.file("document").orElseThrow().fileName() + ">"));
       app.start();
       var result =
           client.send(

@@ -116,7 +116,7 @@ class OpenTelemetryTracingTest {
       app.routes().get("/transport", (request, response) -> response.text("ok"));
       app.afterResponseFlush(
           (request, response) -> {
-            if ("/transport".equals(request.routePattern())) {
+            if (request.routePattern().filter("/transport"::equals).isPresent()) {
               throw new IOException("private");
             }
           });

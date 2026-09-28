@@ -51,6 +51,47 @@ class Pac4jTest {
   @TempDir private Path temporary;
 
   @Test
+  void exposesEveryDuplicateCookieToTheAuthenticationProvider() throws Exception {
+    var received = new CompletableFuture<List<String>>();
+    var provider =
+        new DirectBasicAuthClient(
+            (context, supplied) -> {
+              received.complete(
+                  context.webContext().getRequestCookies().stream()
+                      .map(cookie -> cookie.getName() + "=" + cookie.getValue())
+                      .toList());
+              var profile = new CommonProfile();
+              profile.setId("alice");
+              supplied.setUserProfile(profile);
+              return Optional.of(supplied);
+            });
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .protect(
+              new Pac4j(provider, "Basic"),
+              routes -> routes.get("/me", (request, response) -> response.text("authenticated")));
+      app.start();
+
+      var encoded =
+          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
+                  .timeout(Duration.ofSeconds(5))
+                  .header("Authorization", "Basic " + encoded)
+                  .header("Cookie", "token=first; token=second; Token=upper")
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          List.of("token=first", "token=second", "Token=upper"), received.get(3, TimeUnit.SECONDS));
+    }
+  }
+
+  @Test
   void preservesSecurePrefixedCookiesEmittedByTheProvider() throws Exception {
     var expectedPort = new AtomicInteger();
     var provider =
@@ -120,7 +161,8 @@ class Pac4jTest {
         var client = HttpClient.newHttpClient()) {
       app.exception(
           AuthenticationRequiredException.class,
-          (failure, request, response) -> response.text(String.valueOf(request.principal())));
+          (failure, request, response) ->
+              response.text(request.principal().map(Object::toString).orElse("null")));
       app.routes()
           .protect(
               new Pac4j(provider, "Basic"),
@@ -538,10 +580,12 @@ class Pac4jTest {
                   routes.get(
                       "/me",
                       (request, response) ->
-                          response.text(Objects.requireNonNull(request.principal()).getName())));
+                          response.text(request.principal().orElseThrow().getName())));
       app.routes()
           .get(
-              "/public", (request, response) -> response.text(String.valueOf(request.principal())));
+              "/public",
+              (request, response) ->
+                  response.text(request.principal().map(Object::toString).orElse("null")));
       app.start();
 
       var requests = new ArrayList<CompletableFuture<HttpResponse<String>>>();
@@ -602,7 +646,7 @@ class Pac4jTest {
                   routes.get(
                       "/me",
                       (request, response) ->
-                          response.text(Objects.requireNonNull(request.principal()).getName())));
+                          response.text(request.principal().orElseThrow().getName())));
       app.start();
 
       var uri = URI.create("http://127.0.0.1:" + app.port() + "/me");
@@ -707,7 +751,7 @@ class Pac4jTest {
                   routes.get(
                       "/me",
                       (request, response) ->
-                          response.text(Objects.requireNonNull(request.principal()).getName())));
+                          response.text(request.principal().orElseThrow().getName())));
       app.start();
 
       var request =

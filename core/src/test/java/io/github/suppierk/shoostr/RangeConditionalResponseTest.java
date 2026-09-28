@@ -206,7 +206,7 @@ class RangeConditionalResponseTest {
               "/file",
               (request, response) ->
                   response
-                      .header(HttpHeaders.ETAG.value(), "\"revision-1\"")
+                      .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
       app.start();
       var result =
@@ -336,7 +336,7 @@ class RangeConditionalResponseTest {
               "/file",
               (request, response) ->
                   response
-                      .header(HttpHeaders.ETAG.value(), "\"revision-1\"")
+                      .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
       app.start();
       var matched =
@@ -376,7 +376,7 @@ class RangeConditionalResponseTest {
               "/file",
               (request, response) ->
                   response
-                      .header(HttpHeaders.ETAG.value(), "\"revision,1\"")
+                      .setHeader(HttpHeaders.ETAG.value(), "\"revision,1\"")
                       .file(file, "text/plain"));
       app.start();
       var result =
@@ -405,7 +405,7 @@ class RangeConditionalResponseTest {
               "/file",
               (request, response) ->
                   response
-                      .header(HttpHeaders.ETAG.value(), "\"revision-1\"")
+                      .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
       app.start();
       var result =
@@ -648,7 +648,7 @@ class RangeConditionalResponseTest {
               "/file",
               (request, response) ->
                   response
-                      .header(HttpHeaders.ETAG.value(), "\"revision 1\"")
+                      .setHeader(HttpHeaders.ETAG.value(), "\"revision 1\"")
                       .file(file, "text/plain"));
       app.start();
       var result =
@@ -704,7 +704,7 @@ class RangeConditionalResponseTest {
               "/file",
               (request, response) ->
                   response
-                      .header(HttpHeaders.ETAG.value(), "\"revision-1\"")
+                      .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
       app.start();
       var result =

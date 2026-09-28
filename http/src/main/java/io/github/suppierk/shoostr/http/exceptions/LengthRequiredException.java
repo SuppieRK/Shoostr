@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 411: Length Required.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#LENGTH_REQUIRED
  */
+@SuppressWarnings("squid:S110")
 public class LengthRequiredException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

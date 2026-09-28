@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 406: Not Acceptable.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#NOT_ACCEPTABLE
  */
+@SuppressWarnings("squid:S110")
 public class NotAcceptableException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

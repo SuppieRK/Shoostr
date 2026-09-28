@@ -1,5 +1,7 @@
 package io.github.suppierk.shoostr.http;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 
 /**
@@ -135,10 +137,14 @@ public enum HttpStatusCodes {
   /**
    * HTTP 305: Use Proxy.
    *
+   * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
+   * system that might want to use this status, clearly indicating that it should be replaced.
+   *
    * @see <a href="https://www.rfc-editor.org/rfc/rfc9110">Status specification</a>
    * @deprecated Deprecated by RFC 9110, section 15.4.6.
    */
-  @Deprecated
+  @SuppressWarnings("squid:S1133")
+  @Deprecated(since = "0.1.0")
   USE_PROXY(305, "Use Proxy"),
   /**
    * HTTP 307: Temporary Redirect.
@@ -377,10 +383,14 @@ public enum HttpStatusCodes {
   /**
    * HTTP 510: Not Extended.
    *
+   * <p>S1133 is suppressed due to the need to keep this status for any legacy system or another
+   * system that might want to use this status, clearly indicating that it should be replaced.
+   *
    * @see <a href="https://www.rfc-editor.org/rfc/rfc2774">Status specification</a>
    * @deprecated Obsoleted in the IANA registry; retained for historical recognition.
    */
-  @Deprecated
+  @SuppressWarnings("squid:S1133")
+  @Deprecated(since = "0.1.0")
   NOT_EXTENDED(510, "Not Extended"),
   /**
    * HTTP 511: Network Authentication Required.
@@ -389,7 +399,7 @@ public enum HttpStatusCodes {
    */
   NETWORK_AUTHENTICATION_REQUIRED(511, "Network Authentication Required");
 
-  private static final HttpStatusCodes[] LOOKUP = lookup();
+  private static final Map<Integer, HttpStatusCodes> LOOKUP = lookup();
 
   private final int value;
   private final String reasonPhrase;
@@ -430,11 +440,7 @@ public enum HttpStatusCodes {
    * @return the recognized status, or empty for unused, unassigned or out-of-range input
    */
   public static Optional<HttpStatusCodes> httpStatusCode(int value) {
-    if (value < 0 || value >= LOOKUP.length) {
-      return Optional.empty();
-    }
-
-    return Optional.ofNullable(LOOKUP[value]);
+    return Optional.ofNullable(LOOKUP.get(value));
   }
 
   /**
@@ -497,11 +503,11 @@ public enum HttpStatusCodes {
    *
    * @return status codes indexed by their numeric value
    */
-  private static HttpStatusCodes[] lookup() {
-    var statuses = new HttpStatusCodes[600];
-    for (var status : values()) {
-      statuses[status.value] = status;
+  private static Map<Integer, HttpStatusCodes> lookup() {
+    final var lookup = new HashMap<Integer, HttpStatusCodes>();
+    for (var value : HttpStatusCodes.values()) {
+      lookup.put(value.value(), value);
     }
-    return statuses;
+    return lookup;
   }
 }

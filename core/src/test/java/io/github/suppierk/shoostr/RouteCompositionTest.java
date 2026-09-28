@@ -11,6 +11,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import org.junit.jupiter.api.AfterEach;
@@ -38,6 +39,11 @@ class RouteCompositionTest {
   @BeforeEach
   void start() throws Exception {
     app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
+    app.onRequestHeaders(
+        (request, response) -> {
+          assertTrue(request.pathParam("id").isEmpty());
+          assertTrue(request.routePattern().isEmpty());
+        });
     client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     app.routes()
         .path(
@@ -55,16 +61,26 @@ class RouteCompositionTest {
                                   (req, res) -> {
                                     retainedRequest.set(req);
                                     res.text(
-                                        req.pathParam("accountId") + ":" + req.pathParam("id"));
+                                        req.pathParam("accountId").orElseThrow()
+                                            + ":"
+                                            + req.pathParam("id").orElseThrow());
                                   })));
             });
     app.routes().path("v2/orders/", RouteCompositionTest::orders);
-    app.routes().get("/flat/{id}", (req, res) -> res.text(req.pathParam("id")));
+    app.routes()
+        .get(
+            "/flat/{id}",
+            (req, res) -> {
+              assertTrue(req.pathParam("missing").isEmpty());
+              res.text(req.pathParam("id").orElseThrow());
+            });
     app.routes()
         .path(
             "/order",
             group -> {
-              group.get("/{id}", (req, res) -> res.text("parameter:" + req.pathParam("id")));
+              group.get(
+                  "/{id}",
+                  (req, res) -> res.text("parameter:" + req.pathParam("id").orElseThrow()));
               group.get("/latest", (req, res) -> res.text("literal"));
               group.post("/latest", (req, res) -> res.text("post"));
             });
@@ -73,10 +89,13 @@ class RouteCompositionTest {
             "/reverse-order",
             group -> {
               group.get("/latest", (req, res) -> res.text("literal"));
-              group.get("/{id}", (req, res) -> res.text("parameter:" + req.pathParam("id")));
+              group.get(
+                  "/{id}",
+                  (req, res) -> res.text("parameter:" + req.pathParam("id").orElseThrow()));
             });
     app.routes().get("/fallback/fixed/x", (req, res) -> res.text("x"));
-    app.routes().get("/fallback/{name}/y", (req, res) -> res.text(req.pathParam("name")));
+    app.routes()
+        .get("/fallback/{name}/y", (req, res) -> res.text(req.pathParam("name").orElseThrow()));
     app.routes().route(HttpMethods.PROPFIND, "/properties", (req, res) -> res.text(req.method()));
     app.routes().route("PROPFIND", "/string-properties", (req, res) -> res.text(req.method()));
     app.routes()
@@ -84,7 +103,8 @@ class RouteCompositionTest {
             "/string",
             group -> {
               group.route("GET", (req, res) -> res.text("group"));
-              group.route("POST", "/{id}", (req, res) -> res.text(req.pathParam("id")));
+              group.route(
+                  "POST", "/{id}", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
               group.route(HttpMethods.DELETE, (req, res) -> res.status(204));
             });
     app.routes().path("/", root -> root.get((req, res) -> res.text("root")));
@@ -92,7 +112,7 @@ class RouteCompositionTest {
         .get(
             "/unknown-param",
             (req, res) -> {
-              assertThrows(IllegalArgumentException.class, () -> req.pathParam("missing"));
+              assertEquals(Optional.empty(), req.pathParam("missing"));
               res.text("checked");
             });
     app.start();
@@ -201,6 +221,62 @@ class RouteCompositionTest {
     assertEquals("DELETE, GET", rejected.headers().firstValue("Allow").orElseThrow());
   }
 
+  @Test
+  void rootCallbackRegistersFlatAndComposedRoutesAndReturnsApplication() throws Exception {
+    try (var candidate = new Shoostr(Options.defaults().withPort(0));
+        var candidateClient = HttpClient.newHttpClient()) {
+      assertSame(
+          candidate,
+          candidate.routes(
+              routes -> {
+                assertSame(candidate.routes(), routes);
+                routes.get("/health", (request, response) -> response.text("ok"));
+                routes.path(
+                    "/orders",
+                    orders -> {
+                      orders.get(
+                          "/{id}",
+                          (request, response) ->
+                              response.text("order:" + request.pathParam("id").orElseThrow()));
+                      orders.get("/latest", (request, response) -> response.text("latest"));
+                    });
+              }));
+      candidate.start();
+
+      assertEquals("ok", send(candidateClient, candidate, "/health").body());
+      assertEquals("latest", send(candidateClient, candidate, "/orders/latest").body());
+      assertEquals("order:42", send(candidateClient, candidate, "/orders/42").body());
+    }
+  }
+
+  @Test
+  void rootCallbackPropagatesFailureAndKeepsEarlierRegistrations() throws Exception {
+    try (var candidate = new Shoostr(Options.defaults().withPort(0));
+        var candidateClient = HttpClient.newHttpClient()) {
+      var failure = new IllegalArgumentException("registration failed");
+      assertSame(
+          failure,
+          assertThrows(
+              IllegalArgumentException.class,
+              () ->
+                  candidate.routes(
+                      routes -> {
+                        routes.get("/before", (request, response) -> response.text("before"));
+                        throw failure;
+                      })));
+
+      assertSame(
+          candidate,
+          candidate.routes(
+              routes -> routes.get("/after", (request, response) -> response.text("after"))));
+      candidate.start();
+
+      assertEquals("before", send(candidateClient, candidate, "/before").body());
+      assertEquals("after", send(candidateClient, candidate, "/after").body());
+      assertThrows(IllegalStateException.class, () -> candidate.routes(routes -> {}));
+    }
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"/}id", "/<id", "/>id"})
   void rejectsIsolatedUnsupportedSymbolsDuringRouteRegistration(String pattern) throws Exception {
@@ -302,6 +378,15 @@ class RouteCompositionTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
+  private static HttpResponse<String> send(HttpClient client, Shoostr app, String path)
+      throws Exception {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
+            .timeout(Duration.ofSeconds(5))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   private static void orders(Routes orders) {
     orders.get((req, res) -> res.text("list"));
     orders.post((req, res) -> res.text("create"));
@@ -309,8 +394,8 @@ class RouteCompositionTest {
     orders.path(
         "/{id}",
         order -> {
-          order.get((req, res) -> res.text(req.pathParam("id")));
-          order.patch((req, res) -> res.text("update:" + req.pathParam("id")));
+          order.get((req, res) -> res.text(req.pathParam("id").orElseThrow()));
+          order.patch((req, res) -> res.text("update:" + req.pathParam("id").orElseThrow()));
           order.delete((req, res) -> res.status(204));
         });
   }

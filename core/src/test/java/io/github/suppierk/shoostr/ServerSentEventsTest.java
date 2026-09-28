@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -45,6 +46,63 @@ class ServerSentEventsTest {
           "text/event-stream; charset=utf-8",
           result.headers().firstValue("Content-Type").orElseThrow());
       assertEquals("data: café\ndata: next\n\n", result.body());
+    }
+  }
+
+  @Test
+  void chainsEventsCommentsAndHeartbeatsOnTheSameWriter() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .sse(
+              "/events",
+              (request, response) -> {
+                var events = response.startEventStream();
+                var event =
+                    SseEvent.of("ready")
+                        .withEvent("update")
+                        .withId("cursor-7")
+                        .withRetry(Duration.ofSeconds(2));
+                assertSame(events, events.send("café\nnext"));
+                assertSame(events, events.send(event));
+                assertSame(events, events.comment("connected\nnext"));
+                assertSame(events, events.heartbeat());
+                events.send("tail").send(SseEvent.of("last")).comment("done").heartbeat();
+              });
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          """
+          data: café
+          data: next
+
+          event: update
+          id: cursor-7
+          retry: 2000
+          data: ready
+
+          : connected
+          : next
+
+          :
+
+          data: tail
+
+          data: last
+
+          : done
+
+          :
+
+          """,
+          result.body());
     }
   }
 
@@ -310,14 +368,12 @@ class ServerSentEventsTest {
               "/events",
               (request, response) -> {
                 var previous = request.header(HttpHeaders.LAST_EVENT_ID.value());
-                if (previous != null) {
-                  lastEventId.set(previous);
-                }
+                previous.ifPresent(lastEventId::set);
 
                 response
                     .startEventStream()
                     .send(
-                        previous == null
+                        previous.isEmpty()
                             ? SseEvent.of("first").withId("cursor-1")
                             : SseEvent.of("current").withId(""));
               });

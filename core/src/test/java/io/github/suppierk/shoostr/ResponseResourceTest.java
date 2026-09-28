@@ -56,6 +56,7 @@ class ResponseResourceTest {
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> requestHeaders;
+                      case "addHttpStreamWrapper" -> null;
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
     var delegate =
@@ -79,7 +80,9 @@ class ResponseResourceTest {
                       }
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
-    return new Response(delegate, Options.defaults(), Callback.NOOP, false, request);
+    return io.github.suppierk.shoostr.Request.create(
+            request, delegate, Options.defaults(), Callback.NOOP)
+        .response();
   }
 
   private static final class TrackingChannel implements SeekableByteChannel {

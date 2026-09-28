@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 413: Content Too Large.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#CONTENT_TOO_LARGE
  */
+@SuppressWarnings("squid:S110")
 public class ContentTooLargeException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

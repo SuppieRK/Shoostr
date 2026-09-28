@@ -527,7 +527,7 @@ class ShoostrLifecycleTest {
               "/api",
               routes -> {
                 child.set(routes);
-                routes.get("/{id}", (req, res) -> res.text(req.pathParam("id")));
+                routes.get("/{id}", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
               });
       app.start();
       app.routes().close();

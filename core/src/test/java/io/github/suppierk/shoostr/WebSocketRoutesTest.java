@@ -159,7 +159,7 @@ public class WebSocketRoutesTest {
               "/secure",
               (request, upgrade) -> {
                 assertTrue(request.isSecure());
-                assertEquals("https", request.scheme());
+                assertEquals("https", request.scheme().orElseThrow());
                 return new EchoListener("secure:");
               });
       app.start();
@@ -206,7 +206,7 @@ public class WebSocketRoutesTest {
                         assertEquals(List.of("chat.v1", "chat.v2"), request.webSocketProtocols());
                         upgrade.setAcceptedSubProtocol("chat.v2");
                         factoryCalls.incrementAndGet();
-                        return new EchoListener(request.pathParam("id") + ":");
+                        return new EchoListener(request.pathParam("id").orElseThrow() + ":");
                       }));
       app.start();
 
@@ -249,7 +249,8 @@ public class WebSocketRoutesTest {
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> literal =
           (request, upgrade) -> new EchoListener("literal:");
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> parameter =
-          (request, upgrade) -> new EchoListener("parameter:" + request.pathParam("id") + ":");
+          (request, upgrade) ->
+              new EchoListener("parameter:" + request.pathParam("id").orElseThrow() + ":");
       if (literalFirst) {
         app.routes().websocket("/rooms/latest", literal);
         app.routes().websocket("/rooms/{id}", parameter);
@@ -262,7 +263,8 @@ public class WebSocketRoutesTest {
       app.routes()
           .websocket(
               "/fallback/{name}/y",
-              (request, upgrade) -> new EchoListener(request.pathParam("name") + ":"));
+              (request, upgrade) ->
+                  new EchoListener(request.pathParam("name").orElseThrow() + ":"));
       app.start();
 
       assertEquals("literal:ping", sendAndReceive(client, app, "/rooms/latest"));
@@ -281,7 +283,10 @@ public class WebSocketRoutesTest {
       app.routes()
           .protect(
               (request, response) -> {
-                if (!"https://allowed.example".equals(request.header("Origin"))) {
+                if (!request
+                    .header("Origin")
+                    .filter("https://allowed.example"::equals)
+                    .isPresent()) {
                   throw new ForbiddenException();
                 }
               },
@@ -324,7 +329,7 @@ public class WebSocketRoutesTest {
       app.routes()
           .protect(
               (request, response) -> {
-                if (!"Bearer secret".equals(request.header("Authorization"))) {
+                if (!request.header("Authorization").filter("Bearer secret"::equals).isPresent()) {
                   throw new AuthenticationRequiredException("Bearer realm=\"chat\"");
                 }
 
@@ -334,8 +339,7 @@ public class WebSocketRoutesTest {
                   routes.websocket(
                       "/authenticated",
                       (request, upgrade) ->
-                          new EchoListener(
-                              Objects.requireNonNull(request.principal()).getName() + ":")));
+                          new EchoListener(request.principal().orElseThrow().getName() + ":")));
       app.start();
 
       var rejected =
@@ -409,7 +413,7 @@ public class WebSocketRoutesTest {
       app.exception(
           BadRequestException.class,
           (failure, request, response) ->
-              response.status(422).header("X-Error-Mapped", "yes").text("mapped"));
+              response.status(422).setHeader("X-Error-Mapped", "yes").text("mapped"));
       app.afterRequest(
           result -> {
             notifications.incrementAndGet();

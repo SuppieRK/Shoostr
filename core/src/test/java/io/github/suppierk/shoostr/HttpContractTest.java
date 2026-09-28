@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -69,7 +70,7 @@ class HttpContractTest {
         .get(
             "/failure",
             (req, res) -> {
-              res.status(201).header("X-Leak", "secret").text("must not escape");
+              res.status(201).setHeader("X-Leak", "secret").text("must not escape");
               throw new IllegalArgumentException("secret details");
             });
     app.routes()
@@ -98,6 +99,18 @@ class HttpContractTest {
               }
 
               stream.write("last\n");
+            });
+    app.routes()
+        .get(
+            "/fluent-stream",
+            (req, res) -> {
+              var stream = res.startStream("text/plain; charset=utf-8");
+              assertSame(stream, stream.write("café"));
+              assertSame(stream, stream.write(new byte[] {'!'}));
+              assertSame(stream, stream.write(""));
+              assertSame(stream, stream.write(new byte[0]));
+              assertSame(stream, stream.flush());
+              stream.write("012345678").flush().write("tail");
             });
     app.routes()
         .get(
@@ -133,8 +146,8 @@ class HttpContractTest {
             "/invalid-type", (req, res) -> res.body("text/plain\r\nX-Leak: injected", new byte[0]));
     app.routes()
         .get("/invalid-stream-type", (req, res) -> res.startStream("text/plain\nX-Leak: injected"));
-    app.routes().get("/invalid-header", (req, res) -> res.header("Bad Header", "value"));
-    app.routes().get("/invalid-framing", (req, res) -> res.header("content-length", "12"));
+    app.routes().get("/invalid-header", (req, res) -> res.setHeader("Bad Header", "value"));
+    app.routes().get("/invalid-framing", (req, res) -> res.setHeader("content-length", "12"));
     app.routes()
         .get("/custom-type", (req, res) -> res.body("application/vnd.example+json", new byte[0]));
     app.start();
@@ -221,6 +234,14 @@ class HttpContractTest {
       releaseStream.countDown();
       assertEquals("last\n", new String(input.readAllBytes(), StandardCharsets.UTF_8));
     }
+  }
+
+  @Test
+  void chainsStreamWritesAndFlushesOnTheSameWriter() throws Exception {
+    var result = send("/fluent-stream");
+
+    assertEquals(200, result.statusCode());
+    assertEquals("café!012345678tail", result.body());
   }
 
   @Test
@@ -343,7 +364,7 @@ class HttpContractTest {
         Thread.startVirtualThread(
             () -> {
               try {
-                var response = new Response(sink, Options.defaults(), completion);
+                var response = response(sink, completion);
                 response.flushHooks(
                     () -> {},
                     () -> {
@@ -425,7 +446,7 @@ class HttpContractTest {
                     });
     var completion =
         Callback.from(successes::incrementAndGet, ignored -> failures.incrementAndGet());
-    var response = new Response(sink, Options.defaults(), completion);
+    var response = response(sink, completion);
     response.flushHooks(
         () -> events.add("before"),
         () -> {
@@ -439,6 +460,22 @@ class HttpContractTest {
     assertEquals(List.of("before", "after"), events);
     assertEquals(0, successes.get());
     assertEquals(1, failures.get());
+  }
+
+  private static Response response(org.eclipse.jetty.server.Response sink, Callback completion) {
+    var nativeRequest =
+        (org.eclipse.jetty.server.Request)
+            Proxy.newProxyInstance(
+                HttpContractTest.class.getClassLoader(),
+                new Class<?>[] {org.eclipse.jetty.server.Request.class},
+                (proxy, method, arguments) ->
+                    switch (method.getName()) {
+                      case "getMethod" -> "GET";
+                      case "getHeaders" -> HttpFields.EMPTY;
+                      case "addHttpStreamWrapper" -> null;
+                      default -> throw new UnsupportedOperationException(method.getName());
+                    });
+    return Request.create(nativeRequest, sink, Options.defaults(), completion).response();
   }
 
   private HttpResponse<String> send(String path) throws Exception {

@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -68,7 +69,9 @@ public final class AccessLog implements Consumer<RequestOutcome> {
     for (int index = 0; index < value.length(); index++) {
       char character = value.charAt(index);
       result.append(
-          Character.isWhitespace(character) || Character.isISOControl(character) ? '_' : character);
+          Character.isWhitespace(character) || Character.isISOControl(character)
+              ? HttpCharacters.UNDERSCORE
+              : character);
     }
     return result.toString();
   }

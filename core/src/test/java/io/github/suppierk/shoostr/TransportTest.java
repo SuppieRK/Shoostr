@@ -72,7 +72,7 @@ class TransportTest {
               "/secure",
               (request, response) -> {
                 assertTrue(request.isSecure());
-                assertEquals("https", request.scheme());
+                assertEquals("https", request.scheme().orElseThrow());
                 response.text("secure");
               });
       app.start();
@@ -101,7 +101,7 @@ class TransportTest {
           .get(
               "/parallel/{id}",
               (request, response) -> {
-                if ("warmup".equals(request.pathParam("id"))) {
+                if ("warmup".equals(request.pathParam("id").orElseThrow())) {
                   response.text("warm");
                   return;
                 }
@@ -109,10 +109,9 @@ class TransportTest {
                 entered.countDown();
                 assertTrue(release.await(3, TimeUnit.SECONDS));
                 response.text(
-                    request.pathParam("id")
+                    request.pathParam("id").orElseThrow()
                         + ":"
-                        + Objects.requireNonNull((InetSocketAddress) request.remoteAddress())
-                            .getPort());
+                        + ((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort());
               });
       app.start();
       var base = "https://localhost:" + app.port() + "/parallel/";
@@ -177,9 +176,9 @@ class TransportTest {
                 entered.countDown();
                 release.await();
                 if (stream != null) {
-                  stream.write(request.pathParam("id"));
+                  stream.write(request.pathParam("id").orElseThrow());
                 } else {
-                  response.text("complete-" + request.pathParam("id"));
+                  response.text("complete-" + request.pathParam("id").orElseThrow());
                 }
               });
       app.start();
@@ -287,8 +286,7 @@ class TransportTest {
       app.routes()
           .get(
               "/session",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.session(true)).getId()));
+              (request, response) -> response.text(request.session(true).orElseThrow().getId()));
       app.routes()
           .get(
               "/blocked",
@@ -376,8 +374,7 @@ class TransportTest {
       app.routes()
           .get(
               "/session",
-              (request, response) ->
-                  response.text(Objects.requireNonNull(request.session(true)).getId()));
+              (request, response) -> response.text(request.session(true).orElseThrow().getId()));
       app.routes()
           .get(
               "/hold",
@@ -512,7 +509,7 @@ class TransportTest {
               "/custom",
               (request, response) ->
                   response
-                      .header("Content-Encoding", "br")
+                      .setHeader("Content-Encoding", "br")
                       .body("application/octet-stream", new byte[] {1}));
       app.start();
       var base = "http://127.0.0.1:" + app.port();
@@ -800,11 +797,11 @@ class TransportTest {
               "/metadata",
               (request, response) -> {
                 assertTrue(request.isSecure());
-                assertEquals("https", request.scheme());
+                assertEquals("https", request.scheme().orElseThrow());
                 assertEquals("HTTP/2.0", request.protocol());
                 assertTrue(request.isForwarded());
                 assertEquals("https://public.example/metadata?raw=%2B", request.effectiveUrl());
-                assertEquals("raw=%2B", request.queryString());
+                assertEquals("raw=%2B", request.queryString().orElseThrow());
                 response.text("metadata");
               });
       app.start();
@@ -832,7 +829,7 @@ class TransportTest {
               "/metadata",
               (request, response) -> {
                 assertFalse(request.isSecure());
-                assertEquals("http", request.scheme());
+                assertEquals("http", request.scheme().orElseThrow());
                 assertEquals("HTTP/2.0", request.protocol());
                 assertTrue(request.isForwarded());
                 assertEquals("https://public.example/metadata?raw=%2B", request.effectiveUrl());
@@ -1235,8 +1232,7 @@ class TransportTest {
               (request, response) ->
                   response.text(
                       Integer.toString(
-                          Objects.requireNonNull((InetSocketAddress) request.remoteAddress())
-                              .getPort())));
+                          ((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort())));
       app.routes()
           .get(
               "/good",
@@ -1245,8 +1241,7 @@ class TransportTest {
                 assertTrue(release.await(3, TimeUnit.SECONDS));
                 response.text(
                     Integer.toString(
-                        Objects.requireNonNull((InetSocketAddress) request.remoteAddress())
-                            .getPort()));
+                        ((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort()));
               });
       app.routes()
           .get(

@@ -78,14 +78,16 @@ class RoutePolicyTest {
                       paths ->
                           paths.protect(
                               (request, response) -> {
-                                request.attribute("order", request.attribute("order") + ",inner");
+                                request.attribute(
+                                    "order", request.attribute("order").orElseThrow() + ",inner");
                               },
                               inner ->
                                   inner.get(
                                       "/order",
                                       (request, response) ->
                                           response.text(
-                                              request.attribute("order") + ",handler")))));
+                                              request.attribute("order").orElseThrow()
+                                                  + ",handler")))));
       app.start();
 
       assertEquals("outer,inner,handler", send(client, app, "/api/order").body());

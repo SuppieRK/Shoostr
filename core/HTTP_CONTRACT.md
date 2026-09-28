@@ -26,7 +26,7 @@ The target is complete framework feature coverage relative to Javalin and Jooby,
 
 | Contract | Current implementation and evidence | Javalin comparison | Disposition |
 | --- | --- | --- | --- |
-| Query/form value shape | First/null, repeated ordered values, case-sensitive names, separate query/form maps; deeply immutable returned collections. `RequestParametersTest`. | Similar first/list/map accessors. [Context][context], [request tests][requesttests] | Aligned basic API; local immutability is our own guarantee. |
+| Query/form value shape | First/empty Optional, repeated ordered values, case-sensitive names, separate query/form maps; deeply immutable returned collections. `RequestParametersTest`. | Similar first/list/map accessors. [Context][context], [request tests][requesttests] | Same value semantics; Optional results and collection immutability are chosen local interface differences. |
 | Query/form decoding | UTF-8, `+` → space, decode once, first equals delimiter; empty values/names preserved; empty `&` pairs ignored. | Request charset can influence decoding; empty split segments retained. [Context][context], [servlet utilities][servletutil], [encoding tests][encodingtests] | Different edge cases; retain deterministic UTF-8 and ignored empty pairs. |
 | Malformed parameters | Bad percent or UTF-8 rejects the entire accessed collection with400; no partial maps. | Malformed percent pairs can be omitted while other pairs survive. [Request tests][requesttests], [servlet utilities][servletutil] | Different intentional strictness. |
 | Form representations | UTF-8 URL-encoded and multipart text fields; `Upload` exposes repeated file parts and explicit persistence. Multipart and raw body access are exclusive; temporary parts close at transport completion. | Multipart supported; strict-content-type setting affects form handling. [Context][context], [HttpConfig][httpconfig] | Local bounded multipart contract; no built-in object conversion. |
@@ -105,9 +105,15 @@ Chosen differences remain: known HTTP method tokens, whole-segment route paramet
 
 Redirects default to302; explicit navigation codes300/301/302/303/307/308 are accepted. They replace the previous body or selected file, clear Content-Type, Content-Length and Content-Range, and remain staged until handler return. Replacing a file also removes its ETag, Last-Modified, Accept-Ranges and Content-Disposition fields; unrelated headers remain. Invalid locations/statuses leave output unchanged. Empty references are rejected as a helper policy, although the URI grammar permits them; relative/query/fragment references and non-HTTP schemes remain supported. Existing escapes are preserved and Unicode components are ASCII-escaped by JDK URI. Network destinations require a host, no userinfo and a valid port; destination authorization is application-owned. See [RFC 9110 Location](https://www.rfc-editor.org/rfc/rfc9110.html#section-10.2.2). CookieTest now covers the dedicated cookie APIs in addition to raw repeated Set-Cookie support.
 
+## Buffered request-body ownership
+
+`Request.bodyBytes()` owns and closes its native input adapter on every exit. Jetty owns remaining request content, framing and connection reuse. Declared oversize is rejected before opening the adapter. Consumed oversize is cached before rejection so repeated body access continues to throw `ContentTooLargeException`; close-time failures are suppressed under that rejection or the original read/validation failure. Valid buffered reads retain their defensive-copy contract.
+
+Zero-length bulk reads never fetch or demand native content. Once the overflow byte arrives, rejection does not wait for another chunk or the terminating chunk. Complete available framing allows connection reuse; incomplete framing can produce a controlled rejection followed by native transport failure and connection closure. Public buffered-body and HTTP lifecycle tests cover chunk release, failure precedence, 400/413 responses and HTTP/1.1–HTTP/2 reuse.
+
 ## Cookie contract
 
-`Request.cookie`, `cookies` and `cookieMap` copy Jetty parsed values into request-local immutable collections. First-value lookup and map behavior intentionally agree, unlike Javalin7.2.3's first-value accessor/last-value map inconsistency. Names remain case-sensitive and values are not URL-decoded. The existing Jetty compatibility parser can discard malformed input; this is not advertised as strict request-cookie validation.
+`Request` captures header and cookie maps during construction, after native customization and before application hooks. Accessors share deeply immutable snapshots. `cookie(name)` selects the first value; `cookies(name)` and `cookieMap()` preserve every occurrence, with the map returning `Map<String, List<String>>`. Names remain case-sensitive and values are not URL-decoded. Absent headers and cookies use empty maps; no Cookie field means no cookie parsing. The configured Jetty cookie policy remains authoritative: its default compatibility policy can discard malformed fragments, while an explicitly strict policy rejects them before hooks run. Constructor failures are rendered by Jetty and reported once to completion observers; application exception handlers require a constructed Request.
 
 `http.Cookie` supplies validated immutable attributes, including explicit expiry, SameSite and protected prefixes. Core stages separate fields, replacing only matching name/domain/path scopes; malformed raw cookie fields are preserved. Cookie construction rejects syntax/control injection before output mutation. Response-level cache headers are unchanged. Tests exercise quoted values, normalized domains, expiry-only and zero/large ages, scope-aware deletion, secure prefixes, invalid-attribute atomicity, snapshots across connection reuse, thread/lifetime confinement, HEAD and error-handler cleanup. A JDK CookieManager also proves a set/read/delete round trip through the HTTP listener. These checks establish server formatting and that client interoperability case; they do not claim a complete browser SameSite/CSRF test suite.
 
@@ -115,11 +121,11 @@ Prefix and SameSite invariants follow [draft6265bis22](https://datatracker.ietf.
 
 ## Request metadata and application state
 
-`RequestMetadataTest` adds real HTTP/socket coverage for raw query spelling, immutable complete header/path snapshots, logical authority versus direct socket addresses, URI normalization/IPv6, legacy Host fallback, malformed-query inspection, existing encoded-path rejection, and request-local attributes/Principal. Tests coordinate eight concurrent handlers to prove isolation and verify metadata/state through gates, errors, streaming, foreign-thread rejection and post-handler rejection. This closes inventory P03; trusted-proxy behavior is described below and optional authentication-provider integration is described in the README.
+`RequestMetadataTest` adds real HTTP/socket coverage for raw query spelling, immutable complete header/path snapshots, logical authority versus direct socket addresses, URI normalization/IPv6, legacy Host fallback, malformed-query inspection, existing encoded-path rejection, and request-local attributes/Principal. Tests also verify construction-time metadata snapshots before admission hooks, empty metadata for headerless requests, and snapshot reuse across accessors. Tests coordinate eight concurrent handlers to prove isolation and verify metadata/state through gates, errors, streaming, foreign-thread rejection and post-handler rejection. This closes inventory P03; trusted-proxy behavior is described below and optional authentication-provider integration is described in the README.
 
 `url/fullUrl/scheme/authority/serverName/serverPort` expose Jetty's parsed request URI metadata, which can incorporate client-supplied Host or an absolute target. Default ports may be removed and legacy missing Host uses the listener authority. `isSecure` instead reads the physical endpoint: Jetty's request-level flag is derived from URI scheme, which the absolute-target test demonstrated can say HTTPS on plain TCP. Direct local/remote addresses likewise bypass metadata wrappers. Verified against pinned [HttpConnection](https://github.com/jetty/jetty.project/blob/jetty-12.1.11/jetty-core/jetty-server/src/main/java/org/eclipse/jetty/server/internal/HttpConnection.java), [ChannelRequest](https://github.com/jetty/jetty.project/blob/jetty-12.1.11/jetty-core/jetty-server/src/main/java/org/eclipse/jetty/server/internal/HttpChannelState.java), and [ConnectionMetaData](https://github.com/jetty/jetty.project/blob/jetty-12.1.11/jetty-core/jetty-server/src/main/java/org/eclipse/jetty/server/ConnectionMetaData.java). These HTTP-only metadata tests are supplemented by native TLS coverage below.
 
-Attributes are application-owned Objects with null-as-removal; map snapshots freeze bindings without copying values. Principal is an explicitly assigned JDK Principal, null by default and clearable. Both are thread/lifetime confined and released by request finalization. Neither state nor identity is inferred from headers by these accessors; optional authentication and tracing adapters have separate contracts.
+Attributes are application-owned Objects with null-as-removal; map snapshots freeze bindings without copying values. Principal is an explicitly assigned JDK Principal, exposed as an empty Optional by default and clearable with a null setter input. Both are thread/lifetime confined and released by request finalization. Neither state nor identity is inferred from headers by these accessors; optional authentication and tracing adapters have separate contracts.
 
 ## Trusted reverse-proxy metadata
 
@@ -148,7 +154,7 @@ route gates and application-wide exception handlers under the normal request lif
 RFC 7239 elements are parsed in arrival order, including repeated field lines. Starting with the
 rightmost assertion from the trusted physical peer, the framework walks left only through trusted
 literal predecessors and selects client identity and origin from the same boundary element.
-Missing, `unknown`, or obfuscated identities stop traversal and yield a null client address. A
+Missing, `unknown`, or obfuscated identities stop traversal and yield an empty client-address Optional. A
 literal client without a supplied source port uses port 0; it never borrows the proxy's port.
 Malformed configured fields, duplicate parameters, unsupported schemes, empty elements, and more
 than 64 elements return 400 before gates and handlers. Header input is parsed as literals with
@@ -173,8 +179,8 @@ coverage is `TrustedProxyTest`; it does not prove firewall or reverse-proxy conf
 
 Sessions are disabled until `Shoostr.sessions()` or `Shoostr.sessions(Consumer<SessionHandler>)` is called
 before startup. The Jetty core `ContextHandler → SessionHandler` chain wraps the application's
-handler, and Shoostr owns its lifecycle. `Request.session(false)` returns null without creating a
-session; `session(true)` creates one before response commitment. Jetty's `Session` owns ID, attributes, per-session idle
+handler, and Shoostr owns its lifecycle. `Request.session(false)` returns an empty Optional without creating a
+session when none exists; `session(true)` creates one before response commitment. Jetty's `Session` owns ID, attributes, per-session idle
 expiry and invalidation. `Request.renewSessionId()` uses the current transport response and must
 run before commitment. The old ID stops resolving. Invalidating server state does not itself
 delete the browser cookie; the application also calls `Response.removeCookie` with the configured
@@ -243,3 +249,9 @@ connection into native TLS. `TransportTest` covers
 real HTTPS, ALPN, same-connection concurrent HTTP/2 streams, h2c, proxy metadata, gzip
 wire bytes, ranges, HEAD and startup cleanup. Sources: [Jetty server guide](https://jetty.org/docs/jetty/12.1/programming-guide/server/http.html)
 and [RFC 9110 section 8.6](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.6).
+
+## Optional request retrieval
+
+All17 potentially absent Request accessors return non-null JDK Optionals. Missing named path parameters and access before route selection return empty; null names still reject, and decoding failures remain failures. Present empty query, form, header and cookie values remain present. Raw query absence differs from an explicitly empty query. Native URI/address absence is represented without inventing metadata or changing Jetty fallbacks.
+
+Session creation restrictions, multipart ownership, body limits, parsing and handler confinement are unchanged. Attribute/principal setter nulls retain removal/clearing semantics; internal nullable state and RequestOutcome/Response interfaces are unaffected. This is a source and binary interface change without aliases.

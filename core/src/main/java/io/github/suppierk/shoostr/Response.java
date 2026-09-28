@@ -24,7 +24,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.regex.Pattern;
 import org.eclipse.jetty.compression.Compression;
 import org.eclipse.jetty.compression.server.CompressionConfig;
 import org.eclipse.jetty.compression.server.CompressionHandler;
@@ -94,7 +93,6 @@ public final class Response implements AutoCloseable {
           HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS, HttpHeaders.ACCESS_CONTROL_MAX_AGE);
   private static final ByteRange UNSATISFIABLE_RANGE = new ByteRange(-1, -1);
   private static final SetCookieParser COOKIE_PARSER = SetCookieParser.newInstance();
-  private static final Pattern HEADER_NAME = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
   private static final String TEXT_CONTENT_TYPE = "text/plain; charset=utf-8";
   private static final String IDENTITY_ENCODING = "identity";
   private static final HttpField TEXT =
@@ -108,7 +106,7 @@ public final class Response implements AutoCloseable {
   private final Callback completion;
   private final Thread owner;
   private final boolean head;
-  private final org.eclipse.jetty.server.@Nullable Request request;
+  private final Request request;
   private Runnable beforeFlush;
   private Runnable afterFlush;
   private State state;
@@ -138,60 +136,35 @@ public final class Response implements AutoCloseable {
   private @Nullable Throwable afterFlushFailure;
 
   /**
-   * Creates handler-thread-owned output with an empty staged body.
+   * Creates a response while its request is privately under construction. Retains the peer without
+   * reading it; framework dispatch sees only the completed pair.
    *
-   * @param delegate transport response receiving headers and bytes
-   * @param options finite-body and streaming-buffer limits
-   * @param completion callback completing the transport exchange exactly once
-   */
-  Response(org.eclipse.jetty.server.Response delegate, Options options, Callback completion) {
-    this(delegate, options, completion, false, null);
-  }
-
-  /**
-   * Creates handler-thread-owned output with request-method body semantics.
-   *
-   * @param delegate transport response receiving headers and bytes
-   * @param options finite-body and streaming-buffer limits
-   * @param completion callback completing the transport exchange exactly once
-   * @param head whether the request method suppresses response content
-   */
-  Response(
-      org.eclipse.jetty.server.Response delegate,
-      Options options,
-      Callback completion,
-      boolean head) {
-    this(delegate, options, completion, head, null);
-  }
-
-  /**
-   * Creates handler-thread-owned output with the transport request needed for file semantics.
-   *
-   * @param delegate transport response receiving headers and bytes
-   * @param options finite-body and streaming-buffer limits
-   * @param completion callback completing the transport exchange exactly once
-   * @param head whether the request method suppresses response content
-   * @param request transport request supplying range and condition fields
+   * @param delegate native output receiving headers and bytes
+   * @param options validated response limits
+   * @param completion callback completing the exchange exactly once
+   * @param head whether the method suppresses response content
+   * @param request the one request being paired with this response
+   * @throws NullPointerException if a reference input is null
    */
   Response(
       org.eclipse.jetty.server.Response delegate,
       Options options,
       Callback completion,
       boolean head,
-      org.eclipse.jetty.server.@Nullable Request request) {
-    this.delegate = delegate;
-    this.options = options;
-    this.completion = completion;
-    owner = Thread.currentThread();
+      Request request) {
+    this.delegate = Objects.requireNonNull(delegate);
+    this.options = Objects.requireNonNull(options);
+    this.completion = Objects.requireNonNull(completion);
+    this.owner = Thread.currentThread();
     this.head = head;
-    this.request = request;
-    beforeFlush = () -> {};
-    afterFlush = () -> {};
-    flushCallback = false;
-    beforeFlushFailed = false;
-    headContentLength = -1;
-    state = State.OPEN;
-    body = EMPTY;
+    this.request = Objects.requireNonNull(request);
+    this.beforeFlush = () -> {};
+    this.afterFlush = () -> {};
+    this.flushCallback = false;
+    this.beforeFlushFailed = false;
+    this.headContentLength = -1;
+    this.state = State.OPEN;
+    this.body = EMPTY;
   }
 
   /**
@@ -286,11 +259,10 @@ public final class Response implements AutoCloseable {
    * Renews a live Jetty session using this response before it is committed.
    *
    * @param session existing session
-   * @param request transport request that owns it
    */
-  void renewSessionId(Session session, org.eclipse.jetty.server.Request request) {
+  void renewSessionId(Session session) {
     require(State.OPEN);
-    session.renewId(request, delegate);
+    session.renewId(nativeRequest(), delegate);
   }
 
   /**
@@ -333,8 +305,10 @@ public final class Response implements AutoCloseable {
    *
    * @param value response text
    * @return this response
+   * @throws NullPointerException if value is null
    */
   public Response text(String value) {
+    Objects.requireNonNull(value);
     return body(TEXT_CONTENT_TYPE, value.getBytes(StandardCharsets.UTF_8));
   }
 
@@ -343,35 +317,31 @@ public final class Response implements AutoCloseable {
    * varying by Accept. The returned candidate only labels bytes; callers remain responsible for
    * generating and sending the representation. A missing Accept field selects the first candidate.
    *
-   * @param request request whose Accept fields constrain the selection
-   * @param candidates representations this handler can generate, in server preference order
+   * @param first most preferred representation this handler can generate
+   * @param additional other representations, in server preference order, or null for none
    * @return selected original candidate
    * @throws NotAcceptableException if an explicit Accept field excludes every candidate
    * @throws io.github.suppierk.shoostr.http.exceptions.BadRequestException if an Accept field is
    *     malformed
-   * @throws IllegalArgumentException if candidates is empty
-   * @throws NullPointerException if request, candidates, or a candidate is null
+   * @throws NullPointerException if first or an additional candidate is null
    * @throws IllegalStateException if the response is unavailable for mutation
    */
-  public MediaType negotiate(Request request, MediaType... candidates) {
+  public MediaType negotiate(MediaType first, MediaType @Nullable ... additional) {
     require(State.OPEN);
-    Objects.requireNonNull(request);
-    Objects.requireNonNull(candidates);
-    if (candidates.length == 0) {
-      throw new IllegalArgumentException("At least one media type is required");
-    }
-
-    for (var candidate : candidates) {
-      Objects.requireNonNull(candidate);
+    Objects.requireNonNull(first);
+    if (additional != null) {
+      for (var candidate : additional) {
+        Objects.requireNonNull(candidate);
+      }
     }
 
     var fields = request.headers(HttpHeaders.ACCEPT.value());
     if (fields.isEmpty()) {
       variedByAccept();
-      return candidates[0];
+      return first;
     }
 
-    var selected = AcceptNegotiation.select(fields, candidates);
+    var selected = AcceptNegotiation.select(fields, first, additional);
     variedByAccept();
     if (selected != null) {
       return selected;
@@ -427,9 +397,37 @@ public final class Response implements AutoCloseable {
    * @param contentType response media type
    * @return this response
    * @throws IOException if reading or output fails
+   * @throws IllegalStateException if file output is already selected
    */
   public Response input(InputStream source, String contentType) throws IOException {
-    return input(source, contentType, -1);
+    Objects.requireNonNull(source);
+
+    try (source) {
+      require(State.OPEN);
+      if (fileSelected) {
+        throw new IllegalStateException("Response already has file output");
+      }
+
+      if (!permitsBody()) {
+        return this;
+      }
+
+      if (head) {
+        contentType(contentType);
+        headContentLength = -1;
+        return this;
+      }
+
+      var output = startStream(contentType);
+      var buffer = new byte[options.streamBufferBytes()];
+      for (int read; (read = source.read(buffer)) >= 0; ) {
+        if (read > 0) {
+          output.write(read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read));
+        }
+      }
+
+      return this;
+    }
   }
 
   /**
@@ -449,11 +447,6 @@ public final class Response implements AutoCloseable {
     require(State.OPEN);
     if (gating || body.length != 0 || fileSelected) {
       throw new IllegalStateException("Response cannot become a file");
-    }
-
-    if (request == null) {
-      var length = Files.size(resource);
-      return input(Files.newInputStream(resource), contentType, length);
     }
 
     if (!Files.isRegularFile(resource) || !Files.isReadable(resource)) {
@@ -481,7 +474,7 @@ public final class Response implements AutoCloseable {
   public Response attachment(Path source, String contentType, String filename) throws IOException {
     var disposition = attachmentDisposition(filename);
     file(source, contentType);
-    return header(HttpHeaders.CONTENT_DISPOSITION.value(), disposition);
+    return setHeader(HttpHeaders.CONTENT_DISPOSITION.value(), disposition);
   }
 
   /**
@@ -599,7 +592,12 @@ public final class Response implements AutoCloseable {
           .getHeaders()
           .put(
               HttpHeaders.CONTENT_RANGE.value(),
-              "bytes " + range.first + "-" + range.last + "/" + length);
+              "bytes "
+                  + range.first
+                  + HttpCharacters.DASH_STRING
+                  + range.last
+                  + HttpCharacters.PATH_SEPARATOR_STRING
+                  + length);
       delegate.getHeaders().put(HttpHeader.CONTENT_LENGTH, range.length());
     }
 
@@ -625,8 +623,8 @@ public final class Response implements AutoCloseable {
     }
 
     if (noneMatch(tag)) {
-      return HttpMethods.GET.value().equals(request().getMethod())
-              || HttpMethods.HEAD.value().equals(request().getMethod())
+      return HttpMethods.GET.value().equals(nativeRequest().getMethod())
+              || HttpMethods.HEAD.value().equals(nativeRequest().getMethod())
           ? HttpStatusCodes.NOT_MODIFIED.value()
           : HttpStatusCodes.PRECONDITION_FAILED.value();
     }
@@ -723,7 +721,7 @@ public final class Response implements AutoCloseable {
    * @return first value, or null when absent
    * @throws IllegalStateException if accessed outside the response thread or lifetime
    */
-  public @Nullable String header(String name) {
+  public @Nullable String setHeader(String name) {
     checkReadable();
     return delegate.getHeaders().get(Objects.requireNonNull(name));
   }
@@ -782,7 +780,7 @@ public final class Response implements AutoCloseable {
    * @throws IllegalStateException if the response is no longer open for mutation
    */
   public Response disableCompression() {
-    return header(HttpHeaders.CONTENT_ENCODING.value(), IDENTITY_ENCODING);
+    return setHeader(HttpHeaders.CONTENT_ENCODING.value(), IDENTITY_ENCODING);
   }
 
   /**
@@ -793,7 +791,7 @@ public final class Response implements AutoCloseable {
    * @return this response
    * @throws IllegalArgumentException if the name or value is invalid or the field controls framing
    */
-  public Response header(String name, String value) {
+  public Response setHeader(String name, String value) {
     require(State.OPEN);
     validateHeaderName(name);
     validateHeaderValue(value);
@@ -949,7 +947,7 @@ public final class Response implements AutoCloseable {
       throw new IllegalArgumentException("Invalid redirect destination");
     }
 
-    header(HttpHeaders.LOCATION.value(), destination.toASCIIString());
+    setHeader(HttpHeaders.LOCATION.value(), destination.toASCIIString());
     status(code.value());
     if (fileSelected) {
       resourceContent = null;
@@ -1032,17 +1030,13 @@ public final class Response implements AutoCloseable {
    * @return session cookie values already set by Jetty
    */
   private List<String> sessionCookies() {
-    if (request == null) {
-      return List.of();
-    }
-
-    var session = request.getSession(false);
+    var session = nativeRequest().getSession(false);
     if (!(session instanceof ManagedSession managed)
         || !(managed.getSessionManager() instanceof AbstractSessionManager manager)) {
       return List.of();
     }
 
-    var name = manager.getSessionCookie() + "=";
+    var name = manager.getSessionCookie() + HttpCharacters.EQUALS_SIGN_STRING;
     return delegate.getHeaders().getValuesList(HttpHeaders.SET_COOKIE.value()).stream()
         .filter(value -> value.startsWith(name))
         .toList();
@@ -1193,7 +1187,7 @@ public final class Response implements AutoCloseable {
     }
 
     var domain = previous.getDomain();
-    if (domain != null && domain.startsWith(".")) {
+    if (domain != null && domain.startsWith(HttpCharacters.DOT_STRING)) {
       domain = domain.substring(1);
     }
 
@@ -1231,9 +1225,9 @@ public final class Response implements AutoCloseable {
    */
   private void vary(HttpHeaders header) {
     for (var value : delegate.getHeaders().getValuesList(HttpHeaders.VARY.value())) {
-      for (var token : value.split(",", -1)) {
+      for (var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
         var field = token.trim();
-        if ("*".equals(field) || header.equalsIgnoreCase(field)) {
+        if (HttpCharacters.ASTERISK_STRING.equals(field) || header.equalsIgnoreCase(field)) {
           return;
         }
       }
@@ -1256,7 +1250,7 @@ public final class Response implements AutoCloseable {
    */
   private static void validateHeaderName(String name) {
     Objects.requireNonNull(name);
-    if (!HEADER_NAME.matcher(name).matches()) {
+    if (!HttpCharacters.isValidHttpToken(name)) {
       throw new IllegalArgumentException("Invalid header");
     }
 
@@ -1282,11 +1276,17 @@ public final class Response implements AutoCloseable {
     var fallback = new StringBuilder(value.length());
     for (int index = 0; index < value.length(); index++) {
       var character = value.charAt(index);
-      if (character < 0x20 || character == 0x7f || character == '/' || character == '\\') {
+      if (character < 0x20
+          || character == 0x7f
+          || character == HttpCharacters.PATH_SEPARATOR
+          || character == HttpCharacters.BACKSLASH) {
         throw new IllegalArgumentException("Attachment filename contains an unsafe character");
       }
 
-      fallback.append(character >= 0x20 && character <= 0x7e && character != '"' ? character : '_');
+      fallback.append(
+          character >= 0x20 && character <= 0x7e && character != HttpCharacters.DOUBLE_QUOTE
+              ? character
+              : HttpCharacters.UNDERSCORE);
     }
 
     return "attachment; filename=\"" + fallback + "\"; filename*=UTF-8''" + encodedFilename(value);
@@ -1308,7 +1308,9 @@ public final class Response implements AutoCloseable {
           || "!#$&+-.^_`|~".indexOf(octet) >= 0) {
         encoded.append((char) octet);
       } else {
-        encoded.append('%').append(Character.toUpperCase(Character.forDigit(octet >>> 4, 16)));
+        encoded
+            .append(HttpCharacters.PERCENT_SIGN)
+            .append(Character.toUpperCase(Character.forDigit(octet >>> 4, 16)));
         encoded.append(Character.toUpperCase(Character.forDigit(octet & 0xf, 16)));
       }
     }
@@ -1326,7 +1328,7 @@ public final class Response implements AutoCloseable {
     Objects.requireNonNull(value);
     for (int index = 0; index < value.length(); index++) {
       char character = value.charAt(index);
-      if ((character < 0x20 && character != '\t') || character == 0x7f) {
+      if ((character < 0x20 && character != HttpCharacters.TAB) || character == 0x7f) {
         throw new IllegalArgumentException("Invalid header");
       }
     }
@@ -1411,8 +1413,8 @@ public final class Response implements AutoCloseable {
    *
    * @return the request retained for the selected file response
    */
-  private org.eclipse.jetty.server.Request request() {
-    return Objects.requireNonNull(request);
+  private org.eclipse.jetty.server.Request nativeRequest() {
+    return request.nativeRequest();
   }
 
   /**
@@ -1423,7 +1425,11 @@ public final class Response implements AutoCloseable {
    * @return valid weak entity tag
    */
   private static String resourceTag(long length, Instant lastModified) {
-    return "W/\"" + length + "-" + lastModified.toEpochMilli() + "\"";
+    return "W/\""
+        + length
+        + HttpCharacters.DASH_STRING
+        + lastModified.toEpochMilli()
+        + HttpCharacters.DOUBLE_QUOTE_STRING;
   }
 
   /**
@@ -1433,12 +1439,12 @@ public final class Response implements AutoCloseable {
    * @return whether the request passes the precondition
    */
   private boolean matchesIfMatch(@Nullable String tag) {
-    var values = request().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value());
+    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value());
     if (values.isEmpty()) {
       return true;
     }
 
-    if (entityTags(values).contains("*")) {
+    if (entityTags(values).contains(HttpCharacters.ASTERISK_STRING)) {
       return true;
     }
 
@@ -1463,11 +1469,12 @@ public final class Response implements AutoCloseable {
    */
   private boolean unmodifiedSince(@Nullable Instant lastModified) {
     if (lastModified == null
-        || !request().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value()).isEmpty()) {
+        || !nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_MATCH.value()).isEmpty()) {
       return true;
     }
 
-    var values = request().getHeaders().getValuesList(HttpHeaders.IF_UNMODIFIED_SINCE.value());
+    var values =
+        nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_UNMODIFIED_SINCE.value());
     if (values.size() != 1) {
       return true;
     }
@@ -1488,8 +1495,9 @@ public final class Response implements AutoCloseable {
     }
 
     for (var candidate :
-        entityTags(request().getHeaders().getValuesList(HttpHeaders.IF_NONE_MATCH.value()))) {
-      if ("*".equals(candidate) || weakTag(candidate).equals(weakTag(tag))) {
+        entityTags(nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_NONE_MATCH.value()))) {
+      if (HttpCharacters.ASTERISK_STRING.equals(candidate)
+          || weakTag(candidate).equals(weakTag(tag))) {
         return true;
       }
     }
@@ -1505,13 +1513,13 @@ public final class Response implements AutoCloseable {
    */
   private boolean notModifiedSince(@Nullable Instant lastModified) {
     if (lastModified == null
-        || !request().getHeaders().getValuesList(HttpHeaders.IF_NONE_MATCH.value()).isEmpty()
-        || (!HttpMethods.GET.value().equals(request().getMethod())
-            && !HttpMethods.HEAD.value().equals(request().getMethod()))) {
+        || !nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_NONE_MATCH.value()).isEmpty()
+        || (!HttpMethods.GET.value().equals(nativeRequest().getMethod())
+            && !HttpMethods.HEAD.value().equals(nativeRequest().getMethod()))) {
       return false;
     }
 
-    var values = request().getHeaders().getValuesList(HttpHeaders.IF_MODIFIED_SINCE.value());
+    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_MODIFIED_SINCE.value());
     if (values.size() != 1) {
       return false;
     }
@@ -1539,14 +1547,14 @@ public final class Response implements AutoCloseable {
   private static boolean entityTag(String value) {
     var start = value.startsWith("W/") ? 2 : 0;
     if (value.length() <= start + 1
-        || value.charAt(start) != '"'
-        || value.charAt(value.length() - 1) != '"') {
+        || value.charAt(start) != HttpCharacters.DOUBLE_QUOTE
+        || value.charAt(value.length() - 1) != HttpCharacters.DOUBLE_QUOTE) {
       return false;
     }
 
     for (int index = start + 1; index < value.length() - 1; index++) {
       var character = value.charAt(index);
-      if (character == '"'
+      if (character == HttpCharacters.DOUBLE_QUOTE
           || character == ' '
           || character < 0x21
           || character == 0x7f
@@ -1571,11 +1579,11 @@ public final class Response implements AutoCloseable {
     for (var value : values) {
       for (int index = 0; index < value.length(); index++) {
         var character = value.charAt(index);
-        if (character == '"') {
+        if (character == HttpCharacters.DOUBLE_QUOTE) {
           quoted = !quoted;
         }
 
-        if (character == ',' && !quoted) {
+        if (character == HttpCharacters.COMMA_SIGN && !quoted) {
           tags.add(current.toString().trim());
           current.setLength(0);
         } else {
@@ -1663,7 +1671,7 @@ public final class Response implements AutoCloseable {
   private @Nullable ByteRange range(long length, @Nullable String tag) {
     if (head
         || status() != HttpStatusCodes.OK.value()
-        || !HttpMethods.GET.value().equals(request().getMethod())) {
+        || !HttpMethods.GET.value().equals(nativeRequest().getMethod())) {
       return null;
     }
 
@@ -1671,16 +1679,16 @@ public final class Response implements AutoCloseable {
       return null;
     }
 
-    var values = request().getHeaders().getValuesList(HttpHeaders.RANGE.value());
+    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.RANGE.value());
     if (values.size() != 1
         || !values.getFirst().startsWith("bytes=")
-        || values.getFirst().contains(",")) {
+        || values.getFirst().contains(HttpCharacters.COMMA_SIGN_STRING)) {
       return null;
     }
 
     var value = values.getFirst().substring("bytes=".length());
-    var separator = value.indexOf('-');
-    if (separator < 0 || separator != value.lastIndexOf('-')) {
+    var separator = value.indexOf(HttpCharacters.DASH);
+    if (separator < 0 || separator != value.lastIndexOf(HttpCharacters.DASH)) {
       return null;
     }
 
@@ -1772,7 +1780,7 @@ public final class Response implements AutoCloseable {
    * @return whether Range can select a partial representation
    */
   private boolean ifRangeMatches(@Nullable String tag) {
-    var values = request().getHeaders().getValuesList(HttpHeaders.IF_RANGE.value());
+    var values = nativeRequest().getHeaders().getValuesList(HttpHeaders.IF_RANGE.value());
     if (values.isEmpty()) {
       return true;
     }
@@ -1783,48 +1791,6 @@ public final class Response implements AutoCloseable {
 
     var validator = values.getFirst();
     return tag != null && !tag.startsWith("W/") && validator.equals(tag);
-  }
-
-  /**
-   * Streams a source or publishes only its known representation metadata for a HEAD request.
-   *
-   * @param source application input source
-   * @param contentType response media type
-   * @param knownLength source length when known, otherwise a negative value
-   * @return this response
-   * @throws IOException if reading or output fails
-   * @throws IllegalStateException if file output is already selected
-   */
-  private Response input(InputStream source, String contentType, long knownLength)
-      throws IOException {
-    Objects.requireNonNull(source);
-
-    try (source) {
-      require(State.OPEN);
-      if (fileSelected) {
-        throw new IllegalStateException("Response already has file output");
-      }
-
-      if (!permitsBody()) {
-        return this;
-      }
-
-      if (head) {
-        contentType(contentType);
-        headContentLength = knownLength;
-        return this;
-      }
-
-      var output = startStream(contentType);
-      var buffer = new byte[options.streamBufferBytes()];
-      for (int read; (read = source.read(buffer)) >= 0; ) {
-        if (read > 0) {
-          output.write(read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read));
-        }
-      }
-
-      return this;
-    }
   }
 
   /**
@@ -1929,8 +1895,7 @@ public final class Response implements AutoCloseable {
 
     delegate.getHeaders().remove(HttpHeaders.CONTENT_LENGTH.value());
     vary(HttpHeaders.ACCEPT_ENCODING);
-    if (request != null
-        && request.getConnectionMetaData().getHttpVersion() == HttpVersion.HTTP_1_1) {
+    if (nativeRequest().getConnectionMetaData().getHttpVersion() == HttpVersion.HTTP_1_1) {
       delegate.getHeaders().put(HttpHeader.TRANSFER_ENCODING, "chunked");
     }
   }
@@ -1981,7 +1946,11 @@ public final class Response implements AutoCloseable {
     }
 
     if (contentLength >= 0) {
-      var encoder = selectedCompressor(handler, config, selected.getRequest());
+      var encoder =
+          selectedCompressor(
+              handler,
+              config,
+              selected.getRequest().getHeaders().getValuesList(HttpHeader.ACCEPT_ENCODING));
       if (encoder == null || contentLength < encoder.getMinCompressSize()) {
         encodingRejected = true;
         throw new NotAcceptableException();
@@ -1994,20 +1963,18 @@ public final class Response implements AutoCloseable {
    *
    * @param handler active native compression handler
    * @param config native configuration matched for the outer request path
-   * @param request request at the compression handler's context boundary
+   * @param acceptEncoding raw field values at the compression handler's context boundary
    * @return selected native compressor, or null if no registered compressor matches
    */
   private static @Nullable Compression selectedCompressor(
-      CompressionHandler handler,
-      CompressionConfig config,
-      org.eclipse.jetty.server.Request request) {
+      CompressionHandler handler, CompressionConfig config, List<String> acceptEncoding) {
     var encoders = new TreeMap<String, Compression>(String.CASE_INSENSITIVE_ORDER);
     for (var encoder : handler.getBeans(Compression.class)) {
       encoders.put(encoder.getEncodingName(), encoder);
     }
 
     var parser = new QuotedQualityCSV();
-    for (var value : request.getHeaders().getValuesList(HttpHeader.ACCEPT_ENCODING)) {
+    for (var value : acceptEncoding) {
       parser.addValue(value);
     }
 
@@ -2015,7 +1982,7 @@ public final class Response implements AutoCloseable {
     boolean wildcardAccepted = false;
     for (var value : parser.getQualityValues()) {
       var encoding = value.getValue();
-      if ("*".equals(encoding)) {
+      if (HttpCharacters.ASTERISK_STRING.equals(encoding)) {
         wildcardAccepted = value.isAcceptable();
       } else if (value.isAcceptable()
           && encoders.containsKey(encoding)
@@ -2136,16 +2103,16 @@ public final class Response implements AutoCloseable {
   private void mergeVary(String required) {
     var existing = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
     for (var value : delegate.getHeaders().getValuesList(HttpHeaders.VARY.value())) {
-      for (var token : value.split(",", -1)) {
+      for (var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
         existing.add(token.trim());
       }
     }
 
-    if (existing.contains("*")) {
+    if (existing.contains(HttpCharacters.ASTERISK_STRING)) {
       return;
     }
 
-    for (var token : required.split(",", -1)) {
+    for (var token : required.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
       var name = token.trim();
       if (existing.add(name)) {
         delegate.getHeaders().add(HttpHeaders.VARY.value(), name);
@@ -2226,19 +2193,21 @@ public final class Response implements AutoCloseable {
      * Writes text as UTF-8, flushing at the configured capacity as needed.
      *
      * @param value text to write
+     * @return this stream
      * @throws IOException if a transport write fails
      */
-    public void write(String value) throws IOException {
-      write(value.getBytes(StandardCharsets.UTF_8));
+    public Stream write(String value) throws IOException {
+      return write(value.getBytes(StandardCharsets.UTF_8));
     }
 
     /**
      * Copies bytes into the bounded buffer, blocking on full-buffer writes.
      *
      * @param bytes bytes to write
+     * @return this stream
      * @throws IOException if a transport write fails
      */
-    public void write(byte[] bytes) throws IOException {
+    public Stream write(byte[] bytes) throws IOException {
       require(State.STREAMING);
       Objects.requireNonNull(bytes);
       int offset = 0;
@@ -2252,17 +2221,21 @@ public final class Response implements AutoCloseable {
           flush();
         }
       }
+
+      return this;
     }
 
     /**
      * Sends pending bytes and waits for the transport to finish using the buffer.
      *
+     * @return this stream
      * @throws IOException if the transport write fails
      */
-    public void flush() throws IOException {
+    public Stream flush() throws IOException {
       require(State.STREAMING);
       Response.this.write(false, buffer, used);
       used = 0;
+      return this;
     }
 
     /**
@@ -2301,19 +2274,21 @@ public final class Response implements AutoCloseable {
      * Sends one UTF-8 data event, including its dispatching blank line.
      *
      * @param data event payload; each line becomes a data field
+     * @return this event stream
      * @throws IOException if the transport write fails
      */
-    public void send(String data) throws IOException {
-      send(SseEvent.of(data));
+    public EventStream send(String data) throws IOException {
+      return send(SseEvent.of(data));
     }
 
     /**
      * Sends an event with optional name, ID and retry metadata.
      *
      * @param event immutable event to send
+     * @return this event stream
      * @throws IOException if the transport write fails
      */
-    public void send(SseEvent event) throws IOException {
+    public EventStream send(SseEvent event) throws IOException {
       Objects.requireNonNull(event);
       if (event.event() != null) {
         output.write("event: " + event.event() + "\n");
@@ -2329,28 +2304,33 @@ public final class Response implements AutoCloseable {
 
       writeData(event.data());
       output.flush();
+      return this;
     }
 
     /**
      * Sends one comment block without dispatching an event.
      *
      * @param value comment text, split safely at every event-stream line ending
+     * @return this event stream
      * @throws IOException if the transport write fails
      */
-    public void comment(String value) throws IOException {
+    public EventStream comment(String value) throws IOException {
       writeLines(Objects.requireNonNull(value), ": ");
       output.write("\n");
       output.flush();
+      return this;
     }
 
     /**
      * Sends a minimal comment heartbeat without dispatching an event.
      *
+     * @return this event stream
      * @throws IOException if the transport write fails
      */
-    public void heartbeat() throws IOException {
+    public EventStream heartbeat() throws IOException {
       output.write(":\n\n");
       output.flush();
+      return this;
     }
 
     /**

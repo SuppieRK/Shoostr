@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 416: Range Not Satisfiable.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#RANGE_NOT_SATISFIABLE
  */
+@SuppressWarnings("squid:S110")
 public class RangeNotSatisfiableException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

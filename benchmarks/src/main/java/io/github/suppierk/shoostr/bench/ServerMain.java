@@ -56,31 +56,33 @@ public final class ServerMain {
     AutoCloseable close;
     if ("candidate".equals(implementation)) {
       var app = new Shoostr(Options.defaults().withPort(port));
-      app.routes().get("/plaintext", (req, res) -> res.body("text/plain;charset=utf-8", PLAIN));
-      app.routes().get("/json-bytes", (req, res) -> res.body("application/json", JSON));
-      app.routes()
-          .post("/echo", (req, res) -> res.body("application/octet-stream", req.bodyBytes()));
-      app.routes()
-          .get(
-              "/stream",
-              (req, res) -> {
-                var stream = res.startStream("application/octet-stream");
-                for (int i = 0; i < 16; i++) {
-                  stream.write(CHUNK);
-                  stream.flush();
-                }
-              });
-      app.routes()
-          .get(
-              "/virtual",
-              (req, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
-      app.routes().sse("/sse-burst", (req, res) -> sendCandidateEvents(res, 0, EVENT_PAYLOAD));
-      app.routes().sse("/sse-paced", (req, res) -> sendCandidateEvents(res, 20, EVENT_PAYLOAD));
-      app.routes().sse("/sse-slow", (req, res) -> sendCandidateEvents(res, 0, LARGE_EVENT_PAYLOAD));
-      app.routes().websocket("/ws-text", (req, upgrade) -> new EchoListener());
-      app.routes().websocket("/ws-binary", (req, upgrade) -> new EchoListener());
-      registerRouteGroups(app.routes(), routeGroups);
-      app.start();
+      app.routes(
+              routes -> {
+                routes.get("/plaintext", (req, res) -> res.body("text/plain;charset=utf-8", PLAIN));
+                routes.get("/json-bytes", (req, res) -> res.body("application/json", JSON));
+                routes.post(
+                    "/echo", (req, res) -> res.body("application/octet-stream", req.bodyBytes()));
+                routes.get(
+                    "/stream",
+                    (req, res) -> {
+                      var stream = res.startStream("application/octet-stream");
+                      for (int i = 0; i < 16; i++) {
+                        stream.write(CHUNK);
+                        stream.flush();
+                      }
+                    });
+                routes.get(
+                    "/virtual",
+                    (req, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
+                routes.sse("/sse-burst", (req, res) -> sendCandidateEvents(res, 0, EVENT_PAYLOAD));
+                routes.sse("/sse-paced", (req, res) -> sendCandidateEvents(res, 20, EVENT_PAYLOAD));
+                routes.sse(
+                    "/sse-slow", (req, res) -> sendCandidateEvents(res, 0, LARGE_EVENT_PAYLOAD));
+                routes.websocket("/ws-text", (req, upgrade) -> new EchoListener());
+                routes.websocket("/ws-binary", (req, upgrade) -> new EchoListener());
+                registerRouteGroups(routes, routeGroups);
+              })
+          .start();
       close = null;
     } else if ("jooby".equals(implementation)) {
       var virtual = Executors.newVirtualThreadPerTaskExecutor();
@@ -451,14 +453,20 @@ public final class ServerMain {
                   orders -> {
                     orders.get(
                         "/latest", (req, res) -> res.body("text/plain;charset=utf-8", PLAIN));
-                    orders.get("/{id}", (req, res) -> res.text(req.pathParam("id")));
-                    orders.post("/{orderId}", (req, res) -> res.text(req.pathParam("orderId")));
+                    orders.get("/{id}", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
+                    orders.post(
+                        "/{orderId}",
+                        (req, res) -> res.text(req.pathParam("orderId").orElseThrow()));
                     orders.get("/fixed/details", (req, res) -> res.text("details"));
-                    orders.get("/{id}/events", (req, res) -> res.text(req.pathParam("id")));
+                    orders.get(
+                        "/{id}/events", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
                     orders.get(
                         "/{id}/items/{itemId}",
                         (req, res) ->
-                            res.text(req.pathParam("id") + "/" + req.pathParam("itemId")));
+                            res.text(
+                                req.pathParam("id").orElseThrow()
+                                    + "/"
+                                    + req.pathParam("itemId").orElseThrow()));
                     orders.get("/shadowed", (req, res) -> res.text("literal"));
                     orders.post("/latest", (req, res) -> res.text("latest"));
                   }));

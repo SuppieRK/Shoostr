@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 423: Locked.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#LOCKED
  */
+@SuppressWarnings("squid:S110")
 public class LockedException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

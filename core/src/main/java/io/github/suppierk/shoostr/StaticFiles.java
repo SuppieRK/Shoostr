@@ -165,7 +165,8 @@ final class StaticFiles implements Closeable {
             "Static-file source requires secure directory operations");
       }
 
-      retained = secure.newDirectoryStream(Path.of("."), LinkOption.NOFOLLOW_LINKS);
+      retained =
+          secure.newDirectoryStream(Path.of(HttpCharacters.DOT_STRING), LinkOption.NOFOLLOW_LINKS);
     } catch (IOException | RuntimeException | Error failure) {
       if (retained != null) {
         try {
@@ -268,7 +269,7 @@ final class StaticFiles implements Closeable {
 
     try {
       response
-          .header(HttpHeaders.CACHE_CONTROL.value(), "no-cache")
+          .setHeader(HttpHeaders.CACHE_CONTROL.value(), "no-cache")
           .resource(
               selected.channel(),
               selected.length(),
@@ -298,7 +299,7 @@ final class StaticFiles implements Closeable {
     }
 
     response
-        .header(HttpHeaders.CACHE_CONTROL.value(), "no-cache")
+        .setHeader(HttpHeaders.CACHE_CONTROL.value(), "no-cache")
         .resource(resource, contentType(resource.getFileName()));
   }
 
@@ -681,12 +682,16 @@ final class StaticFiles implements Closeable {
    * @return true when the path contains no traversal or platform separator
    */
   private static boolean safe(String path) {
-    if (path.indexOf('\\') >= 0 || path.indexOf('\u0000') >= 0 || path.isEmpty()) {
+    if (path.indexOf(HttpCharacters.BACKSLASH) >= 0
+        || path.indexOf('\u0000') >= 0
+        || path.isEmpty()) {
       return false;
     }
 
     for (var segment : path.split(HttpCharacters.PATH_SEPARATOR_STRING, -1)) {
-      if (segment.isEmpty() || ".".equals(segment) || "..".equals(segment)) {
+      if (segment.isEmpty()
+          || HttpCharacters.DOT_STRING.equals(segment)
+          || HttpCharacters.PARENT_DIRECTORY.equals(segment)) {
         return false;
       }
     }

@@ -28,7 +28,7 @@ public final class OpenTelemetryTracing implements Function<Request, RequestObse
         /** {@inheritDoc} */
         @Override
         public @Nullable String get(@Nullable Request carrier, String key) {
-          return carrier == null ? null : carrier.header(key);
+          return carrier == null ? null : carrier.header(key).orElse(null);
         }
       };
 

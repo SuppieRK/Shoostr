@@ -11,11 +11,13 @@ public interface ExceptionHandler<E extends Exception> {
   /**
    * Writes an error response while the original request remains available on the handler thread.
    *
+   * <p>S112 is suppressed due to the need to retain checked exception contracts.
+   *
    * @param exception directly thrown application exception
    * @param request original live request
    * @param response response with failed output cleared and the error status initialized
    * @throws Exception if error handling fails; the framework applies its safe fallback
    */
-  @SuppressWarnings("java:S112") // Applications retain their checked exception contracts.
+  @SuppressWarnings("java:S112")
   void handle(E exception, Request request, Response response) throws Exception;
 }

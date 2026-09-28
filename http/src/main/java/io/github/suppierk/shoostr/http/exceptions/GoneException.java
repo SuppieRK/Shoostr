@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 410: Gone.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#GONE
  */
+@SuppressWarnings("squid:S110")
 public class GoneException extends HttpClientException {
   @Serial private static final long serialVersionUID = 1L;
 

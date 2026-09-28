@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr;
 
 import io.github.suppierk.shoostr.http.ForwardedHeaders;
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import java.net.InetAddress;
@@ -25,13 +26,12 @@ final class TrustedProxy {
   private static final String X_FORWARDED_PORT = "X-Forwarded-Port";
   private static final String X_FORWARDED_PROTO = "X-Forwarded-Proto";
   private static final String PROTO_FIELD = "proto";
-  private static final Pattern TOKEN = Pattern.compile("[!#$%&'*+.^_`|~0-9A-Za-z-]+");
   private static final Pattern IPV4 = Pattern.compile("\\d{1,3}(?:\\.\\d{1,3}){3}");
   private static final Pattern OBFUSCATED = Pattern.compile("_[A-Za-z0-9._-]+");
   private static final Pattern DIGITS = Pattern.compile("\\d+");
   private static final QuotedStringTokenizer PARAMETERS =
       QuotedStringTokenizer.builder()
-          .delimiters(";")
+          .delimiters(HttpCharacters.SEMICOLON_SIGN_STRING)
           .returnDelimiters()
           .returnQuotes()
           .allowEmbeddedQuotes()
@@ -39,7 +39,7 @@ final class TrustedProxy {
           .build();
   private static final QuotedStringTokenizer ELEMENTS =
       QuotedStringTokenizer.builder()
-          .delimiters(",")
+          .delimiters(HttpCharacters.COMMA_SIGN_STRING)
           .returnDelimiters()
           .returnQuotes()
           .allowEmbeddedQuotes()
@@ -66,7 +66,7 @@ final class TrustedProxy {
    * @throws BadRequestException if trusted forwarding metadata is malformed
    */
   void apply(Request request) {
-    if (!(request.remoteAddress() instanceof InetSocketAddress peer)
+    if (!(request.remoteAddress().orElse(null) instanceof InetSocketAddress peer)
         || !trusted.test(peer.getAddress())) {
       return;
     }
@@ -154,7 +154,7 @@ final class TrustedProxy {
     boolean elementExpected = true;
     while (elements.hasNext()) {
       var element = elements.next();
-      if (",".equals(element)) {
+      if (HttpCharacters.COMMA_SIGN_STRING.equals(element)) {
         if (elementExpected) {
           throw new IllegalArgumentException("Empty forwarding element");
         }
@@ -267,8 +267,9 @@ final class TrustedProxy {
    * @throws IllegalArgumentException if the value is malformed
    */
   private static @Nullable InetSocketAddress legacyNode(String value) {
-    if (value.indexOf(':') != value.lastIndexOf(':') && !value.startsWith("[")) {
-      if (value.indexOf('%') >= 0) {
+    if (value.indexOf(HttpCharacters.COLON_SIGN) != value.lastIndexOf(HttpCharacters.COLON_SIGN)
+        && value.charAt(0) != HttpCharacters.OPEN_SQUARE_BRACKET) {
+      if (value.indexOf(HttpCharacters.PERCENT_SIGN) >= 0) {
         throw new IllegalArgumentException("Invalid forwarding address");
       }
 
@@ -301,7 +302,7 @@ final class TrustedProxy {
       return host;
     }
 
-    return host + ':' + port;
+    return host + HttpCharacters.COLON_SIGN + port;
   }
 
   /**
@@ -314,7 +315,7 @@ final class TrustedProxy {
   private static List<String> values(List<String> lines) {
     var result = new ArrayList<String>();
     for (var line : lines) {
-      for (var value : line.split(",", -1)) {
+      for (var value : line.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
         var trimmed = value.trim();
         if (trimmed.isEmpty() || result.size() == MAX_FORWARDING_ELEMENTS) {
           throw new BadRequestException();
@@ -355,20 +356,21 @@ final class TrustedProxy {
     var tokens = PARAMETERS.tokenize(value);
     while (tokens.hasNext()) {
       var token = tokens.next();
-      int equals = token.indexOf('=');
+      int equals = token.indexOf(HttpCharacters.EQUALS_SIGN);
       if (equals < 1) {
         throw new IllegalArgumentException("Invalid forwarding parameter");
       }
 
       var name = token.substring(0, equals).toLowerCase(Locale.ROOT);
       var raw = token.substring(equals + 1);
-      if (!TOKEN.matcher(name).matches()
-          || !(TOKEN.matcher(raw).matches() || validQuoted(raw))
+      if (!HttpCharacters.isValidHttpToken(name)
+          || !(HttpCharacters.isValidHttpToken(raw) || validQuoted(raw))
           || fields.putIfAbsent(name, PARAMETERS.unquote(raw)) != null) {
         throw new IllegalArgumentException("Invalid forwarding parameter");
       }
 
-      if (tokens.hasNext() && (!";".equals(tokens.next()) || !tokens.hasNext())) {
+      if (tokens.hasNext()
+          && (!HttpCharacters.SEMICOLON_SIGN_STRING.equals(tokens.next()) || !tokens.hasNext())) {
         throw new IllegalArgumentException("Invalid forwarding delimiter");
       }
     }
@@ -396,7 +398,9 @@ final class TrustedProxy {
    * @return whether the value follows the HTTP quoted-string grammar
    */
   private static boolean validQuoted(String value) {
-    if (value.length() < 2 || value.charAt(0) != '"' || value.charAt(value.length() - 1) != '"') {
+    if (value.length() < 2
+        || value.charAt(0) != HttpCharacters.DOUBLE_QUOTE
+        || value.charAt(value.length() - 1) != HttpCharacters.DOUBLE_QUOTE) {
       return false;
     }
 
@@ -404,7 +408,7 @@ final class TrustedProxy {
     int index = 1;
     while (index < end) {
       char character = value.charAt(index);
-      if (character == '\\') {
+      if (character == HttpCharacters.BACKSLASH) {
         index++;
         if (index == end || !validQuotedOctet(value.charAt(index), true)) {
           return false;
@@ -427,11 +431,13 @@ final class TrustedProxy {
    * @return whether the octet is valid in this position
    */
   private static boolean validQuotedOctet(char character, boolean escaped) {
-    return character == '\t'
+    return character == HttpCharacters.TAB
         || (character >= 0x20
             && character <= 0xff
             && character != 0x7f
-            && (escaped || (character != '"' && character != '\\')));
+            && (escaped
+                || (character != HttpCharacters.DOUBLE_QUOTE
+                    && character != HttpCharacters.BACKSLASH)));
   }
 
   /**
@@ -446,11 +452,14 @@ final class TrustedProxy {
       return null;
     }
 
-    int separator = value.startsWith("[") ? value.indexOf(']') + 1 : value.indexOf(':');
+    int separator =
+        value.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
+            ? value.indexOf(HttpCharacters.CLOSE_SQUARE_BRACKET) + 1
+            : value.indexOf(HttpCharacters.COLON_SIGN);
     String name = value;
     int sourcePort = 0;
     if (separator >= 0 && separator < value.length()) {
-      if (value.charAt(separator) != ':') {
+      if (value.charAt(separator) != HttpCharacters.COLON_SIGN) {
         throw new IllegalArgumentException("Invalid forwarding node");
       }
 
@@ -465,7 +474,9 @@ final class TrustedProxy {
       return null;
     }
 
-    if (name.indexOf('%') >= 0 || (!name.startsWith("[") && !IPV4.matcher(name).matches())) {
+    if (name.indexOf(HttpCharacters.PERCENT_SIGN) >= 0
+        || (!name.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
+            && !IPV4.matcher(name).matches())) {
       throw new IllegalArgumentException("Invalid forwarding address");
     }
 
@@ -481,15 +492,20 @@ final class TrustedProxy {
    */
   private static HostPort host(String value) {
     if (value.isEmpty()
-        || value.endsWith(":")
-        || value.indexOf('%') >= 0
+        || value.endsWith(HttpCharacters.COLON_SIGN_STRING)
+        || value.indexOf(HttpCharacters.PERCENT_SIGN) >= 0
         || value.chars().anyMatch(character -> "/?#@\\".indexOf(character) >= 0)
-        || (!value.startsWith("[") && value.indexOf(':') != value.lastIndexOf(':'))) {
+        || (!value.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
+            && value.indexOf(HttpCharacters.COLON_SIGN)
+                != value.lastIndexOf(HttpCharacters.COLON_SIGN))) {
       throw new IllegalArgumentException("Invalid forwarding host");
     }
 
     var parsed = new HostPort(value);
-    int separator = value.startsWith("[") ? value.indexOf(']') + 1 : value.indexOf(':');
+    int separator =
+        value.startsWith(HttpCharacters.OPEN_SQUARE_BRACKET_STRING)
+            ? value.indexOf(HttpCharacters.CLOSE_SQUARE_BRACKET) + 1
+            : value.indexOf(HttpCharacters.COLON_SIGN);
     if (separator > 0 && separator < value.length() && port(value.substring(separator + 1)) == 0) {
       throw new IllegalArgumentException("Invalid forwarding host port");
     }

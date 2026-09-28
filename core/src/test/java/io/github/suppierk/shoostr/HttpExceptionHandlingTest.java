@@ -50,7 +50,7 @@ class HttpExceptionHandlingTest {
                 retainedResponse.set(response);
                 response
                     .status(201)
-                    .header("X-Leak", "secret")
+                    .setHeader("X-Leak", "secret")
                     .body("text/html", new byte[] {1, 2});
                 throw failure;
               });

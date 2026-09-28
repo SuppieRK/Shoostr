@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr;
 
 import io.github.suppierk.shoostr.http.ForwardedHeaders;
+import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
@@ -210,6 +211,21 @@ public final class Shoostr implements Closeable {
    */
   public Routes routes() {
     return routes;
+  }
+
+  /**
+   * Registers routes through the pre-created root scope and returns this application for fluent
+   * startup. The callback runs immediately without holding the registration lock. Startup rejects
+   * an active callback; an exception propagates without undoing routes already registered.
+   *
+   * @param registration callback receiving the same scope as {@link #routes()}
+   * @return this application
+   * @throws IllegalStateException if registration has ended
+   * @throws NullPointerException if registration is null
+   */
+  public Shoostr routes(Consumer<Routes> registration) {
+    routes.register(registration);
+    return this;
   }
 
   /**
@@ -466,7 +482,7 @@ public final class Shoostr implements Closeable {
    *
    * @return this application
    * @throws Exception if startup or shutdown-hook registration fails
-   * @throws IllegalStateException if started, closed, or any path registration callback is active
+   * @throws IllegalStateException if started, closed, or a route registration callback is active
    */
   @SuppressWarnings(
       "java:S1181") // Startup cleanup must also run when Jetty or a callback throws Error.
@@ -745,7 +761,7 @@ public final class Shoostr implements Closeable {
     SessionHandler installedSessionHandler = null;
     ContextHandler context = null;
     if (sessionConfiguration != null || websocketRoutes != null) {
-      context = new ContextHandler("/");
+      context = new ContextHandler(HttpCharacters.PATH_SEPARATOR_STRING);
     }
 
     if (sessionConfiguration != null) {
@@ -999,7 +1015,7 @@ public final class Shoostr implements Closeable {
       } else if ("identity".equalsIgnoreCase(value.getValue())) {
         identitySpecified = true;
         identityAccepted |= value.isAcceptable();
-      } else if ("*".equals(value.getValue())) {
+      } else if (HttpCharacters.ASTERISK_STRING.equals(value.getValue())) {
         wildcardSpecified = true;
         wildcardAccepted |= value.isAcceptable();
       }
@@ -1203,6 +1219,7 @@ public final class Shoostr implements Closeable {
     /**
      * Dispatches one request and completes it exactly once through the transport callback.
      * Uncommitted failures become safe error responses; committed or fatal failures abort.
+     * Construction failures finalize observation bookkeeping before native Jetty renders the error.
      *
      * @param rawRequest transport-owned input
      * @param rawResponse transport-owned output
@@ -1234,25 +1251,24 @@ public final class Shoostr implements Closeable {
           observation == null
               ? callback
               : Callback.from(callback, observation::recordTransportFailure);
-      var response =
-          new Response(
-              rawResponse,
-              options,
-              responseCallback,
-              HttpMethods.HEAD.value().equals(rawRequest.getMethod()),
-              rawRequest);
+      Request request;
+
+      try {
+        request = Request.create(rawRequest, rawResponse, options, responseCallback);
+      } catch (RuntimeException | Error failure) {
+        if (observation != null) {
+          observation.finish(null, failure);
+        }
+
+        throw failure;
+      }
+
+      var response = request.response();
       if (compressionHandler != null) {
         response.compression(compressionHandler);
         configureEncoding(response, rawRequest);
       }
 
-      var request =
-          new Request(
-              rawRequest,
-              response,
-              options.maxRequestBytes(),
-              options.maxParameters(),
-              options.multipart());
       response.flushHooks(
           () -> flush(preFlushHooks, request, response),
           () -> flush(postFlushHooks, request, response));
@@ -1332,7 +1348,7 @@ public final class Shoostr implements Closeable {
         }
       }
 
-      var routePattern = observation == null ? null : request.routePattern();
+      var routePattern = observation == null ? null : request.routePattern().orElse(null);
       if (observation != null) {
         observation.closeScopes();
       }
@@ -1540,8 +1556,8 @@ public final class Shoostr implements Closeable {
         return true;
       }
 
-      response.header(HttpHeader.UPGRADE.asString(), "websocket");
-      response.header(
+      response.setHeader(HttpHeader.UPGRADE.asString(), "websocket");
+      response.setHeader(
           HttpHeader.SEC_WEBSOCKET_VERSION.asString(), WebSocketConstants.SPEC_VERSION_STRING);
       generated(
           statuses,

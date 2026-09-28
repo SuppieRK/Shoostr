@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 500: Internal Server Error.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#INTERNAL_SERVER_ERROR
  */
+@SuppressWarnings("squid:S110")
 public class InternalServerErrorException extends HttpServerException {
   @Serial private static final long serialVersionUID = 1L;
 

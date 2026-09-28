@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 507: Insufficient Storage.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#INSUFFICIENT_STORAGE
  */
+@SuppressWarnings("squid:S110")
 public class InsufficientStorageException extends HttpServerException {
   @Serial private static final long serialVersionUID = 1L;
 

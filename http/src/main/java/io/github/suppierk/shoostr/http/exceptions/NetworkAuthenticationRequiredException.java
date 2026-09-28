@@ -7,8 +7,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * HTTP 511: Network Authentication Required.
  *
+ * <p>S110 is suppressed due to the need to maintain exceptions hierarchy.
+ *
  * @see HttpStatusCodes#NETWORK_AUTHENTICATION_REQUIRED
  */
+@SuppressWarnings("squid:S110")
 public class NetworkAuthenticationRequiredException extends HttpServerException {
   @Serial private static final long serialVersionUID = 1L;
 

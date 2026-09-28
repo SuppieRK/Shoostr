@@ -2,8 +2,8 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,11 +54,11 @@ class RequestParametersTest {
             "/query",
             (request, response) ->
                 response.text(
-                    request.queryParam("name")
+                    request.queryParam("name").orElseThrow()
                         + "|"
                         + request.queryParams("name")
                         + "|"
-                        + request.queryParam("token")));
+                        + request.queryParam("token").orElseThrow()));
     app.start();
     var result =
         send(request("/query?na%6De=M%C3%BCnchen+city&name=one%2Btwo&token=a=b%2526").build());
@@ -92,9 +93,11 @@ class RequestParametersTest {
               var queryNames = request.queryParams("name");
               assertThrows(UnsupportedOperationException.class, () -> names.add("injected"));
               assertThrows(UnsupportedOperationException.class, queryNames::clear);
-              assertNull(request.queryParam("NAME"));
+              assertEquals(Optional.empty(), request.queryParam("NAME"));
               assertEquals(List.of(), request.queryParams("absent"));
-              assertEquals("first", request.queryParam("name"));
+              assertEquals(Optional.of("first"), request.queryParam("name"));
+              assertEquals(Optional.of(""), request.queryParam("flag"));
+              assertEquals(Optional.of(""), request.queryParam("empty"));
               response.text("ok");
             });
     app.start();
@@ -110,13 +113,12 @@ class RequestParametersTest {
         BadRequestException.class,
         (failure, request, response) -> {
           assertThrows(BadRequestException.class, request::queryParamMap);
-          response.header("X-Handled", "bad-query").text("bad input");
+          response.setHeader("X-Handled", "bad-query").text("bad input");
         });
     app.routes()
         .get(
             "/query",
-            (request, response) ->
-                response.text(Objects.requireNonNull(request.queryParam("good"))));
+            (request, response) -> response.text(request.queryParam("good").orElseThrow()));
     app.start();
     var result = send(request("/query?good=first&bad=" + encoded).build());
     assertEquals(400, result.statusCode());
@@ -158,7 +160,9 @@ class RequestParametersTest {
             "/headers",
             (request, response) -> {
               assertEquals(List.of("first,second", "third"), request.headers("x-values"));
-              assertEquals("first,second", request.header("X-VALUES"));
+              assertEquals("first,second", request.header("X-VALUES").orElseThrow());
+              assertEquals(Optional.of(""), request.header("X-Empty"));
+              assertTrue(request.header("Absent").isEmpty());
               assertEquals(List.of(), request.headers("Absent"));
               var values = request.headers("X-Values");
               assertThrows(UnsupportedOperationException.class, () -> values.add("x"));
@@ -170,6 +174,7 @@ class RequestParametersTest {
             request("/headers")
                 .header("X-Values", "first,second")
                 .header("X-Values", "third")
+                .header("X-Empty", "")
                 .build());
     assertEquals(200, result.statusCode());
     assertEquals("ok", result.body());
@@ -183,7 +188,9 @@ class RequestParametersTest {
             "/form",
             (request, response) -> {
               assertEquals(encoded, request.bodyText());
-              assertEquals("München city", request.formParam("name"));
+              assertEquals("München city", request.formParam("name").orElseThrow());
+              assertEquals(Optional.of(""), request.formParam("flag"));
+              assertEquals(Optional.of(""), request.formParam("empty"));
               assertEquals(List.of("München city", "one+two"), request.formParams("name"));
               assertEquals(
                   Map.of(
@@ -198,13 +205,13 @@ class RequestParametersTest {
                       "token",
                       List.of("a=b%26")),
                   request.formParamMap());
-              assertNull(request.formParam("Name"));
+              assertTrue(request.formParam("Name").isEmpty());
               assertEquals(List.of(), request.formParams("missing"));
               var form = request.formParamMap();
               var formNames = request.formParams("name");
               assertThrows(UnsupportedOperationException.class, form::clear);
               assertThrows(UnsupportedOperationException.class, () -> formNames.add("x"));
-              assertEquals("query", request.queryParam("name"));
+              assertEquals("query", request.queryParam("name").orElseThrow());
               assertArrayEquals(encoded.getBytes(StandardCharsets.UTF_8), request.bodyBytes());
               response.text("ok");
             });
@@ -235,9 +242,7 @@ class RequestParametersTest {
   void rejectsUnsupportedFormRepresentations(String contentType) throws Exception {
     app.routes()
         .post(
-            "/form",
-            (request, response) ->
-                response.text(Objects.requireNonNull(request.formParam("name"))));
+            "/form", (request, response) -> response.text(request.formParam("name").orElseThrow()));
     app.start();
     var outgoing = request("/form").POST(HttpRequest.BodyPublishers.ofString("name=value"));
     if (contentType != null) {
@@ -260,9 +265,7 @@ class RequestParametersTest {
         });
     app.routes()
         .post(
-            "/form",
-            (request, response) ->
-                response.text(Objects.requireNonNull(request.formParam("good"))));
+            "/form", (request, response) -> response.text(request.formParam("good").orElseThrow()));
     app.start();
     byte[] invalid =
         encoded
@@ -290,9 +293,7 @@ class RequestParametersTest {
           response.text("still oversized");
         });
     app.routes()
-        .post(
-            "/form",
-            (request, response) -> response.text(Objects.requireNonNull(request.formParam("a"))));
+        .post("/form", (request, response) -> response.text(request.formParam("a").orElseThrow()));
     app.start();
     var result =
         send(
@@ -321,7 +322,7 @@ class RequestParametersTest {
             "/form",
             (request, response) -> {
               assertEquals("city=München", request.bodyText());
-              response.text(Objects.requireNonNull(request.formParam("city")));
+              response.text(request.formParam("city").orElseThrow());
             });
     app.start();
     var result =
@@ -339,9 +340,7 @@ class RequestParametersTest {
   void rejectsMalformedFormEscapes(String encoded) throws Exception {
     app.routes()
         .post(
-            "/form",
-            (request, response) ->
-                response.text(Objects.requireNonNull(request.formParam("name"))));
+            "/form", (request, response) -> response.text(request.formParam("name").orElseThrow()));
     app.start();
     var result =
         send(
@@ -388,9 +387,7 @@ class RequestParametersTest {
     app.close();
     app = new Shoostr(new Options("127.0.0.1", 0, 7, 1024, 64, 30_000));
     app.routes()
-        .post(
-            "/form",
-            (request, response) -> response.text(Objects.requireNonNull(request.formParam("a"))));
+        .post("/form", (request, response) -> response.text(request.formParam("a").orElseThrow()));
     app.start();
     for (String body : List.of("a=12345", "a=123456")) {
       var publisher =
@@ -418,8 +415,8 @@ class RequestParametersTest {
             (request, response) -> {
               assertEquals(Map.of(), request.queryParamMap());
               assertEquals(Map.of(), request.formParamMap());
-              assertNull(request.queryParam("missing"));
-              assertNull(request.formParam("missing"));
+              assertTrue(request.queryParam("missing").isEmpty());
+              assertTrue(request.formParam("missing").isEmpty());
               response.text("ok");
             });
     app.start();
