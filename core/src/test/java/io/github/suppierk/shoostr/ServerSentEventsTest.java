@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr;
 
 import static org.awaitility.Awaitility.await;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -27,6 +28,111 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 class ServerSentEventsTest {
+  @Test
+  void sendsEmptyAsciiUnicodeAndMalformedSurrogateDataAsExactUtf8Bytes() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .sse(
+              "/events",
+              (_, response) -> {
+                var events = response.startEventStream();
+                events.send("");
+                events.send("plain");
+                events.send("café😀");
+                events.send("\uD800");
+              });
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertArrayEquals(
+          "data: \n\ndata: plain\n\ndata: café😀\n\ndata: ?\n\n".getBytes(StandardCharsets.UTF_8),
+          result.body());
+    }
+  }
+
+  @Test
+  void rejectsNullDataWithoutWritingAFrame() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .sse(
+              "/events",
+              (_, response) -> {
+                var events = response.startEventStream();
+                assertThrows(NullPointerException.class, () -> events.send((String) null));
+                events.send("valid");
+              });
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertArrayEquals("data: valid\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+    }
+  }
+
+  @Test
+  void preservesInitialAutomaticExplicitAndTerminalFlushesForASingleLineEvent() throws Exception {
+    var defaults = Options.defaults();
+    var options =
+        new Options(
+            defaults.host(),
+            0,
+            defaults.maxRequestBytes(),
+            defaults.maxResponseBytes(),
+            8,
+            defaults.idleTimeoutMillis());
+    var before = new AtomicInteger();
+    var after = new AtomicInteger();
+
+    try (var app = new Shoostr(options);
+        var client = HttpClient.newHttpClient()) {
+      app.beforeResponseFlush((_, _) -> before.incrementAndGet());
+      app.afterResponseFlush((_, _) -> after.incrementAndGet());
+      app.routes().sse("/events", (_, response) -> response.startEventStream().send("abcd"));
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertArrayEquals("data: abcd\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+      await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertEquals(4, after.get()));
+      assertEquals(4, before.get());
+    }
+  }
+
+  @Test
+  void sendsLargeSingleLinePayloadAsOneExactUtf8Frame() throws Exception {
+    var payload = "x".repeat(65_536);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes().sse("/events", (_, response) -> response.startEventStream().send(payload));
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertArrayEquals(
+          ("data: " + payload + "\n\n").getBytes(StandardCharsets.UTF_8), result.body());
+    }
+  }
+
   @Test
   void sendsUtf8MultilineDataAsOneCompleteEvent() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
@@ -293,9 +399,12 @@ class ServerSentEventsTest {
           client.send(
               HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
                   .build(),
-              HttpResponse.BodyHandlers.ofString());
+              HttpResponse.BodyHandlers.ofByteArray());
 
-      assertEquals("event: update\nid: cursor-7\nretry: 2000\ndata: ready\n\n", result.body());
+      assertArrayEquals(
+          "event: update\nid: cursor-7\nretry: 2000\ndata: ready\n\n"
+              .getBytes(StandardCharsets.UTF_8),
+          result.body());
     }
   }
 
@@ -318,13 +427,45 @@ class ServerSentEventsTest {
           client.send(
               HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
                   .build(),
-              HttpResponse.BodyHandlers.ofString());
+              HttpResponse.BodyHandlers.ofByteArray());
 
-      assertEquals(
+      assertArrayEquals(
           String.join(
-              "",
-              "id: good\ndata: first\ndata: id: forged\ndata: tail\ndata: \n\n",
-              ": note\n: retry: 1\n: \n\n:\n\n"),
+                  "",
+                  "id: good\ndata: first\ndata: id: forged\ndata: tail\ndata: \n\n",
+                  ": note\n: retry: 1\n: \n\n:\n\n")
+              .getBytes(StandardCharsets.UTF_8),
+          result.body());
+    }
+  }
+
+  @Test
+  void normalizesCrOnlyDataForStringAndMetadataEventsWithoutFieldInjection() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .sse(
+              "/events",
+              (_, response) -> {
+                var events = response.startEventStream();
+                var payload = "first\rid: forged\r";
+                events.send(payload);
+                events.send(SseEvent.of(payload).withEvent("update"));
+              });
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertArrayEquals(
+          String.join(
+                  "",
+                  "data: first\ndata: id: forged\ndata: \n\n",
+                  "event: update\ndata: first\ndata: id: forged\ndata: \n\n")
+              .getBytes(StandardCharsets.UTF_8),
           result.body());
     }
   }
