@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -264,13 +263,9 @@ class StreamBufferTest {
                 var stream = response.startStream("application/octet-stream");
                 stream.write(new byte[] {1, 2, 3});
 
-                try {
-                  stream.flush();
-                  fail("flush unexpectedly succeeded");
-                } catch (IOException failure) {
-                  assertThrows(IllegalStateException.class, () -> stream.write(new byte[] {4}));
-                  outcome.complete(failure);
-                }
+                var failure = assertThrows(IOException.class, stream::flush);
+                assertThrows(IllegalStateException.class, () -> stream.write(new byte[] {4}));
+                outcome.complete(failure);
               } catch (Throwable failure) {
                 outcome.complete(failure);
               }
@@ -310,13 +305,9 @@ class StreamBufferTest {
                     var stream = response.startStream("application/octet-stream");
                     stream.write(new byte[] {1, 2, 3});
 
-                    try {
-                      stream.flush();
-                      fail("flush unexpectedly succeeded");
-                    } catch (IOException failure) {
-                      assertThrows(IllegalStateException.class, () -> stream.write(new byte[] {4}));
-                      outcome.complete(failure);
-                    }
+                    var failure = assertThrows(IOException.class, stream::flush);
+                    assertThrows(IllegalStateException.class, () -> stream.write(new byte[] {4}));
+                    outcome.complete(failure);
                   } catch (Throwable failure) {
                     outcome.complete(failure);
                   }
