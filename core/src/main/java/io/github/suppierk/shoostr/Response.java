@@ -2259,6 +2259,8 @@ public final class Response implements AutoCloseable {
 
   /** Writes complete server-sent event frames through the response's bounded stream. */
   public static final class EventStream {
+    private static final byte[] DATA_PREFIX = "data: ".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] EVENT_TERMINATOR = "\n\n".getBytes(StandardCharsets.UTF_8);
     private final Stream output;
 
     /**
@@ -2278,7 +2280,9 @@ public final class Response implements AutoCloseable {
      * @throws IOException if the transport write fails
      */
     public EventStream send(String data) throws IOException {
-      return send(SseEvent.of(data));
+      writeData(Objects.requireNonNull(data));
+      output.flush();
+      return this;
     }
 
     /**
@@ -2340,6 +2344,14 @@ public final class Response implements AutoCloseable {
      * @throws IOException if the transport write fails
      */
     private void writeData(String data) throws IOException {
+      // Check LF first so common multiline data avoids a full scan for absent CR.
+      if (data.indexOf('\n') < 0 && data.indexOf('\r') < 0) {
+        output.write(DATA_PREFIX);
+        output.write(data);
+        output.write(EVENT_TERMINATOR);
+        return;
+      }
+
       writeLines(data, "data: ");
       output.write("\n");
     }
