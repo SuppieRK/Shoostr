@@ -64,6 +64,17 @@ With `ROUTE_GROUPS` set to the same positive count, these additional workloads b
 
 Groups are selected using `(iterationInTest * 977) % ROUTE_GROUPS`, cycling through all 1,000 groups in the documented configuration. The fixtures use native k6 [expected status callbacks](https://grafana.com/docs/k6/latest/javascript-api/k6-http/expected-statuses/) so expected 404/405 responses pass while unexpected statuses and transport failures remain errors. Body and header checks stay enabled, accepting equivalent charset whitespace and Allow method order. Setup verifies all enabled fixtures, including the original four payload workloads. `http_req_duration{scenario:requests}` and `http_reqs{scenario:requests}` in native summaries exclude setup traffic.
 
+For candidate-only catch-all and constrained-segment HTTP measurements, pass `CANDIDATE_ROUTING=1` to k6 and run the candidate server. This adds three setup-checked workloads without changing the Jooby/Javalin parity fixture: `route-catch-all` GETs `/candidate/catch/archive/receipt`, `route-regex` GETs `/candidate/regex/42`, and `route-regex-fallback` GETs `/candidate/regex/alpha` through a plain-parameter fallback. Each returns its selected capture or fallback label. Do not use these workloads to claim competitor parity.
+
+```sh
+cmdshape ./gradlew :benchmarks:installDist
+JAVA_OPTS='-XX:StartFlightRecording=filename=benchmark-results/issue77-server.jfr,settings=profile,dumponexit=true' \
+cmdshape benchmarks/build/install/benchmarks/bin/benchmarks candidate 8080 1000
+cmdshape .scratch/tools/k6 run --no-usage-report -e CANDIDATE_ROUTING=1 -e ROUTE_GROUPS=1000 -e WORKLOAD=route-regex -e RATE=1000 -e VUS=64 -e DURATION=60s benchmarks/http.js
+```
+
+Run a separate unprofiled trial for latency, then inspect the JFR recording for allocation sites and CPU samples. These are end-to-end loopback checks, not replacements for the before/after JMH allocation and timing matrix.
+
 With route groups enabled, Jooby uses explicit 404/405 error handlers to return the same small plaintext bodies as the candidate. Its native router still detects missing routes and methods and generates `Allow`; there is no catch-all replacement router. These workloads do not test the frameworks' different ambiguous-route precedence policies. Candidate response-byte copying, parameter handling, and each framework's internal error dispatch remain part of the measured behavior.
 
 Javalin natively returns 404 for this fixture's DELETE on a GET/POST path. Its 404 error handler maps the benchmark path shape to the same 405 body and `Allow` header, so Javalin's `wrong-method` latency is **not native 405 dispatch** and should be evaluated separately. The Javalin SSE fixture uses `InputStream` data to send raw UTF-8 rather than JSON-quoted strings; this also changes its allocation path. The [sustained report](../benchmark-results/issue43-20260924/REPORT.md) records those limits and the full JFR findings.

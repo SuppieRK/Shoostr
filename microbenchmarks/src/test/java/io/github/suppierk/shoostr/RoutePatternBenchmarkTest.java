@@ -24,10 +24,19 @@ class RoutePatternBenchmarkTest {
     fixture.setup();
     for (String path : fixture.paths) {
       var endpoint = fixture.router.match(path, fixture.method);
-      if ("wrongMethod".equals(workload) || "notFound".equals(workload)) {
+      if ("wrongMethod".equals(workload)
+          || "notFound".equals(workload)
+          || "catchAllWrongMethod".equals(workload)
+          || "catchAllMiss".equals(workload)
+          || "regexWrongMethod".equals(workload)
+          || "regexMiss".equals(workload)) {
         assertNull(endpoint);
         assertEquals(
-            "notFound".equals(workload) ? Set.of() : Set.of(HttpMethods.GET, HttpMethods.POST),
+            "notFound".equals(workload)
+                    || "catchAllMiss".equals(workload)
+                    || "regexMiss".equals(workload)
+                ? Set.of()
+                : Set.of(HttpMethods.GET, HttpMethods.POST),
             fixture.router.allowedMethods(path));
       } else {
         assertNotNull(endpoint);
@@ -39,12 +48,18 @@ class RoutePatternBenchmarkTest {
               case "precedence" -> "/shadowed";
               case "twoParameters" -> "/{id}/items/{itemId}";
               case "fallback" -> "/{id}/events";
+              case "catchAllNoRead", "catchAllRead", "catchAllFallback" -> "/{*tail}";
+              case "regexNoRead", "regexRead" -> "/{numericId:[0-9]+}";
+              case "regexFallback" -> "/{id}/events";
               default -> "/{id}";
             };
         assertEquals(
             "/api/resources/" + group + "/orders" + patternSuffix, endpoint.routePattern());
         for (int i = 0; i < fixture.parameterNames.length; i++) {
-          String value = URLDecoder.decode(segments[5 + i * 2], StandardCharsets.UTF_8);
+          String value =
+              "catchAllRead".equals(workload)
+                  ? path.substring(path.indexOf("/orders/") + "/orders/".length())
+                  : URLDecoder.decode(segments[5 + i * 2], StandardCharsets.UTF_8);
           assertEquals(value, endpoint.parameter(path, fixture.parameterNames[i]));
         }
       }
@@ -63,7 +78,17 @@ class RoutePatternBenchmarkTest {
                         "precedence",
                         "fallback",
                         "notFound",
-                        "wrongMethod")
+                        "wrongMethod",
+                        "catchAllNoRead",
+                        "catchAllRead",
+                        "catchAllFallback",
+                        "catchAllWrongMethod",
+                        "catchAllMiss",
+                        "regexNoRead",
+                        "regexRead",
+                        "regexFallback",
+                        "regexWrongMethod",
+                        "regexMiss")
                     .flatMap(
                         workload ->
                             Stream.of("reused", "fresh")

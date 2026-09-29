@@ -5,6 +5,7 @@ import exec from 'k6/execution';
 const base = __ENV.BASE_URL || 'http://127.0.0.1:8080';
 const workload = __ENV.WORKLOAD || 'plaintext';
 const routeGroups = Number(__ENV.ROUTE_GROUPS || 0);
+const candidateRouting = __ENV.CANDIDATE_ROUTING === '1';
 if (!Number.isInteger(routeGroups) || routeGroups < 0) throw new Error('Invalid ROUTE_GROUPS');
 const chunk = 'x'.repeat(1023) + '\n';
 const fixtures = {
@@ -19,6 +20,13 @@ if (routeGroups > 0) {
     'route-parameter': ['order-42', 'text/plain; charset=utf-8', 200],
     'not-found': ['Not found', 'text/plain; charset=utf-8', 404],
     'wrong-method': ['Method not allowed', 'text/plain; charset=utf-8', 405],
+  });
+}
+if (candidateRouting) {
+  Object.assign(fixtures, {
+    'route-catch-all': ['archive/receipt', 'text/plain;charset=utf-8', 200],
+    'route-regex': ['42', 'text/plain;charset=utf-8', 200],
+    'route-regex-fallback': ['plain:alpha', 'text/plain;charset=utf-8', 200],
   });
 }
 if (!fixtures[workload]) throw new Error(`Unknown workload: ${workload}`);
@@ -94,6 +102,15 @@ function send(name, iteration = 0) {
     responseCallback: expectedStatuses[name],
     tags: { name },
   };
+  if (name === 'route-catch-all') {
+    return http.get(`${base}/candidate/catch/archive/receipt`, params);
+  }
+  if (name === 'route-regex') {
+    return http.get(`${base}/candidate/regex/42`, params);
+  }
+  if (name === 'route-regex-fallback') {
+    return http.get(`${base}/candidate/regex/alpha`, params);
+  }
   if (name === 'route-literal' || name === 'route-parameter'
       || name === 'not-found' || name === 'wrong-method') {
     const group = (iteration * 977) % routeGroups;

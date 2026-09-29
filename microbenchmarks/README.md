@@ -50,15 +50,21 @@ issue 50 candidate-only comparison is saved locally under
 | `fallback` | Match `/fixed/events` despite the nonmatching `/fixed/details` branch |
 | `notFound` | Fail path lookup, then collect the empty allowed-method set |
 | `wrongMethod` | Request DELETE on `/latest`, then collect GET and POST from overlapping matches |
+| `catchAllNoRead`, `catchAllRead` | Match a terminal named tail without/with reading `tail` |
+| `catchAllFallback` | Fall through a partial literal branch to the catch-all |
+| `catchAllWrongMethod`, `catchAllMiss` | Collect methods after a catch-all method mismatch, or miss an empty tail |
+| `regexNoRead`, `regexRead` | Match a digit-constrained segment without/with reading `numericId` |
+| `regexFallback` | Fall through a nonmatching constraint to a plain parameter route |
+| `regexWrongMethod`, `regexMiss` | Collect methods after a constrained method mismatch, or miss an empty segment |
 
-Each operation consumes the selected endpoint and requested values, or the allowed-method set, through JMH. This measures routing and parameter access. It excludes HTTP parsing, wire-token-to-enum lookup, request/response wrappers, handler execution, and formatting the `Allow` header. The failure benchmarks retain the returned sets; escape analysis in a complete HTTP handler may differ. `input=reused` uses existing path strings; `input=fresh` additionally constructs a string inside the timed operation, and its cost/allocations must be reported explicitly.
+Catch-all and regex workloads add their respective GET/POST routes to each group's base eight endpoints; the ordinary workloads retain exactly the historical eight-route table. A regex workload uses a single ASCII digit class, not arbitrary backtracking patterns. Each operation consumes the selected endpoint and requested values, or the allowed-method set, through JMH. This measures routing and parameter access. It excludes HTTP parsing, wire-token-to-enum lookup, request/response wrappers, handler execution, and formatting the `Allow` header. The failure benchmarks retain the returned sets; escape analysis in a complete HTTP handler may differ. `input=reused` uses existing path strings; `input=fresh` additionally constructs a string inside the timed operation, and its cost/allocations must be reported explicitly.
 
 ```sh
 cmdshape ./gradlew :microbenchmarks:check :microbenchmarks:installDist
 cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks RoutePatternBenchmark -prof gc -foe true -rf json -rff benchmark-results/patterns.json
 ```
 
-Defaults are three forks, five one-second warmups, five one-second measurements, one thread, and a fixed 512 MiB G1 heap. The 24-case default matrix takes about 12–13 minutes. The 48 JUnit fixture cases cover all workloads, table sizes, and both input modes before measurement.
+Defaults are three forks, five one-second warmups, five one-second measurements, one thread, and a fixed 512 MiB G1 heap. The expanded 54-case default matrix takes roughly half an hour; select a recorded subset for a targeted comparison. The 108 JUnit fixture cases cover all workloads, table sizes, and both input modes before measurement.
 
 Capture JFR **separately** from the timing run. Use one fork per profile directory: JMH 1.37 writes a fixed `profile.jfr` filename per parameter combination, so multiple forks would overwrite that recording. For example:
 
