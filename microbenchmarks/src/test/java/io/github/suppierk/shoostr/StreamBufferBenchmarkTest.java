@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ class StreamBufferBenchmarkTest {
     benchmark.setupInvocation();
     assertEquals(16384, benchmark.repeatedExplicitFlush());
     assertEquals(18, benchmark.writes());
+    assertTrue(benchmark.submitted().capacity() >= 1024);
   }
 
   @Test
