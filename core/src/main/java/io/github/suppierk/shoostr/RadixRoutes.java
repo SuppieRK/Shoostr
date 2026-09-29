@@ -227,6 +227,7 @@ class RadixRoutes {
    * @param path absolute pattern without query or fragment
    * @return immutable parameter names and their segment indexes, counting the leading empty segment
    * @throws IllegalArgumentException if the path syntax is invalid or a parameter name is repeated
+   * @throws NullPointerException if the path is null
    */
   static Map<String, Integer> parameters(@Nullable String path) {
     return parse(path).parameters();
@@ -238,9 +239,11 @@ class RadixRoutes {
    * @param path absolute route pattern
    * @return validated route metadata
    * @throws IllegalArgumentException if the route syntax is invalid
+   * @throws NullPointerException if the path is null
    */
   private static RouteSyntax parse(@Nullable String path) {
-    if (path == null || path.isEmpty() || path.charAt(0) != HttpCharacters.PATH_SEPARATOR) {
+    Objects.requireNonNull(path, "path");
+    if (path.isEmpty() || path.charAt(0) != HttpCharacters.PATH_SEPARATOR) {
       throw new IllegalArgumentException("Expected an absolute path without query or fragment");
     }
 
@@ -257,50 +260,7 @@ class RadixRoutes {
       }
 
       String segment = segments[i];
-      var parameter = PARAMETER_PATTERN.matcher(segment);
-      if (parameter.matches()) {
-        if (parameters.putIfAbsent(parameter.group(1), i) != null) {
-          throw new IllegalArgumentException("Repeated path parameter: " + parameter.group(1));
-        }
-
-        pattern.append(HttpCharacters.CURLY_BRACES);
-      } else if (CATCH_ALL_PATTERN.matcher(segment).matches()) {
-        if (i != segments.length - 1) {
-          throw new IllegalArgumentException("Catch-all must be the final segment: " + segment);
-        }
-
-        String name = segment.substring(2, segment.length() - 1);
-        if (parameters.putIfAbsent(name, -i) != null) {
-          throw new IllegalArgumentException("Repeated path parameter: " + name);
-        }
-
-        pattern.append(CATCH_ALL_EDGE);
-      } else if (segment.startsWith("{") && segment.endsWith("}") && segment.contains(":")) {
-        int separator = segment.indexOf(':');
-        String name = segment.substring(1, separator);
-        if (!PARAMETER_PATTERN.matcher("{" + name + "}").matches()) {
-          throw new IllegalArgumentException("Invalid constrained parameter name: " + name);
-        }
-
-        String constraint = segment.substring(separator + 1, segment.length() - 1);
-        var compiled = compileConstraint(constraint, Map.of());
-        if (parameters.putIfAbsent(name, i) != null) {
-          throw new IllegalArgumentException("Repeated path parameter: " + name);
-        }
-
-        pattern.append(CONSTRAINT_PREFIX).append(compiled.expression()).append('}');
-      } else if (segment.indexOf(HttpCharacters.OPEN_CURLY_BRACE) >= 0
-          || segment.indexOf(HttpCharacters.CLOSE_CURLY_BRACE) >= 0
-          || segment.indexOf(HttpCharacters.ASTERISK) >= 0
-          || segment.indexOf(HttpCharacters.OPEN_ANGLE_BRACKET) >= 0
-          || segment.indexOf(HttpCharacters.CLOSE_ANGLE_BRACKET) >= 0
-          || segment.indexOf(HttpCharacters.QUERY_SEPARATOR) >= 0
-          || segment.indexOf(HttpCharacters.FRAGMENT_SEPARATOR) >= 0
-          || containsControl(segment)) {
-        throw new IllegalArgumentException("Expected a literal segment or {name}: " + segment);
-      } else {
-        pattern.append(segment);
-      }
+      appendSyntaxSegment(segment, i, segments.length, parameters, pattern);
 
       if (firstParameterOffset < 0 && !parameters.isEmpty()) {
         firstParameterOffset = offset;
@@ -314,6 +274,135 @@ class RadixRoutes {
         Map.copyOf(parameters),
         firstParameterOffset,
         firstParameterSegment);
+  }
+
+  /**
+   * Appends one normalized segment and records its capture position.
+   *
+   * @param segment route segment
+   * @param index segment index, counting the leading empty segment
+   * @param segmentCount number of segments in the route
+   * @param parameters collected capture positions
+   * @param pattern normalized pattern under construction
+   * @throws IllegalArgumentException if the segment syntax is invalid
+   */
+  private static void appendSyntaxSegment(
+      String segment,
+      int index,
+      int segmentCount,
+      Map<String, Integer> parameters,
+      StringBuilder pattern) {
+    var parameter = PARAMETER_PATTERN.matcher(segment);
+    if (parameter.matches()) {
+      addParameter(parameters, parameter.group(1), index);
+      pattern.append(HttpCharacters.CURLY_BRACES);
+      return;
+    }
+
+    if (CATCH_ALL_PATTERN.matcher(segment).matches()) {
+      appendCatchAllSegment(segment, index, segmentCount, parameters, pattern);
+      return;
+    }
+
+    if (isConstrainedSegment(segment)) {
+      appendConstrainedSegment(segment, index, parameters, pattern);
+      return;
+    }
+
+    if (invalidLiteralSegment(segment)) {
+      throw new IllegalArgumentException("Expected a literal segment or {name}: " + segment);
+    }
+
+    pattern.append(segment);
+  }
+
+  /**
+   * Appends a terminal named tail capture.
+   *
+   * @param segment catch-all segment
+   * @param index segment index
+   * @param segmentCount route segment count
+   * @param parameters collected capture positions
+   * @param pattern normalized pattern under construction
+   * @throws IllegalArgumentException if the catch-all is nonterminal or repeats a name
+   */
+  private static void appendCatchAllSegment(
+      String segment,
+      int index,
+      int segmentCount,
+      Map<String, Integer> parameters,
+      StringBuilder pattern) {
+    if (index != segmentCount - 1) {
+      throw new IllegalArgumentException("Catch-all must be the final segment: " + segment);
+    }
+
+    String name = segment.substring(2, segment.length() - 1);
+    addParameter(parameters, name, -index);
+    pattern.append(CATCH_ALL_EDGE);
+  }
+
+  /**
+   * Appends a validated segment-local constraint marker.
+   *
+   * @param segment constrained segment
+   * @param index segment index
+   * @param parameters collected capture positions
+   * @param pattern normalized pattern under construction
+   * @throws IllegalArgumentException if the name or constraint is invalid or repeated
+   */
+  private static void appendConstrainedSegment(
+      String segment, int index, Map<String, Integer> parameters, StringBuilder pattern) {
+    int separator = segment.indexOf(':');
+    String name = segment.substring(1, separator);
+    if (!PARAMETER_PATTERN.matcher("{" + name + "}").matches()) {
+      throw new IllegalArgumentException("Invalid constrained parameter name: " + name);
+    }
+
+    String constraint = segment.substring(separator + 1, segment.length() - 1);
+    var compiled = compileConstraint(constraint, Map.of());
+    addParameter(parameters, name, index);
+    pattern.append(CONSTRAINT_PREFIX).append(compiled.expression()).append('}');
+  }
+
+  /**
+   * Records a unique parameter name and its segment position.
+   *
+   * @param parameters collected capture positions
+   * @param name parameter name
+   * @param index positive single-segment or negative catch-all position
+   * @throws IllegalArgumentException if the name is repeated
+   */
+  private static void addParameter(Map<String, Integer> parameters, String name, int index) {
+    if (parameters.putIfAbsent(name, index) != null) {
+      throw new IllegalArgumentException("Repeated path parameter: " + name);
+    }
+  }
+
+  /**
+   * Identifies a whole-segment constrained parameter candidate.
+   *
+   * @param segment route segment
+   * @return whether the segment has a constraint separator inside braces
+   */
+  private static boolean isConstrainedSegment(String segment) {
+    return segment.startsWith("{") && segment.endsWith("}") && segment.contains(":");
+  }
+
+  /**
+   * Rejects literal segments containing reserved route or URI syntax.
+   *
+   * @param segment route segment
+   * @return whether the segment cannot be a literal
+   */
+  private static boolean invalidLiteralSegment(String segment) {
+    return segment.indexOf(HttpCharacters.OPEN_CURLY_BRACE) >= 0
+        || segment.indexOf(HttpCharacters.CLOSE_CURLY_BRACE) >= 0
+        || segment.indexOf(HttpCharacters.ASTERISK) >= 0
+        || segment.indexOf(HttpCharacters.OPEN_ANGLE_BRACKET) >= 0
+        || segment.indexOf(HttpCharacters.CLOSE_ANGLE_BRACKET) >= 0
+        || segment.indexOf(HttpCharacters.QUERY_SEPARATOR) >= 0
+        || segment.indexOf(HttpCharacters.FRAGMENT_SEPARATOR) >= 0
+        || containsControl(segment);
   }
 
   /**
@@ -350,10 +439,24 @@ class RadixRoutes {
       throw new IllegalArgumentException("Expected a nonempty character class in route constraint");
     }
 
-    long lowerBits = 0;
-    long upperBits = 0;
+    long[] bits = classBits(constraint, close);
+    int[] bounds = repetitionBounds(constraint.substring(close + 1));
+    return new Constraint(constraint, bits[0], bits[1], bounds[0], bounds[1], ranks);
+  }
+
+  /**
+   * Compiles the supported class atoms into two ASCII membership bitsets.
+   *
+   * @param constraint constraint expression
+   * @param close index of the closing class bracket
+   * @return membership bits below and above ASCII code 64
+   * @throws IllegalArgumentException if a class character or range is unsupported
+   */
+  private static long[] classBits(String constraint, int close) {
+    long[] bits = new long[2];
     boolean rangeStartAvailable = false;
-    for (int i = 1; i < close; i++) {
+    int i = 1;
+    while (i < close) {
       char character = constraint.charAt(i);
       if (!allowedClassCharacter(character)) {
         throw new IllegalArgumentException("Unsupported route constraint character: " + character);
@@ -364,52 +467,83 @@ class RadixRoutes {
       }
 
       if (character == '-' && rangeStartAvailable && i < close - 1) {
-        char first = constraint.charAt(i - 1);
-        char last = constraint.charAt(++i);
-        if (!sameRange(first, last) || last < first) {
-          throw new IllegalArgumentException("Invalid route constraint range");
-        }
-
-        for (char value = first; value <= last; value++) {
-          if (value < 64) {
-            lowerBits |= 1L << value;
-          } else {
-            upperBits |= 1L << (value - 64);
-          }
-        }
+        includeRange(bits, constraint.charAt(i - 1), constraint.charAt(i + 1));
+        i += 2;
         rangeStartAvailable = false;
-      } else if (character < 64) {
-        lowerBits |= 1L << character;
-        rangeStartAvailable = character != '-';
       } else {
-        upperBits |= 1L << (character - 64);
-        rangeStartAvailable = true;
+        includeCharacter(bits, character);
+        i++;
+        rangeStartAvailable = character != '-';
       }
     }
-    String repetition = constraint.substring(close + 1);
-    if (!repetition.isEmpty()
-        && !"+".equals(repetition)
-        && !"*".equals(repetition)
-        && !"?".equals(repetition)
-        && !validBoundedRepetition(repetition)) {
+    return bits;
+  }
+
+  /**
+   * Adds every member of a same-category ascending range.
+   *
+   * @param bits mutable ASCII membership bits
+   * @param first first range character
+   * @param last final range character
+   * @throws IllegalArgumentException if the range is unsupported or descending
+   */
+  private static void includeRange(long[] bits, char first, char last) {
+    if (!sameRange(first, last) || last < first) {
+      throw new IllegalArgumentException("Invalid route constraint range");
+    }
+
+    for (char value = first; value <= last; value++) {
+      includeCharacter(bits, value);
+    }
+  }
+
+  /**
+   * Sets one ASCII membership bit.
+   *
+   * @param bits mutable ASCII membership bits
+   * @param character allowed ASCII class character
+   */
+  private static void includeCharacter(long[] bits, char character) {
+    if (character < 64) {
+      bits[0] |= 1L << character;
+    } else {
+      bits[1] |= 1L << (character - 64);
+    }
+  }
+
+  /**
+   * Parses the optional simple repetition after a character class.
+   *
+   * @param repetition expression suffix
+   * @return inclusive minimum and maximum repetition counts
+   * @throws IllegalArgumentException if the repetition form is unsupported
+   */
+  private static int[] repetitionBounds(String repetition) {
+    if (repetition.isEmpty()) {
+      return new int[] {1, 1};
+    }
+
+    if ("+".equals(repetition)) {
+      return new int[] {1, Integer.MAX_VALUE};
+    }
+
+    if ("*".equals(repetition)) {
+      return new int[] {0, Integer.MAX_VALUE};
+    }
+
+    if ("?".equals(repetition)) {
+      return new int[] {0, 1};
+    }
+
+    if (!validBoundedRepetition(repetition)) {
       throw new IllegalArgumentException("Unsupported route constraint repetition: " + repetition);
     }
 
-    int minimum = 1;
-    int maximum = 1;
-    if ("+".equals(repetition) || "*".equals(repetition)) {
-      maximum = Integer.MAX_VALUE;
-      minimum = "+".equals(repetition) ? 1 : 0;
-    } else if ("?".equals(repetition)) {
-      minimum = 0;
-    } else if (!repetition.isEmpty()) {
-      String bounds = repetition.substring(1, repetition.length() - 1);
-      int comma = bounds.indexOf(',');
-      minimum = Integer.parseInt(comma < 0 ? bounds : bounds.substring(0, comma));
-      maximum = comma < 0 ? minimum : Integer.parseInt(bounds.substring(comma + 1));
-    }
-
-    return new Constraint(constraint, lowerBits, upperBits, minimum, maximum, ranks);
+    String bounds = repetition.substring(1, repetition.length() - 1);
+    int comma = bounds.indexOf(',');
+    int minimum = Integer.parseInt(comma < 0 ? bounds : bounds.substring(0, comma));
+    int maximum = comma < 0 ? minimum : Integer.parseInt(bounds.substring(comma + 1));
+    return new int[] {minimum, maximum};
   }
 
   /**
@@ -770,12 +904,7 @@ class RadixRoutes {
     boolean parameterEdge = first.startsWith(HttpCharacters.CURLY_BRACES, offset);
     boolean catchAllEdge = first.startsWith(CATCH_ALL_EDGE, offset);
     boolean constrainedEdge = first.startsWith(CONSTRAINT_PREFIX, offset);
-    int end =
-        parameterEdge
-            ? offset + HttpCharacters.CURLY_BRACES.length()
-            : catchAllEdge
-                ? offset + CATCH_ALL_EDGE.length()
-                : constrainedEdge ? constraintEnd(first, offset) : prefixEnd(first, last, offset);
+    int end = edgeEnd(first, last, offset);
 
     Map<HttpMethods, Endpoint> endpoints = Map.of();
     if (first.length() == end) {
@@ -786,20 +915,8 @@ class RadixRoutes {
     var children = new ArrayList<RadixRoutes>();
     RadixRoutes parameter = null;
     while (from < to) {
-      int next = from + 1;
       char label = branchLabel(paths[from], end);
-      if (label == CONSTRAINT_LABEL) {
-        int branchEnd = constraintEnd(paths[from], end);
-        String token = paths[from].substring(end, branchEnd);
-        while (next < to && paths[next].startsWith(token, end)) {
-          next++;
-        }
-      } else {
-        while (next < to && branchLabel(paths[next], end) == label) {
-          next++;
-        }
-      }
-
+      int next = nextBranchEnd(paths, from, to, end, label);
       var child = build(routes, registrationOrder, paths, from, next, end, List.of());
       if (label == HttpCharacters.OPEN_CURLY_BRACE) {
         parameter = child;
@@ -834,6 +951,57 @@ class RadixRoutes {
   }
 
   /**
+   * Chooses the boundary of one normalized edge.
+   *
+   * @param first first path in the subtree
+   * @param last last path in the subtree
+   * @param offset already consumed prefix length
+   * @return edge boundary
+   */
+  private static int edgeEnd(String first, String last, int offset) {
+    if (first.startsWith(HttpCharacters.CURLY_BRACES, offset)) {
+      return offset + HttpCharacters.CURLY_BRACES.length();
+    }
+
+    if (first.startsWith(CATCH_ALL_EDGE, offset)) {
+      return offset + CATCH_ALL_EDGE.length();
+    }
+
+    if (first.startsWith(CONSTRAINT_PREFIX, offset)) {
+      return constraintEnd(first, offset);
+    }
+
+    return prefixEnd(first, last, offset);
+  }
+
+  /**
+   * Finds the exclusive end of one sibling branch in sorted route patterns.
+   *
+   * @param paths sorted normalized patterns
+   * @param from first pattern in the branch
+   * @param to first pattern outside the subtree
+   * @param offset branch start
+   * @param label reserved or literal branch label
+   * @return first pattern outside this branch
+   */
+  private static int nextBranchEnd(String[] paths, int from, int to, int offset, char label) {
+    int next = from + 1;
+    if (label == CONSTRAINT_LABEL) {
+      int branchEnd = constraintEnd(paths[from], offset);
+      String token = paths[from].substring(offset, branchEnd);
+      while (next < to && paths[next].startsWith(token, offset)) {
+        next++;
+      }
+      return next;
+    }
+
+    while (next < to && branchLabel(paths[next], offset) == label) {
+      next++;
+    }
+    return next;
+  }
+
+  /**
    * Finds the end of a literal edge shared by the first and last sorted paths.
    *
    * @param first first path in the range
@@ -861,9 +1029,15 @@ class RadixRoutes {
    * @return sorted-child label
    */
   private static char branchLabel(String path, int offset) {
-    return path.startsWith(CATCH_ALL_EDGE, offset)
-        ? 0
-        : path.startsWith(CONSTRAINT_PREFIX, offset) ? CONSTRAINT_LABEL : path.charAt(offset);
+    if (path.startsWith(CATCH_ALL_EDGE, offset)) {
+      return 0;
+    }
+
+    if (path.startsWith(CONSTRAINT_PREFIX, offset)) {
+      return CONSTRAINT_LABEL;
+    }
+
+    return path.charAt(offset);
   }
 
   /**

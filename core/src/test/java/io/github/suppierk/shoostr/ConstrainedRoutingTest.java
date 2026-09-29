@@ -47,9 +47,9 @@ class ConstrainedRoutingTest {
   @Test
   void rejectsAnInvalidConstraintAtRegistration() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      var routes = app.routes();
       assertThrows(
-          IllegalArgumentException.class,
-          () -> app.routes().get("/users/{id:[0-9+}", (_, _) -> {}));
+          IllegalArgumentException.class, () -> routes.get("/users/{id:[0-9+}", (_, _) -> {}));
     }
   }
 
@@ -130,7 +130,8 @@ class ConstrainedRoutingTest {
       })
   void rejectsUnsupportedOrMalformedConstraintSyntax(String pattern) throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      assertThrows(IllegalArgumentException.class, () -> app.routes().get(pattern, (_, _) -> {}));
+      var routes = app.routes();
+      assertThrows(IllegalArgumentException.class, () -> routes.get(pattern, (_, _) -> {}));
     }
   }
 
@@ -138,13 +139,14 @@ class ConstrainedRoutingTest {
   void acceptsBoundedRepetitionAndRejectsEquivalentConstraintShapes() throws Exception {
     try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .path(
-              "/api",
-              routes -> routes.get("/users/{id:[0-9]{1,3}}", (_, response) -> response.text("ok")));
+      var routes = app.routes();
+      routes.path(
+          "/api",
+          nestedRoutes ->
+              nestedRoutes.get("/users/{id:[0-9]{1,3}}", (_, response) -> response.text("ok")));
       assertThrows(
           IllegalArgumentException.class,
-          () -> app.routes().get("/api/users/{other:[0-9]{1,3}}", (_, _) -> {}));
+          () -> routes.get("/api/users/{other:[0-9]{1,3}}", (_, _) -> {}));
       app.start();
 
       assertEquals("ok", send(client, app, "/api/users/123").body());

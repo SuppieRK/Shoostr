@@ -123,17 +123,19 @@ class CatchAllRoutingTest {
       })
   void rejectsInvalidCatchAllSyntaxAtRegistration(String pattern) throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      assertThrows(IllegalArgumentException.class, () -> app.routes().get(pattern, (_, _) -> {}));
+      var routes = app.routes();
+      assertThrows(IllegalArgumentException.class, () -> routes.get(pattern, (_, _) -> {}));
     }
   }
 
   @Test
   void rejectsEquivalentCatchAllShapesForTheSameMethod() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/files/{*path}", (_, _) -> {});
+      var routes = app.routes();
+      routes.get("/files/{*path}", (_, _) -> {});
       assertThrows(
-          IllegalArgumentException.class, () -> app.routes().get("/files/{*rest}", (_, _) -> {}));
-      app.routes().post("/files/{*rest}", (_, _) -> {});
+          IllegalArgumentException.class, () -> routes.get("/files/{*rest}", (_, _) -> {}));
+      routes.post("/files/{*rest}", (_, _) -> {});
     }
   }
 

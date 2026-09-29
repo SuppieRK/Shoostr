@@ -139,6 +139,11 @@ class RoutePatternTest {
   }
 
   @Test
+  void rejectsNullRoutePatternBeforeParsing() {
+    assertThrows(NullPointerException.class, () -> RadixRoutes.parameters(null));
+  }
+
+  @Test
   void rejectsEquivalentPatternsForTheSameMethod() {
     assertThrows(IllegalArgumentException.class, () -> compile("GET /{id}", "GET /{name}"));
   }
