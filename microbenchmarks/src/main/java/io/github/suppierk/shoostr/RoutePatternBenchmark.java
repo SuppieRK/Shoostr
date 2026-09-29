@@ -45,7 +45,17 @@ public class RoutePatternBenchmark {
     "precedence",
     "fallback",
     "notFound",
-    "wrongMethod"
+    "wrongMethod",
+    "catchAllNoRead",
+    "catchAllRead",
+    "catchAllFallback",
+    "catchAllWrongMethod",
+    "catchAllMiss",
+    "regexNoRead",
+    "regexRead",
+    "regexFallback",
+    "regexWrongMethod",
+    "regexMiss"
   })
   public String workload;
 
@@ -95,13 +105,34 @@ public class RoutePatternBenchmark {
           case "reused" -> false;
           default -> throw new IllegalArgumentException("Unknown input: " + input);
         };
-    router = RadixRoutes.from(registrations(groups));
-    method = "wrongMethod".equals(workload) ? HttpMethods.DELETE : HttpMethods.GET;
+    router =
+        RadixRoutes.from(
+            registrations(groups, workload.startsWith("catchAll"), workload.startsWith("regex")));
+    method =
+        "wrongMethod".equals(workload)
+                || "catchAllWrongMethod".equals(workload)
+                || "regexWrongMethod".equals(workload)
+            ? HttpMethods.DELETE
+            : HttpMethods.GET;
     parameterNames =
         switch (workload) {
           case "oneParameter", "encodedParameter", "fallback" -> new String[] {"id"};
           case "twoParameters" -> new String[] {"id", "itemId"};
-          case "literal", "precedence", "notFound", "wrongMethod" -> new String[0];
+          case "catchAllRead" -> new String[] {"tail"};
+          case "regexRead" -> new String[] {"numericId"};
+          case "literal",
+              "precedence",
+              "notFound",
+              "wrongMethod",
+              "catchAllNoRead",
+              "catchAllFallback",
+              "catchAllWrongMethod",
+              "catchAllMiss",
+              "regexNoRead",
+              "regexFallback",
+              "regexWrongMethod",
+              "regexMiss" ->
+              new String[0];
           default -> throw new IllegalArgumentException("Unknown workload: " + workload);
         };
     paths = new String[QUERY_COUNT];
@@ -123,6 +154,13 @@ public class RoutePatternBenchmark {
             case "precedence" -> "/shadowed";
             case "fallback" -> "/fixed/events";
             case "notFound" -> "/order-" + query + "/missing";
+            case "catchAllNoRead", "catchAllRead", "catchAllWrongMethod" ->
+                "/archive/order-" + query + "/receipt";
+            case "catchAllFallback" -> "/fixed/other/" + query;
+            case "catchAllMiss" -> "/";
+            case "regexNoRead", "regexRead", "regexWrongMethod" -> "/" + query;
+            case "regexFallback" -> "/fixed/events";
+            case "regexMiss" -> "/";
             default -> throw new IllegalArgumentException("Unknown workload: " + workload);
           };
       paths[i] = prefix + suffix;
@@ -132,12 +170,15 @@ public class RoutePatternBenchmark {
   }
 
   /**
-   * Creates eight endpoints per resource group, including literal precedence and fallback cases.
+   * Builds the shared route table plus branches required by the selected workload.
    *
-   * @param groups number of independent resource prefixes
-   * @return registrations exercising literal-first precedence
+   * @param groups number of resource groups
+   * @param catchAll whether to register catch-all routes
+   * @param regex whether to register constrained routes
+   * @return ordered endpoint registrations
    */
-  static List<RadixRoutes.Endpoint> registrations(int groups) {
+  private static List<RadixRoutes.Endpoint> registrations(
+      int groups, boolean catchAll, boolean regex) {
     var endpoints = new ArrayList<RadixRoutes.Endpoint>();
     for (int group = 0; group < groups; group++) {
       String prefix = "/api/resources/" + group + "/orders";
@@ -149,6 +190,15 @@ public class RoutePatternBenchmark {
       add(endpoints, HttpMethods.GET, prefix + "/{id}/items/{itemId}");
       add(endpoints, HttpMethods.GET, prefix + "/shadowed");
       add(endpoints, HttpMethods.POST, prefix + "/latest");
+      if (catchAll) {
+        add(endpoints, HttpMethods.GET, prefix + "/{*tail}");
+        add(endpoints, HttpMethods.POST, prefix + "/{*tail}");
+      }
+
+      if (regex) {
+        add(endpoints, HttpMethods.GET, prefix + "/{numericId:[0-9]+}");
+        add(endpoints, HttpMethods.POST, prefix + "/{numericId:[0-9]+}");
+      }
     }
     return endpoints;
   }

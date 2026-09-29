@@ -274,6 +274,58 @@ public class WebSocketRoutesTest {
 
   @Test
   @Timeout(10)
+  void upgradesCatchAllWebSocketRoutesWithoutChangingSingleSegmentPrecedence() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .path(
+              "/rooms",
+              rooms -> {
+                rooms.websocket(
+                    "/{*path}",
+                    (request, _) ->
+                        new EchoListener("tail:" + request.pathParam("path").orElseThrow() + ":"));
+                rooms.websocket(
+                    "/{id}",
+                    (request, _) ->
+                        new EchoListener("single:" + request.pathParam("id").orElseThrow() + ":"));
+                rooms.websocket("/latest", (_, _) -> new EchoListener("literal:"));
+              });
+      app.start();
+
+      assertEquals("literal:ping", sendAndReceive(client, app, "/rooms/latest"));
+      assertEquals("single:a:ping", sendAndReceive(client, app, "/rooms/a"));
+      assertEquals("tail:a/b:ping", sendAndReceive(client, app, "/rooms/a/b"));
+    }
+  }
+
+  @Test
+  @Timeout(10)
+  void upgradesConstrainedWebSocketRoutesAndFallsBackToPlainParameters() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .path(
+              "/rooms",
+              rooms -> {
+                rooms.websocket(
+                    "/{name}",
+                    (request, _) ->
+                        new EchoListener("plain:" + request.pathParam("name").orElseThrow() + ":"));
+                rooms.websocket(
+                    "/{id:[0-9]+}",
+                    (request, _) ->
+                        new EchoListener("digits:" + request.pathParam("id").orElseThrow() + ":"));
+              });
+      app.start();
+
+      assertEquals("digits:42:ping", sendAndReceive(client, app, "/rooms/42"));
+      assertEquals("plain:alpha:ping", sendAndReceive(client, app, "/rooms/alpha"));
+    }
+  }
+
+  @Test
+  @Timeout(10)
   void rejectsAnOriginInRouteAdmissionBeforeCallingTheListenerFactory() throws Exception {
     var factoryCalls = new AtomicInteger();
 

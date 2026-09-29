@@ -49,8 +49,8 @@ public class RouteLookupBenchmark {
   public String distribution;
 
   private Map<String, Map<HttpMethods, Handler>> map;
-  private RadixRoutes radix;
-  private String[] paths;
+  RadixRoutes radix;
+  String[] paths;
   private char[][] characters;
   private HttpMethods[] methods;
   private int cursor;
@@ -107,7 +107,19 @@ public class RouteLookupBenchmark {
   @Setup
   public void setup() {
     map = registrations(routeCount, shape);
-    radix = RadixRoutes.from(endpoints(map));
+    var routeEndpoints = endpoints(map);
+    if (outcome.startsWith("catchAll")) {
+      for (int route = 0; route < routeCount; route++) {
+        String base = path(route, shape);
+        routeEndpoints.add(RadixRoutes.endpoint(HttpMethods.GET, base + "/{*tail}", handler()));
+        routeEndpoints.add(RadixRoutes.endpoint(HttpMethods.POST, base + "/{*tail}", handler()));
+        routeEndpoints.add(
+            RadixRoutes.endpoint(HttpMethods.GET, base + "/fixed/details", handler()));
+        routeEndpoints.add(RadixRoutes.endpoint(HttpMethods.GET, base + "/{id}/events", handler()));
+      }
+    }
+
+    radix = RadixRoutes.from(routeEndpoints);
     paths = new String[QUERY_COUNT];
     characters = new char[QUERY_COUNT][];
     methods = new HttpMethods[QUERY_COUNT];
@@ -146,6 +158,13 @@ public class RouteLookupBenchmark {
         case "earlyMiss" -> path = "/!" + path.substring(2);
         case "lateMiss" -> path += "!";
         case "wrongMethod" -> method = HttpMethods.DELETE;
+        case "catchAllHit" -> path += "/attachments/receipt";
+        case "catchAllFallback" -> path += "/fixed/other";
+        case "catchAllWrongMethod" -> {
+          path += "/attachments/receipt";
+          method = HttpMethods.DELETE;
+        }
+        case "catchAllMiss" -> path = "/!" + path.substring(2);
         default -> throw new IllegalArgumentException("Unknown outcome: " + selectedOutcome);
       }
       characters[i] = path.toCharArray();

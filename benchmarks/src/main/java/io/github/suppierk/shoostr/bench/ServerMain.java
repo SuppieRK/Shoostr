@@ -81,6 +81,15 @@ public final class ServerMain {
                 routes.websocket("/ws-text", (_, _) -> new EchoListener());
                 routes.websocket("/ws-binary", (_, _) -> new EchoListener());
                 registerRouteGroups(routes, routeGroups);
+                routes.get(
+                    "/candidate/catch/{*tail}",
+                    (req, res) -> res.text(req.pathParam("tail").orElseThrow()));
+                routes.get(
+                    "/candidate/regex/{id:[0-9]+}",
+                    (req, res) -> res.text(req.pathParam("id").orElseThrow()));
+                routes.get(
+                    "/candidate/regex/{name}",
+                    (req, res) -> res.text("plain:" + req.pathParam("name").orElseThrow()));
               })
           .start();
       close = null;

@@ -373,7 +373,10 @@ public final class Routes implements Closeable {
   }
 
   /**
-   * Registers an explicit HTTP method beneath this group's prefix.
+   * Registers an explicit HTTP method beneath this group's prefix. Whole-segment patterns may use
+   * {@code {name}}, terminal {@code {*tail}}, or a constrained parameter such as {@code
+   * {id:[0-9]+}}. Constraints use one ASCII character class with optional simple repetition.
+   * Matching prefers literals, constraints, plain parameters, then catch-alls.
    *
    * @param method registered HTTP method
    * @param path relative endpoint path; empty selects the group endpoint
