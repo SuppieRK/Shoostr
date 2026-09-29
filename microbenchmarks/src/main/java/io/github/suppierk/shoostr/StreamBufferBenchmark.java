@@ -43,8 +43,14 @@ public class StreamBufferBenchmark {
   private Request nativeRequest;
   private Response response;
   private Response growthResponse;
+  private ByteBuffer submitted;
   private int bytesWritten;
   private int writes;
+
+  /** Initializes the view retained by the benchmark transport fixture. */
+  public StreamBufferBenchmark() {
+    submitted = ByteBuffer.allocate(0);
+  }
 
   /** Prepares immutable payloads and a callback-completing transport outside measured work. */
   @Setup(Level.Trial)
@@ -88,7 +94,8 @@ public class StreamBufferBenchmark {
                       case "isCommitted" -> writes != 0;
                       case "write" -> {
                         writes++;
-                        bytesWritten += ((ByteBuffer) arguments[1]).remaining();
+                        submitted = (ByteBuffer) arguments[1];
+                        bytesWritten += submitted.remaining();
                         ((Callback) arguments[2]).succeeded();
                         yield null;
                       }
@@ -193,5 +200,14 @@ public class StreamBufferBenchmark {
    */
   int writes() {
     return writes;
+  }
+
+  /**
+   * Exposes the retained transport view to fixture tests.
+   *
+   * @return the most recently submitted view
+   */
+  ByteBuffer submitted() {
+    return submitted;
   }
 }

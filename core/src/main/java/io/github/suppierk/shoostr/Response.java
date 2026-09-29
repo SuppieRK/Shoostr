@@ -654,7 +654,7 @@ public final class Response implements AutoCloseable {
     contentType(contentType);
     state = State.STREAMING;
     stream = new Stream();
-    write(false, EMPTY, 0);
+    write(false, 0);
     return stream;
   }
 
@@ -1146,7 +1146,7 @@ public final class Response implements AutoCloseable {
    */
   private void completeStreaming() throws IOException {
     var activeStream = Objects.requireNonNull(stream);
-    write(true, activeStream.buffer, activeStream.used);
+    write(true, activeStream.used);
     activeStream.used = 0;
     body = EMPTY;
     state = State.CLOSED;
@@ -1822,19 +1822,20 @@ public final class Response implements AutoCloseable {
    * write makes the response terminal so error handling cannot replace partial output.
    *
    * @param last whether this write ends the response
-   * @param bytes source buffer owned by the response
    * @param length number of bytes to send from the start of the buffer
    * @throws IOException if the transport cannot complete the write
    */
-  private void write(boolean last, byte[] bytes, int length) throws IOException {
+  private void write(boolean last, int length) throws IOException {
+    var activeStream = Objects.requireNonNull(stream);
     notifyBeforeFlush(last, length);
 
     try {
       protectRequiredHeaders();
-      Content.Sink.write(delegate, last, ByteBuffer.wrap(bytes, 0, length));
+      Content.Sink.write(delegate, last, activeStream.view(length));
       notifyAfterFlush();
     } catch (IOException | RuntimeException failure) {
       state = State.FAILED;
+      activeStream.view = null;
       throw failure;
     }
   }
@@ -2182,6 +2183,7 @@ public final class Response implements AutoCloseable {
   public final class Stream {
     private static final int INITIAL_BUFFER_BYTES = 256;
     private byte[] buffer;
+    private @Nullable ByteBuffer view;
     private int used;
 
     /** Starts with shared empty storage so empty streams allocate no body buffer. */
@@ -2233,9 +2235,27 @@ public final class Response implements AutoCloseable {
      */
     public Stream flush() throws IOException {
       require(State.STREAMING);
-      Response.this.write(false, buffer, used);
+      Response.this.write(false, used);
       used = 0;
       return this;
+    }
+
+    /**
+     * Resets this stream's heap view only after the preceding transport write succeeded.
+     *
+     * @param length pending bytes to expose from the start of the backing array
+     * @return the view positioned at zero and limited to the pending bytes
+     */
+    private ByteBuffer view(int length) {
+      var current = view;
+      if (current == null) {
+        current = ByteBuffer.wrap(buffer);
+        view = current;
+      }
+
+      current.clear();
+      current.limit(length);
+      return current;
     }
 
     /**
@@ -2254,6 +2274,7 @@ public final class Response implements AutoCloseable {
       var grown = new byte[capacity];
       System.arraycopy(buffer, 0, grown, 0, used);
       buffer = grown;
+      view = null;
     }
   }
 
