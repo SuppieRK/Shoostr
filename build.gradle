@@ -3,7 +3,7 @@ import io.github.suppierk.build.StatementSpacingCheck
 plugins {
 	id 'java'
 	id 'checkstyle'
-	id 'com.diffplug.spotless' version '8.10.2'
+	id 'com.diffplug.spotless' version '8.10.3'
 	id 'net.ltgt.errorprone' version '5.1.1' apply false
 	id 'net.ltgt.nullaway' version '3.2.0' apply false
 	id 'org.sonarqube' version '7.5.0.8588'
@@ -35,7 +35,7 @@ allprojects {
 		testImplementation platform('org.junit:junit-bom:6.1.3')
 		testImplementation 'org.junit.jupiter:junit-jupiter'
 		testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-		checkstyle 'com.puppycrawl.tools:checkstyle:14.1.0'
+		checkstyle 'com.puppycrawl.tools:checkstyle:14.3.0'
 		checkstyle files(rootProject.file('buildSrc/build/libs/buildSrc.jar'))
 	}
 }
@@ -102,7 +102,7 @@ def checkstyleBuildLogicTests = tasks.register('checkstyleBuildLogicTests', Chec
 }
 sourceSets.test.java.srcDirs = ['config/checkstyle/tests']
 dependencies {
-	testImplementation 'com.puppycrawl.tools:checkstyle:14.1.0'
+	testImplementation 'com.puppycrawl.tools:checkstyle:14.3.0'
 	testImplementation files('buildSrc/build/libs/buildSrc.jar')
 }
 tasks.named('check') {
