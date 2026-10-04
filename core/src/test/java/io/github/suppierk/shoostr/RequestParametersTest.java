@@ -225,6 +225,37 @@ class RequestParametersTest {
     assertEquals("ok", result.body());
   }
 
+  @Test
+  void preservesOriginalBodyBytesWhenFormFieldsAreParsedFirst() throws Exception {
+    var encoded = "name=M%C3%BCnchen+city&name=one%2Btwo&token=a=b%2526&empty=";
+    app.routes()
+        .post(
+            "/form",
+            (request, response) -> {
+              assertEquals(
+                  Map.of(
+                      "name", List.of("München city", "one+two"),
+                      "token", List.of("a=b%26"),
+                      "empty", List.of("")),
+                  request.formParamMap());
+              assertEquals(encoded, request.bodyText());
+              response.body(MediaType.APPLICATION_OCTET_STREAM, request.bodyBytes());
+            });
+    app.start();
+    var result =
+        client.send(
+            request("/form")
+                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+                .POST(
+                    HttpRequest.BodyPublishers.ofByteArray(
+                        encoded.getBytes(StandardCharsets.UTF_8)))
+                .build(),
+            HttpResponse.BodyHandlers.ofByteArray());
+
+    assertEquals(200, result.statusCode());
+    assertArrayEquals(encoded.getBytes(StandardCharsets.UTF_8), result.body());
+  }
+
   @ParameterizedTest
   @NullSource
   @ValueSource(
