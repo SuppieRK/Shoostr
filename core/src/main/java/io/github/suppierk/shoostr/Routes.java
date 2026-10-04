@@ -175,7 +175,6 @@ public final class Routes implements Closeable {
           configuration == null && configure == null
               ? null
               : new Extensions(installed, configuration);
-      var scope = new Routes(root, group, conditions, local, nextDepth);
       if (local != null) {
         synchronized (lock) {
           requireMutable();
@@ -189,7 +188,7 @@ public final class Routes implements Closeable {
         }
       }
 
-      registration.accept(scope);
+      registration.accept(new Routes(root, group, conditions, local, nextDepth));
     } finally {
       if (local != null) {
         local.freeze();
@@ -804,6 +803,8 @@ public final class Routes implements Closeable {
    * @return this scope
    * @throws IllegalArgumentException if the shape is already registered or being configured
    */
+  @SuppressWarnings(
+      "java:S1181") // Roll back the reserved shape even when configuration throws Error.
   private Routes registerEndpoint(
       RadixRoutes.Endpoint endpoint, @Nullable Consumer<Extensions> configure, boolean websocket) {
     var keys = websocket ? websocketRouteKeys : routeKeys;
@@ -1007,6 +1008,8 @@ public final class Routes implements Closeable {
    * @param source creates the owned static source
    * @return this scope
    */
+  @SuppressWarnings(
+      "java:S1181") // Close unpublished resources on Error without replacing its cause.
   private Routes staticSource(String path, Function<String, StaticFiles> source) {
     String mount;
     synchronized (lock) {

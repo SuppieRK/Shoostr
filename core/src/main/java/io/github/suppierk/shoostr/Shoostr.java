@@ -639,7 +639,6 @@ public final class Shoostr implements Closeable {
       afterFlushHandlers.clear();
       exceptionHandlers.clear();
       statusHandlers.clear();
-      started = true;
 
       startServer(dispatch);
       var boundConnector = Objects.requireNonNull(connector);
@@ -697,13 +696,7 @@ public final class Shoostr implements Closeable {
     afterFlushHandlers.clear();
     afterHandlers.clear();
     observationFactories.clear();
-    IOException failure = null;
-
-    try {
-      routes.close();
-    } catch (RuntimeException closeFailure) {
-      failure = appendCloseFailure(null, "Could not close route resources", closeFailure);
-    }
+    IOException failure = closeRouteResources();
 
     serverConfigurations.clear();
     httpConfigurations.clear();
@@ -752,6 +745,20 @@ public final class Shoostr implements Closeable {
 
     if (failure != null) {
       throw failure;
+    }
+  }
+
+  /**
+   * Releases pending route resources without skipping subsequent shutdown phases on failure.
+   *
+   * @return cleanup failure, or null if pending resources were closed
+   */
+  private @Nullable IOException closeRouteResources() {
+    try {
+      routes.close();
+      return null;
+    } catch (RuntimeException closeFailure) {
+      return appendCloseFailure(null, "Could not close route resources", closeFailure);
     }
   }
 
@@ -1400,17 +1407,7 @@ public final class Shoostr implements Closeable {
           observation == null
               ? callback
               : Callback.from(callback, observation::recordTransportFailure);
-      Request request;
-
-      try {
-        request = Request.create(rawRequest, rawResponse, options, responseCallback);
-      } catch (RuntimeException | Error failure) {
-        if (observation != null) {
-          observation.finish(null, failure);
-        }
-
-        throw failure;
-      }
+      var request = createRequest(rawRequest, rawResponse, responseCallback, observation);
 
       var response = request.response();
       if (compressionHandler != null) {
@@ -1452,6 +1449,33 @@ public final class Shoostr implements Closeable {
       }
 
       return true;
+    }
+
+    /**
+     * Constructs the request, finalizing observation when construction itself fails.
+     *
+     * @param rawRequest transport-owned input
+     * @param rawResponse transport-owned output
+     * @param callback response completion notification
+     * @param observation optional terminal observation
+     * @return initialized framework request
+     */
+    @SuppressWarnings(
+        "java:S1181") // Construction failures must finalize observation even on Error.
+    private Request createRequest(
+        org.eclipse.jetty.server.Request rawRequest,
+        org.eclipse.jetty.server.Response rawResponse,
+        Callback callback,
+        @Nullable Completion observation) {
+      try {
+        return Request.create(rawRequest, rawResponse, options, callback);
+      } catch (RuntimeException | Error failure) {
+        if (observation != null) {
+          observation.finish(null, failure);
+        }
+
+        throw failure;
+      }
     }
 
     /**
@@ -1707,14 +1731,8 @@ public final class Shoostr implements Closeable {
       }
 
       runGates(local, request, response);
-      if (local != null) {
-        for (var condition : local.conditions()) {
-          if (!condition.test(request)) {
-            response.setHeader(HttpHeader.CACHE_CONTROL.asString(), "no-store");
-            generated(statuses, HttpStatusCodes.NOT_FOUND.value(), "Not found", request, response);
-            return false;
-          }
-        }
+      if (!available(local, request, response)) {
+        return false;
       }
 
       endpoint.handler().handle(request, response);
@@ -1756,6 +1774,33 @@ public final class Shoostr implements Closeable {
           request,
           response);
       return false;
+    }
+
+    /**
+     * Evaluates availability after admission and renders a non-cacheable 404 on the first
+     * rejection.
+     *
+     * @param local selected endpoint phases, or null
+     * @param request matched request
+     * @param response live response
+     * @return whether the endpoint is available
+     * @throws Exception if a condition or generated-status handler fails
+     */
+    @SuppressWarnings(
+        "java:S112") // Availability and generated-status callbacks may throw checked failures.
+    private boolean available(@Nullable EndpointBehavior local, Request request, Response response)
+        throws Exception {
+      if (local != null) {
+        for (var condition : local.conditions()) {
+          if (!condition.test(request)) {
+            response.setHeader(HttpHeader.CACHE_CONTROL.asString(), "no-store");
+            generated(statuses, HttpStatusCodes.NOT_FOUND.value(), "Not found", request, response);
+            return false;
+          }
+        }
+      }
+
+      return true;
     }
 
     /**

@@ -1,9 +1,9 @@
 package io.github.suppierk.shoostr.extensions;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.Extensions;
@@ -55,7 +55,8 @@ class RegistrationDepthTest {
     var entered = new AtomicInteger();
 
     try (var app = new Shoostr()) {
-      assertThrows(IllegalStateException.class, () -> capturedRoot(app.routes(), 11, entered));
+      var routes = app.routes();
+      assertThrows(IllegalStateException.class, () -> capturedRoot(routes, 11, entered));
       assertEquals(10, entered.get());
     }
   }
@@ -66,30 +67,33 @@ class RegistrationDepthTest {
 
     try (var app = new Shoostr()) {
       nested(app.routes(), 10, false, retained::set);
-      assertThrows(IllegalStateException.class, () -> retained.get().path("/child", _ -> {}));
+      var child = retained.get();
+      assertThrows(IllegalStateException.class, () -> child.path("/child", _ -> {}));
     }
   }
 
   @Test
   void restoresGroupingDepthAfterARegistrationException() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
           () ->
               nested(
-                  app.routes(),
+                  routes,
                   10,
                   true,
                   _ -> {
                     throw new IllegalArgumentException("registration failed");
                   }));
-      nested(app.routes(), 10, true, routes -> routes.get("/recovered", (_, _) -> {}));
+      nested(routes, 10, true, child -> child.get("/recovered", (_, _) -> {}));
       app.start();
       assertTrue(app.port() > 0);
     }
   }
 
   @Test
+  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
   void rejectsExcessDepthBeforeConfigurationOrInheritedProvidersRun() throws Exception {
     var configured = new AtomicInteger();
     var userCalls = new AtomicInteger();
@@ -146,12 +150,7 @@ class RegistrationDepthTest {
                   _ -> {
                     reached.countDown();
 
-                    try {
-                      assertTrue(reached.await(5, TimeUnit.SECONDS));
-                    } catch (InterruptedException failure) {
-                      Thread.currentThread().interrupt();
-                      fail("Registration thread was interrupted", failure);
-                    }
+                    assertDoesNotThrow(() -> assertTrue(reached.await(5, TimeUnit.SECONDS)));
                   });
       var first = executor.submit(registration);
       var second = executor.submit(registration);
@@ -165,7 +164,8 @@ class RegistrationDepthTest {
     var entered = new AtomicInteger();
 
     try (var app = new Shoostr()) {
-      assertThrows(IllegalStateException.class, () -> conditions(app.routes(), 11, entered));
+      var routes = app.routes();
+      assertThrows(IllegalStateException.class, () -> conditions(routes, 11, entered));
       assertEquals(10, entered.get());
     }
   }
@@ -175,7 +175,8 @@ class RegistrationDepthTest {
     var entered = new AtomicInteger();
 
     try (var app = new Shoostr()) {
-      assertThrows(IllegalStateException.class, () -> paths(app.routes(), 11, entered));
+      var routes = app.routes();
+      assertThrows(IllegalStateException.class, () -> paths(routes, 11, entered));
       assertEquals(10, entered.get());
     }
   }

@@ -41,9 +41,10 @@ class ExtensionConfigurationConcurrencyTest {
   @Test
   void rejectsPublicationAfterConfigurationClosesRegistration() throws Exception {
     try (var app = new Shoostr()) {
+      var routes = app.routes();
       assertThrows(
           IllegalStateException.class,
-          () -> app.routes().get("/closed", (_, _) -> {}, _ -> app.routes().close()));
+          () -> routes.get("/closed", (_, _) -> {}, _ -> routes.close()));
       assertThrows(IllegalStateException.class, app::start);
     }
   }
@@ -52,14 +53,14 @@ class ExtensionConfigurationConcurrencyTest {
   void reservesShapesDuringReentrantConfigurationAndReleasesFailedReservations() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
           () ->
-              app.routes()
-                  .get(
-                      "/reserved/{id}",
-                      (_, _) -> {},
-                      _ -> app.routes().get("/reserved/{other}", (_, _) -> {})));
+              routes.get(
+                  "/reserved/{id}",
+                  (_, _) -> {},
+                  _ -> routes.get("/reserved/{other}", (_, _) -> {})));
       app.routes().get("/reserved/{id}", (_, response) -> response.text("retry"));
       app.start();
       assertEquals(
@@ -105,19 +106,17 @@ class ExtensionConfigurationConcurrencyTest {
   void webSocketConfigurationRejectsStartupAndReservesIndependentHandshakeShapes()
       throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes()
-          .websocket(
-              "/socket",
-              (_, _) -> new Session.Listener.AutoDemanding() {},
-              _ -> {
-                assertThrows(IllegalStateException.class, app::start);
-                assertThrows(
-                    IllegalArgumentException.class,
-                    () ->
-                        app.routes()
-                            .websocket(
-                                "/socket", (_, _) -> new Session.Listener.AutoDemanding() {}));
-              });
+      var routes = app.routes();
+      routes.websocket(
+          "/socket",
+          (_, _) -> new Session.Listener.AutoDemanding() {},
+          _ -> {
+            assertThrows(IllegalStateException.class, app::start);
+            assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                    routes.websocket("/socket", (_, _) -> new Session.Listener.AutoDemanding() {}));
+          });
       app.routes().get("/socket", (_, _) -> {});
       app.start();
     }
@@ -125,6 +124,7 @@ class ExtensionConfigurationConcurrencyTest {
 
   @Test
   @Timeout(10)
+  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
   void inheritedProviderConfigurationRunsOutsideTheLockWithStartupGuarded() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var executor = Executors.newVirtualThreadPerTaskExecutor()) {

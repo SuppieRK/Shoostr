@@ -63,8 +63,10 @@ class ExtensionLifecycleTest {
       assertEquals(List.of("install-first", "install-second"), events);
       assertThrows(IllegalArgumentException.class, () -> app.extensions(second));
       assertSame(app, app.authentication(auth));
-      assertThrows(
-          IllegalStateException.class, () -> app.authentication(authenticator((_, _) -> {})));
+
+      try (var anotherAuth = authenticator((_, _) -> {})) {
+        assertThrows(IllegalStateException.class, () -> app.authentication(anotherAuth));
+      }
     }
 
     assertEquals(List.of("install-first", "install-second", "close-second", "close-first"), events);
@@ -80,9 +82,10 @@ class ExtensionLifecycleTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.extensions(installed);
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
-          () -> app.routes().get("/route", (_, _) -> {}, e -> e.get(missing)));
+          () -> routes.get("/route", (_, _) -> {}, e -> e.get(missing)));
       app.routes()
           .get(
               "/route",
@@ -91,8 +94,9 @@ class ExtensionLifecycleTest {
                 assertSame(e.get(installed), e.get(installed));
                 retained.set(e);
               });
+      var configuration = retained.get();
       assertThrows(
-          IllegalStateException.class, () -> retained.get().afterRouteHandler((_, _) -> {}));
+          IllegalStateException.class, () -> configuration.afterRouteHandler((_, _) -> {}));
       app.start();
       assertThrows(IllegalStateException.class, () -> app.extensions(missing));
       assertEquals("ok", send(client, app, "GET", "/route").body());
@@ -119,11 +123,12 @@ class ExtensionLifecycleTest {
         };
 
     try (var app = new Shoostr()) {
+      var routes = app.routes();
       var failure = assertThrows(IllegalStateException.class, () -> app.extensions(first, broken));
       assertEquals("setup failed", failure.getMessage());
       assertEquals(1, failure.getSuppressed().length);
       assertThrows(IllegalStateException.class, app::start);
-      assertThrows(IllegalStateException.class, () -> app.routes().get("/", (_, _) -> {}));
+      assertThrows(IllegalStateException.class, () -> routes.get("/", (_, _) -> {}));
     }
 
     assertEquals(List.of("install-first", "install-broken", "close-broken", "close-first"), events);
@@ -506,6 +511,7 @@ class ExtensionLifecycleTest {
   }
 
   @Test
+  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
   void rejectsProviderSideNestedAuthenticationSelectionWithoutPublishingTheEndpoint()
       throws Exception {
     var calls = new AtomicInteger();
@@ -522,9 +528,10 @@ class ExtensionLifecycleTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.authentication(auth).extensions(nested);
+      var routes = app.routes();
       assertThrows(
           IllegalStateException.class,
-          () -> app.routes().get("/nested", (_, _) -> {}, e -> e.get(nested)));
+          () -> routes.get("/nested", (_, _) -> {}, e -> e.get(nested)));
       app.routes().get("/nested", (_, response) -> response.text("retry"));
       app.start();
       assertEquals("retry", send(client, app, "GET", "/nested").body());
@@ -574,6 +581,7 @@ class ExtensionLifecycleTest {
     }
   }
 
+  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
   private static Extension<Object> callbackProvider(
       String name, LinkedBlockingQueue<String> events) {
     return new Extension<>() {

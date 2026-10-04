@@ -75,8 +75,9 @@ class ApplicationCallbacksTest {
         app.extensions(extension);
       }
 
+      var callbacks = retained.get();
       for (var register : registrations()) {
-        assertThrows(IllegalStateException.class, () -> register.accept(retained.get()));
+        assertThrows(IllegalStateException.class, () -> register.accept(callbacks));
       }
     }
   }
@@ -102,12 +103,13 @@ class ApplicationCallbacksTest {
         app.extensions(extension);
       }
 
+      var callbacks = retained.get();
       executor
           .submit(
               () ->
                   assertThrows(
                       IllegalStateException.class,
-                      () -> retained.get().beforeRouteHandler((_, _) -> {})))
+                      () -> callbacks.beforeRouteHandler((_, _) -> {})))
           .get(5, TimeUnit.SECONDS);
     }
   }
@@ -374,6 +376,7 @@ class ApplicationCallbacksTest {
     }
   }
 
+  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
   private static Extension<Void> extension(Consumer<ApplicationCallbacks> installation) {
     return new Extension<>() {
       @Override
