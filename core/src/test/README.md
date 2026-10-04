@@ -66,6 +66,14 @@ query/cookie/session/header/authority values rather than retaining Request.
 The case-sensitive miss has a successful upgrade/message positive control and
 must leave the listener-factory count unchanged.
 
+Issue 76 T05 independently adapts pinned Javalin 7.2.3 `TestWsLogging` in
+`AccessLogTest.logsBoundedAcceptedWebSocketUpgradesWithoutHandshakeSecrets` and
+`logsBoundedDeniedWebSocketUpgradesWithoutHandshakeOrFailureSecrets`.
+Live upgrades with long credentials and path identifiers produce single bounded
+101/403 records using the configured route template. Neither record includes
+handshake secrets; denial also excludes exception details and skips the listener
+factory. These tests cover Shoostr's terminal access log, not message-payload logging.
+
 Query/form parsing and repeated raw headers now have 43 cases in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:
