@@ -189,6 +189,112 @@ public class WebSocketRoutesTest {
 
   @Test
   @Timeout(10)
+  void rejectsWebSocketRoutesWithWrongLiteralCaseBeforeCallingTheFactory() throws Exception {
+    var factoryCalls = new AtomicInteger();
+    var received = new CompletableFuture<String>();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes()
+          .websocket(
+              "/rooms/{id}",
+              (request, _) -> {
+                factoryCalls.incrementAndGet();
+                return new EchoListener(request.pathParam("id").orElseThrow() + ":");
+              });
+      app.start();
+      var socket =
+          client
+              .newWebSocketBuilder()
+              .connectTimeout(Duration.ofSeconds(3))
+              .buildAsync(
+                  URI.create("ws://127.0.0.1:" + app.port() + "/rooms/lobby"), receiving(received))
+              .get(3, TimeUnit.SECONDS);
+
+      try {
+        socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
+        assertEquals("lobby:hello", received.get(3, TimeUnit.SECONDS));
+        assertEquals(1, factoryCalls.get());
+        assertEquals(404, failedHandshakeStatus(client, app, "/Rooms/lobby"));
+        assertEquals(1, factoryCalls.get());
+      } finally {
+        socket.abort();
+      }
+    }
+  }
+
+  @Test
+  @Timeout(15)
+  void passesHandshakeMetadataAndExistingSessionToTheListenerFactory() throws Exception {
+    var received = new CompletableFuture<String>();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.sessions();
+      app.routes()
+          .get(
+              "/session",
+              (request, response) -> {
+                var session = request.session(true).orElseThrow();
+                session.setAttribute("name", "alice");
+                response.text(session.getId());
+              });
+      app.routes()
+          .websocket(
+              "/metadata",
+              (request, _) -> {
+                var session = request.session(false).orElseThrow();
+                var prefix =
+                    String.join(
+                        "|",
+                        request.queryParam("city").orElseThrow(),
+                        request.cookie("theme").orElseThrow(),
+                        Objects.toString(session.getAttribute("name")),
+                        session.getId(),
+                        request.header("X-Handshake").orElseThrow(),
+                        request.authority().orElseThrow());
+                return new EchoListener(prefix + "|");
+              });
+      app.start();
+
+      var created =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/session"))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, created.statusCode());
+      assertFalse(created.body().isBlank());
+      var cookie = created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+      var socket =
+          client
+              .newWebSocketBuilder()
+              .connectTimeout(Duration.ofSeconds(3))
+              .header("Cookie", cookie + "; theme=dark")
+              .header("X-Handshake", "present")
+              .buildAsync(
+                  URI.create("ws://127.0.0.1:" + app.port() + "/metadata?city=M%C3%BCnchen+city"),
+                  receiving(received))
+              .get(3, TimeUnit.SECONDS);
+
+      try {
+        socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
+        assertEquals(
+            "München city|dark|alice|"
+                + created.body()
+                + "|present|127.0.0.1:"
+                + app.port()
+                + "|hello",
+            received.get(3, TimeUnit.SECONDS));
+      } finally {
+        socket.abort();
+      }
+    }
+  }
+
+  @Test
+  @Timeout(10)
   void passesParsedProtocolsAndPathParametersToAListenerFactoryForEachConnection()
       throws Exception {
     var factoryCalls = new AtomicInteger();
