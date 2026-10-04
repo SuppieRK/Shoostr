@@ -99,6 +99,14 @@ A live encoded UTF-8 path with a literal plus is decoded by `onRouteMatched`;
 the endpoint returns the value that hook stored in the public request attributes.
 This proves availability before endpoint execution without private route internals.
 
+Issue 76 T13 independently adapts pinned Javalin 7.2.3 `MicrometerPluginTest`
+in the micrometer module's `MicrometerMetricsTest`. Separate live cases check
+the complete method/route/status/error tag set for explicit 200/404/500,
+unmatched 404, thrown failure 500, unfollowed 302 and a real conditional-file 304.
+Templates or UNMATCHED replace private path values, and failure details are not
+labels. Every request gets one completed timer count; conditional validation uses
+the returned file ETag. Javalin's optional URI/outcome-tag switches are not added.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:
