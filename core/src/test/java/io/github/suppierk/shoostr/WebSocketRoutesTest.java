@@ -427,6 +427,62 @@ public class WebSocketRoutesTest {
 
   @Test
   @Timeout(10)
+  void echoesTenRapidDistinctMessagesCompletelyAndInOrder() throws Exception {
+    var expected =
+        List.of("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten");
+    var received = new CompletableFuture<List<String>>();
+    var messages = new ArrayList<String>();
+    var partial = new StringBuilder();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes().websocket("/burst", (_, _) -> new EchoListener());
+      app.start();
+      var socket =
+          client
+              .newWebSocketBuilder()
+              .connectTimeout(Duration.ofSeconds(3))
+              .buildAsync(
+                  URI.create("ws://127.0.0.1:" + app.port() + "/burst"),
+                  new WebSocket.Listener() {
+                    @Override
+                    public CompletionStage<?> onText(
+                        WebSocket webSocket, CharSequence data, boolean last) {
+                      partial.append(data);
+                      if (last) {
+                        messages.add(partial.toString());
+                        partial.setLength(0);
+                        if (messages.size() == expected.size()) {
+                          received.complete(List.copyOf(messages));
+                        }
+                      }
+
+                      webSocket.request(1);
+                      return CompletableFuture.completedFuture(null);
+                    }
+
+                    @Override
+                    public void onError(WebSocket webSocket, Throwable error) {
+                      received.completeExceptionally(error);
+                    }
+                  })
+              .get(3, TimeUnit.SECONDS);
+
+      try {
+        var sends = CompletableFuture.completedFuture(socket);
+        for (var message : expected) {
+          sends = sends.thenCompose(webSocket -> webSocket.sendText(message, true));
+        }
+        sends.get(3, TimeUnit.SECONDS);
+        assertEquals(expected, received.get(3, TimeUnit.SECONDS));
+      } finally {
+        socket.abort();
+      }
+    }
+  }
+
+  @Test
+  @Timeout(10)
   void echoesTextThroughAWebSocketRoute() throws Exception {
     var received = new LinkedBlockingQueue<String>();
     var factoryCalls = new AtomicInteger();
