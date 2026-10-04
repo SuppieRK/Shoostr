@@ -22,6 +22,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -35,6 +37,105 @@ class MultipartRequestTest {
   private static final String BOUNDARY = "multipart-test-boundary";
   private static final byte[] BINARY_CONTENT = {0, 1, -1, 127, -128};
   @TempDir Path temporaryDirectory;
+
+  @Test
+  void preservesALargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage() throws Exception {
+    var content = "é".repeat(95 * 1024);
+    var directory = Files.createDirectory(temporaryDirectory.resolve("large-text"));
+    var multipart = new MultipartOptions(300_000, 250_000, 2, 8192, 1024, directory);
+    var completed = new CompletableFuture<Void>();
+    var body =
+        ("--"
+                + BOUNDARY
+                + "\r\nContent-Disposition: form-data; name=\"document\"\r\n\r\n"
+                + content
+                + "\r\n--"
+                + BOUNDARY
+                + "--\r\n")
+            .getBytes(StandardCharsets.UTF_8);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0).withMultipart(multipart));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.afterRequest(_ -> completed.complete(null));
+      app.routes()
+          .post(
+              "/upload",
+              (request, response) -> {
+                var fields = request.formParamMap();
+                assertEquals(Map.of("document", List.of(content)), fields);
+                assertTrue(request.files().isEmpty());
+
+                try (var files = Files.list(directory)) {
+                  assertTrue(files.findAny().isPresent());
+                }
+
+                response.text(request.formParam("document").orElseThrow());
+              });
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/upload"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                  .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(200, result.statusCode());
+      assertArrayEquals(content.getBytes(StandardCharsets.UTF_8), result.body());
+      completed.get(3, TimeUnit.SECONDS);
+      awaitFile(directory, false);
+    }
+  }
+
+  @Test
+  void preservesASameSizedNamedMultipartPartAsAFileAndCleansItsTemporaryStorage() throws Exception {
+    var content = "é".repeat(95 * 1024);
+    var directory = Files.createDirectory(temporaryDirectory.resolve("large-file"));
+    var multipart = new MultipartOptions(300_000, 250_000, 2, 8192, 1024, directory);
+    var completed = new CompletableFuture<Void>();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0).withMultipart(multipart));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.afterRequest(_ -> completed.complete(null));
+      app.routes()
+          .post(
+              "/upload",
+              (request, response) -> {
+                assertTrue(request.formParamMap().isEmpty());
+                assertEquals(1, request.files().size());
+                assertEquals(1, request.files("document").size());
+                var upload = request.file("document").orElseThrow();
+                assertEquals("document", upload.name());
+                assertEquals("report.txt", upload.fileName());
+                assertEquals(194_560, upload.size());
+
+                try (var files = Files.list(directory)) {
+                  assertTrue(files.findAny().isPresent());
+                }
+
+                try (var input = upload.content()) {
+                  response.body("application/octet-stream", input.readAllBytes());
+                }
+              });
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/upload"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                  .POST(HttpRequest.BodyPublishers.ofByteArray(fileBody(content)))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(200, result.statusCode());
+      assertArrayEquals(content.getBytes(StandardCharsets.UTF_8), result.body());
+      completed.get(3, TimeUnit.SECONDS);
+      awaitFile(directory, false);
+    }
+  }
 
   @Test
   void readsMultipartTextAndFileFields() throws Exception {
