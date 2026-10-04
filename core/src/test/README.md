@@ -231,6 +231,13 @@ The short client/server frame literals are independent RFC fixtures, not a
 framework parser. Native frame buffers are released and owned clients close
 before the application. The client and ALPN provider are test-only dependencies.
 
+Issue76 B04 adopts optional file retrieval for nonmultipart input, independently
+inspired by pinned Javalin TestMultipartForms and selected by the user. Live
+tests cover absent/text/JSON/form media types, buffered and streamed access orders,
+and bodyless input; empty results must not claim or consume the ordinary body.
+Malformed declared multipart and actual multipart/raw-body exclusivity remain
+required controls. Test implementations are independently authored, not copied.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:

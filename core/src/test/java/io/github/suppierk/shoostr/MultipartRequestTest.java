@@ -34,12 +34,216 @@ import org.eclipse.jetty.http.HttpTester;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class MultipartRequestTest {
   private static final String BOUNDARY = "multipart-test-boundary";
   private static final byte[] BINARY_CONTENT = {0, 1, -1, 127, -128};
   @TempDir Path temporaryDirectory;
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"", "text/plain", "application/json", "application/x-www-form-urlencoded"})
+  void preservesNonmultipartBodyBytesWhenFileAccessorsAreCalledFirst(String contentType)
+      throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.routes()
+          .post(
+              "/files",
+              (request, response) -> {
+                assertNoUploads(request);
+                response.body("application/octet-stream", request.bodyBytes());
+              });
+      app.start();
+      var request =
+          HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/files"))
+              .timeout(Duration.ofSeconds(3))
+              .POST(HttpRequest.BodyPublishers.ofByteArray(BINARY_CONTENT));
+      if (!contentType.isEmpty()) {
+        request.header("Content-Type", contentType);
+      }
+
+      var result = client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(200, result.statusCode());
+      assertArrayEquals(BINARY_CONTENT, result.body());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"", "text/plain", "application/json", "application/x-www-form-urlencoded"})
+  void allowsNonmultipartFileAccessAfterBufferedBodyConsumption(String contentType)
+      throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.routes()
+          .post(
+              "/files",
+              (request, response) -> {
+                request.bodyBytes();
+                assertNoUploads(request);
+                response.body("application/octet-stream", request.bodyBytes());
+              });
+      app.start();
+      var request =
+          HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/files"))
+              .timeout(Duration.ofSeconds(3))
+              .POST(HttpRequest.BodyPublishers.ofByteArray(BINARY_CONTENT));
+      if (!contentType.isEmpty()) {
+        request.header("Content-Type", contentType);
+      }
+
+      var result = client.send(request.build(), HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(200, result.statusCode());
+      assertArrayEquals(BINARY_CONTENT, result.body());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void preservesNonmultipartInputRegardlessOfFileAccessOrder(boolean filesFirst) throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.routes()
+          .post(
+              "/files",
+              (request, response) -> {
+                if (filesFirst) {
+                  assertNoUploads(request);
+                }
+
+                try (var input = request.input()) {
+                  var content = input.readAllBytes();
+                  if (!filesFirst) {
+                    assertNoUploads(request);
+                  }
+
+                  assertEquals(-1, input.read());
+                  response.body("application/octet-stream", content);
+                }
+              });
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/files"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Content-Type", "application/octet-stream")
+                  .POST(HttpRequest.BodyPublishers.ofByteArray(BINARY_CONTENT))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(200, result.statusCode());
+      assertArrayEquals(BINARY_CONTENT, result.body());
+    }
+  }
+
+  @Test
+  void returnsNoUploadsForABodylessRequestWithoutAContentType() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.routes()
+          .get(
+              "/files",
+              (request, response) -> {
+                assertNoUploads(request);
+                response.text(request.bodyText());
+              });
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/files"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("", result.body());
+    }
+  }
+
+  @Test
+  void preservesNonmultipartUtf8TextAfterFileLookup() throws Exception {
+    var content = "café + %23\n";
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.routes()
+          .post(
+              "/files",
+              (request, response) -> {
+                assertNoUploads(request);
+                response.text(request.bodyText());
+              });
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/files"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Content-Type", "text/plain")
+                  .POST(HttpRequest.BodyPublishers.ofString(content, StandardCharsets.UTF_8))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+      assertEquals(200, result.statusCode());
+      assertEquals(content, result.body());
+    }
+  }
+
+  @Test
+  void keepsMultipartWithoutFilesExclusiveFromRawBodyAccess() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.routes()
+          .post(
+              "/files",
+              (request, response) -> {
+                assertNoUploads(request);
+                assertThrows(IllegalStateException.class, request::bodyBytes);
+                response.text(request.formParam("document").orElseThrow());
+              });
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/files"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                  .POST(
+                      HttpRequest.BodyPublishers.ofByteArray(
+                          partBody("Content-Disposition: form-data; name=\"document\"")))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("contents", result.body());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "multipart/form-data",
+        "multipart/form-data; boundary=" + BOUNDARY,
+        "multipart/form-data; boundary=\"unterminated"
+      })
+  void rejectsDeclaredMalformedMultipartDuringFileLookup(String contentType) throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.routes()
+          .post(
+              "/files",
+              (request, response) -> response.text(Integer.toString(request.files().size())));
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/files"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Content-Type", contentType)
+                  .POST(HttpRequest.BodyPublishers.ofByteArray(malformedBody()))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, result.statusCode());
+      assertEquals("Bad Request", result.body());
+    }
+  }
 
   @Test
   void sendsContinueBeforeReceivingAndPreservingABinaryMultipartUpload() throws Exception {
@@ -1080,6 +1284,15 @@ class MultipartRequestTest {
       assertEquals(200, result.statusCode());
       assertEquals("<>", result.body());
     }
+  }
+
+  private static void assertNoUploads(Request request) throws IOException {
+    assertEquals(Map.of(), request.files());
+    assertEquals(List.of(), request.files("document"));
+    assertTrue(request.file("document").isEmpty());
+    assertThrows(
+        UnsupportedOperationException.class, () -> request.files().put("document", List.of()));
+    assertThrows(UnsupportedOperationException.class, () -> request.files("document").clear());
   }
 
   private static byte[] body() {
