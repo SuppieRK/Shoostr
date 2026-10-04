@@ -70,6 +70,54 @@ public class WebSocketRoutesTest {
   @TempDir Path temporaryDirectory;
 
   @Test
+  @Timeout(15)
+  void sendsAServerFirstMessageThenRepliesWithSuccessfulNativeSendCallbacks() throws Exception {
+    var firstSent = new CompletableFuture<Void>();
+    var replySent = new CompletableFuture<Void>();
+    var received = new LinkedBlockingQueue<String>(2);
+    var pending = new StringBuilder();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.routes().websocket("/greeting", (_, _) -> new GreetingListener(firstSent, replySent));
+      app.start();
+
+      var socket =
+          client
+              .newWebSocketBuilder()
+              .connectTimeout(Duration.ofSeconds(3))
+              .buildAsync(
+                  URI.create("ws://127.0.0.1:" + app.port() + "/greeting"),
+                  new WebSocket.Listener() {
+                    @Override
+                    public CompletionStage<?> onText(
+                        WebSocket webSocket, CharSequence data, boolean last) {
+                      pending.append(data);
+                      if (last) {
+                        received.add(pending.toString());
+                        pending.setLength(0);
+                      }
+
+                      webSocket.request(1);
+                      return CompletableFuture.completedFuture(null);
+                    }
+                  })
+              .get(3, TimeUnit.SECONDS);
+
+      try {
+        assertEquals("server-first", received.poll(3, TimeUnit.SECONDS));
+        firstSent.get(3, TimeUnit.SECONDS);
+        socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
+        assertEquals("reply:ping", received.poll(3, TimeUnit.SECONDS));
+        replySent.get(3, TimeUnit.SECONDS);
+        assertTrue(received.isEmpty());
+      } finally {
+        socket.abort();
+      }
+    }
+  }
+
+  @Test
   @Timeout(10)
   void echoesTextThroughAWebSocketRoute() throws Exception {
     var received = new LinkedBlockingQueue<String>();
@@ -1062,6 +1110,46 @@ public class WebSocketRoutesTest {
         return CompletableFuture.completedFuture(null);
       }
     };
+  }
+
+  public static final class GreetingListener implements Session.Listener {
+    private final AtomicReference<Session> connection;
+    private final CompletableFuture<Void> firstSent;
+    private final CompletableFuture<Void> replySent;
+
+    public GreetingListener(CompletableFuture<Void> firstSent, CompletableFuture<Void> replySent) {
+      this.connection = new AtomicReference<>();
+      this.firstSent = Objects.requireNonNull(firstSent);
+      this.replySent = Objects.requireNonNull(replySent);
+    }
+
+    @Override
+    public void onWebSocketOpen(Session session) {
+      connection.set(session);
+      session.sendText(
+          "server-first",
+          Callback.from(() -> firstSent.complete(null), firstSent::completeExceptionally));
+      session.demand();
+    }
+
+    @Override
+    public void onWebSocketText(String message) {
+      var session = Objects.requireNonNull(connection.get());
+      session.sendText(
+          "reply:" + message,
+          Callback.from(
+              () -> {
+                replySent.complete(null);
+                session.demand();
+              },
+              replySent::completeExceptionally));
+    }
+
+    @Override
+    public void onWebSocketError(Throwable failure) {
+      firstSent.completeExceptionally(failure);
+      replySent.completeExceptionally(failure);
+    }
   }
 
   public static final class EchoListener implements Session.Listener {

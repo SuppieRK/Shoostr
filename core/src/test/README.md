@@ -202,6 +202,15 @@ authenticated request resumes the handler's stored marker without a new cookie.
 The configured direct client emits no provider cookies. Indirect clients remain
 unsupported.
 
+Issue 76 T29 adds `WebSocketRoutesTest`
+`sendsAServerFirstMessageThenRepliesWithSuccessfulNativeSendCallbacks`,
+independently adapting pinned Jooby 4.5.4 `Issue2858`. The live client receives
+the opening message before sending any text, then sends a ping and receives its
+exact reply. Both native send callbacks must complete successfully; callback
+errors fail the awaited futures. The fixture uses a public listener class,
+matching Jetty's reflective callback-access requirement, and explicitly aborts
+the owned client socket during cleanup. No callback or protocol wrapper is added.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:
