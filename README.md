@@ -147,6 +147,13 @@ factory runs. An ordinary GET and a WebSocket route may share a path, with first
 registration winning among routes of the same kind. Jetty handles framing, limits,
 ping/pong, close, and session shutdown through its native listener/container.
 
+With `app.http2()`, the same WebSocket registration also accepts HTTP/2 extended
+CONNECT over h2c or TLS/ALPN. HTTP/1.1 still uses GET/101; HTTP/2 uses CONNECT/200.
+`Request.method()` retains that wire method, and route callbacks, authentication
+and runtime availability run before listener creation on both transports. Other
+extended CONNECT protocols remain ordinary CONNECT routes. Jetty owns negotiation
+and frame delivery; no separate protocol handler or route registration is needed.
+
 The default Jetty container permits at most **32 pending outgoing frames per session**;
 the native `ServerWebSocketContainer.setMaxOutgoingFrames` and
 `Session.setMaxOutgoingFrames` override it. Configure the container from

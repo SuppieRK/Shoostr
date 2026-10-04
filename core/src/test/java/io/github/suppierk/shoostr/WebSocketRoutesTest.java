@@ -13,10 +13,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.extensions.AdmissionExtension;
+import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.InetAddress;
@@ -35,7 +37,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.KeyStore;
-import java.security.Principal;
 import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -50,12 +51,23 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
+import org.eclipse.jetty.http.HostPortHttpField;
+import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.http.HttpVersion;
+import org.eclipse.jetty.http.MetaData;
+import org.eclipse.jetty.http2.api.Stream;
+import org.eclipse.jetty.http2.client.HTTP2Client;
+import org.eclipse.jetty.http2.frames.DataFrame;
+import org.eclipse.jetty.http2.frames.HeadersFrame;
+import org.eclipse.jetty.http2.frames.SettingsFrame;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.websocket.api.Callback;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.server.ServerUpgradeResponse;
@@ -68,6 +80,302 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 public class WebSocketRoutesTest {
   @TempDir Path temporaryDirectory;
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void echoesTextOverNegotiatedHttp2WebSocketConnectWithoutBreakingHttp1(boolean secure)
+      throws Exception {
+    var factories = new AtomicInteger();
+    var headers = new CompletableFuture<MetaData.Response>();
+    var received = new CompletableFuture<byte[]>();
+    var content = new ByteArrayOutputStream();
+    var keyStore = KeyStore.getInstance("PKCS12");
+
+    try (var input =
+        Objects.requireNonNull(getClass().getResourceAsStream("/localhost-test.p12"))) {
+      keyStore.load(input, "changeit".toCharArray());
+    }
+
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(keyStore);
+    var context = SSLContext.getInstance("TLS");
+    context.init(null, trust.getTrustManagers(), null);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var http =
+            HttpClient.newBuilder()
+                .sslContext(context)
+                .connectTimeout(Duration.ofSeconds(3))
+                .build();
+        var client = new HTTP2Client()) {
+      app.http2();
+      if (secure) {
+        app.tls(
+            tls -> {
+              tls.setKeyStore(keyStore);
+              tls.setKeyStorePassword("changeit");
+            });
+      }
+
+      app.routes()
+          .websocket(
+              "/connect",
+              (request, _) -> {
+                factories.incrementAndGet();
+                assertEquals(secure, request.isSecure());
+                return new EchoListener();
+              });
+      app.start();
+      var firstMessage = new CompletableFuture<String>();
+      var firstSocket =
+          http.newWebSocketBuilder()
+              .connectTimeout(Duration.ofSeconds(3))
+              .buildAsync(
+                  URI.create((secure ? "wss" : "ws") + "://localhost:" + app.port() + "/connect"),
+                  receiving(firstMessage))
+              .get(3, TimeUnit.SECONDS);
+
+      try {
+        firstSocket.sendText("ping", true).get(3, TimeUnit.SECONDS);
+        assertEquals("ping", firstMessage.get(3, TimeUnit.SECONDS));
+      } finally {
+        firstSocket.abort();
+      }
+
+      assertEquals(1, factories.get());
+
+      var ssl = new SslContextFactory.Client();
+      ssl.setTrustStore(keyStore);
+      client.getClientConnector().setSslContextFactory(ssl);
+      var connection = connectHttp2(client, app, secure);
+
+      var request =
+          new MetaData.ConnectRequest(
+              secure ? "https" : "http",
+              new HostPortHttpField("127.0.0.1:" + app.port()),
+              "/connect",
+              HttpFields.build().put("Sec-WebSocket-Version", "13").asImmutable(),
+              "websocket");
+      var stream =
+          connection
+              .newStream(
+                  new HeadersFrame(request, null, false),
+                  new Stream.Listener() {
+                    @Override
+                    public void onHeaders(Stream stream, HeadersFrame frame) {
+                      headers.complete(
+                          assertInstanceOf(MetaData.Response.class, frame.getMetaData()));
+                      if (!frame.isEndStream()) {
+                        stream.demand();
+                      }
+                    }
+
+                    @Override
+                    public void onDataAvailable(Stream stream) {
+                      var data = stream.readData();
+                      if (data == null) {
+                        stream.demand();
+                        return;
+                      }
+
+                      try {
+                        var buffer = data.frame().getByteBuffer();
+                        var bytes = new byte[buffer.remaining()];
+                        buffer.get(bytes);
+                        content.writeBytes(bytes);
+                        if (content.size() >= 6 || data.frame().isEndStream()) {
+                          received.complete(content.toByteArray());
+                        } else {
+                          stream.demand();
+                        }
+                      } finally {
+                        data.release();
+                      }
+                    }
+                  })
+              .get(3, TimeUnit.SECONDS);
+      var result = headers.get(3, TimeUnit.SECONDS);
+      assertEquals(HttpVersion.HTTP_2, result.getHttpVersion());
+      assertEquals(200, result.getStatus(), "WebSocket factory calls: " + factories.get());
+      assertEquals(2, factories.get());
+      stream
+          .data(
+              new DataFrame(
+                  stream.getId(),
+                  ByteBuffer.wrap(
+                      new byte[] {(byte) 0x81, (byte) 0x84, 0, 0, 0, 0, 'p', 'i', 'n', 'g'}),
+                  false))
+          .get(3, TimeUnit.SECONDS);
+      assertArrayEquals(
+          new byte[] {(byte) 0x81, 4, 'p', 'i', 'n', 'g'}, received.get(3, TimeUnit.SECONDS));
+    }
+  }
+
+  @Test
+  @Timeout(15)
+  void deniesUnauthenticatedHttp2WebSocketsBeforeCallingTheirListenerFactory() throws Exception {
+    var factories = new AtomicInteger();
+    var authentication = chatAuthentication();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = new HTTP2Client()) {
+      app.http2().authentication(authentication);
+      app.routes()
+          .websocket(
+              "/authenticated",
+              (request, _) -> {
+                assertEquals("alice", request.principal().orElseThrow().getName());
+                factories.incrementAndGet();
+                return new EchoListener();
+              },
+              extensions -> extensions.get(authentication).required());
+      app.start();
+      var connection = connectHttp2(client, app);
+      var fields = HttpFields.build().put("Sec-WebSocket-Version", "13");
+      var accepted =
+          http2ConnectResponse(
+              connection,
+              app,
+              "/authenticated",
+              "websocket",
+              HttpFields.build(fields).put("Authorization", "Bearer secret").asImmutable());
+      assertEquals(200, accepted.getStatus());
+      assertEquals(1, factories.get());
+
+      var rejected =
+          http2ConnectResponse(
+              connection, app, "/authenticated", "websocket", fields.asImmutable());
+      assertEquals(401, rejected.getStatus());
+      assertEquals("Bearer realm=\"chat\"", rejected.getHttpFields().get("WWW-Authenticate"));
+      assertEquals(1, factories.get());
+    }
+  }
+
+  @Test
+  @Timeout(15)
+  void keepsOtherExtendedConnectProtocolsOnOrdinaryConnectRoutes() throws Exception {
+    var factories = new AtomicInteger();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = new HTTP2Client()) {
+      app.http2();
+      app.routes()
+          .websocket(
+              "/connect",
+              (_, _) -> {
+                factories.incrementAndGet();
+                return new EchoListener();
+              });
+      app.routes().route(HttpMethods.CONNECT, "/connect", (_, response) -> response.status(204));
+      app.start();
+      var connection = connectHttp2(client, app);
+      var result = http2ConnectResponse(connection, app, "/connect", "other", HttpFields.EMPTY);
+      assertEquals(204, result.getStatus());
+      assertEquals(0, factories.get());
+    }
+  }
+
+  @Test
+  @Timeout(15)
+  void rejectsUnsupportedHttp2WebSocketVersionsWithoutHttp1UpgradeHeaders() throws Exception {
+    var factories = new AtomicInteger();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = new HTTP2Client()) {
+      app.http2();
+      app.routes()
+          .websocket(
+              "/version",
+              (_, _) -> {
+                factories.incrementAndGet();
+                return new EchoListener();
+              });
+      app.start();
+      var connection = connectHttp2(client, app);
+      var result =
+          http2ConnectResponse(
+              connection,
+              app,
+              "/version",
+              "websocket",
+              HttpFields.build().put("Sec-WebSocket-Version", "12").asImmutable());
+      assertEquals(426, result.getStatus());
+      assertEquals("13", result.getHttpFields().get("Sec-WebSocket-Version"));
+      assertNull(result.getHttpFields().get("Upgrade"));
+      assertEquals(0, factories.get());
+    }
+  }
+
+  @Test
+  @Timeout(15)
+  void matchesHttp2WebSocketTemplatesBeforeRunningRouteCallbacks() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = new HTTP2Client()) {
+      app.http2();
+      app.routes()
+          .websocket(
+              "/rooms/{room}",
+              (request, upgrade) -> {
+                assertEquals("€", request.attribute("matched-room").orElseThrow());
+                upgrade.getHeaders().put("X-Matched-Room", "ready");
+                return new EchoListener();
+              },
+              extensions ->
+                  extensions.onRouteMatched(
+                      (request, _) -> {
+                        assertEquals("CONNECT", request.method());
+                        assertEquals("/rooms/{room}", request.routePattern().orElseThrow());
+                        request.attribute("matched-room", request.pathParam("room").orElseThrow());
+                      }));
+      app.start();
+      var connection = connectHttp2(client, app);
+      var result =
+          http2ConnectResponse(
+              connection,
+              app,
+              "/rooms/%E2%82%AC",
+              "websocket",
+              HttpFields.build().put("Sec-WebSocket-Version", "13").asImmutable());
+      assertEquals(200, result.getStatus());
+      assertEquals("ready", result.getHttpFields().get("X-Matched-Room"));
+    }
+  }
+
+  @Test
+  @Timeout(15)
+  void hidesUnavailableHttp2WebSocketRoutesBeforeCallingTheirListenerFactory() throws Exception {
+    var available = new AtomicBoolean(true);
+    var factories = new AtomicInteger();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = new HTTP2Client()) {
+      app.http2();
+      app.routes()
+          .when(
+              available::get,
+              routes ->
+                  routes.websocket(
+                      "/available",
+                      (_, _) -> {
+                        factories.incrementAndGet();
+                        return new EchoListener();
+                      }));
+      app.start();
+      var connection = connectHttp2(client, app);
+      var fields = HttpFields.build().put("Sec-WebSocket-Version", "13").asImmutable();
+      assertEquals(
+          200,
+          http2ConnectResponse(connection, app, "/available", "websocket", fields).getStatus());
+      assertEquals(1, factories.get());
+
+      available.set(false);
+      var result = http2ConnectResponse(connection, app, "/available", "websocket", fields);
+      assertEquals(404, result.getStatus());
+      assertEquals("no-store", result.getHttpFields().get("Cache-Control"));
+      assertEquals(1, factories.get());
+    }
+  }
 
   @Test
   @Timeout(15)
@@ -534,18 +842,7 @@ public class WebSocketRoutesTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      var admission =
-          new AuthenticationExtension() {
-            @Override
-            public void handle(Request request, Response response) throws Exception {
-
-              if (request.header("Authorization").filter("Bearer secret"::equals).isEmpty()) {
-                throw new AuthenticationRequiredException("Bearer realm=\"chat\"");
-              }
-
-              request.principal((Principal) () -> "alice");
-            }
-          };
+      var admission = chatAuthentication();
       app.authentication(admission)
           .routes()
           .path(
@@ -1016,6 +1313,79 @@ public class WebSocketRoutesTest {
       assertEquals(listener.accepted(), delivered);
       socket.abort();
     }
+  }
+
+  private static AuthenticationExtension chatAuthentication() {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        if (request.header("Authorization").filter("Bearer secret"::equals).isEmpty()) {
+          throw new AuthenticationRequiredException("Bearer realm=\"chat\"");
+        }
+
+        request.principal(() -> "alice");
+      }
+    };
+  }
+
+  private static org.eclipse.jetty.http2.api.Session connectHttp2(HTTP2Client client, Shoostr app)
+      throws Exception {
+    return connectHttp2(client, app, false);
+  }
+
+  private static org.eclipse.jetty.http2.api.Session connectHttp2(
+      HTTP2Client client, Shoostr app, boolean secure) throws Exception {
+    var advertised = new CompletableFuture<Integer>();
+    client.setConnectTimeout(3000);
+    client.setIdleTimeout(3000);
+    client.start();
+    var connection =
+        client
+            .connect(
+                secure ? client.getClientConnector().getSslContextFactory() : null,
+                new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
+                new org.eclipse.jetty.http2.api.Session.Listener() {
+                  @Override
+                  public void onSettings(
+                      org.eclipse.jetty.http2.api.Session session, SettingsFrame frame) {
+                    var enabled = frame.getSettings().get(SettingsFrame.ENABLE_CONNECT_PROTOCOL);
+                    if (enabled != null) {
+                      advertised.complete(enabled);
+                    }
+                  }
+                })
+            .get(3, TimeUnit.SECONDS);
+    assertEquals(1, advertised.get(3, TimeUnit.SECONDS));
+    return connection;
+  }
+
+  private static MetaData.Response http2ConnectResponse(
+      org.eclipse.jetty.http2.api.Session connection,
+      Shoostr app,
+      String path,
+      String protocol,
+      HttpFields fields)
+      throws Exception {
+    var received = new CompletableFuture<MetaData.Response>();
+    var request =
+        new MetaData.ConnectRequest(
+            "http", new HostPortHttpField("127.0.0.1:" + app.port()), path, fields, protocol);
+    connection
+        .newStream(
+            new HeadersFrame(request, null, false),
+            new Stream.Listener() {
+              @Override
+              public void onHeaders(Stream stream, HeadersFrame frame) {
+                received.complete(assertInstanceOf(MetaData.Response.class, frame.getMetaData()));
+                if (!frame.isEndStream()) {
+                  stream.demand();
+                }
+              }
+            })
+        .get(3, TimeUnit.SECONDS);
+    var response = received.get(3, TimeUnit.SECONDS);
+    assertEquals(HttpVersion.HTTP_2, response.getHttpVersion());
+    return response;
   }
 
   private static String sendAndReceive(HttpClient client, Shoostr app, String path)

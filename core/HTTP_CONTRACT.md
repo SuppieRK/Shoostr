@@ -251,6 +251,21 @@ real HTTPS, ALPN, same-connection concurrent HTTP/2 streams, h2c, proxy metadata
 wire bytes, ranges, HEAD and startup cleanup. Sources: [Jetty server guide](https://jetty.org/docs/jetty/12.1/programming-guide/server/http.html)
 and [RFC 9110 section 8.6](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.6).
 
+## WebSocket HTTP/2 transport
+
+With `Shoostr.http2()`, existing `Routes.websocket` registrations accept negotiated
+RFC 8441 extended CONNECT on h2c and TLS/ALPN HTTP/2. Only a native HTTP/2 CONNECT
+tunnel with protocol `websocket` uses the WebSocket route index. Its lookup uses
+the registration's GET key, but public request/outcome methods remain CONNECT;
+HTTP/1.1 GET upgrades remain unchanged. Matched callbacks, managed authentication,
+availability and listener creation use the existing admission path. Other tunnel
+protocols fall through to ordinary CONNECT routing. Native Jetty handles SETTINGS,
+HTTP/2 200 handshakes, framing, limits and session ownership. Tests cover negotiated
+exact text frames on both transports with HTTP/1.1 controls, 401 denial before
+factory invocation, unsupported-version 426 without HTTP/1-only wire headers,
+decoded template context in matched hooks and non-cacheable availability 404.
+This does not imply HTTP/3 support. See [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441.html).
+
 ## Optional request retrieval
 
 All17 potentially absent Request accessors return non-null JDK Optionals. Missing named path parameters and access before route selection return empty; null names still reject, and decoding failures remain failures. Present empty query, form, header and cookie values remain present. Raw query absence differs from an explicitly empty query. Native URI/address absence is represented without inventing metadata or changing Jetty fallbacks.

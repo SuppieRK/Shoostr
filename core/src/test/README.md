@@ -219,6 +219,18 @@ The final 200 preserves named file metadata and exact binary content. It does
 not mistake a client-hidden interim response or eager body transmission for
 continue support. No native policy or production code is changed.
 
+Issue 76 B01 was explicitly expanded to implement HTTP/2 WebSockets after a
+negotiated live CONNECT returned404 without reaching the listener factory.
+`WebSocketRoutesTest` now checks exact text-frame round trips over h2c and
+TLS/ALPN, with working HTTP/1.1 controls; managed-authentication denial before
+factory creation; other CONNECT protocols retaining ordinary routes; invalid
+versions receiving426 without an HTTP/1 Upgrade header; matched-hook access to
+decoded parameters with raw CONNECT method; and dynamic availability404 with
+no-store. Public Jetty HTTP2Client handles negotiation, HPACK and flow control.
+The short client/server frame literals are independent RFC fixtures, not a
+framework parser. Native frame buffers are released and owned clients close
+before the application. The client and ALPN provider are test-only dependencies.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:
