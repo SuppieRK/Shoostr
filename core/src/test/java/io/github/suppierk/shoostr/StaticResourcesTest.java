@@ -544,6 +544,173 @@ class StaticResourcesTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void validatesTheFallbackResourceSelectedFromComposedStaticSources(boolean filesystemFirst)
+      throws Exception {
+    assumeSecureDirectoryOperations();
+    var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
+    var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
+    var fallback = filesystemFirst ? classpath : filesystem;
+    Files.writeString(fallback.resolve("fallback.txt"), "selected fallback resource");
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
+      app.start();
+      var uri = URI.create("http://127.0.0.1:" + app.port() + "/assets/fallback.txt");
+
+      var selected =
+          client.send(
+              HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(3)).build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, selected.statusCode());
+      assertEquals("selected fallback resource", selected.body());
+      var etag = selected.headers().firstValue("ETag").orElseThrow();
+      assertFalse(etag.isBlank());
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(uri)
+                  .timeout(Duration.ofSeconds(3))
+                  .header("If-None-Match", etag)
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(304, result.statusCode());
+      assertEquals("", result.body());
+      assertEquals(etag, result.headers().firstValue("ETag").orElseThrow());
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void returnsNotFoundWhenNeitherComposedStaticSourceContainsThePath(boolean filesystemFirst)
+      throws Exception {
+    assumeSecureDirectoryOperations();
+    var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
+    var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
+    Files.writeString(filesystem.resolve("shared.txt"), "filesystem content");
+    Files.writeString(classpath.resolve("shared.txt"), "classpath content");
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
+      app.start();
+
+      var control =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/shared.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, control.statusCode());
+      assertEquals(filesystemFirst ? "filesystem content" : "classpath content", control.body());
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/missing.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(404, result.statusCode());
+      assertEquals("Not found", result.body());
+      assertTrue(result.headers().allValues("ETag").isEmpty());
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void prefersTheFirstRegisteredStaticSourceWhenBothContainTheSamePath(boolean filesystemFirst)
+      throws Exception {
+    assumeSecureDirectoryOperations();
+    var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
+    var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
+    Files.writeString(filesystem.resolve("shared.txt"), "filesystem winner");
+    Files.writeString(classpath.resolve("shared.txt"), "classpath candidate");
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/shared.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals(filesystemFirst ? "filesystem winner" : "classpath candidate", result.body());
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void fallsBackBetweenFilesystemAndClasspathSourcesAtTheSamePrefix(boolean filesystemFirst)
+      throws Exception {
+    assumeSecureDirectoryOperations();
+    var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
+    var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
+    Files.writeString(filesystem.resolve("filesystem-only.txt"), "filesystem content");
+    Files.writeString(classpath.resolve("classpath-only.txt"), "classpath content");
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
+      app.start();
+
+      var filesystemResult =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/filesystem-only.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, filesystemResult.statusCode());
+      assertEquals("filesystem content", filesystemResult.body());
+
+      var classpathResult =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/classpath-only.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, classpathResult.statusCode());
+      assertEquals("classpath content", classpathResult.body());
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
   @Test
   void servesClasspathFilesBelowTheMountedPath() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
@@ -1196,6 +1363,15 @@ class StaticResourcesTest {
       assertEquals(
           "attachment; filename=\"r_sum_ 2026.txt\"; filename*=UTF-8''r%C3%A9sum%C3%A9%202026.txt",
           result.headers().firstValue("Content-Disposition").orElseThrow());
+    }
+  }
+
+  private static void registerComposedStaticSources(
+      Routes routes, Path filesystem, boolean filesystemFirst) {
+    if (filesystemFirst) {
+      routes.staticFiles("/assets", filesystem).classpathResources("/assets", "/issue76-composed");
+    } else {
+      routes.classpathResources("/assets", "/issue76-composed").staticFiles("/assets", filesystem);
     }
   }
 

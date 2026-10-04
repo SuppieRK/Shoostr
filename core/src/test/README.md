@@ -180,6 +180,18 @@ expected wire sequence checks the complete response's bytes, count and order
 under default bounded streaming, with a request deadline and handler-owned
 completion. This is correctness coverage, not a throughput benchmark.
 
+Issue 76 T27 adds four separate `StaticResourcesTest` cases, independently
+adapting pinned Jooby 4.5.4 `FeaturedTest.assets`:
+`fallsBackBetweenFilesystemAndClasspathSourcesAtTheSamePrefix`,
+`prefersTheFirstRegisteredStaticSourceWhenBothContainTheSamePath`,
+`returnsNotFoundWhenNeitherComposedStaticSourceContainsThePath` and
+`validatesTheFallbackResourceSelectedFromComposedStaticSources`.
+Each runs with both registration orders and isolated temporary sources at one
+URL prefix. Live requests cover source-exclusive content, first-registered
+overlap selection, a controlled miss and bodyless conditional validation of the
+resource found only in the second source. Jooby's per-path cache callback
+remains unoffered.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:
