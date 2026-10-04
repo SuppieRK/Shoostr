@@ -195,8 +195,9 @@ readable regular files only; missing paths and directories return 404. `StaticOp
 a welcome file at the mount root and in nested directories, and a mount-root SPA fallback for
 otherwise missing GET/HEAD resources. Configured names must be simple filenames. These options do
 not enable directory listing; a selected file that disappears after route admission returns 404.
-Encoded traversal is rejected by Jetty before dispatch;
-decoded traversal and symlinks outside a filesystem mount are rejected by the mount. Filesystem
+Encoded traversal is rejected by Jetty before dispatch; under the default URI policy,
+double-encoded traversal, encoded backslashes and NUL return 400 for filesystem and classpath mounts.
+Decoded traversal and symlinks outside a filesystem mount are rejected by the mount. Filesystem
 mounts require secure directory operations from their filesystem provider and retain an anchored root
 descriptor for the app lifetime, so a later replacement of the mounted pathname cannot redirect a
 request outside that directory. Static files use filename-based MIME detection with a binary fallback. Filesystem mounts generate

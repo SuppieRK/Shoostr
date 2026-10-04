@@ -12,7 +12,9 @@ import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.exceptions.UnauthorizedException;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.net.InetAddress;
 import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -38,6 +40,8 @@ import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class StaticResourcesTest {
   @TempDir Path temporaryDirectory;
@@ -571,6 +575,54 @@ class StaticResourcesTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"/%252e%252e/secret.txt", "/..%5csecret.txt", "/site.txt%00"})
+  void rejectsUnsafeEncodedPathsUnderFilesystemMount(String path) throws Exception {
+    assumeSecureDirectoryOperations();
+    var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("public"));
+    Files.writeString(publicDirectory.resolve("site.txt"), "public resource");
+    Files.writeString(temporaryDirectory.resolve("secret.txt"), "outside-mount-secret");
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes().staticFiles("/assets", publicDirectory);
+      app.start();
+      var allowed = send(client, app, "/assets/site.txt");
+      assertEquals(200, allowed.statusCode());
+      assertEquals("public resource", allowed.body());
+
+      var rejected = rawGet(app, "/assets" + path);
+      assertTrue(rejected.startsWith("HTTP/1.1 400 "), rejected);
+      assertFalse(rejected.contains("outside-mount-secret"));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"/%252e%252e/secret.txt", "/..%5csecret.txt", "/site.txt%00"})
+  void rejectsUnsafeEncodedPathsUnderClasspathMount(String path) throws Exception {
+    var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("issue76-public"));
+    Files.writeString(publicDirectory.resolve("site.txt"), "public resource");
+    Files.writeString(temporaryDirectory.resolve("secret.txt"), "outside-mount-secret");
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      app.routes().classpathResources("/assets", "/issue76-public");
+      app.start();
+      var allowed = send(client, app, "/assets/site.txt");
+      assertEquals(200, allowed.statusCode());
+      assertEquals("public resource", allowed.body());
+
+      var rejected = rawGet(app, "/assets" + path);
+      assertTrue(rejected.startsWith("HTTP/1.1 400 "), rejected);
+      assertFalse(rejected.contains("outside-mount-secret"));
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
   @Test
   void returnsNotFoundForMissingFilesDirectoriesAndNonRegularResources() throws Exception {
     assumeSecureDirectoryOperations();
@@ -760,6 +812,15 @@ class StaticResourcesTest {
       assumeTrue(
           stream instanceof SecureDirectoryStream<?>,
           "Filesystem static mounts require SecureDirectoryStream support");
+    }
+  }
+
+  private static String rawGet(Shoostr app, String path) throws IOException {
+    try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
+      socket.setSoTimeout(3000);
+      var request = "GET " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+      socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+      return new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
     }
   }
 
