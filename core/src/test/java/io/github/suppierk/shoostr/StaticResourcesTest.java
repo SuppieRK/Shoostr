@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -10,6 +11,7 @@ import io.github.suppierk.shoostr.extensions.AdmissionExtension;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.exceptions.UnauthorizedException;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.net.InetAddress;
@@ -38,9 +40,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.zip.GZIPInputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class StaticResourcesTest {
@@ -519,6 +523,113 @@ class StaticResourcesTest {
       assertEquals(304, conditional.statusCode());
       assertEquals(200, head.statusCode());
       assertEquals("19", head.headers().firstValue("Content-Length").orElseThrow());
+    }
+  }
+
+  @Test
+  void compressesMountedFilesWhenGzipIsAccepted() throws Exception {
+    assumeSecureDirectoryOperations();
+    var payload = "mounted-compressible-data-€\n".repeat(1024);
+    Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.compression();
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Accept-Encoding", "gzip")
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(200, result.statusCode());
+      assertEquals("gzip", result.headers().firstValue("Content-Encoding").orElseThrow());
+      assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+
+      try (var decoded = new GZIPInputStream(new ByteArrayInputStream(result.body()))) {
+        assertArrayEquals(payload.getBytes(StandardCharsets.UTF_8), decoded.readAllBytes());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"identity", "gzip;q=0"})
+  void servesMountedFilesUnencodedWhenGzipIsNotAccepted(String acceptEncoding) throws Exception {
+    assumeSecureDirectoryOperations();
+    var payload = "mounted-compressible-data-€\n".repeat(1024);
+    Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.compression();
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Accept-Encoding", acceptEncoding)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(200, result.statusCode());
+      assertTrue(result.headers().firstValue("Content-Encoding").isEmpty());
+      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      assertArrayEquals(payload.getBytes(StandardCharsets.UTF_8), result.body());
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "gzip, If-None-Match, ETag",
+    "identity, If-None-Match, ETag",
+    "gzip, If-Modified-Since, Last-Modified",
+    "identity, If-Modified-Since, Last-Modified"
+  })
+  void returnsNotModifiedForMountedFileValidatorsWithCompressionEnabled(
+      String acceptEncoding, String requestHeader, String responseHeader) throws Exception {
+    assumeSecureDirectoryOperations();
+    var payload = "mounted-compressible-data-€\n".repeat(1024);
+    Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.compression();
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var uri = URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt");
+      var full =
+          client.send(
+              HttpRequest.newBuilder(uri)
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Accept-Encoding", acceptEncoding)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(200, full.statusCode());
+      assertEquals(
+          acceptEncoding, full.headers().firstValue("Content-Encoding").orElse("identity"));
+      var validator = full.headers().firstValue(responseHeader).orElseThrow();
+
+      var conditional =
+          client.send(
+              HttpRequest.newBuilder(uri)
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Accept-Encoding", acceptEncoding)
+                  .header(requestHeader, validator)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(304, conditional.statusCode());
+      assertEquals(0, conditional.body().length);
+      assertEquals(validator, conditional.headers().firstValue(responseHeader).orElseThrow());
+      assertTrue(conditional.headers().allValues("Vary").contains("Accept-Encoding"));
     }
   }
 
