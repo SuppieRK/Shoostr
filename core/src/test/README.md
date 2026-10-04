@@ -156,6 +156,13 @@ its filename and every byte; raw JSON retains whitespace, UTF-8 and escape
 spelling. Both assert TLS and negotiated HTTP/2 through the live client.
 Jooby's automatic JSON-to-object conversion remains unoffered.
 
+Issue 76 T21 adds `ServerSentEventsTest`
+`preservesLeadingWhitespaceInMultilineEventDataOnTheWire`, independently
+adapting pinned Jooby 4.5.4 `Issue3479`. A live response asserts the exact UTF-8
+frame for `café\n next`: the second data field contains the protocol separator
+space and the original payload space. This is SSE data framing, not raw HTTP
+body preservation.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:

@@ -188,6 +188,30 @@ class ServerSentEventsTest {
   }
 
   @Test
+  @Timeout(10)
+  void preservesLeadingWhitespaceInMultilineEventDataOnTheWire() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.routes().sse("/events", (_, response) -> response.startEventStream().send("café\n next"));
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          "text/event-stream; charset=utf-8",
+          result.headers().firstValue("Content-Type").orElseThrow());
+      assertArrayEquals(
+          "data: café\ndata:  next\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+    }
+  }
+
+  @Test
   void chainsEventsCommentsAndHeartbeatsOnTheSameWriter() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
