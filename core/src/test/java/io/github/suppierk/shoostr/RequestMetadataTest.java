@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -18,6 +19,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
 import java.security.Principal;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -32,7 +34,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.TrustManagerFactory;
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.http.HttpTester;
 import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.io.EndPoint;
@@ -42,7 +48,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class RequestMetadataTest {
@@ -544,6 +552,64 @@ class RequestMetadataTest {
   }
 
   @Test
+  void normalizesAnExplicitHttpsDefaultPortAndPreservesTheRawQueryOverTls() throws Exception {
+    var keyStore = KeyStore.getInstance("PKCS12");
+
+    try (var input =
+        Objects.requireNonNull(getClass().getResourceAsStream("/localhost-test.p12"))) {
+      keyStore.load(input, "changeit".toCharArray());
+    }
+
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(keyStore);
+    var context = SSLContext.getInstance("TLS");
+    context.init(null, trust.getTrustManagers(), null);
+    app.tls(
+        tls -> {
+          tls.setKeyStore(keyStore);
+          tls.setKeyStorePassword("changeit");
+        });
+    app.routes()
+        .get(
+            "/metadata",
+            (request, response) -> {
+              assertTrue(request.isSecure());
+              assertEquals("https", request.scheme().orElseThrow());
+              assertEquals("localhost", request.authority().orElseThrow());
+              assertEquals("localhost", request.serverName().orElseThrow());
+              assertEquals(443, request.serverPort());
+              assertEquals("https://localhost/metadata", request.url());
+              assertEquals(
+                  "https://localhost/metadata?encoded=a%2Bb&empty=&slash=%2f", request.fullUrl());
+              assertEquals("encoded=a%2Bb&empty=&slash=%2f", request.queryString().orElseThrow());
+              response.text("secure metadata");
+            });
+    app.start();
+
+    try (var socket = (SSLSocket) context.getSocketFactory().createSocket()) {
+      socket.setSoTimeout(3000);
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.startHandshake();
+      socket
+          .getOutputStream()
+          .write(
+              String.join(
+                      "\r\n",
+                      "GET /metadata?encoded=a%2Bb&empty=&slash=%2f HTTP/1.1",
+                      "Host: localhost:443",
+                      "Connection: close",
+                      "",
+                      "")
+                  .getBytes(StandardCharsets.US_ASCII));
+      var result = HttpTester.parseResponse(HttpTester.from(socket.getInputStream()));
+      assertNotNull(result);
+      assertEquals(200, result.getStatus());
+      assertEquals("secure metadata", result.getContent());
+    }
+  }
+
+  @Test
   void handlesIpv6AuthoritiesAndMissingLegacyHost() throws Exception {
     app.routes()
         .get(
@@ -681,8 +747,133 @@ class RequestMetadataTest {
     assertEquals(List.of("kept"), snapshot.get().get("X-VALUE"));
   }
 
+  @Test
+  void matchesAnEncodedUtf8LiteralAtTheLiveListener() throws Exception {
+    app.routes().get("/tést", (_, response) -> response.text("unicode-literal"));
+    app.routes().get("/{value}", (_, response) -> response.text("parameter"));
+    app.start();
+    var result = send(request("/t%C3%A9st"));
+    assertEquals(200, result.statusCode());
+    assertEquals("unicode-literal", result.body());
+  }
+
+  @Test
+  void rejectsAnEncodedSlashBeforeInvokingEitherSegmentShape() throws Exception {
+    var calls = new AtomicInteger();
+    app.routes()
+        .get(
+            "/segments/{value}",
+            (request, response) -> {
+              calls.incrementAndGet();
+              response.text(request.pathParam("value").orElseThrow());
+            });
+    app.routes()
+        .get(
+            "/segments/a/b",
+            (_, response) -> {
+              calls.incrementAndGet();
+              response.text("split");
+            });
+    app.start();
+    var parameter = send(request("/segments/a"));
+    assertEquals(200, parameter.statusCode());
+    assertEquals("a", parameter.body());
+    var split = send(request("/segments/a/b"));
+    assertEquals(200, split.statusCode());
+    assertEquals("split", split.body());
+    assertEquals(2, calls.get());
+    var rejected =
+        HttpTester.parseResponse(
+            exchange(
+                "GET /segments/a%2Fb HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"));
+    assertNotNull(rejected);
+    assertEquals(400, rejected.getStatus());
+    assertEquals(2, calls.get());
+  }
+
+  @ParameterizedTest
+  @CsvSource({"200, false", "200, true", "204, false", "204, true"})
+  void reusesHttp11ConnectionsWithoutAdvertisingKeepAlive(int status, boolean keepAlive)
+      throws Exception {
+    app.routes()
+        .get(
+            "/response",
+            (request, response) -> {
+              assertEquals("HTTP/1.1", request.protocol());
+              response.status(status);
+              if (status == 200) {
+                response.text("first");
+              }
+            });
+    app.routes().get("/next", (_, response) -> response.text("next"));
+    app.start();
+
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      var input = HttpTester.from(socket.getInputStream());
+      var message =
+          "GET /response HTTP/1.1\r\nHost: example.test\r\n"
+              + (keepAlive ? "Connection: keep-alive\r\n" : "")
+              + "\r\n";
+      socket.getOutputStream().write(message.getBytes(StandardCharsets.US_ASCII));
+      var first = HttpTester.parseResponse(input);
+      assertNotNull(first);
+      assertEquals(status, first.getStatus());
+      assertEquals(status == 200 ? "first" : "", first.getContent());
+      assertNull(first.get("Connection"));
+      socket
+          .getOutputStream()
+          .write(
+              "GET /next HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+                  .getBytes(StandardCharsets.US_ASCII));
+      var next = HttpTester.parseResponse(input);
+      assertNotNull(next);
+      assertEquals(200, next.getStatus());
+      assertEquals("next", next.getContent());
+      assertEquals("close", next.get("Connection"));
+      assertEquals(-1, socket.getInputStream().read());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {200, 204})
+  void closesHttp11ConnectionsWhenTheRequestExplicitlyAsks(int status) throws Exception {
+    app.routes()
+        .get(
+            "/response",
+            (request, response) -> {
+              assertEquals("HTTP/1.1", request.protocol());
+              response.status(status);
+              if (status == 200) {
+                response.text("first");
+              }
+            });
+    app.start();
+
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      socket
+          .getOutputStream()
+          .write(
+              "GET /response HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+                  .getBytes(StandardCharsets.US_ASCII));
+      var result = HttpTester.parseResponse(HttpTester.from(socket.getInputStream()));
+      assertNotNull(result);
+      assertEquals(status, result.getStatus());
+      assertEquals(status == 200 ? "first" : "", result.getContent());
+      assertEquals("close", result.get("Connection"));
+      assertEquals(-1, socket.getInputStream().read());
+    }
+  }
+
   private String exchange(String message) throws Exception {
-    try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
       socket.setSoTimeout(3000);
       socket.getOutputStream().write(message.getBytes(StandardCharsets.US_ASCII));
       return new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);

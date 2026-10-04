@@ -25,6 +25,7 @@ import org.eclipse.jetty.compression.server.CompressionConfig;
 import org.eclipse.jetty.compression.server.CompressionHandler;
 import org.eclipse.jetty.http.HttpCookie;
 import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.QuotedQualityCSV;
 import org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory;
 import org.eclipse.jetty.http2.server.HTTP2ServerConnectionFactory;
@@ -48,6 +49,7 @@ import org.jspecify.annotations.Nullable;
 public final class Shoostr implements Closeable {
   private static final long DEFAULT_STOP_TIMEOUT_MILLIS = 5000;
   private static final int DEFAULT_WEBSOCKET_MAX_OUTGOING_FRAMES = 32;
+  private static final String WEBSOCKET_PROTOCOL = "websocket";
 
   private final Options options;
   private final Routes routes;
@@ -1643,18 +1645,28 @@ public final class Shoostr implements Closeable {
     /**
      * Resolves upgrades, ordinary routes and static resources in precedence order.
      *
-     * @param rawRequest transport request with upgrade headers
+     * @param rawRequest transport request with upgrade headers or an extended CONNECT tunnel
      * @param request parsed framework request
      * @return matched endpoint, or null
      */
     private RadixRoutes.@Nullable Endpoint matchEndpoint(
         org.eclipse.jetty.server.Request rawRequest, Request request) {
       var method = HttpMethods.httpMethod(request.method()).orElse(null);
-      var endpoint =
-          websocketRoutes != null
-                  && rawRequest.getHeaders().contains(HttpHeader.UPGRADE, "websocket")
-              ? websocketRoutes.match(request.path(), method)
-              : null;
+      RadixRoutes.Endpoint endpoint = null;
+      if (websocketRoutes != null) {
+        var tunnel = rawRequest.getTunnelSupport();
+        boolean extendedWebSocket =
+            method == HttpMethods.CONNECT
+                && rawRequest.getConnectionMetaData().getHttpVersion() == HttpVersion.HTTP_2
+                && tunnel != null
+                && WEBSOCKET_PROTOCOL.equals(tunnel.getProtocol());
+        if (extendedWebSocket
+            || rawRequest.getHeaders().contains(HttpHeader.UPGRADE, WEBSOCKET_PROTOCOL)) {
+          endpoint =
+              websocketRoutes.match(request.path(), extendedWebSocket ? HttpMethods.GET : method);
+        }
+      }
+
       if (endpoint == null) {
         endpoint = compiledRoutes.match(request.path(), method);
       }
@@ -1764,7 +1776,7 @@ public final class Shoostr implements Closeable {
         return true;
       }
 
-      response.setHeader(HttpHeader.UPGRADE.asString(), "websocket");
+      response.setHeader(HttpHeader.UPGRADE.asString(), WEBSOCKET_PROTOCOL);
       response.setHeader(
           HttpHeader.SEC_WEBSOCKET_VERSION.asString(), WebSocketConstants.SPEC_VERSION_STRING);
       generated(

@@ -15,6 +15,9 @@ import io.github.suppierk.shoostr.http.exceptions.NotFoundException;
 import io.github.suppierk.shoostr.http.exceptions.ServiceUnavailableException;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -70,6 +73,40 @@ class HttpExceptionHandlingTest {
       var closedResponse = retainedResponse.get();
       assertThrows(IllegalStateException.class, closedRequest::path);
       assertThrows(IllegalStateException.class, () -> closedResponse.text("too late"));
+    }
+  }
+
+  @Test
+  void keepsQuotedAndCrLfBearingDiagnosticsOutOfTheEntireHttpResponse() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.routes()
+          .get(
+              "/error",
+              (_, _) -> {
+                throw new BadRequestException(
+                    "\"private-diagnostic\"\r\nX-Injected: secret\r\n\r\nHTTP/1.1 200 Injected");
+              });
+      app.start();
+
+      try (var socket = new Socket()) {
+        socket.setSoTimeout(3000);
+        socket.connect(
+            new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+        socket
+            .getOutputStream()
+            .write(
+                "GET /error HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        var wire = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(wire.startsWith("HTTP/1.1 400 Bad Request\r\n"), wire);
+        assertFalse(wire.contains("private-diagnostic"), wire);
+        assertFalse(wire.contains("X-Injected"), wire);
+        assertFalse(wire.contains("secret"), wire);
+        assertFalse(wire.contains("200 Injected"), wire);
+        int bodyStart = wire.indexOf("\r\n\r\n");
+        assertTrue(bodyStart >= 0, wire);
+        assertEquals("Bad Request", wire.substring(bodyStart + 4));
+      }
     }
   }
 

@@ -53,6 +53,53 @@ class ShoostrLifecycleTest {
   @TempDir private Path temporary;
 
   @Test
+  void omitsTheServerHeaderOnTheDefaultListenerWithoutNativeOverrides() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes().get("/", (_, response) -> response.text("default listener"));
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("default listener", result.body());
+      assertTrue(result.headers().firstValue("Server").isEmpty());
+    }
+  }
+
+  @Test
+  void acceptsALargerThanDefaultHeaderAfterRaisingTheNativeLimit() throws Exception {
+    var value = "x".repeat(12_288);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+      app.modifyHttpConfiguration(
+          configuration -> {
+            assertEquals(8192, configuration.getRequestHeaderSize());
+            configuration.setRequestHeaderSize(16_384);
+          });
+      app.routes()
+          .get(
+              "/",
+              (request, response) -> response.text(request.header("User-Agent").orElseThrow()));
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("User-Agent", value)
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(HttpClient.Version.HTTP_1_1, result.version());
+      assertEquals(value, result.body());
+    }
+  }
+
+  @Test
   void nativeConfigurationRunsInOrderAfterDefaultsAndChangesTheListener() throws Exception {
     var nativeServer = new AtomicReference<Server>();
 

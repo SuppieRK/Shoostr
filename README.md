@@ -147,6 +147,13 @@ factory runs. An ordinary GET and a WebSocket route may share a path, with first
 registration winning among routes of the same kind. Jetty handles framing, limits,
 ping/pong, close, and session shutdown through its native listener/container.
 
+With `app.http2()`, the same WebSocket registration also accepts HTTP/2 extended
+CONNECT over h2c or TLS/ALPN. HTTP/1.1 still uses GET/101; HTTP/2 uses CONNECT/200.
+`Request.method()` retains that wire method, and route callbacks, authentication
+and runtime availability run before listener creation on both transports. Other
+extended CONNECT protocols remain ordinary CONNECT routes. Jetty owns negotiation
+and frame delivery; no separate protocol handler or route registration is needed.
+
 The default Jetty container permits at most **32 pending outgoing frames per session**;
 the native `ServerWebSocketContainer.setMaxOutgoingFrames` and
 `Session.setMaxOutgoingFrames` override it. Configure the container from
@@ -195,8 +202,9 @@ readable regular files only; missing paths and directories return 404. `StaticOp
 a welcome file at the mount root and in nested directories, and a mount-root SPA fallback for
 otherwise missing GET/HEAD resources. Configured names must be simple filenames. These options do
 not enable directory listing; a selected file that disappears after route admission returns 404.
-Encoded traversal is rejected by Jetty before dispatch;
-decoded traversal and symlinks outside a filesystem mount are rejected by the mount. Filesystem
+Encoded traversal is rejected by Jetty before dispatch; under the default URI policy,
+double-encoded traversal, encoded backslashes and NUL return 400 for filesystem and classpath mounts.
+Decoded traversal and symlinks outside a filesystem mount are rejected by the mount. Filesystem
 mounts require secure directory operations from their filesystem provider and retain an anchored root
 descriptor for the app lifetime, so a later replacement of the mounted pathname cannot redirect a
 request outside that directory. Static files use filename-based MIME detection with a binary fallback. Filesystem mounts generate
@@ -483,7 +491,7 @@ app.routes().post("/orders", (request, response) -> {
 
 `queryParam` / `formParam` return an Optional containing the first value, or empty when absent; `queryParams` / `formParams` return all values in arrival order or an empty list. `queryParamMap` / `formParamMap` expose deeply immutable snapshots. Parameter names are case-sensitive. Both parsers decode UTF-8 percent escapes once and turn `+` into a space. Empty names and values are retained; empty pairs between `&` separators are ignored. `headers(name)` returns immutable raw field values with case-insensitive name lookup and does not split commas. `header(name)` still returns the first value.
 
-Parsing is lazy and cached. Forms support `application/x-www-form-urlencoded` with absent or UTF-8 charset metadata (including Java's UTF-8 aliases), and multipart text fields. Multipart files use `request.file(name)` or `request.files(name)`; `Upload.content()` is handler-lifetime only and `persistTo(Path)` transfers content to application ownership. Multipart defaults are 10 MiB total, 5 MiB per part, 100 parts, 8 KiB headers and 16 KiB in memory per part; `Options.withMultipart(MultipartOptions)` overrides them. Multipart and raw body access are mutually exclusive. Missing/unsupported Content-Type or charset produces `UnsupportedMediaTypeException` (415) on form access; malformed form data produces `BadRequestException` (400), and size limits produce `ContentTooLargeException` (413). Failures never expose partial maps.
+Parsing is lazy and cached. Forms support `application/x-www-form-urlencoded` with absent or UTF-8 charset metadata (including Java's UTF-8 aliases), and multipart text fields. Multipart files use `request.file(name)` or `request.files(name)`; `Upload.content()` is handler-lifetime only and `persistTo(Path)` transfers content to application ownership. On nonmultipart requests, `files()`, `files(name)` and `file(name)` return empty results without reading or claiming the ordinary body, even after body access. Parsing actual multipart and reading the raw body remain mutually exclusive; an empty upload result on multipart input does not relax that rule. Multipart defaults are 10 MiB total, 5 MiB per part, 100 parts, 8 KiB headers and 16 KiB in memory per part; `Options.withMultipart(MultipartOptions)` overrides them. Missing/unsupported Content-Type or charset produces `UnsupportedMediaTypeException` (415) on form access; malformed form data produces `BadRequestException` (400), and size limits produce `ContentTooLargeException` (413). Declared malformed multipart still fails on file access. Failures never expose partial maps.
 
 `Options.maxParameters` defaults to 1,000 and counts every pair, including repeated names, for query and URL-encoded forms. Override it with `Options.defaults().withMaxParameters(200)`; the compatibility constructors retain the defaults for newly added options. Multipart uses its own part limit. Exceeding either limit produces 400 or 413 respectively. The existing request-body byte limit applies to non-multipart forms (413), including unknown-length/chunked bodies and repeated reads after rejection. Multipart forms instead use their aggregate multipart limit. Jetty's HTTP header/request-target limit separately bounds the encoded query. Raw body reads remain repeatable before form parsing; raw body and multipart access are mutually exclusive. Accessors obey the existing request thread/lifetime rules; already returned immutable collections can safely be retained.
 

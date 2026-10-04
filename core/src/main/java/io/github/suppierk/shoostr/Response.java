@@ -548,7 +548,7 @@ public final class Response implements AutoCloseable {
     contentType(contentType);
     var effectiveLastModified =
         Objects.requireNonNull(effectiveLastModified(lastModified, responseDate()));
-    var tag = resourceTag(length, effectiveLastModified);
+    var tag = resourceTag(length, lastModified);
     delegate.getHeaders().put(HttpHeaders.ETAG.value(), tag);
     delegate
         .getHeaders()
@@ -1421,7 +1421,7 @@ public final class Response implements AutoCloseable {
    * Creates a weak descriptor-relative entity tag without reading a mutable filesystem pathname.
    *
    * @param length selected representation length
-   * @param lastModified selected effective modification time
+   * @param lastModified selected resource modification time, independent of the response date
    * @return valid weak entity tag
    */
   private static String resourceTag(long length, Instant lastModified) {

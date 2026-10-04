@@ -783,7 +783,8 @@ public final class Request {
   }
 
   /**
-   * Reads the first multipart upload with the exact field name, or empty when absent.
+   * Reads the first multipart upload with the exact field name, or empty when absent. Nonmultipart
+   * requests return empty without reading or claiming their body.
    *
    * @param name exact multipart field name
    * @return first upload, or empty
@@ -795,7 +796,8 @@ public final class Request {
   }
 
   /**
-   * Reads multipart uploads for the exact field name in arrival order.
+   * Reads multipart uploads for the exact field name in arrival order. Nonmultipart requests return
+   * an empty list without reading or claiming their body.
    *
    * @param name exact multipart field name
    * @return immutable uploads, or an empty list
@@ -806,7 +808,8 @@ public final class Request {
   }
 
   /**
-   * Reads every multipart upload by field name in arrival order.
+   * Reads every multipart upload by field name in arrival order. Nonmultipart requests return an
+   * empty map without reading or claiming their body.
    *
    * @return immutable uploads grouped by field name
    * @throws IOException if multipart input cannot be parsed
@@ -814,6 +817,11 @@ public final class Request {
   public Map<String, List<Upload>> files() throws IOException {
     check();
     if (files == null) {
+      if (!isMultipart()) {
+        files = Map.of();
+        return files;
+      }
+
       var grouped = new LinkedHashMap<String, List<Upload>>();
       for (var part : parts()) {
         if (part.getFileName() != null) {
@@ -1019,6 +1027,10 @@ public final class Request {
             Promise.Invocable.toPromise(parsed));
       } catch (RuntimeException failure) {
         multipartPublished = null;
+        if (failure instanceof IllegalArgumentException) {
+          throw new BadRequestException("Malformed multipart input", failure);
+        }
+
         throw failure;
       }
     }
@@ -1196,14 +1208,11 @@ public final class Request {
    * @return whether the Content-Type is multipart/form-data
    */
   private boolean isMultipart() {
-    try {
-      var type =
-          HttpField.getValueParameters(
-              header(HttpHeaders.CONTENT_TYPE.value()).orElse(null), new HashMap<>());
-      return "multipart/form-data".equalsIgnoreCase(type);
-    } catch (IllegalArgumentException _) {
-      return false;
-    }
+    var contentType = header(HttpHeaders.CONTENT_TYPE.value()).orElse("");
+    var separator = contentType.indexOf(';');
+    // Classification must not hide invalid parameters from the multipart parser.
+    var type = separator < 0 ? contentType : contentType.substring(0, separator);
+    return "multipart/form-data".equalsIgnoreCase(type.trim());
   }
 
   /**

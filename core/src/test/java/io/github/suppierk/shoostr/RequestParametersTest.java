@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,6 +10,9 @@ import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException;
 import java.io.ByteArrayInputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -19,6 +23,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.eclipse.jetty.http.HttpTester;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -223,6 +229,37 @@ class RequestParametersTest {
                 .build());
     assertEquals(200, result.statusCode());
     assertEquals("ok", result.body());
+  }
+
+  @Test
+  void preservesOriginalBodyBytesWhenFormFieldsAreParsedFirst() throws Exception {
+    var encoded = "name=M%C3%BCnchen+city&name=one%2Btwo&token=a=b%2526&empty=";
+    app.routes()
+        .post(
+            "/form",
+            (request, response) -> {
+              assertEquals(
+                  Map.of(
+                      "name", List.of("München city", "one+two"),
+                      "token", List.of("a=b%26"),
+                      "empty", List.of("")),
+                  request.formParamMap());
+              assertEquals(encoded, request.bodyText());
+              response.body(MediaType.APPLICATION_OCTET_STREAM, request.bodyBytes());
+            });
+    app.start();
+    var result =
+        client.send(
+            request("/form")
+                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+                .POST(
+                    HttpRequest.BodyPublishers.ofByteArray(
+                        encoded.getBytes(StandardCharsets.UTF_8)))
+                .build(),
+            HttpResponse.BodyHandlers.ofByteArray());
+
+    assertEquals(200, result.statusCode());
+    assertArrayEquals(encoded.getBytes(StandardCharsets.UTF_8), result.body());
   }
 
   @ParameterizedTest
@@ -441,6 +478,67 @@ class RequestParametersTest {
                 .build());
     assertEquals(200, result.statusCode());
     assertEquals("bad=%FF", result.body());
+  }
+
+  @Test
+  void preservesSemicolonsInsideQueryValuesRatherThanSplittingPairs() throws Exception {
+    app.routes()
+        .get(
+            "/query",
+            (request, response) -> {
+              assertEquals("first=one;second=two&third=three", request.queryString().orElseThrow());
+              assertEquals(
+                  Map.of("first", List.of("one;second=two"), "third", List.of("three")),
+                  request.queryParamMap());
+              response.text(request.queryParam("first").orElseThrow());
+            });
+    app.start();
+    var result = exchange("/query?first=one;second=two&third=three");
+    assertEquals(200, result.getStatus());
+    assertEquals("one;second=two", result.getContent());
+  }
+
+  @Test
+  void rejectsARawQueryFragmentBeforeInvokingTheEndpoint() throws Exception {
+    var calls = new AtomicInteger();
+    app.routes()
+        .get(
+            "/query",
+            (request, response) -> {
+              calls.incrementAndGet();
+              assertEquals("value=one%23fragment", request.queryString().orElseThrow());
+              response.text(request.queryParam("value").orElseThrow());
+            });
+    app.start();
+    var encoded = exchange("/query?value=one%23fragment");
+    assertEquals(200, encoded.getStatus());
+    assertEquals("one#fragment", encoded.getContent());
+    assertEquals(1, calls.get());
+    var rejected = exchange("/query?value=one#fragment");
+    assertEquals(400, rejected.getStatus());
+    assertEquals(1, calls.get());
+  }
+
+  private HttpTester.Response exchange(String target) throws Exception {
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      var message =
+          String.join(
+              "\r\n",
+              "GET " + target + " HTTP/1.1",
+              "Host: example.test",
+              "Connection: close",
+              "",
+              "");
+      socket.getOutputStream().write(message.getBytes(StandardCharsets.US_ASCII));
+      var result =
+          HttpTester.parseResponse(
+              new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+      assertNotNull(result);
+      return result;
+    }
   }
 
   private HttpResponse<String> send(HttpRequest request) throws Exception {

@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -10,9 +11,12 @@ import io.github.suppierk.shoostr.extensions.AdmissionExtension;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.exceptions.UnauthorizedException;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.net.InetAddress;
 import java.net.ServerSocket;
+import java.net.Socket;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -25,22 +29,84 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SecureDirectoryStream;
+import java.nio.file.attribute.FileTime;
+import java.security.KeyStore;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.zip.GZIPInputStream;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class StaticResourcesTest {
   @TempDir Path temporaryDirectory;
+
+  @ParameterizedTest
+  @CsvSource({
+    "data.json,application/json,false",
+    "style.css,text/css,false",
+    "image.png,image/png,false",
+    "data.shoostr-unknown,application/octet-stream,false",
+    "data.json,application/json,true",
+    "style.css,text/css,true",
+    "image.png,image/png,true",
+    "data.shoostr-unknown,application/octet-stream,true"
+  })
+  @Timeout(10)
+  void usesFilenameMimeGuessesAndBinaryFallbackForBothStaticSources(
+      String fileName, String expectedType, boolean classpath) throws Exception {
+    if (!classpath) {
+      assumeSecureDirectoryOperations();
+    }
+
+    var directory = Files.createDirectory(temporaryDirectory.resolve("issue76-mime"));
+    var content = new byte[] {0, 1, 2, 3, (byte) 0xFF};
+    Files.write(directory.resolve(fileName), content);
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      if (classpath) {
+        app.routes().classpathResources("/assets", "/issue76-mime");
+      } else {
+        app.routes().staticFiles("/assets", directory);
+      }
+
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/" + fileName))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(200, result.statusCode());
+      assertEquals(expectedType, result.headers().firstValue("Content-Type").orElseThrow());
+      assertArrayEquals(content, result.body());
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
 
   @Test
   void rejectsParameterizedFilesystemMounts() {
@@ -90,6 +156,78 @@ class StaticResourcesTest {
       assertEquals("filesystem resource", result.body());
       assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
       assertEquals("no-cache", result.headers().firstValue("Cache-Control").orElseThrow());
+    }
+  }
+
+  @Test
+  void runsMatchedHooksInOrderWithTheStaticMountPattern() throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.onRouteMatched(
+          (request, response) ->
+              response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
+      app.afterRouteHandler(
+          (request, response) ->
+              response.addHeader("X-Stage", "after:" + request.routePattern().orElseThrow()));
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals("filesystem resource", result.body());
+      assertEquals(
+          List.of("matched:/assets", "after:/assets"), result.headers().allValues("X-Stage"));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"/assets/missing.txt", "/outside"})
+  void skipsMatchedHooksWhenNoMountedResourceMatches(String path) throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
+    var stages = new CopyOnWriteArrayList<String>();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.onRouteMatched((_, _) -> stages.add("matched"));
+      app.afterRouteHandler((_, _) -> stages.add("after"));
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var base = "http://127.0.0.1:" + app.port();
+
+      var hit =
+          client.send(
+              HttpRequest.newBuilder(URI.create(base + "/assets/site.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, hit.statusCode());
+      assertEquals("filesystem resource", hit.body());
+      assertEquals(List.of("matched", "after"), stages);
+      stages.clear();
+
+      var miss =
+          client.send(
+              HttpRequest.newBuilder(URI.create(base + path))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(404, miss.statusCode());
+      assertTrue(stages.isEmpty());
     }
   }
 
@@ -151,6 +289,42 @@ class StaticResourcesTest {
       assertEquals("console.log('app');", send(client, app, "/assets/app.js").body());
       assertEquals("endpoint", send(client, app, "/assets/health").body());
       assertEquals(404, send(client, app, "/outside").statusCode());
+    }
+  }
+
+  @Test
+  void runsMatchedHooksInOrderWithTheSpaFallbackMountPattern() throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.onRouteMatched(
+          (request, response) ->
+              response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
+      app.afterRouteHandler(
+          (request, response) ->
+              response.addHeader("X-Stage", "after:" + request.routePattern().orElseThrow()));
+      app.routes()
+          .staticFiles(
+              "/assets",
+              temporaryDirectory,
+              StaticOptions.defaults().withSpaFallback("index.html"));
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/orders/42"))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals("<h1>app</h1>", result.body());
+      assertEquals(
+          List.of("matched:/assets", "after:/assets"), result.headers().allValues("X-Stage"));
     }
   }
 
@@ -378,6 +552,215 @@ class StaticResourcesTest {
   }
 
   @Test
+  @Timeout(10)
+  void servesUtf8NamedClasspathFilesThroughEncodedPathsWithoutEscapingTheMount() throws Exception {
+    var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("issue76-utf8-public"));
+    var content = "UTF-8 classpath resource: café €\n".getBytes(StandardCharsets.UTF_8);
+    Files.write(publicDirectory.resolve("tést.txt"), content);
+    Files.writeString(
+        temporaryDirectory.resolve("privé.txt"), "outside-mount-secret", StandardCharsets.UTF_8);
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      app.routes().classpathResources("/assets", "/issue76-utf8-public");
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/t%C3%A9st.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(200, result.statusCode());
+      assertArrayEquals(content, result.body());
+
+      var outside =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/priv%C3%A9.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(404, outside.statusCode());
+      assertFalse(outside.body().contains("outside-mount-secret"));
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void validatesTheFallbackResourceSelectedFromComposedStaticSources(boolean filesystemFirst)
+      throws Exception {
+    assumeSecureDirectoryOperations();
+    var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
+    var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
+    var fallback = filesystemFirst ? classpath : filesystem;
+    Files.writeString(fallback.resolve("fallback.txt"), "selected fallback resource");
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
+      app.start();
+      var uri = URI.create("http://127.0.0.1:" + app.port() + "/assets/fallback.txt");
+
+      var selected =
+          client.send(
+              HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(3)).build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, selected.statusCode());
+      assertEquals("selected fallback resource", selected.body());
+      var etag = selected.headers().firstValue("ETag").orElseThrow();
+      assertFalse(etag.isBlank());
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(uri)
+                  .timeout(Duration.ofSeconds(3))
+                  .header("If-None-Match", etag)
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(304, result.statusCode());
+      assertEquals("", result.body());
+      assertEquals(etag, result.headers().firstValue("ETag").orElseThrow());
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void returnsNotFoundWhenNeitherComposedStaticSourceContainsThePath(boolean filesystemFirst)
+      throws Exception {
+    assumeSecureDirectoryOperations();
+    var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
+    var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
+    Files.writeString(filesystem.resolve("shared.txt"), "filesystem content");
+    Files.writeString(classpath.resolve("shared.txt"), "classpath content");
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
+      app.start();
+
+      var control =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/shared.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, control.statusCode());
+      assertEquals(filesystemFirst ? "filesystem content" : "classpath content", control.body());
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/missing.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(404, result.statusCode());
+      assertEquals("Not found", result.body());
+      assertTrue(result.headers().allValues("ETag").isEmpty());
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void prefersTheFirstRegisteredStaticSourceWhenBothContainTheSamePath(boolean filesystemFirst)
+      throws Exception {
+    assumeSecureDirectoryOperations();
+    var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
+    var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
+    Files.writeString(filesystem.resolve("shared.txt"), "filesystem winner");
+    Files.writeString(classpath.resolve("shared.txt"), "classpath candidate");
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/shared.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals(filesystemFirst ? "filesystem winner" : "classpath candidate", result.body());
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void fallsBackBetweenFilesystemAndClasspathSourcesAtTheSamePrefix(boolean filesystemFirst)
+      throws Exception {
+    assumeSecureDirectoryOperations();
+    var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
+    var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
+    Files.writeString(filesystem.resolve("filesystem-only.txt"), "filesystem content");
+    Files.writeString(classpath.resolve("classpath-only.txt"), "classpath content");
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
+      app.start();
+
+      var filesystemResult =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/filesystem-only.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, filesystemResult.statusCode());
+      assertEquals("filesystem content", filesystemResult.body());
+
+      var classpathResult =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/classpath-only.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, classpathResult.statusCode());
+      assertEquals("classpath content", classpathResult.body());
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
+  @Test
   void servesClasspathFilesBelowTheMountedPath() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
@@ -518,6 +901,235 @@ class StaticResourcesTest {
     }
   }
 
+  @ParameterizedTest
+  @CsvSource({"false, true, HTTP_2", "true, false, HTTP_1_1", "true, true, HTTP_2"})
+  @Timeout(10)
+  void servesExactMountedFileBytesOverTheConfiguredProtocol(
+      boolean tls, boolean http2, HttpClient.Version expectedVersion) throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = staticTransportClient(app, tls, http2)) {
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var target =
+          URI.create((tls ? "https" : "http") + "://127.0.0.1:" + app.port() + "/assets/site.txt");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(3)).GET().build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(expectedVersion, result.version());
+      assertEquals(200, result.statusCode());
+      assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+      assertArrayEquals(
+          "static over transport: €\n".getBytes(StandardCharsets.UTF_8), result.body());
+      assertEquals(tls, result.sslSession().isPresent());
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false, true, HTTP_2", "true, false, HTTP_1_1", "true, true, HTTP_2"})
+  @Timeout(10)
+  void returnsMountedFileHeadMetadataWithoutBytesOverTheConfiguredProtocol(
+      boolean tls, boolean http2, HttpClient.Version expectedVersion) throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = staticTransportClient(app, tls, http2)) {
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var target =
+          URI.create((tls ? "https" : "http") + "://127.0.0.1:" + app.port() + "/assets/site.txt");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(target)
+                  .timeout(Duration.ofSeconds(3))
+                  .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(expectedVersion, result.version());
+      assertEquals(200, result.statusCode());
+      assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+      assertEquals("27", result.headers().firstValue("Content-Length").orElseThrow());
+      assertEquals(0, result.body().length);
+      assertEquals(tls, result.sslSession().isPresent());
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false, true, HTTP_2", "true, false, HTTP_1_1", "true, true, HTTP_2"})
+  @Timeout(10)
+  void returnsNotModifiedForAnUnchangedMountedFileAcrossResponseDates(
+      boolean tls, boolean http2, HttpClient.Version expectedVersion) throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
+    Files.setLastModifiedTime(
+        temporaryDirectory.resolve("site.txt"),
+        FileTime.from(Instant.parse("2020-01-01T00:00:00.500Z")));
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = staticTransportClient(app, tls, http2)) {
+      app.beforeRouteHandler(
+          (request, response) ->
+              response.setHeader(
+                  "Date",
+                  request.header("If-None-Match").isPresent()
+                      ? "Wed, 01 Jan 2020 00:00:01 GMT"
+                      : "Wed, 01 Jan 2020 00:00:00 GMT"));
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var target =
+          URI.create((tls ? "https" : "http") + "://127.0.0.1:" + app.port() + "/assets/site.txt");
+      var full =
+          client.send(
+              HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(3)).GET().build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(expectedVersion, full.version());
+      assertEquals(200, full.statusCode());
+      assertArrayEquals("static over transport: €\n".getBytes(StandardCharsets.UTF_8), full.body());
+      assertEquals(
+          "Wed, 01 Jan 2020 00:00:00 GMT", full.headers().firstValue("Date").orElseThrow());
+      assertEquals(
+          Instant.parse("2020-01-01T00:00:00Z"),
+          ZonedDateTime.parse(
+                  full.headers().firstValue("Last-Modified").orElseThrow(),
+                  DateTimeFormatter.RFC_1123_DATE_TIME)
+              .toInstant());
+      var etag = full.headers().firstValue("ETag").orElseThrow();
+
+      var conditional =
+          client.send(
+              HttpRequest.newBuilder(target)
+                  .timeout(Duration.ofSeconds(3))
+                  .header("If-None-Match", etag)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(expectedVersion, conditional.version());
+      assertEquals(
+          "Wed, 01 Jan 2020 00:00:01 GMT", conditional.headers().firstValue("Date").orElseThrow());
+      assertEquals(
+          304,
+          conditional.statusCode(),
+          () -> "Requested ETag " + etag + "; returned headers " + conditional.headers().map());
+      assertEquals(etag, conditional.headers().firstValue("ETag").orElseThrow());
+      assertEquals(0, conditional.body().length);
+      assertEquals(tls, conditional.sslSession().isPresent());
+    }
+  }
+
+  @Test
+  void compressesMountedFilesWhenGzipIsAccepted() throws Exception {
+    assumeSecureDirectoryOperations();
+    var payload = "mounted-compressible-data-€\n".repeat(1024);
+    Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.compression();
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Accept-Encoding", "gzip")
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(200, result.statusCode());
+      assertEquals("gzip", result.headers().firstValue("Content-Encoding").orElseThrow());
+      assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+
+      try (var decoded = new GZIPInputStream(new ByteArrayInputStream(result.body()))) {
+        assertArrayEquals(payload.getBytes(StandardCharsets.UTF_8), decoded.readAllBytes());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"identity", "gzip;q=0"})
+  void servesMountedFilesUnencodedWhenGzipIsNotAccepted(String acceptEncoding) throws Exception {
+    assumeSecureDirectoryOperations();
+    var payload = "mounted-compressible-data-€\n".repeat(1024);
+    Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.compression();
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Accept-Encoding", acceptEncoding)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(200, result.statusCode());
+      assertTrue(result.headers().firstValue("Content-Encoding").isEmpty());
+      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      assertArrayEquals(payload.getBytes(StandardCharsets.UTF_8), result.body());
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "gzip, If-None-Match, ETag",
+    "identity, If-None-Match, ETag",
+    "gzip, If-Modified-Since, Last-Modified",
+    "identity, If-Modified-Since, Last-Modified"
+  })
+  void returnsNotModifiedForMountedFileValidatorsWithCompressionEnabled(
+      String acceptEncoding, String requestHeader, String responseHeader) throws Exception {
+    assumeSecureDirectoryOperations();
+    var payload = "mounted-compressible-data-€\n".repeat(1024);
+    Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.compression();
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var uri = URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt");
+      var full =
+          client.send(
+              HttpRequest.newBuilder(uri)
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Accept-Encoding", acceptEncoding)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(200, full.statusCode());
+      assertEquals(
+          acceptEncoding, full.headers().firstValue("Content-Encoding").orElse("identity"));
+      var validator = full.headers().firstValue(responseHeader).orElseThrow();
+
+      var conditional =
+          client.send(
+              HttpRequest.newBuilder(uri)
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Accept-Encoding", acceptEncoding)
+                  .header(requestHeader, validator)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(304, conditional.statusCode());
+      assertEquals(0, conditional.body().length);
+      assertEquals(validator, conditional.headers().firstValue(responseHeader).orElseThrow());
+      assertTrue(conditional.headers().allValues("Vary").contains("Accept-Encoding"));
+    }
+  }
+
   @Test
   void givesExplicitEndpointsPrecedenceOverMountedFiles() throws Exception {
     assumeSecureDirectoryOperations();
@@ -568,6 +1180,54 @@ class StaticResourcesTest {
 
       assertEquals(400, result.statusCode());
       assertFalse(result.body().contains("top-secret-content"));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"/%252e%252e/secret.txt", "/..%5csecret.txt", "/site.txt%00"})
+  void rejectsUnsafeEncodedPathsUnderFilesystemMount(String path) throws Exception {
+    assumeSecureDirectoryOperations();
+    var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("public"));
+    Files.writeString(publicDirectory.resolve("site.txt"), "public resource");
+    Files.writeString(temporaryDirectory.resolve("secret.txt"), "outside-mount-secret");
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes().staticFiles("/assets", publicDirectory);
+      app.start();
+      var allowed = send(client, app, "/assets/site.txt");
+      assertEquals(200, allowed.statusCode());
+      assertEquals("public resource", allowed.body());
+
+      var rejected = rawGet(app, "/assets" + path);
+      assertTrue(rejected.startsWith("HTTP/1.1 400 "), rejected);
+      assertFalse(rejected.contains("outside-mount-secret"));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"/%252e%252e/secret.txt", "/..%5csecret.txt", "/site.txt%00"})
+  void rejectsUnsafeEncodedPathsUnderClasspathMount(String path) throws Exception {
+    var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("issue76-public"));
+    Files.writeString(publicDirectory.resolve("site.txt"), "public resource");
+    Files.writeString(temporaryDirectory.resolve("secret.txt"), "outside-mount-secret");
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      app.routes().classpathResources("/assets", "/issue76-public");
+      app.start();
+      var allowed = send(client, app, "/assets/site.txt");
+      assertEquals(200, allowed.statusCode());
+      assertEquals("public resource", allowed.body());
+
+      var rejected = rawGet(app, "/assets" + path);
+      assertTrue(rejected.startsWith("HTTP/1.1 400 "), rejected);
+      assertFalse(rejected.contains("outside-mount-secret"));
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
     }
   }
 
@@ -755,11 +1415,63 @@ class StaticResourcesTest {
     }
   }
 
+  private static void registerComposedStaticSources(
+      Routes routes, Path filesystem, boolean filesystemFirst) {
+    if (filesystemFirst) {
+      routes.staticFiles("/assets", filesystem).classpathResources("/assets", "/issue76-composed");
+    } else {
+      routes.classpathResources("/assets", "/issue76-composed").staticFiles("/assets", filesystem);
+    }
+  }
+
   private void assumeSecureDirectoryOperations() throws IOException {
     try (var stream = Files.newDirectoryStream(temporaryDirectory)) {
       assumeTrue(
           stream instanceof SecureDirectoryStream<?>,
           "Filesystem static mounts require SecureDirectoryStream support");
+    }
+  }
+
+  private static HttpClient staticTransportClient(Shoostr app, boolean tls, boolean http2)
+      throws Exception {
+    var client =
+        HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(3))
+            .version(http2 ? HttpClient.Version.HTTP_2 : HttpClient.Version.HTTP_1_1);
+    if (http2) {
+      app.http2();
+    }
+
+    if (tls) {
+      var store = KeyStore.getInstance("PKCS12");
+
+      try (var input =
+          Objects.requireNonNull(
+              StaticResourcesTest.class.getResourceAsStream("/localhost-test.p12"))) {
+        store.load(input, "changeit".toCharArray());
+      }
+
+      app.tls(
+          context -> {
+            context.setKeyStore(store);
+            context.setKeyStorePassword("changeit");
+          });
+      var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+      trust.init(store);
+      var context = SSLContext.getInstance("TLS");
+      context.init(null, trust.getTrustManagers(), null);
+      client.sslContext(context);
+    }
+
+    return client.build();
+  }
+
+  private static String rawGet(Shoostr app, String path) throws IOException {
+    try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
+      socket.setSoTimeout(3000);
+      var request = "GET " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+      socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+      return new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
     }
   }
 

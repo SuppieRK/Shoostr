@@ -94,6 +94,23 @@ class LifecycleHooksTest {
   }
 
   @Test
+  void exposesDecodedPathParametersToTheMatchedHookBeforeTheHandler() throws Exception {
+    app.onRouteMatched(
+        (request, _) -> request.attribute("matched-id", request.pathParam("id").orElseThrow()));
+    app.routes()
+        .get(
+            "/users/{id}",
+            (request, response) ->
+                response.text(request.attribute("matched-id").orElseThrow().toString()));
+    app.start();
+
+    var result = send("GET", "/users/caf%C3%A9+team");
+
+    assertEquals(200, result.statusCode());
+    assertEquals("café+team", result.body());
+  }
+
+  @Test
   void ordersGatesAndStopsOnRejection() throws Exception {
     var calls = new CopyOnWriteArrayList<String>();
     app.beforeRouteHandler(

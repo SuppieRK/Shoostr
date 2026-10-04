@@ -29,7 +29,7 @@ The target is complete framework feature coverage relative to Javalin and Jooby,
 | Query/form value shape | First/empty Optional, repeated ordered values, case-sensitive names, separate query/form maps; deeply immutable returned collections. `RequestParametersTest`. | Similar first/list/map accessors. [Context][context], [request tests][requesttests] | Same value semantics; Optional results and collection immutability are chosen local interface differences. |
 | Query/form decoding | UTF-8, `+` → space, decode once, first equals delimiter; empty values/names preserved; empty `&` pairs ignored. | Request charset can influence decoding; empty split segments retained. [Context][context], [servlet utilities][servletutil], [encoding tests][encodingtests] | Different edge cases; retain deterministic UTF-8 and ignored empty pairs. |
 | Malformed parameters | Bad percent or UTF-8 rejects the entire accessed collection with400; no partial maps. | Malformed percent pairs can be omitted while other pairs survive. [Request tests][requesttests], [servlet utilities][servletutil] | Different intentional strictness. |
-| Form representations | UTF-8 URL-encoded and multipart text fields; `Upload` exposes repeated file parts and explicit persistence. Multipart and raw body access are exclusive; temporary parts close at transport completion. | Multipart supported; strict-content-type setting affects form handling. [Context][context], [HttpConfig][httpconfig] | Local bounded multipart contract; no built-in object conversion. |
+| Form representations | UTF-8 URL-encoded and multipart text fields; `Upload` exposes repeated file parts and explicit persistence. Nonmultipart `files()`/`files(name)`/`file(name)` return empty without reading or claiming the ordinary body. Actual multipart and raw body access remain exclusive, even when multipart has no files; malformed declared multipart still rejects. Temporary parts close at transport completion. | Multipart supported; strict-content-type setting affects form handling. [Context][context], [HttpConfig][httpconfig] | Local bounded multipart contract; no built-in object conversion. |
 | Resource bounds | 1MiB default buffered body;1000 pairs each for query/form including repeats, separately overridable;413 byte overflow,400 pair overflow. Retry after oversized chunked input remains rejected. `RequestParametersTest`, `HttpCompatibilityTest.acceptsTheByteLimitAndRejectsOneAdditionalByte`. | Own configurable request-size behavior. [Size tests][sizetests] | Different defaults/policies; preserve our tested bounds. |
 | Headers | First header or immutable list of raw repeated fields; case-insensitive name lookup, no comma splitting. Response setter replaces; framework owns framing headers. `RequestParametersTest.readsImmutableRepeatedHeadersCaseInsensitively`, `HttpCompatibilityTest.readsAndReplacesHeadersCaseInsensitively`. | Context header/headerMap exposes first values; raw Servlet request supplies repetitions. [Context][context], [response tests][responsetests] | Comparable capability, different convenience API. ResponseMetadataTest covers inspection, immutable case-insensitive snapshots, append/remove and distinct Set-Cookie fields; framing remains framework-owned. |
 | Raw body and serialization | Cached defensive bytes; UTF-8 text; serializers, converters, and business validation application-owned. `HttpCompatibilityTest.cachesRequestBytesWithoutExposingMutableStorage`. | Broader object/validator API. [Context][context] | Intentional scope exclusion, not codec work waiting to happen. |
@@ -197,8 +197,9 @@ settings are HttpOnly, SameSite=Lax, root path, no Domain or browser Max-Age, an
 direct connection is secure; the native callback may override them. Server-side idle expiry is
 30 minutes by default. URL session-ID tracking is disabled.
 
-`Csrf` is an explicit route policy for cookie-authenticated browser operations, registered through
-`Routes.protect`. GET, HEAD, OPTIONS and TRACE are safe under RFC 9110; all other methods require
+`Csrf` is an explicit route policy for cookie-authenticated browser operations, installed with
+`Shoostr.extensions(csrf)` and selected with `extensions.get(csrf).required()` in route configuration.
+GET, HEAD, OPTIONS and TRACE are safe under RFC 9110; all other methods require
 an existing session, one session-bound synchronizer token in `X-CSRF-Token` or `_csrf` form input,
 and a trustworthy source origin. A single `Origin` must match the effective target origin or an
 explicitly configured trusted origin; if absent, one `Referer` supplies that comparison. Missing,
@@ -249,6 +250,21 @@ connection into native TLS. `TransportTest` covers
 real HTTPS, ALPN, same-connection concurrent HTTP/2 streams, h2c, proxy metadata, gzip
 wire bytes, ranges, HEAD and startup cleanup. Sources: [Jetty server guide](https://jetty.org/docs/jetty/12.1/programming-guide/server/http.html)
 and [RFC 9110 section 8.6](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.6).
+
+## WebSocket HTTP/2 transport
+
+With `Shoostr.http2()`, existing `Routes.websocket` registrations accept negotiated
+RFC 8441 extended CONNECT on h2c and TLS/ALPN HTTP/2. Only a native HTTP/2 CONNECT
+tunnel with protocol `websocket` uses the WebSocket route index. Its lookup uses
+the registration's GET key, but public request/outcome methods remain CONNECT;
+HTTP/1.1 GET upgrades remain unchanged. Matched callbacks, managed authentication,
+availability and listener creation use the existing admission path. Other tunnel
+protocols fall through to ordinary CONNECT routing. Native Jetty handles SETTINGS,
+HTTP/2 200 handshakes, framing, limits and session ownership. Tests cover negotiated
+exact text frames on both transports with HTTP/1.1 controls, 401 denial before
+factory invocation, unsupported-version 426 without HTTP/1-only wire headers,
+decoded template context in matched hooks and non-cacheable availability 404.
+This does not imply HTTP/3 support. See [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441.html).
 
 ## Optional request retrieval
 
