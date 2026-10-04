@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -21,6 +22,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.jetty.http.HttpTester;
@@ -28,10 +30,70 @@ import org.eclipse.jetty.io.QuietException;
 import org.eclipse.jetty.server.HttpStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class BufferedRequestLifecycleTest {
   private static final String PAYLOAD = "01234567890123456789012345678901";
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void acceptsAnExactDefaultLimitBodyAtTheLiveListener(boolean knownLength) throws Exception {
+    var payload = new byte[1_048_576];
+    Arrays.fill(payload, (byte) 0x5A);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+      app.routes()
+          .post(
+              "/body",
+              (request, response) -> {
+                assertArrayEquals(payload, request.bodyBytes());
+                response.text("accepted");
+              });
+      app.start();
+      var publisher =
+          knownLength
+              ? HttpRequest.BodyPublishers.ofByteArray(payload)
+              : HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(payload));
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
+                  .timeout(Duration.ofSeconds(3))
+                  .POST(publisher)
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("accepted", result.body());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void rejectsOneByteBeyondTheDefaultLimitAtTheLiveListener(boolean knownLength) throws Exception {
+    var payload = new byte[1_048_577];
+    Arrays.fill(payload, (byte) 0x5A);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+      app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
+      app.start();
+      var publisher =
+          knownLength
+              ? HttpRequest.BodyPublishers.ofByteArray(payload)
+              : HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(payload));
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
+                  .timeout(Duration.ofSeconds(3))
+                  .POST(publisher)
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(413, result.statusCode());
+      assertEquals("Content Too Large", result.body());
+    }
+  }
 
   @Test
   void mapsOversizedChunkedBodyAndReusesHttp1Connection() throws Exception {
