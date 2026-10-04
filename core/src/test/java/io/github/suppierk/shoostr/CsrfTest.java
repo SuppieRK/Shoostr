@@ -17,8 +17,136 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
 
 class CsrfTest {
+  @ParameterizedTest
+  @EnumSource(
+      value = HttpMethods.class,
+      names = {"GET", "HEAD", "OPTIONS", "TRACE"})
+  @Timeout(15)
+  void bypassesTokensForExplicitlyRegisteredSafeMethods(HttpMethods method) throws Exception {
+    var csrf = new Csrf();
+    var executions = new AtomicInteger();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.sessions().extensions(csrf);
+      app.routes().get("/token", (request, response) -> response.text(csrf.token(request)));
+      app.routes()
+          .route(
+              method,
+              "/safe",
+              (request, response) -> {
+                assertTrue(request.session(false).isPresent());
+                executions.incrementAndGet();
+                response.text("accepted");
+              },
+              e -> e.get(csrf).required());
+      app.start();
+
+      var token =
+          client.send(
+              request(app, "/token").timeout(Duration.ofSeconds(3)).GET().build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, token.statusCode());
+      assertFalse(token.body().isBlank());
+      var cookie = token.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+
+      var result =
+          client.send(
+              request(app, "/safe")
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Cookie", cookie)
+                  .header("Origin", "http://localhost:" + app.port())
+                  .method(method.value(), HttpRequest.BodyPublishers.noBody())
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals(method == HttpMethods.HEAD ? "" : "accepted", result.body());
+      assertEquals(1, executions.get());
+      assertTrue(result.headers().allValues("Set-Cookie").isEmpty());
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "POST, ''",
+    "POST, invalid",
+    "PUT, ''",
+    "PUT, invalid",
+    "PATCH, ''",
+    "PATCH, invalid",
+    "DELETE, ''",
+    "DELETE, invalid"
+  })
+  @Timeout(15)
+  void rejectsMissingOrInvalidTokensForMutatingMethodsWithValidSessionAndOrigin(
+      HttpMethods method, String suppliedToken) throws Exception {
+    var csrf = new Csrf();
+    var executions = new AtomicInteger();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.sessions().extensions(csrf);
+      app.routes().get("/token", (request, response) -> response.text(csrf.token(request)));
+      app.routes()
+          .route(
+              method,
+              "/mutation",
+              (_, response) -> {
+                executions.incrementAndGet();
+                response.text("accepted");
+              },
+              e -> e.get(csrf).required());
+      app.start();
+
+      var token =
+          client.send(
+              request(app, "/token").timeout(Duration.ofSeconds(3)).GET().build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, token.statusCode());
+      assertFalse(token.body().isBlank());
+      var cookie = token.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+      var origin = "http://localhost:" + app.port();
+
+      var accepted =
+          client.send(
+              request(app, "/mutation")
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Cookie", cookie)
+                  .header("Origin", origin)
+                  .header("X-CSRF-Token", token.body())
+                  .method(method.value(), HttpRequest.BodyPublishers.noBody())
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, accepted.statusCode());
+      assertEquals("accepted", accepted.body());
+      assertEquals(1, executions.get());
+
+      var rejectedRequest =
+          request(app, "/mutation")
+              .timeout(Duration.ofSeconds(3))
+              .header("Cookie", cookie)
+              .header("Origin", origin);
+      if (!suppliedToken.isEmpty()) {
+        rejectedRequest.header("X-CSRF-Token", suppliedToken);
+      }
+
+      var rejected =
+          client.send(
+              rejectedRequest.method(method.value(), HttpRequest.BodyPublishers.noBody()).build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(403, rejected.statusCode());
+      assertEquals(1, executions.get());
+      assertTrue(rejected.headers().allValues("Set-Cookie").isEmpty());
+    }
+  }
+
   @Test
   void repeatedInheritedRequirementsRegisterExactlyOneVerification() throws Exception {
     var csrf = new Csrf();

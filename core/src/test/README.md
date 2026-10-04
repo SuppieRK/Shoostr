@@ -163,6 +163,15 @@ frame for `café\n next`: the second data field contains the protocol separator
 space and the original payload space. This is SSE data framing, not raw HTTP
 body preservation.
 
+Issue 76 T23 adds `CsrfTest`
+`bypassesTokensForExplicitlyRegisteredSafeMethods` and
+`rejectsMissingOrInvalidTokensForMutatingMethodsWithValidSessionAndOrigin`,
+independently adapting pinned Jooby 4.5.4 `CsrfHandlerTest.testDefaultFilter`.
+Live explicitly registered GET/HEAD/OPTIONS/TRACE handlers bypass tokens with
+a real session and same-origin request. POST/PUT/PATCH/DELETE each have a
+valid-token control followed by missing-token or invalid-token rejection before
+business logic. This does not rely on implicit HEAD or OPTIONS handling.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:

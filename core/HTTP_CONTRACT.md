@@ -197,8 +197,9 @@ settings are HttpOnly, SameSite=Lax, root path, no Domain or browser Max-Age, an
 direct connection is secure; the native callback may override them. Server-side idle expiry is
 30 minutes by default. URL session-ID tracking is disabled.
 
-`Csrf` is an explicit route policy for cookie-authenticated browser operations, registered through
-`Routes.protect`. GET, HEAD, OPTIONS and TRACE are safe under RFC 9110; all other methods require
+`Csrf` is an explicit route policy for cookie-authenticated browser operations, installed with
+`Shoostr.extensions(csrf)` and selected with `extensions.get(csrf).required()` in route configuration.
+GET, HEAD, OPTIONS and TRACE are safe under RFC 9110; all other methods require
 an existing session, one session-bound synchronizer token in `X-CSRF-Token` or `_csrf` form input,
 and a trustworthy source origin. A single `Origin` must match the effective target origin or an
 explicitly configured trusted origin; if absent, one `Referer` supplies that comparison. Missing,
