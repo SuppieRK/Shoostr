@@ -12,6 +12,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -158,6 +159,68 @@ class CsrfTest {
               .POST(HttpRequest.BodyPublishers.ofString(multipartBody))
               .build();
       assertEquals(200, client.send(multipart, HttpResponse.BodyHandlers.ofString()).statusCode());
+    }
+  }
+
+  @Test
+  void rejectsFileOnlyMultipartWithoutCsrfTokenBeforeInvokingHandler() throws Exception {
+    var executions = new AtomicInteger();
+    var csrf = new Csrf();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.sessions().extensions(csrf);
+      app.routes().get("/form", (request, response) -> response.text(csrf.token(request)));
+      app.routes()
+          .post(
+              "/submit",
+              (_, response) -> {
+                executions.incrementAndGet();
+                response.text("accepted");
+              },
+              e -> e.get(csrf).required());
+      app.start();
+
+      var form =
+          client.send(
+              request(app, "/form").timeout(Duration.ofSeconds(3)).GET().build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, form.statusCode());
+      assertFalse(form.body().isBlank());
+      var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+      var resumed =
+          client.send(
+              request(app, "/form")
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Cookie", cookie)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, resumed.statusCode());
+      assertEquals(form.body(), resumed.body());
+      assertTrue(resumed.headers().allValues("Set-Cookie").isEmpty());
+
+      var body =
+          """
+          --file-only\r
+          Content-Disposition: form-data; name="file"; filename="note.txt"\r
+          Content-Type: text/plain\r
+          \r
+          uploaded content\r
+          --file-only--\r
+          """;
+      var rejected =
+          client.send(
+              request(app, "/submit")
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Cookie", cookie)
+                  .header("Origin", "http://localhost:" + app.port())
+                  .header("Content-Type", "multipart/form-data; boundary=file-only")
+                  .POST(HttpRequest.BodyPublishers.ofString(body))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(403, rejected.statusCode());
+      assertEquals(0, executions.get());
     }
   }
 

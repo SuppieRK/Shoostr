@@ -24,6 +24,11 @@ double-encoded traversal, encoded backslash traversal and NUL then receive 400
 without exposing a real resource outside that mount. These assertions retain
 Shoostr's default Jetty URI policy, not Javalin-specific response bodies or statuses.
 
+Issue 76 T15 adds `CsrfTest.rejectsFileOnlyMultipartWithoutCsrfTokenBeforeInvokingHandler`,
+inspired by pinned Jooby 4.5.4 `Issue1815`. A live request first establishes and resumes
+the same CSRF-token session. A correctly framed file-only multipart POST with its cookie
+and a same-origin Origin, but no token, must return 403 before business logic runs.
+
 Query/form parsing and repeated raw headers now have 43 cases in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:
