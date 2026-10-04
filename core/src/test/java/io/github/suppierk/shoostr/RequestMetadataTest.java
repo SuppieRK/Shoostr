@@ -48,7 +48,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.NullSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class RequestMetadataTest {
@@ -787,6 +789,85 @@ class RequestMetadataTest {
     assertNotNull(rejected);
     assertEquals(400, rejected.getStatus());
     assertEquals(2, calls.get());
+  }
+
+  @ParameterizedTest
+  @CsvSource({"200, false", "200, true", "204, false", "204, true"})
+  void reusesHttp11ConnectionsWithoutAdvertisingKeepAlive(int status, boolean keepAlive)
+      throws Exception {
+    app.routes()
+        .get(
+            "/response",
+            (request, response) -> {
+              assertEquals("HTTP/1.1", request.protocol());
+              response.status(status);
+              if (status == 200) {
+                response.text("first");
+              }
+            });
+    app.routes().get("/next", (_, response) -> response.text("next"));
+    app.start();
+
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      var input = HttpTester.from(socket.getInputStream());
+      var message =
+          "GET /response HTTP/1.1\r\nHost: example.test\r\n"
+              + (keepAlive ? "Connection: keep-alive\r\n" : "")
+              + "\r\n";
+      socket.getOutputStream().write(message.getBytes(StandardCharsets.US_ASCII));
+      var first = HttpTester.parseResponse(input);
+      assertNotNull(first);
+      assertEquals(status, first.getStatus());
+      assertEquals(status == 200 ? "first" : "", first.getContent());
+      assertNull(first.get("Connection"));
+      socket
+          .getOutputStream()
+          .write(
+              "GET /next HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+                  .getBytes(StandardCharsets.US_ASCII));
+      var next = HttpTester.parseResponse(input);
+      assertNotNull(next);
+      assertEquals(200, next.getStatus());
+      assertEquals("next", next.getContent());
+      assertEquals("close", next.get("Connection"));
+      assertEquals(-1, socket.getInputStream().read());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {200, 204})
+  void closesHttp11ConnectionsWhenTheRequestExplicitlyAsks(int status) throws Exception {
+    app.routes()
+        .get(
+            "/response",
+            (request, response) -> {
+              assertEquals("HTTP/1.1", request.protocol());
+              response.status(status);
+              if (status == 200) {
+                response.text("first");
+              }
+            });
+    app.start();
+
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      socket
+          .getOutputStream()
+          .write(
+              "GET /response HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+                  .getBytes(StandardCharsets.US_ASCII));
+      var result = HttpTester.parseResponse(HttpTester.from(socket.getInputStream()));
+      assertNotNull(result);
+      assertEquals(status, result.getStatus());
+      assertEquals(status == 200 ? "first" : "", result.getContent());
+      assertEquals("close", result.get("Connection"));
+      assertEquals(-1, socket.getInputStream().read());
+    }
   }
 
   private String exchange(String message) throws Exception {
