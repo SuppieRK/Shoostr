@@ -92,6 +92,13 @@ A live URL-encoded POST is parsed before raw access; repeated and escaped UTF-8
 values decode correctly while subsequent text access and the exact byte echo
 retain the original representation, not a re-encoded form.
 
+Issue 76 T09 adds
+`LifecycleHooksTest.exposesDecodedPathParametersToTheMatchedHookBeforeTheHandler`,
+independently adapting pinned Javalin 7.2.3 `TestBeforeAfterMatched`.
+A live encoded UTF-8 path with a literal plus is decoded by `onRouteMatched`;
+the endpoint returns the value that hook stored in the public request attributes.
+This proves availability before endpoint execution without private route internals.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:
