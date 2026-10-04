@@ -16,6 +16,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -33,6 +34,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -279,6 +281,67 @@ class TransportTest {
       } finally {
         release.countDown();
       }
+    }
+  }
+
+  @Test
+  void mappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable() throws Exception {
+    var peers = new CopyOnWriteArrayList<SocketAddress>();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = secureClient(HttpClient.Version.HTTP_2)) {
+      enableTls(app);
+      app.http2();
+      app.onRequestHeaders((request, _) -> peers.add(request.remoteAddress().orElseThrow()));
+      app.exception(
+          IllegalArgumentException.class,
+          (_, _, response) -> response.status(400).text("mapped error"));
+      app.routes()
+          .get(
+              "/error",
+              (_, _) -> {
+                throw new IllegalArgumentException("recoverable diagnostic");
+              });
+      app.routes().get("/healthy", (_, response) -> response.text("healthy"));
+      app.start();
+      var base = "https://localhost:" + app.port();
+
+      var mapped =
+          client.send(
+              HttpRequest.newBuilder(URI.create(base + "/error"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, mapped.statusCode());
+      assertEquals("mapped error", mapped.body());
+      assertEquals(HttpClient.Version.HTTP_2, mapped.version());
+      assertTrue(mapped.sslSession().isPresent());
+
+      var missing =
+          client.send(
+              HttpRequest.newBuilder(URI.create(base + "/missing"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(404, missing.statusCode());
+      assertEquals("Not found", missing.body());
+      assertEquals(HttpClient.Version.HTTP_2, missing.version());
+      assertTrue(missing.sslSession().isPresent());
+
+      var healthy =
+          client.send(
+              HttpRequest.newBuilder(URI.create(base + "/healthy"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, healthy.statusCode());
+      assertEquals("healthy", healthy.body());
+      assertEquals(HttpClient.Version.HTTP_2, healthy.version());
+      assertTrue(healthy.sslSession().isPresent());
+
+      assertEquals(3, peers.size());
+      assertEquals(peers.getFirst(), peers.get(1));
+      assertEquals(peers.getFirst(), peers.get(2));
     }
   }
 

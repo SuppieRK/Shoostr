@@ -140,6 +140,14 @@ with 200. Separate live cases with and without Origin assert exact Vary and
 sharing fields on rejection and success. Jooby's declarative JSON-consumes API
 and automatic JSON decoding remain unoffered; no parity feature is introduced.
 
+Issue 76 T19 adds
+`TransportTest.mappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable`,
+independently adapting pinned Jooby 4.5.4 `Issue2399`. A mapped 400, unmatched
+404 and subsequent healthy response complete with exact bodies over real
+TLS/HTTP/2. The public request-header hook captures each peer address,
+including the unmatched request; all three share one TCP peer rather than
+merely using one client that could reconnect. No private transport seam is used.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:
