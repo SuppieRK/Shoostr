@@ -49,6 +49,7 @@ import org.jspecify.annotations.Nullable;
 public final class Shoostr implements Closeable {
   private static final long DEFAULT_STOP_TIMEOUT_MILLIS = 5000;
   private static final int DEFAULT_WEBSOCKET_MAX_OUTGOING_FRAMES = 32;
+  private static final String WEBSOCKET_PROTOCOL = "websocket";
 
   private final Options options;
   private final Routes routes;
@@ -1658,9 +1659,9 @@ public final class Shoostr implements Closeable {
             method == HttpMethods.CONNECT
                 && rawRequest.getConnectionMetaData().getHttpVersion() == HttpVersion.HTTP_2
                 && tunnel != null
-                && "websocket".equals(tunnel.getProtocol());
+                && WEBSOCKET_PROTOCOL.equals(tunnel.getProtocol());
         if (extendedWebSocket
-            || rawRequest.getHeaders().contains(HttpHeader.UPGRADE, "websocket")) {
+            || rawRequest.getHeaders().contains(HttpHeader.UPGRADE, WEBSOCKET_PROTOCOL)) {
           endpoint =
               websocketRoutes.match(request.path(), extendedWebSocket ? HttpMethods.GET : method);
         }
@@ -1775,7 +1776,7 @@ public final class Shoostr implements Closeable {
         return true;
       }
 
-      response.setHeader(HttpHeader.UPGRADE.asString(), "websocket");
+      response.setHeader(HttpHeader.UPGRADE.asString(), WEBSOCKET_PROTOCOL);
       response.setHeader(
           HttpHeader.SEC_WEBSOCKET_VERSION.asString(), WebSocketConstants.SPEC_VERSION_STRING);
       generated(
