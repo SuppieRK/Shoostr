@@ -59,6 +59,55 @@ import org.junit.jupiter.params.provider.ValueSource;
 class StaticResourcesTest {
   @TempDir Path temporaryDirectory;
 
+  @ParameterizedTest
+  @CsvSource({
+    "data.json,application/json,false",
+    "style.css,text/css,false",
+    "image.png,image/png,false",
+    "data.shoostr-unknown,application/octet-stream,false",
+    "data.json,application/json,true",
+    "style.css,text/css,true",
+    "image.png,image/png,true",
+    "data.shoostr-unknown,application/octet-stream,true"
+  })
+  @Timeout(10)
+  void usesFilenameMimeGuessesAndBinaryFallbackForBothStaticSources(
+      String fileName, String expectedType, boolean classpath) throws Exception {
+    if (!classpath) {
+      assumeSecureDirectoryOperations();
+    }
+
+    var directory = Files.createDirectory(temporaryDirectory.resolve("issue76-mime"));
+    var content = new byte[] {0, 1, 2, 3, (byte) 0xFF};
+    Files.write(directory.resolve(fileName), content);
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      if (classpath) {
+        app.routes().classpathResources("/assets", "/issue76-mime");
+      } else {
+        app.routes().staticFiles("/assets", directory);
+      }
+
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/" + fileName))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(200, result.statusCode());
+      assertEquals(expectedType, result.headers().firstValue("Content-Type").orElseThrow());
+      assertArrayEquals(content, result.body());
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
   @Test
   void rejectsParameterizedFilesystemMounts() {
     var app = new Shoostr();
