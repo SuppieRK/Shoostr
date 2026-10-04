@@ -30,6 +30,7 @@ import java.security.KeyStore;
 import java.security.Principal;
 import java.security.cert.X509Certificate;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
@@ -342,6 +343,102 @@ class TransportTest {
       assertEquals(3, peers.size());
       assertEquals(peers.getFirst(), peers.get(1));
       assertEquals(peers.getFirst(), peers.get(2));
+    }
+  }
+
+  @Test
+  void roundTripsANamedBinaryMultipartUploadOverTlsHttp2() throws Exception {
+    var content = new byte[19_456];
+    Arrays.fill(content, (byte) 0xA5);
+    content[0] = 0;
+    content[content.length - 1] = (byte) 0xFF;
+    var body = new ByteArrayOutputStream();
+    body.write(
+        """
+        --http2-upload-boundary\r
+        Content-Disposition: form-data; name="document"; filename="report.bin"\r
+        Content-Type: application/octet-stream\r
+        \r
+        """
+            .getBytes(StandardCharsets.US_ASCII));
+    body.write(content);
+    body.write("\r\n--http2-upload-boundary--\r\n".getBytes(StandardCharsets.US_ASCII));
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = secureClient(HttpClient.Version.HTTP_2)) {
+      enableTls(app);
+      app.http2();
+      app.routes()
+          .post(
+              "/upload",
+              (request, response) -> {
+                var upload = request.file("document").orElseThrow();
+                assertEquals("document", upload.name());
+                assertEquals(19_456, upload.size());
+                response.setHeader(
+                    "Content-Disposition", "attachment; filename=\"" + upload.fileName() + "\"");
+
+                try (var input = upload.content()) {
+                  response.body("application/octet-stream", input.readAllBytes());
+                }
+              });
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/upload"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Content-Type", "multipart/form-data; boundary=http2-upload-boundary")
+                  .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(200, result.statusCode());
+      assertEquals(HttpClient.Version.HTTP_2, result.version());
+      assertTrue(result.sslSession().isPresent());
+      assertEquals(
+          "attachment; filename=\"report.bin\"",
+          result.headers().firstValue("Content-Disposition").orElseThrow());
+      assertArrayEquals(content, result.body());
+    }
+  }
+
+  @Test
+  void roundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion() throws Exception {
+    var content =
+        """
+        {
+          "name": "café",
+          "literal": "\\u20ac",
+          "values": [1, true, null]
+        }
+        """
+            .getBytes(StandardCharsets.UTF_8);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = secureClient(HttpClient.Version.HTTP_2)) {
+      enableTls(app);
+      app.http2();
+      app.routes()
+          .post(
+              "/json",
+              (request, response) -> response.body("application/json", request.bodyBytes()));
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/json"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Content-Type", "application/json")
+                  .POST(HttpRequest.BodyPublishers.ofByteArray(content))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(200, result.statusCode());
+      assertEquals(HttpClient.Version.HTTP_2, result.version());
+      assertTrue(result.sslSession().isPresent());
+      assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
+      assertArrayEquals(content, result.body());
     }
   }
 
