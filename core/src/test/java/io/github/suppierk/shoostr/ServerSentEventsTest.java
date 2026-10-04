@@ -26,8 +26,41 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class ServerSentEventsTest {
+  @ParameterizedTest
+  @ValueSource(strings = {"text/event-stream", "application/json, text/event-stream"})
+  @Timeout(10)
+  void emitsTheQueryParameterAsExactEventBytesForPositiveAcceptHeaders(String accept)
+      throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.routes()
+          .sse(
+              "/events",
+              (request, response) ->
+                  response.startEventStream().send(request.queryParam("qp").orElseThrow()));
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/events?qp=my-qp"))
+                  .header("Accept", accept)
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          "text/event-stream; charset=utf-8",
+          result.headers().firstValue("Content-Type").orElseThrow());
+      assertArrayEquals("data: my-qp\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+    }
+  }
+
   @Test
   void sendsEmptyAsciiUnicodeAndMalformedSurrogateDataAsExactUtf8Bytes() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
