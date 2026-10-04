@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import io.github.suppierk.shoostr.extensions.AdmissionExtension;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import java.net.URI;
@@ -23,14 +24,14 @@ class RoutePolicyTest {
   @TempDir Path directory;
 
   @Test
-  void rejectsProtectionCallbacksAfterRegistrationCloses() throws Exception {
+  void rejectsExtensionConfigurationAfterRegistrationCloses() throws Exception {
     var invoked = new AtomicBoolean();
 
     try (var app = new Shoostr()) {
       var routes = app.routes();
       routes.close();
       assertThrows(
-          IllegalStateException.class, () -> routes.protect((_, _) -> {}, _ -> invoked.set(true)));
+          IllegalStateException.class, () -> routes.get("/", (_, _) -> {}, _ -> invoked.set(true)));
       assertFalse(invoked.get());
     }
   }
@@ -43,14 +44,14 @@ class RoutePolicyTest {
       plain
           .routes()
           .path("/api//", routes -> routes.get("", (_, response) -> response.text("plain")));
+      var admission = new AdmissionExtension((_, _) -> {});
       guarded
+          .extensions(admission)
           .routes()
           .path(
               "/api//",
               routes ->
-                  routes.protect(
-                      (_, _) -> {},
-                      secured -> secured.get("", (_, response) -> response.text("guarded"))));
+                  routes.get("", (_, response) -> response.text("guarded"), e -> e.get(admission)));
       plain.start();
       guarded.start();
 
@@ -62,33 +63,46 @@ class RoutePolicyTest {
   }
 
   @Test
-  void runsInheritedPoliciesInOrderBeforeTheHandlerAndPreventsPolicyStreaming() throws Exception {
+  void runsInheritedExtensionAdmissionInSelectionOrderBeforeTheHandler() throws Exception {
+    var outer = new AdmissionExtension((request, _) -> request.attribute("order", "outer"));
+    var inner =
+        new AdmissionExtension(
+            (request, _) ->
+                request.attribute("order", request.attribute("order").orElseThrow() + ",inner"));
+
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              (request, response) -> {
-                request.attribute("order", "outer");
-                assertThrows(IllegalStateException.class, () -> response.startStream("text/plain"));
-              },
-              outer ->
-                  outer.path(
-                      "/api",
-                      paths ->
-                          paths.protect(
-                              (request, _) ->
-                                  request.attribute(
-                                      "order", request.attribute("order").orElseThrow() + ",inner"),
-                              inner ->
-                                  inner.get(
-                                      "/order",
-                                      (request, response) ->
-                                          response.text(
-                                              request.attribute("order").orElseThrow()
-                                                  + ",handler")))));
+      app.extensions(outer, inner)
+          .routes()
+          .path(
+              "/api",
+              routes ->
+                  routes.get(
+                      "/order",
+                      (request, response) ->
+                          response.text(request.attribute("order").orElseThrow() + ",handler"),
+                      e -> e.get(inner)),
+              e -> e.get(outer));
       app.start();
-
       assertEquals("outer,inner,handler", send(client, app, "/api/order").body());
+    }
+  }
+
+  @Test
+  void preventsExtensionAdmissionFromStartingAStream() throws Exception {
+    var admission =
+        new AdmissionExtension(
+            (_, response) ->
+                assertThrows(
+                    IllegalStateException.class, () -> response.startStream("text/plain")));
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.extensions(admission)
+          .routes()
+          .get("/stream", (_, response) -> response.text("finite"), e -> e.get(admission));
+      app.start();
+      assertEquals("finite", send(client, app, "/stream").body());
     }
   }
 
@@ -99,12 +113,16 @@ class RoutePolicyTest {
       app.exception(
           AuthenticationRequiredException.class,
           (_, _, response) -> response.text("login required"));
-      app.routes()
-          .protect(
-              (_, _) -> {
-                throw new AuthenticationRequiredException("Bearer realm=\"api\"");
-              },
-              secured -> secured.get("/private", (_, response) -> response.text("secret")));
+      var auth =
+          new AuthenticationExtension() {
+            @Override
+            public void handle(Request request, Response response) {
+              throw new AuthenticationRequiredException("Bearer realm=\"api\"");
+            }
+          };
+      app.authentication(auth)
+          .routes()
+          .get("/private", (_, response) -> response.text("secret"), e -> e.get(auth).required());
       app.start();
 
       var result = send(client, app, "/private");
@@ -127,12 +145,14 @@ class RoutePolicyTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
+      var admission =
+          new AdmissionExtension(
               (_, _) -> {
                 throw new ForbiddenException();
-              },
-              secured -> secured.staticFiles("/files", directory));
+              });
+      app.extensions(admission)
+          .routes()
+          .path("/", secured -> secured.staticFiles("/files", directory), e -> e.get(admission));
       app.start();
 
       assertEquals(403, send(client, app, "/files/secret.txt").statusCode());
@@ -143,15 +163,18 @@ class RoutePolicyTest {
   void protectsScopedRoutesWithoutProtectingPublicSiblings() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
+      var admission =
+          new AdmissionExtension(
+              (_, _) -> {
+                throw new ForbiddenException();
+              });
+      app.extensions(admission)
+          .routes()
           .path(
               "/api",
               routes -> {
-                routes.protect(
-                    (_, _) -> {
-                      throw new ForbiddenException();
-                    },
-                    secured -> secured.get("/private", (_, response) -> response.text("secret")));
+                routes.get(
+                    "/private", (_, response) -> response.text("secret"), e -> e.get(admission));
                 routes.get("/public", (_, response) -> response.text("public"));
               });
       app.start();

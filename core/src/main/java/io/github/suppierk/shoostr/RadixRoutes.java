@@ -199,7 +199,7 @@ class RadixRoutes {
    * Prepares a WebSocket upgrade route with the same path matching rules as HTTP GET.
    *
    * @param path absolute route pattern
-   * @param admission handler applying inherited route policies before upgrade
+   * @param admission handshake handler; compiled behavior supplies admission before upgrade
    * @param factory creates one listener from the handshake request and response
    * @return compiled WebSocket endpoint metadata
    */
@@ -1355,7 +1355,41 @@ class RadixRoutes {
       Map<String, Integer> parameters,
       int firstParameterOffset,
       int firstParameterSegment,
-      @Nullable BiFunction<Request, ServerUpgradeResponse, Session.Listener> websocketFactory) {
+      @Nullable BiFunction<Request, ServerUpgradeResponse, Session.Listener> websocketFactory,
+      @Nullable EndpointBehavior behavior) {
+    /**
+     * Creates an ordinary endpoint without local runtime behavior.
+     *
+     * @param method HTTP method
+     * @param pattern radix pattern
+     * @param routePattern public composed template
+     * @param handler submitted handler
+     * @param parameters parameter names and positions
+     * @param firstParameterOffset first capture character offset
+     * @param firstParameterSegment first capture segment
+     * @param websocketFactory optional handshake factory
+     */
+    Endpoint(
+        HttpMethods method,
+        String pattern,
+        String routePattern,
+        Handler handler,
+        Map<String, Integer> parameters,
+        int firstParameterOffset,
+        int firstParameterSegment,
+        @Nullable BiFunction<Request, ServerUpgradeResponse, Session.Listener> websocketFactory) {
+      this(
+          method,
+          pattern,
+          routePattern,
+          handler,
+          parameters,
+          firstParameterOffset,
+          firstParameterSegment,
+          websocketFactory,
+          null);
+    }
+
     /**
      * Copies parameter metadata so later changes to the caller's map cannot affect requests.
      *
@@ -1367,6 +1401,7 @@ class RadixRoutes {
      * @param firstParameterOffset character offset of the first parameter, or -1 for literal routes
      * @param firstParameterSegment segment index of the first parameter, or zero for literal routes
      * @param websocketFactory per-upgrade listener factory, or null for ordinary HTTP routes
+     * @param behavior immutable local runtime behavior, or null
      * @throws IllegalArgumentException if the first parameter position is invalid
      */
     Endpoint {
@@ -1382,6 +1417,27 @@ class RadixRoutes {
           || (literal && firstParameterSegment != 0)) {
         throw new IllegalArgumentException("Invalid first parameter position");
       }
+    }
+
+    /**
+     * Attaches immutable behavior while preserving all validated route facts.
+     *
+     * @param behavior local runtime data, or null
+     * @return this endpoint when behavior is absent, otherwise its enriched copy
+     */
+    Endpoint withBehavior(@Nullable EndpointBehavior behavior) {
+      return behavior == null
+          ? this
+          : new Endpoint(
+              method,
+              pattern,
+              routePattern,
+              handler,
+              parameters,
+              firstParameterOffset,
+              firstParameterSegment,
+              websocketFactory,
+              behavior);
     }
 
     /**

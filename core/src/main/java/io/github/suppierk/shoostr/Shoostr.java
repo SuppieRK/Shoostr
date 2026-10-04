@@ -51,6 +51,9 @@ public final class Shoostr implements Closeable {
 
   private final Options options;
   private final Routes routes;
+  private final List<Extension<?>> extensions;
+  private @Nullable AuthenticationExtension authentication;
+  private boolean installing;
   private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> exceptionHandlers;
   private final Map<Integer, Handler> statusHandlers;
   private final List<Handler> requestHeaderHandlers;
@@ -91,6 +94,7 @@ public final class Shoostr implements Closeable {
   public Shoostr(Options options) {
     this.options = Objects.requireNonNull(options);
     routes = new Routes();
+    extensions = new ArrayList<>();
     exceptionHandlers = new HashMap<>();
     statusHandlers = new HashMap<>();
     requestHeaderHandlers = new ArrayList<>();
@@ -211,6 +215,117 @@ public final class Shoostr implements Closeable {
    */
   public Routes routes() {
     return routes;
+  }
+
+  /**
+   * Installs ordinary capabilities eagerly, in written order. Instance identity determines
+   * selection; multiple instances of one type may coexist. Bare installation does not activate
+   * route behavior. A bad batch is rejected before setup; provider failure closes the application.
+   *
+   * @param first required first capability
+   * @param additional additional capabilities; null means none
+   * @return this application
+   * @throws NullPointerException if first or an additional capability is null
+   * @throws IllegalArgumentException if a capability is duplicated or is an authenticator
+   * @throws IllegalStateException if startup, closure or provider installation has begun
+   */
+  public synchronized Shoostr extensions(
+      Extension<?> first, Extension<?> @Nullable ... additional) {
+    requireExtensionRegistration();
+    var batch = new ArrayList<Extension<?>>();
+    batch.add(Objects.requireNonNull(first));
+    if (additional != null) {
+      for (var extension : additional) {
+        batch.add(Objects.requireNonNull(extension));
+      }
+    }
+
+    for (var extension : batch) {
+      if (extension instanceof AuthenticationExtension) {
+        throw new IllegalArgumentException("Install authentication through app.authentication");
+      }
+    }
+    installExtensions(batch);
+    return this;
+  }
+
+  /**
+   * Installs the application's one managed identity source. Routes/groups explicitly require it
+   * using extensions.get(instance).required(); installation itself leaves routes public.
+   *
+   * @param extension identity source
+   * @return this application
+   * @throws IllegalStateException if already configured or installation is closed
+   */
+  public synchronized Shoostr authentication(AuthenticationExtension extension) {
+    requireExtensionRegistration();
+    Objects.requireNonNull(extension);
+    if (authentication != null) {
+      throw new IllegalStateException("Only one managed authenticator may be installed");
+    }
+
+    installExtensions(List.of(extension));
+    authentication = extension;
+    return this;
+  }
+
+  /**
+   * Rejects extension registration after startup/closure or during provider setup.
+   *
+   * @throws IllegalStateException if application setup is closed or already running
+   */
+  private void requireExtensionRegistration() {
+    if (started || closed || installing) {
+      throw new IllegalStateException("Install extensions before starting or closing the app");
+    }
+  }
+
+  /**
+   * Claims a fully validated batch before eager setup and cleans owned resources on failure.
+   *
+   * @param batch non-null capabilities in written order
+   * @throws IllegalStateException if setup closes the application
+   */
+  @SuppressWarnings("java:S1181") // Provider setup must clean resources even on Error.
+  private void installExtensions(List<Extension<?>> batch) {
+    routes.install(batch);
+    extensions.addAll(batch);
+    installing = true;
+
+    try {
+      for (var extension : batch) {
+        var callbacks = new ApplicationCallbacks();
+
+        try {
+          extension.install(callbacks);
+        } finally {
+          callbacks.freeze();
+        }
+
+        if (closed) {
+          throw new IllegalStateException("Provider setup closed the application");
+        }
+
+        requestHeaderHandlers.addAll(callbacks.headers);
+        routeMatchedHandlers.addAll(callbacks.matched);
+        beforeHandlers.addAll(callbacks.before);
+        afterRouteHandlers.addAll(callbacks.after);
+        beforeFlushHandlers.addAll(callbacks.beforeFlush);
+        afterFlushHandlers.addAll(callbacks.afterFlush);
+        afterHandlers.addAll(callbacks.completed);
+        observationFactories.addAll(callbacks.observations);
+      }
+    } catch (RuntimeException | Error failure) {
+      try {
+        close();
+      } catch (IOException cleanup) {
+        failure.addSuppressed(cleanup);
+      }
+
+      throw failure;
+    } finally {
+      installing = false;
+    }
   }
 
   /**
@@ -487,7 +602,7 @@ public final class Shoostr implements Closeable {
   @SuppressWarnings(
       "java:S1181") // Startup cleanup must also run when Jetty or a callback throws Error.
   public synchronized Shoostr start() throws Exception {
-    if (started || closed) {
+    if (started || closed || installing) {
       throw new IllegalStateException("Shoostr can only start once and cannot start after close");
     }
 
@@ -495,6 +610,11 @@ public final class Shoostr implements Closeable {
     websocketRouter = routes.websocketRouter();
 
     try {
+      started = true;
+      routes.prepare();
+      for (var extension : extensions) {
+        extension.beforeStart();
+      }
       var dispatch =
           new DispatchConfiguration(
               Objects.requireNonNull(router),
@@ -507,7 +627,8 @@ public final class Shoostr implements Closeable {
               beforeFlushHandlers,
               afterFlushHandlers,
               afterHandlers,
-              observationFactories);
+              observationFactories,
+              routes.localObservers());
       observationFactories.clear();
       afterHandlers.clear();
       beforeHandlers.clear();
@@ -565,6 +686,7 @@ public final class Shoostr implements Closeable {
     }
 
     closed = true;
+    authentication = null;
     exceptionHandlers.clear();
     statusHandlers.clear();
     requestHeaderHandlers.clear();
@@ -574,12 +696,19 @@ public final class Shoostr implements Closeable {
     beforeFlushHandlers.clear();
     afterFlushHandlers.clear();
     afterHandlers.clear();
-    routes.close();
+    observationFactories.clear();
+    IOException failure = null;
+
+    try {
+      routes.close();
+    } catch (RuntimeException closeFailure) {
+      failure = appendCloseFailure(null, "Could not close route resources", closeFailure);
+    }
+
     serverConfigurations.clear();
     httpConfigurations.clear();
     sessionConfiguration = null;
     tlsConfiguration = null;
-    IOException failure = null;
 
     try {
       if (server != null) {
@@ -590,7 +719,7 @@ public final class Shoostr implements Closeable {
         Thread.currentThread().interrupt();
       }
 
-      failure = new IOException("Could not stop HTTP server", stopFailure);
+      failure = appendCloseFailure(failure, "Could not stop HTTP server", stopFailure);
     } finally {
       if (router != null) {
         try {
@@ -611,6 +740,14 @@ public final class Shoostr implements Closeable {
       }
 
       removeShutdownHook();
+      for (int index = extensions.size() - 1; index >= 0; index--) {
+        try {
+          extensions.get(index).close();
+        } catch (IOException | RuntimeException closeFailure) {
+          failure = appendCloseFailure(failure, "Could not close extension", closeFailure);
+        }
+      }
+      extensions.clear();
     }
 
     if (failure != null) {
@@ -627,7 +764,7 @@ public final class Shoostr implements Closeable {
    * @return aggregated failure
    */
   private static IOException appendCloseFailure(
-      @Nullable IOException current, String message, RuntimeException additional) {
+      @Nullable IOException current, String message, Exception additional) {
     if (current == null) {
       return new IOException(message, additional);
     }
@@ -923,7 +1060,12 @@ public final class Shoostr implements Closeable {
         failure instanceof HttpException httpFailure
             ? httpFailure.statusCode()
             : HttpStatusCodes.INTERNAL_SERVER_ERROR;
-    var errorHandler = exceptionHandler(errors, failure);
+    var local = request.behavior();
+    var errorHandler = local == null ? null : exceptionHandler(local.errors(), failure);
+    if (errorHandler == null) {
+      errorHandler = exceptionHandler(errors, failure);
+    }
+
     if (failure instanceof AuthenticationRequiredException authentication) {
       response.requiredChallenge(authentication.challenge());
     }
@@ -1065,7 +1207,12 @@ public final class Shoostr implements Closeable {
       Request request,
       Response response)
       throws Exception {
-    var handler = handlers.get(status);
+    var local = request.behavior();
+    var handler = local == null ? null : local.statuses().get(status);
+    if (handler == null) {
+      handler = handlers.get(status);
+    }
+
     if (handler == null) {
       response.status(status).text(fallback);
       return;
@@ -1179,6 +1326,7 @@ public final class Shoostr implements Closeable {
     private final List<Handler> postFlushHooks;
     private final List<Consumer<RequestOutcome>> observers;
     private final List<Function<Request, RequestObservation>> instrumentation;
+    private final boolean localObservers;
     private final @Nullable TrustedProxy proxy;
     private final @Nullable CorsPolicy cors;
     private final @Nullable RadixRoutes websocketRoutes;
@@ -1210,6 +1358,7 @@ public final class Shoostr implements Closeable {
       postFlushHooks = dispatch.afterFlushHooks();
       observers = dispatch.observers();
       instrumentation = dispatch.instrumentation();
+      localObservers = dispatch.localObservers();
       this.proxy = proxy;
       this.cors = cors;
       this.websocketRoutes = websocketRoutes;
@@ -1236,7 +1385,7 @@ public final class Shoostr implements Closeable {
         org.eclipse.jetty.server.Response rawResponse,
         Callback callback) {
       var observation =
-          observers.isEmpty() && instrumentation.isEmpty()
+          observers.isEmpty() && instrumentation.isEmpty() && !localObservers
               ? null
               : new Completion(rawRequest.getMethod(), observers);
       if (observation != null) {
@@ -1270,8 +1419,22 @@ public final class Shoostr implements Closeable {
       }
 
       response.flushHooks(
-          () -> flush(preFlushHooks, request, response),
-          () -> flush(postFlushHooks, request, response));
+          () -> {
+            var local = request.behavior();
+            if (local != null) {
+              flush(local.beforeFlush(), request, response);
+            }
+
+            flush(preFlushHooks, request, response);
+          },
+          () -> {
+            var local = request.behavior();
+            if (local != null) {
+              flush(local.afterFlush(), request, response);
+            }
+
+            flush(postFlushHooks, request, response);
+          });
       Throwable terminalFailure = null;
       Throwable applicationFailure = null;
 
@@ -1524,6 +1687,17 @@ public final class Shoostr implements Closeable {
         @Nullable Completion observation)
         throws Exception {
       request.route(endpoint);
+      var local = endpoint.behavior();
+      if (local != null) {
+        if (observation != null) {
+          observation.localObservers = local.observers();
+        }
+
+        for (var hook : local.matched()) {
+          hook.handle(request, response);
+        }
+      }
+
       for (var hook : matchedHooks) {
         hook.handle(request, response);
       }
@@ -1532,8 +1706,24 @@ public final class Shoostr implements Closeable {
         throw new ContentTooLargeException();
       }
 
-      runGates(request, response);
+      runGates(local, request, response);
+      if (local != null) {
+        for (var condition : local.conditions()) {
+          if (!condition.test(request)) {
+            response.setHeader(HttpHeader.CACHE_CONTROL.asString(), "no-store");
+            generated(statuses, HttpStatusCodes.NOT_FOUND.value(), "Not found", request, response);
+            return false;
+          }
+        }
+      }
+
       endpoint.handler().handle(request, response);
+      if (local != null) {
+        for (var hook : local.after()) {
+          hook.handle(request, response);
+        }
+      }
+
       for (var hook : postRouteHooks) {
         hook.handle(request, response);
       }
@@ -1571,19 +1761,31 @@ public final class Shoostr implements Closeable {
     /**
      * Runs application admission gates while response output is disabled.
      *
+     * @param local selected endpoint phases, or null
      * @param request matched request
      * @param response live response
      * @throws Exception if an admission gate fails
      */
     @SuppressWarnings("java:S112") // Admission gates may throw checked application failures.
-    private void runGates(Request request, Response response) throws Exception {
-      if (gates.isEmpty()) {
+    private void runGates(@Nullable EndpointBehavior local, Request request, Response response)
+        throws Exception {
+      if (gates.isEmpty() && local == null) {
         return;
       }
 
       response.gating(true);
 
       try {
+        if (local != null) {
+          if (local.authentication() != null) {
+            local.authentication().handle(request, response);
+          }
+
+          for (var gate : local.before()) {
+            gate.handle(request, response);
+          }
+        }
+
         for (var gate : gates) {
           gate.handle(request, response);
         }
@@ -1605,7 +1807,8 @@ public final class Shoostr implements Closeable {
       List<Handler> beforeFlushHooks,
       List<Handler> afterFlushHooks,
       List<Consumer<RequestOutcome>> observers,
-      List<Function<Request, RequestObservation>> instrumentation) {
+      List<Function<Request, RequestObservation>> instrumentation,
+      boolean localObservers) {
     /**
      * Copies registrations so clearing the mutable builders cannot affect live requests.
      *
@@ -1620,6 +1823,7 @@ public final class Shoostr implements Closeable {
      * @param afterFlushHooks callbacks after response submission
      * @param observers terminal completion observers
      * @param instrumentation per-request observation factories
+     * @param localObservers whether any route requires terminal completion
      */
     private DispatchConfiguration {
       Objects.requireNonNull(router);
@@ -1643,6 +1847,7 @@ public final class Shoostr implements Closeable {
     private final String method;
     private final long started;
     private final List<Consumer<RequestOutcome>> observers;
+    private List<Consumer<RequestOutcome>> localObservers;
     private final List<RequestObservation> scopes;
     private @Nullable String routePattern;
     private int status;
@@ -1661,6 +1866,7 @@ public final class Shoostr implements Closeable {
     private Completion(String method, List<Consumer<RequestOutcome>> observers) {
       this.method = method;
       this.observers = observers;
+      localObservers = List.of();
       scopes = new ArrayList<>();
       started = System.nanoTime();
     }
@@ -1802,7 +2008,18 @@ public final class Shoostr implements Closeable {
         }
       }
 
-      for (var observer : observers) {
+      notifyTerminal(localObservers, outcome);
+      notifyTerminal(observers, outcome);
+    }
+
+    /**
+     * Isolates terminal observer failures and preserves local-before-app order.
+     *
+     * @param callbacks terminal callbacks
+     * @param outcome immutable final outcome
+     */
+    private void notifyTerminal(List<Consumer<RequestOutcome>> callbacks, RequestOutcome outcome) {
+      for (var observer : callbacks) {
         try {
           observer.accept(outcome);
         } catch (RuntimeException failure) {

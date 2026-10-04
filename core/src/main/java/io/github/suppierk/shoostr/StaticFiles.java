@@ -34,7 +34,7 @@ import org.jspecify.annotations.Nullable;
 final class StaticFiles implements Closeable {
   private static final String BINARY_CONTENT_TYPE = "application/octet-stream";
   private final String mount;
-  private final List<Handler> policies;
+  private @Nullable EndpointBehavior behavior;
   private final StaticOptions options;
   private final @Nullable SecureDirectoryStream<Path> rootDirectory;
   private final ResourceFactory.@Nullable Closeable resourceFactory;
@@ -49,32 +49,18 @@ final class StaticFiles implements Closeable {
    *     filesystem cannot anchor relative operations safely
    */
   StaticFiles(String mount, Path directory) {
-    this(mount, directory, List.of());
+    this(mount, directory, StaticOptions.defaults());
   }
 
   /**
-   * Creates a mount with inherited route admission policies.
+   * Creates a filesystem mount with explicit resource options.
    *
    * @param mount mounted request path
    * @param directory source directory
-   * @param policies immutable policies required before serving a resource
-   * @throws IllegalArgumentException if the directory cannot be mounted safely
-   */
-  StaticFiles(String mount, Path directory, List<Handler> policies) {
-    this(mount, directory, policies, StaticOptions.defaults());
-  }
-
-  /**
-   * Creates a filesystem mount with inherited policies and explicit resource options.
-   *
-   * @param mount mounted request path
-   * @param directory source directory
-   * @param policies immutable policies required before serving a resource
    * @param options welcome-file and SPA fallback options
    * @throws IllegalArgumentException if the directory cannot be mounted safely
    */
-  StaticFiles(String mount, Path directory, List<Handler> policies, StaticOptions options) {
-    this.policies = List.copyOf(policies);
+  StaticFiles(String mount, Path directory, StaticOptions options) {
     this.mount = Objects.requireNonNull(mount);
     this.options = Objects.requireNonNull(options);
     Path root;
@@ -107,32 +93,18 @@ final class StaticFiles implements Closeable {
    * @throws IllegalArgumentException if the source is unavailable or not a readable directory
    */
   StaticFiles(String mount, String directory) {
-    this(mount, directory, List.of());
+    this(mount, directory, StaticOptions.defaults());
   }
 
   /**
-   * Creates a mount with inherited route admission policies.
+   * Creates a classpath mount with explicit resource options.
    *
    * @param mount mounted request path
    * @param directory source directory
-   * @param policies immutable policies required before serving a resource
-   * @throws IllegalArgumentException if the directory cannot be mounted safely
-   */
-  StaticFiles(String mount, String directory, List<Handler> policies) {
-    this(mount, directory, policies, StaticOptions.defaults());
-  }
-
-  /**
-   * Creates a classpath mount with inherited policies and explicit resource options.
-   *
-   * @param mount mounted request path
-   * @param directory source directory
-   * @param policies immutable policies required before serving a resource
    * @param options welcome-file and SPA fallback options
    * @throws IllegalArgumentException if the directory cannot be mounted safely
    */
-  StaticFiles(String mount, String directory, List<Handler> policies, StaticOptions options) {
-    this.policies = List.copyOf(policies);
+  StaticFiles(String mount, String directory, StaticOptions options) {
     this.mount = Objects.requireNonNull(mount);
     this.options = Objects.requireNonNull(options);
     rootDirectory = null;
@@ -216,11 +188,21 @@ final class StaticFiles implements Closeable {
         method,
         mount,
         mount,
-        Routes.protectedHandler((_, response) -> serve(selected, response), policies),
+        (_, response) -> serve(selected, response),
         Map.of(),
         -1,
         0,
-        null);
+        null,
+        behavior);
+  }
+
+  /**
+   * Captures mount-scoped phases during registration, before the router is published.
+   *
+   * @param behavior immutable mount behavior
+   */
+  void behavior(@Nullable EndpointBehavior behavior) {
+    this.behavior = behavior;
   }
 
   /**

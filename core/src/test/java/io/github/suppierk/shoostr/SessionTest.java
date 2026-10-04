@@ -372,11 +372,13 @@ class SessionTest {
         var client = HttpClient.newHttpClient()) {
       var csrf = new Csrf();
       restarted.sessions(handler -> fileStore(handler, directory));
+      restarted.extensions(csrf);
       restarted
           .routes()
-          .protect(
-              csrf::verify,
-              routes -> routes.post("/submit", (_, response) -> response.text("accepted")));
+          .path(
+              "/",
+              routes -> routes.post("/submit", (_, response) -> response.text("accepted")),
+              e -> e.get(csrf).required());
       restarted.start();
       var response =
           client.send(

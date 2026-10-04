@@ -79,13 +79,21 @@ class CorsTest {
       app.beforeRouteHandler((_, _) -> gates.incrementAndGet());
       app.afterRequest(completions::add);
       app.onRequestHeaders((_, _) -> admissions.incrementAndGet());
-      app.routes()
-          .protect(
-              (_, _) -> {
-                authentications.incrementAndGet();
-                throw new AuthenticationRequiredException("Bearer");
-              },
-              routes -> routes.get("/data", (_, _) -> executions.incrementAndGet()));
+      var admission =
+          new AuthenticationExtension() {
+            @Override
+            public void handle(Request request, Response response) throws Exception {
+
+              authentications.incrementAndGet();
+              throw new AuthenticationRequiredException("Bearer");
+            }
+          };
+      app.authentication(admission)
+          .routes()
+          .path(
+              "/",
+              routes -> routes.get("/data", (_, _) -> executions.incrementAndGet()),
+              e -> e.get(admission).required());
       app.start();
       var preflight =
           send(
@@ -110,7 +118,7 @@ class CorsTest {
           actual.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
       assertEquals(2, admissions.get());
       assertEquals(1, authentications.get());
-      assertEquals(1, gates.get());
+      assertEquals(0, gates.get());
       assertEquals(
           "true", actual.headers().firstValue("Access-Control-Allow-Credentials").orElseThrow());
       var firstOutcome = Objects.requireNonNull(completions.poll(5, TimeUnit.SECONDS));

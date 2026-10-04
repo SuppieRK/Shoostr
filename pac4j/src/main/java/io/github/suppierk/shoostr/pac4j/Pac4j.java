@@ -1,6 +1,6 @@
 package io.github.suppierk.shoostr.pac4j;
 
-import io.github.suppierk.shoostr.Handler;
+import io.github.suppierk.shoostr.AuthenticationExtension;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.http.HttpHeaders;
@@ -17,7 +17,7 @@ import org.pac4j.core.context.CallContext;
  * Configure the client and its thread-safe authenticator before creating this policy; do not mutate
  * them while serving requests. The application owns credentials, keys, and identity stores.
  */
-public final class Pac4j implements Handler {
+public final class Pac4j extends AuthenticationExtension {
   private final DirectClient client;
   private final String challenge;
   private final Authorizer authorizer;

@@ -1,5 +1,7 @@
 package io.github.suppierk.shoostr.micrometer;
 
+import io.github.suppierk.shoostr.ApplicationCallbacks;
+import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestObservation;
 import io.github.suppierk.shoostr.http.HttpMethods;
@@ -11,9 +13,12 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
 
 /** Optional metrics registered with Shoostr.observe; the application owns the supplied registry. */
-public final class MicrometerMetrics implements Function<Request, RequestObservation> {
+public final class MicrometerMetrics
+    implements Extension<Void>, Function<Request, RequestObservation> {
   private final MeterRegistry registry;
   private final LongTaskTimer active;
+  private boolean allRequests;
+  private boolean installed;
 
   /**
    * Creates completed count/duration and active-request instrumentation.
@@ -68,5 +73,33 @@ public final class MicrometerMetrics implements Function<Request, RequestObserva
         sample.stop();
       }
     };
+  }
+
+  /**
+   * Enables app-wide instrumentation explicitly before extension installation.
+   *
+   * @return this extension
+   * @throws IllegalStateException if already installed
+   */
+  public synchronized MicrometerMetrics allRequests() {
+    if (installed) {
+      throw new IllegalStateException("Configure instrumentation before installation");
+    }
+
+    allRequests = true;
+    return this;
+  }
+
+  /**
+   * Installs configured observation without owning borrowed dependencies.
+   *
+   * @param callbacks registration-only application callbacks
+   */
+  @Override
+  public synchronized void install(ApplicationCallbacks callbacks) {
+    installed = true;
+    if (allRequests) {
+      callbacks.observe(this);
+    }
   }
 }

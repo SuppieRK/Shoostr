@@ -211,21 +211,108 @@ characters in the supplied filename.
 
 Throw an exception from `io.github.suppierk.shoostr.http.exceptions`, such as `new NotFoundException()`, to select its HTTP error status. By default, before commitment, core replaces all staged headers and body with that status and its standard reason phrase as UTF-8 plain text. Custom subclasses of `HttpException`, `HttpClientException`, or `HttpServerException` use the same mapping. Built-in responses never expose exception messages, causes, or stack traces. Other exceptions produce `500 Internal Server Error`; core does not unwrap causes to select a status. Fatal Java `Error` instances fail the request directly.
 
-Protect explicit route scopes with reusable policies:
+### Extensions and live availability
+
+Install optional capabilities by instance and configure their use alongside the submitted handler:
 
 ```java
-app.routes().protect(policy, secured -> {
-  secured.get("/account", accountHandler);
-  secured.path("/admin", adminRoutes);
+app.authentication(security).extensions(devDocs, publicDocs).routes(routes -> {
+  routes.path("/users", users -> {
+    users.get("/{id}", getUser, e -> e.get(publicDocs).summary("Find one user"));
+    users.get("/search", searchUsers);
+  }, e -> {
+    e.get(security).required();
+    e.get(publicDocs).tag("users").summary("Users");
+  });
+  routes.get("/openapi.json", publicDocs.handler(), e -> e.get(security).required());
 });
-app.routes().get("/health", healthHandler);
 ```
 
-`policy` is a `Handler` that throws to deny access. Nested scopes inherit policies in
-outer-to-inner order, including static mounts. Public siblings remain independent, and endpoint
-literal route segments take routing precedence. Application-wide hooks and gates run first;
-route policies then run before the endpoint and cannot start streaming. Header-only authentication
-does not read the request body. Policies are shared across requests and must be thread-safe.
+`devDocs` and `publicDocs` illustrate optional library instances; core does not ship OpenAPI.
+`extensions(first, additional...)` and `authentication(...)` return the same app. Select the exact
+installed instance with `e.get(instance)`; class/name lookup is absent. Authentication has one
+dedicated app slot, rejected by ordinary `extensions(...)`. Groups configure once. Each child
+receives independent provider configuration, including inherited fields that a local setter does
+not override. Reusing a Handler across paths does not merge those endpoint definitions.
+
+Route callbacks may register `onRouteMatched`, `beforeRouteHandler`, `afterRouteHandler`,
+`beforeResponseFlush`, `afterResponseFlush`, `afterRequest`, `exception` and `status` directly on
+`Extensions`. Match and ordinary lifecycle hooks run local first, then app; a thrown exception
+stops the ordinary phase. After matched hooks and known-length body validation, admission runs
+managed authentication, inherited/selected extension contributions in first-selection order,
+direct local gates, app gates, then availability.
+The endpoint follows only on success. Matching local exception/status renderers handle the response
+alone; app rendering applies when no local match exists. Terminal observers remain failure-isolated
+and run local before app after application cleanup and transport completion. Header admission and
+instrumentation stay app-wide because they precede route lookup. Handshake callbacks apply to HTTP
+admission, not later WebSocket messages; static mounts and SSE inherit group callbacks too.
+
+Use runtime conditions for feature flags or authenticated request decisions:
+
+```java
+routes.when(featureFlag::enabled, enabled -> enabled.get("/preview", previewHandler));
+routes.when(request -> countryAvailable(request), regional -> regional.get("/regional", handler));
+```
+
+Each registration callback runs once; predicates run per request after admission. Nested conditions
+short-circuit outer to inner. False renders terminal 404 with `Cache-Control: no-store` and does not
+fall through to another route. Method discovery/405 and CORS preflight remain unchanged, so this is
+availability control, not route concealment. Successful response caching remains application-owned;
+cached responses never consult a live predicate. Use ordinary Java conditional registration for
+deployment-specific absence: `if (development) routes.get("/debug", debugHandler);`.
+
+Extension authors implement `Extension<C>`. Its `configure(Extensions, C inherited)` method returns
+a fresh typed configurator, copies parent values when present, and registers its own callbacks.
+Select collaborating capabilities in the route/group callback; provider-side nested `get` is rejected.
+Repeated `get(instance)` within one scope returns the same configurator. Provider contributions run
+in first-selection order, followed by directly registered local callbacks; inherited ordinary hooks
+retain outer-to-inner order. Avoid capturing mutable configurators in runtime callbacks: capture
+the selected values. Core snapshots callback collections and closes registration surfaces before
+traffic; it does not police arbitrary provider-owned setters.
+
+Internally, each endpoint with local runtime behavior receives an immutable `EndpointBehavior`
+during registration. It combines inherited and local authentication, hooks, renderers
+and availability checks; matching requests reuse it without rebuilding collections or consulting
+an extension registry. Plain and metadata-only bindings retain no behavior object. Installed but
+inactive extensions still have app installation state, but add no behavior objects to the frozen
+router. Registration allocates temporary configurators; active behavior increases retained router
+memory and the live graph traversed by GC, rather than recreating its configuration per request.
+Hook execution and collection iteration can still allocate, and captured application objects affect
+retained memory too.
+
+The existing local JOL fixture estimated identical plain/inactive frozen-router sizes to baseline.
+Across 2,000 bindings, its callback configuration added 208,048 retained bytes and authentication
+added 112,016 bytes. These are complete graph differences for those fixtures, not record sizes or
+universal overheads. Paired JMH detected no material plain/inactive regression, but noisy timings
+cannot rule out small costs. See the [JMH/JFR/JOL report](benchmark-results/issue78/REPORT.md) for
+scope and limitations; its artifacts are local and ignored by Git. Renaming this internal type
+changes terminology only, not execution logic or object layout.
+
+`install(ApplicationCallbacks)` runs eagerly and preserves written app callback order within
+each lifecycle phase. This registration-only collector offers `onRequestHeaders`, `onRouteMatched`,
+`beforeRouteHandler`, `afterRouteHandler`, `beforeResponseFlush`, `afterResponseFlush`,
+`afterRequest` and `observe`. It exposes no app/router, infrastructure settings or renderers,
+and rejects retained registration after installation returns or throws. Installation itself
+does not enable app-wide behavior: the extension must explicitly configure that contribution.
+Cold
+`Extensions.onRoute((method, pathTemplate) -> ...)` notifications arrive after registration freezes
+and before `Extension.beforeStart()`. They describe actual ordinary HTTP/SSE bindings, including an
+explicitly registered documentation handler's own route, without executing handlers. WebSocket
+handshakes and static mounts produce no invented HTTP documentation paths. Generate final metadata
+in `beforeStart()`. Explicitly register any serving handler yourself and protect it normally.
+The app closes owned extension resources in reverse installation order; borrowed dependencies
+remain the application's responsibility. Bad installation batches have no setup effects. Provider
+setup/finalization failure closes the app and prevents restart. Native asynchronous protocol
+lifetimes, schemas, UI serving and codec integration belong to their respective optional adapters.
+
+Protection belongs to selected extensions, not a core `Routes.protect` method. Matched hooks run
+before admission; managed authentication runs first, then extension before-handler contributions
+in inherited/first-selection order, direct local callbacks, and application callbacks. Availability
+runs after admission and before the endpoint. Repeated selection or configuration does not reorder
+extensions. These admission callbacks throw to reject access and cannot start streaming. Public
+siblings remain independent; selection on groups is inherited by their HTTP routes, static mounts
+and WebSocket handshakes. Shared callbacks must be thread-safe. Header-only authentication does not
+read the request body.
 
 The optional `pac4j` module provides real direct-client authentication and authorization with
 pac4j 6.5.8. Core has no pac4j dependency. Choose provider artifacts explicitly:
@@ -242,8 +329,9 @@ and an optional pac4j `Authorizer`:
 ```java
 var client = new HeaderClient("Authorization", "Bearer ", jwtAuthenticator);
 var security = new Pac4j(client, "Bearer", authorizer);
-app.routes().protect(security, secured ->
-    secured.get("/me", (request, response) -> response.text(request.principal().orElseThrow().getName())));
+app.authentication(security).routes(routes ->
+    routes.get("/me", (request, response) -> response.text(request.principal().orElseThrow().getName()),
+        extensions -> extensions.get(security).required()));
 ```
 
 Import `io.github.suppierk.shoostr.pac4j.Pac4j`. Configure the client, authenticator, and authorizer
@@ -281,7 +369,7 @@ app.exception(UnauthorizedException.class, (exception, request, response) -> {
 });
 ```
 
-`Shoostr.exception(Class<E>, ExceptionHandler<? super E>)` selects the most specific superclass of the directly thrown exception, regardless of registration order. Duplicate classes are rejected; registration is synchronized with startup and close, and runtime lookup uses an immutable snapshot without locking. There are no path-scoped handlers or handler chains. Recoverable business errors should normally be handled in business logic.
+`Shoostr.exception(Class<E>, ExceptionHandler<? super E>)` selects the most specific superclass of the directly thrown exception, regardless of registration order. Duplicate app-level classes are rejected; registration is synchronized with startup and close, and runtime lookup uses an immutable snapshot without locking. Groups and endpoints may configure local renderers through `Extensions.exception(...)`: a matching local renderer handles the error alone, with app-level rendering used only when no local renderer matches. Renderers do not form a handler chain. Recoverable business errors should normally be handled in business logic.
 
 Custom handlers receive the original readable request on the original handler thread. The failed response's body and headers are cleared first; its initial status is the thrown `HttpException` status or 500. The callback may override that status and set its own headers/body or start a stream. It must finish output before returning; the framework still owns closure. These handlers are shared across requests, so captured mutable application state must be safe for concurrent calls. Request access ends after error handling and finalization; retained objects cannot be used later or on another thread.
 
@@ -363,9 +451,9 @@ app.afterRequest(outcome -> {
 
 `authorize` and `metrics` represent application code, not bundled integrations. `Request.routePattern()` exposes the original composed template, such as `/accounts/{accountId}/orders/{id}`, for route-aware policy and bounded metric labels. It returns `Optional.empty()` without a selected endpoint and follows the existing request thread/lifetime rules. The template is retained at registration, not reconstructed per request. Never substitute a concrete request URL when a metric's route template is absent; normalize unfamiliar methods and failure labels in the chosen metrics adapter.
 
-`beforeRouteHandler(Handler)` runs gates in registration order after matching and the known Content-Length limit check. Gates are skipped for generated 404/405 responses. They may read bounded request data and stage finite output; setting status/body does not skip the endpoint. Throwing an exception skips subsequent gates and the endpoint, then invokes the existing global error handling. Gate headers/body are cleared on failure, so a 401 challenge belongs in its exception callback. Gates cannot start streams or close the response. Error handlers retain their existing streaming capabilities.
+`beforeRouteHandler(Handler)` runs gates in registration order after matching and the known Content-Length limit check. Gates are skipped for unmatched-path 404s and method-mismatch 405s. An availability-denied 404 follows matching, authentication and gates; a false availability check skips later checks, the endpoint and post-route callbacks. Gates may read bounded request data and stage finite output; setting status/body does not skip the endpoint. Throwing an exception skips subsequent gates and the endpoint, then invokes a matching local exception renderer or, if none matches, app-level error handling. Gate headers/body are cleared on failure, so a 401 challenge belongs in its exception callback. Gates cannot start streams or close the response. Error handlers retain their existing streaming capabilities.
 
-The remaining live stages are registered in the same way: `onRequestHeaders`, `onRouteMatched`, `afterRouteHandler`, `beforeResponseFlush`, and `afterResponseFlush`. A successful matched request runs them in this order: request-header callbacks, route-match callbacks, route gates, the endpoint, post-route callbacks, then the flush callbacks. Header callbacks also run for generated 404/405 responses; matched-route, gate, and post-route callbacks do not. Any live callback can reject the request by throwing and uses the existing application-wide exception selection.
+The remaining live stages are registered in the same way: `onRequestHeaders`, `onRouteMatched`, `afterRouteHandler`, `beforeResponseFlush`, and `afterResponseFlush`. A successful matched request runs them in this order: request-header callbacks, route-match callbacks, route gates, availability checks, the endpoint, post-route callbacks, then the flush callbacks. Header callbacks also run for unmatched-path 404s and method-mismatch 405s; matched-route, gate, and post-route callbacks do not. Availability-denied 404s retain the earlier matched-route and gate work but skip the endpoint and post-route callbacks. Any live callback can reject the request by throwing; exception selection uses matching local rendering first, then the app fallback. Without a selected endpoint, only app-level rendering applies.
 
 Flush callbacks surround every streaming buffer submission and the terminal stream submission. For finite and file responses, they surround the framework submission that starts the terminal transport write; they do not wait for the asynchronous client acknowledgement. Both stages are read-only: request and response metadata remain available, while output mutation, streaming writes, and closure are rejected to prevent reentry. If a before-flush callback rejects an unsubmitted response, its callbacks are skipped while the existing exception mapper renders the recovery response. `afterResponseFlush` cannot alter submitted output. Neither callback is a streaming handoff: the framework still finishes every stream when its endpoint returns.
 
@@ -402,6 +490,13 @@ Parsing is lazy and cached. Forms support `application/x-www-form-urlencoded` wi
 ## Composing routes
 
 `Shoostr.routes(callback)` receives the pre-created root `Routes` and returns the application for `.start()` chaining. The no-argument `routes()` getter remains available. `path(...)` executes a scoped registration callback immediately. Scopes can nest or be extracted to a method accepting `Routes`:
+
+The maximum is **10 total nested `path`/`when` scopes**; the root is depth zero and endpoints
+consume no level. Empty groups still count; flat path segments do not. The eleventh scope fails
+before extension configuration or user callbacks. Scope ancestry and active grouping on the same
+thread both count, so captured-root recursion cannot bypass the limit. Independent threads do
+not share an active depth counter. Exceptions restore depth, allowing later registration/startup.
+This is a route-group contract, not a sandbox for arbitrary recursive Java or fresh-thread recursion.
 
 ```java
 var app = new Shoostr();
@@ -569,10 +664,10 @@ app.sessions(handler -> {
 });
 
 var csrf = new Csrf();
-app.routes().protect(csrf::verify, browser -> {
+app.extensions(csrf).routes().path("/", browser -> {
   browser.get("/form", (request, response) -> response.text(csrf.token(request)));
   browser.post("/submit", (request, response) -> response.text("accepted"));
-});
+}, extensions -> extensions.get(csrf).required());
 ```
 
 The defaults are a 30-minute server-side idle timeout, an HttpOnly, SameSite=Lax session cookie,
@@ -583,7 +678,9 @@ Shoostr owns handler startup and shutdown. The default cache shares one session 
 requests on a node, but compound attribute updates and mutable attribute values still need
 application synchronization. A remote store alone does not make cross-node writes atomic.
 
-`Csrf` is a separate opt-in policy for explicitly cookie-authenticated routes. A safe route can
+`Csrf` is a separate opt-in extension for explicitly cookie-authenticated routes. Installation alone
+does not protect routes or enable sessions; select `required()` on browser routes/groups and enable
+sessions explicitly. Repeated `required()` calls add verification only once per binding. A safe route can
 return `csrf.token(request)` in its response body for an HTML form or script. Unsafe requests
 must send that session-bound token in exactly one `X-CSRF-Token` header or `_csrf` URL-encoded or
 multipart form field. They must also supply a single same-origin `Origin`, or a same-origin
@@ -660,8 +757,9 @@ implementation project(':opentelemetry') // OpenTelemetry API 1.66.0; configure 
 ```
 
 ```java
-app.observe(new MicrometerMetrics(registry));
-app.observe(new OpenTelemetryTracing(openTelemetry));
+app.extensions(
+    new MicrometerMetrics(registry).allRequests(),
+    new OpenTelemetryTracing(openTelemetry).allRequests());
 app.afterRequest(new AccessLog()); // System.Logger INFO, or new AccessLog(yourSink)
 ```
 
@@ -670,6 +768,10 @@ Import `io.github.suppierk.shoostr.micrometer.MicrometerMetrics`,
 `io.github.suppierk.shoostr.AccessLog`. Register before `start()`. Supply an OpenTelemetry
 instance with your chosen propagators (for example W3C trace context) and exporters;
 no global provider is installed. Business code sees the server span through `Span.current()`.
+Bare extension installation leaves request instrumentation inactive; call `allRequests()` before
+installing. Existing `observe(adapter)` registration remains supported. Distinct activated instances
+both run, even when sharing a registry or SDK: metrics may record twice and the last tracing scope
+is current until scopes close in reverse order. Do not install duplicates accidentally.
 For explicit downstream clients, inject `Context.current()` with your configured propagator.
 
 `http.server.requests` is a Micrometer timer: it supplies completed count and duration, tagged
@@ -701,5 +803,6 @@ restores invocation-local resources on the admission thread, in reverse registra
 `complete(RequestOutcome)` runs once after terminal transport completion and cleanup, potentially
 on a transport thread. Never retain live Request/Response objects. Factory failures must clean up
 resources they acquired before throwing. Runtime instrumentation failures are logged and do not
-change HTTP results or stop later observers. Provider resources are never closed by Shoostr.
+change HTTP results or stop later observers. Borrowed registries, SDKs and authentication clients
+are never closed by Shoostr.
 Requests rejected by Jetty before framework admission are outside this instrumentation's scope.

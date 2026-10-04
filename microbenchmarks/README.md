@@ -2,6 +2,25 @@
 
 Local results: [latest lazy-allocation and child-search experiments with JFR](../benchmark-results/radix-fastpaths-20260918-01/REPORT.md), [constants-cleanup validation](../benchmark-results/radix-constants-20260918-01/REPORT.md), and [earlier routing optimizations with JFR and retained memory](../benchmark-results/radix-patterns-20260918-01/REPORT.md). The results directories are ignored by Git; retain or copy them when sharing evidence.
 
+## Extension dispatch
+
+`ExtensionRequestBenchmark` runs complete HTTP/1.1 exchanges through Jetty's `LocalConnector` and
+the production Shoostr dispatcher. It includes native parsing, virtual-thread dispatch, request
+and response peers, response serialization and terminal completion; it excludes network sockets
+and an HTTP client. Report its microseconds and bytes/op separately from nanosecond router lookup.
+The table has GET/POST parameter endpoints in 1 or 1,000 groups. Outcomes cover matches, misses
+and 405. Configuration is ordinary routes, installed-but-inactive capability, local before/after
+callbacks, or managed authentication. The `plain` fixture uses only pre-extension registration so
+the same fixture can run against a pinned baseline core jar. Setup checks expected response status.
+
+```sh
+cmdshape ./gradlew :microbenchmarks:installDist
+cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks ExtensionRequestBenchmark -p configuration=plain,inactive,callbacks,authentication -p groups=1,1000 -p outcome=matched,missed,wrongMethod -prof gc -foe true -rf json -rff benchmark-results/extensions.json
+```
+
+Run paired baseline/candidate plain cases on the same JVM with identical settings, and profile JFR
+separately. Active-case overhead is expected work and must not be reported as extension-free cost.
+
 ## Buffered request bodies
 
 `BufferedRequestBenchmark` measures `Request.bodyBytes()` with a fresh Jetty
