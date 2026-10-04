@@ -34,10 +34,93 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class CorsTest {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(10)
+  void preservesCorsSharingWhenFormParsingRejectsUnsupportedMedia(boolean withOrigin)
+      throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.cors(
+          new CorsPolicy(
+              Set.of("https://client.example"),
+              Set.of(HttpMethods.POST),
+              Set.of(),
+              false,
+              Set.of(),
+              5));
+      app.routes()
+          .post(
+              "/form",
+              (request, response) -> response.text(request.formParam("name").orElseThrow()));
+      app.start();
+
+      var request =
+          HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/form"))
+              .timeout(Duration.ofSeconds(3))
+              .header("Content-Type", "application/json")
+              .POST(HttpRequest.BodyPublishers.ofString("{\"name\":\"Ada\"}"));
+      if (withOrigin) {
+        request.header("Origin", "https://client.example");
+      }
+
+      var result = client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(415, result.statusCode());
+      assertEquals("Unsupported Media Type", result.body());
+      assertEquals(List.of("Origin"), result.headers().allValues("Vary"));
+      assertEquals(
+          withOrigin ? List.of("https://client.example") : List.of(),
+          result.headers().allValues("Access-Control-Allow-Origin"));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(10)
+  void sharesAcceptedFormResponsesOnlyWhenAnAllowedOriginIsPresent(boolean withOrigin)
+      throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.cors(
+          new CorsPolicy(
+              Set.of("https://client.example"),
+              Set.of(HttpMethods.POST),
+              Set.of(),
+              false,
+              Set.of(),
+              5));
+      app.routes()
+          .post(
+              "/form",
+              (request, response) -> response.text(request.formParam("name").orElseThrow()));
+      app.start();
+
+      var request =
+          HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/form"))
+              .timeout(Duration.ofSeconds(3))
+              .header("Content-Type", "application/x-www-form-urlencoded")
+              .POST(HttpRequest.BodyPublishers.ofString("name=Ada"));
+      if (withOrigin) {
+        request.header("Origin", "https://client.example");
+      }
+
+      var result = client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals("Ada", result.body());
+      assertEquals(List.of("Origin"), result.headers().allValues("Vary"));
+      assertEquals(
+          withOrigin ? List.of("https://client.example") : List.of(),
+          result.headers().allValues("Access-Control-Allow-Origin"));
+    }
+  }
+
   @Test
   void sharesAnAllowedActualResponseAndPreservesItsVaryFields() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));

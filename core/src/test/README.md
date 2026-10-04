@@ -131,6 +131,15 @@ bytes round-trip through live HTTP. Both parts exceed the configured memory
 threshold; tests observe temporary storage during handling and its removal
 after bounded request completion.
 
+Issue 76 T18 adds `CorsTest` cases
+`preservesCorsSharingWhenFormParsingRejectsUnsupportedMedia` and
+`sharesAcceptedFormResponsesOnlyWhenAnAllowedOriginIsPresent`, independently
+adapting pinned Jooby 4.5.4 `Issue2649`. Both exercise the same /form endpoint:
+its offered form parser rejects JSON with 415 and accepts URL-encoded input
+with 200. Separate live cases with and without Origin assert exact Vary and
+sharing fields on rejection and success. Jooby's declarative JSON-consumes API
+and automatic JSON decoding remain unoffered; no parity feature is introduced.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:
