@@ -151,6 +151,8 @@ public final class Routes implements Closeable {
    * @param configure optional group configuration
    * @return this scope
    */
+  @SuppressWarnings(
+      "java:S2093") // Closing a borrowed scope would close the root's shared registration.
   private Routes pathScope(
       String path, Consumer<Routes> registration, @Nullable Consumer<Extensions> configure) {
     String group;
