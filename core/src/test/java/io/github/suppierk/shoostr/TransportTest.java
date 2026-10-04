@@ -1,9 +1,11 @@
 package io.github.suppierk.shoostr;
 
 import static org.awaitility.Awaitility.await;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -14,6 +16,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -23,6 +26,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.KeyStore;
+import java.security.Principal;
+import java.security.cert.X509Certificate;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -36,8 +41,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.GZIPInputStream;
 import java.util.zip.GZIPOutputStream;
+import javax.net.ssl.KeyManagerFactory;
 import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
 import javax.net.ssl.TrustManagerFactory;
+import javax.net.ssl.X509KeyManager;
 import org.eclipse.jetty.compression.gzip.GzipCompression;
 import org.eclipse.jetty.compression.server.CompressionConfig;
 import org.eclipse.jetty.compression.server.CompressionHandler;
@@ -85,6 +93,132 @@ class TransportTest {
       assertEquals(200, result.statusCode());
       assertEquals("secure", result.body());
       assertEquals(HttpClient.Version.HTTP_1_1, result.version());
+    }
+  }
+
+  @Test
+  void admitsATrustedClientCertificateWhenMutualTlsIsRequired() throws Exception {
+    var identity = testKeyStore();
+    var context = mutualTlsContext(identity);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client =
+            HttpClient.newBuilder()
+                .sslContext(context)
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(3))
+                .build()) {
+      enableMutualTls(app);
+      app.routes().get("/secure", (_, response) -> response.text("trusted client"));
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/secure"))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals("trusted client", result.body());
+      assertEquals(HttpClient.Version.HTTP_1_1, result.version());
+      assertEquals("TLSv1.2", result.sslSession().orElseThrow().getProtocol());
+      assertArrayEquals(
+          identity.getCertificateChain("localhost"),
+          result.sslSession().orElseThrow().getLocalCertificates());
+    }
+  }
+
+  @Test
+  void rejectsAnAbsentClientCertificateDuringMutualTlsHandshake() throws Exception {
+    var identity = KeyStore.getInstance("PKCS12");
+    identity.load(null, PASSWORD);
+    var context = mutualTlsContext(identity);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var trustedClient =
+            HttpClient.newBuilder()
+                .sslContext(mutualTlsContext(testKeyStore()))
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(3))
+                .build()) {
+      enableMutualTls(app);
+      app.routes().get("/control", (_, response) -> response.text("trusted client"));
+      app.start();
+
+      var control =
+          trustedClient.send(
+              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/control"))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, control.statusCode());
+      assertEquals("trusted client", control.body());
+
+      try (var socket = (SSLSocket) context.getSocketFactory().createSocket()) {
+        socket.connect(new InetSocketAddress("localhost", app.port()), 3000);
+        socket.setSoTimeout(3000);
+        socket.setEnabledProtocols(new String[] {"TLSv1.2"});
+        var parameters = socket.getSSLParameters();
+        parameters.setEndpointIdentificationAlgorithm("HTTPS");
+        socket.setSSLParameters(parameters);
+
+        var rejection = assertThrows(IOException.class, socket::startHandshake);
+        assertFalse(rejection instanceof SocketTimeoutException);
+      }
+    }
+  }
+
+  @Test
+  void rejectsAnUntrustedClientCertificateDuringMutualTlsHandshake() throws Exception {
+    var identity = untrustedClientKeyStore();
+    var trustedCertificate = (X509Certificate) testKeyStore().getCertificate("localhost");
+    assertNotEquals(trustedCertificate, identity.getCertificate("untrusted"));
+    var keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+    keys.init(identity, PASSWORD);
+    var manager = assertInstanceOf(X509KeyManager.class, keys.getKeyManagers()[0]);
+    assertEquals(
+        "untrusted",
+        manager.chooseClientAlias(
+            new String[] {"RSA"},
+            new Principal[] {trustedCertificate.getSubjectX500Principal()},
+            null));
+    var context = mutualTlsContext(identity);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var trustedClient =
+            HttpClient.newBuilder()
+                .sslContext(mutualTlsContext(testKeyStore()))
+                .version(HttpClient.Version.HTTP_1_1)
+                .connectTimeout(Duration.ofSeconds(3))
+                .build()) {
+      enableMutualTls(app);
+      app.routes().get("/control", (_, response) -> response.text("trusted client"));
+      app.start();
+
+      var control =
+          trustedClient.send(
+              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/control"))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, control.statusCode());
+      assertEquals("trusted client", control.body());
+
+      try (var socket = (SSLSocket) context.getSocketFactory().createSocket()) {
+        socket.connect(new InetSocketAddress("localhost", app.port()), 3000);
+        socket.setSoTimeout(3000);
+        socket.setEnabledProtocols(new String[] {"TLSv1.2"});
+        var parameters = socket.getSSLParameters();
+        parameters.setEndpointIdentificationAlgorithm("HTTPS");
+        socket.setSSLParameters(parameters);
+
+        var rejection = assertThrows(IOException.class, socket::startHandshake);
+        assertFalse(rejection instanceof SocketTimeoutException);
+      }
     }
   }
 
@@ -1365,13 +1499,7 @@ class TransportTest {
   }
 
   private static HttpClient secureClient(HttpClient.Version version) throws Exception {
-    var store = KeyStore.getInstance("PKCS12");
-
-    try (var input =
-        Objects.requireNonNull(TransportTest.class.getResourceAsStream(KEYSTORE_RESOURCE))) {
-      store.load(input, PASSWORD);
-    }
-
+    var store = testKeyStore();
     var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
     trust.init(store);
     var context = SSLContext.getInstance("TLS");
@@ -1381,5 +1509,94 @@ class TransportTest {
         .version(version)
         .connectTimeout(Duration.ofSeconds(3))
         .build();
+  }
+
+  private static void enableMutualTls(Shoostr app) throws Exception {
+    var store = testKeyStore();
+    app.tls(
+        tls -> {
+          tls.setKeyStore(store);
+          tls.setKeyStorePassword(String.valueOf(PASSWORD));
+          tls.setTrustStore(store);
+          tls.setNeedClientAuth(true);
+          tls.setIncludeProtocols("TLSv1.2");
+        });
+  }
+
+  private static SSLContext mutualTlsContext(KeyStore identity) throws Exception {
+    var keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+    keys.init(identity, PASSWORD);
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(testKeyStore());
+    var context = SSLContext.getInstance("TLS");
+    context.init(keys.getKeyManagers(), trust.getTrustManagers(), null);
+    return context;
+  }
+
+  private static KeyStore testKeyStore() throws Exception {
+    var store = KeyStore.getInstance("PKCS12");
+
+    try (var input =
+        Objects.requireNonNull(TransportTest.class.getResourceAsStream(KEYSTORE_RESOURCE))) {
+      store.load(input, PASSWORD);
+    }
+
+    return store;
+  }
+
+  private KeyStore untrustedClientKeyStore() throws Exception {
+    var path = temporary.resolve("untrusted-client.p12");
+    var tool = Path.of(System.getProperty("java.home"), "bin", "keytool");
+    if (!Files.isRegularFile(tool)) {
+      tool = tool.resolveSibling("keytool.exe");
+    }
+
+    var output = temporary.resolve("keytool.log");
+    var process =
+        new ProcessBuilder(
+                tool.toString(),
+                "-genkeypair",
+                "-alias",
+                "untrusted",
+                "-keyalg",
+                "RSA",
+                "-keysize",
+                "2048",
+                "-dname",
+                "CN=localhost",
+                "-ext",
+                "EKU=clientAuth",
+                "-validity",
+                "1",
+                "-storetype",
+                "PKCS12",
+                "-keystore",
+                path.toString(),
+                "-storepass",
+                String.valueOf(PASSWORD),
+                "-keypass",
+                String.valueOf(PASSWORD),
+                "-noprompt")
+            .redirectErrorStream(true)
+            .redirectOutput(output.toFile())
+            .start();
+
+    try {
+      assertTrue(process.waitFor(8, TimeUnit.SECONDS));
+      assertEquals(0, process.exitValue(), Files.readString(output));
+    } finally {
+      if (process.isAlive()) {
+        process.destroyForcibly();
+        process.waitFor(3, TimeUnit.SECONDS);
+      }
+    }
+
+    var store = KeyStore.getInstance("PKCS12");
+
+    try (var input = Files.newInputStream(path)) {
+      store.load(input, PASSWORD);
+    }
+
+    return store;
   }
 }
