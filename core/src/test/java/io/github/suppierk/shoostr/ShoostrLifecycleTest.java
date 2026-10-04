@@ -53,6 +53,24 @@ class ShoostrLifecycleTest {
   @TempDir private Path temporary;
 
   @Test
+  void omitsTheServerHeaderOnTheDefaultListenerWithoutNativeOverrides() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.routes().get("/", (_, response) -> response.text("default listener"));
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("default listener", result.body());
+      assertTrue(result.headers().firstValue("Server").isEmpty());
+    }
+  }
+
+  @Test
   void nativeConfigurationRunsInOrderAfterDefaultsAndChangesTheListener() throws Exception {
     var nativeServer = new AtomicReference<Server>();
 
