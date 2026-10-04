@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -102,6 +103,78 @@ class StaticResourcesTest {
   }
 
   @Test
+  void runsMatchedHooksInOrderWithTheStaticMountPattern() throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.onRouteMatched(
+          (request, response) ->
+              response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
+      app.afterRouteHandler(
+          (request, response) ->
+              response.addHeader("X-Stage", "after:" + request.routePattern().orElseThrow()));
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals("filesystem resource", result.body());
+      assertEquals(
+          List.of("matched:/assets", "after:/assets"), result.headers().allValues("X-Stage"));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"/assets/missing.txt", "/outside"})
+  void skipsMatchedHooksWhenNoMountedResourceMatches(String path) throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
+    var stages = new CopyOnWriteArrayList<String>();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.onRouteMatched((_, _) -> stages.add("matched"));
+      app.afterRouteHandler((_, _) -> stages.add("after"));
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var base = "http://127.0.0.1:" + app.port();
+
+      var hit =
+          client.send(
+              HttpRequest.newBuilder(URI.create(base + "/assets/site.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, hit.statusCode());
+      assertEquals("filesystem resource", hit.body());
+      assertEquals(List.of("matched", "after"), stages);
+      stages.clear();
+
+      var miss =
+          client.send(
+              HttpRequest.newBuilder(URI.create(base + path))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(404, miss.statusCode());
+      assertTrue(stages.isEmpty());
+    }
+  }
+
+  @Test
   void servesConfiguredWelcomeFilesAtTheMountAndNestedDirectories() throws Exception {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>root</h1>");
@@ -159,6 +232,42 @@ class StaticResourcesTest {
       assertEquals("console.log('app');", send(client, app, "/assets/app.js").body());
       assertEquals("endpoint", send(client, app, "/assets/health").body());
       assertEquals(404, send(client, app, "/outside").statusCode());
+    }
+  }
+
+  @Test
+  void runsMatchedHooksInOrderWithTheSpaFallbackMountPattern() throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.onRouteMatched(
+          (request, response) ->
+              response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
+      app.afterRouteHandler(
+          (request, response) ->
+              response.addHeader("X-Stage", "after:" + request.routePattern().orElseThrow()));
+      app.routes()
+          .staticFiles(
+              "/assets",
+              temporaryDirectory,
+              StaticOptions.defaults().withSpaFallback("index.html"));
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/orders/42"))
+                  .timeout(Duration.ofSeconds(3))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals("<h1>app</h1>", result.body());
+      assertEquals(
+          List.of("matched:/assets", "after:/assets"), result.headers().allValues("X-Stage"));
     }
   }
 

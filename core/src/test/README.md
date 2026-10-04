@@ -38,6 +38,14 @@ These independently adapt pinned Javalin 7.2.3 `TestCompression` and Jooby 4.5.4
 Accept-Encoding variation, and bodyless 304 using the returned ETag or Last-Modified
 under both gzip and identity. They do not introduce dynamic-body auto-ETags.
 
+Issue 76 T02 independently adapts pinned Javalin 7.2.3 `TestBeforeAfterMatched`
+in `StaticResourcesTest.runsMatchedHooksInOrderWithTheStaticMountPattern`,
+`runsMatchedHooksInOrderWithTheSpaFallbackMountPattern` and
+`skipsMatchedHooksWhenNoMountedResourceMatches`. Live responses expose callback
+order and the mount route pattern for ordinary files and SPA fallback. Misses
+inside and outside the mount invoke neither callback, with a real static hit
+first proving that the callbacks are installed.
+
 Query/form parsing and repeated raw headers now have 43 cases in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:
