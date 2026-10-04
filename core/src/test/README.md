@@ -114,6 +114,13 @@ Single and mixed positive Accept fields both receive an exact UTF-8 event frame
 whose data is read from the query in the SSE handler, with the event-stream
 content type. This does not introduce an Accept rejection gate or detached streams.
 
+Issue 76 T16 adds
+`StaticResourcesTest.servesUtf8NamedClasspathFilesThroughEncodedPathsWithoutEscapingTheMount`,
+independently adapting pinned Jooby 4.5.4 `Issue3070`. An encoded URL resolves
+the UTF-8-named asset to its exact bytes in an isolated classpath directory;
+a UTF-8-named adjacent resource stays unavailable below the mount. The test
+uses live HTTP and restores the thread context classloader after cleanup.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:

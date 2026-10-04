@@ -503,6 +503,48 @@ class StaticResourcesTest {
   }
 
   @Test
+  @Timeout(10)
+  void servesUtf8NamedClasspathFilesThroughEncodedPathsWithoutEscapingTheMount() throws Exception {
+    var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("issue76-utf8-public"));
+    var content = "UTF-8 classpath resource: café €\n".getBytes(StandardCharsets.UTF_8);
+    Files.write(publicDirectory.resolve("tést.txt"), content);
+    Files.writeString(
+        temporaryDirectory.resolve("privé.txt"), "outside-mount-secret", StandardCharsets.UTF_8);
+    var previous = Thread.currentThread().getContextClassLoader();
+
+    try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      Thread.currentThread().setContextClassLoader(loader);
+      app.routes().classpathResources("/assets", "/issue76-utf8-public");
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/t%C3%A9st.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(200, result.statusCode());
+      assertArrayEquals(content, result.body());
+
+      var outside =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/assets/priv%C3%A9.txt"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(404, outside.statusCode());
+      assertFalse(outside.body().contains("outside-mount-secret"));
+    } finally {
+      Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
+  @Test
   void servesClasspathFilesBelowTheMountedPath() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
