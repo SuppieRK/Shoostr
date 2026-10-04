@@ -74,6 +74,17 @@ Live upgrades with long credentials and path identifiers produce single bounded
 handshake secrets; denial also excludes exception details and skips the listener
 factory. These tests cover Shoostr's terminal access log, not message-payload logging.
 
+Issue 76 T06 independently adapts pinned Javalin 7.2.3 `TestStaticFilesEdgeCases`
+in `StaticResourcesTest.servesExactMountedFileBytesOverTheConfiguredProtocol`,
+`returnsMountedFileHeadMetadataWithoutBytesOverTheConfiguredProtocol` and
+`returnsNotModifiedForAnUnchangedMountedFileAcrossResponseDates`.
+Each uses real h2c, HTTPS/HTTP1.1 and TLS/HTTP2 requests, verifies the negotiated
+version, and checks exact file bytes, bodyless HEAD metadata or ETag-based 304.
+The conditional test controls response dates across the file modification time:
+an unchanged file must retain its ETag even while Last-Modified is date-clamped.
+This exposed a descriptor-relative ETag bug; its fix uses actual file metadata
+for the tag without removing the Last-Modified clamp.
+
 Query/form parsing and repeated raw headers now have 43 cases in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:

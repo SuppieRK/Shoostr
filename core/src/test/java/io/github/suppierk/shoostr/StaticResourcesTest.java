@@ -29,7 +29,12 @@ import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.SecureDirectoryStream;
+import java.nio.file.attribute.FileTime;
+import java.security.KeyStore;
 import java.time.Duration;
+import java.time.Instant;
+import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -42,7 +47,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
 import java.util.zip.GZIPInputStream;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -635,6 +643,128 @@ class StaticResourcesTest {
     }
   }
 
+  @ParameterizedTest
+  @CsvSource({"false, true, HTTP_2", "true, false, HTTP_1_1", "true, true, HTTP_2"})
+  @Timeout(10)
+  void servesExactMountedFileBytesOverTheConfiguredProtocol(
+      boolean tls, boolean http2, HttpClient.Version expectedVersion) throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = staticTransportClient(app, tls, http2)) {
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var target =
+          URI.create((tls ? "https" : "http") + "://127.0.0.1:" + app.port() + "/assets/site.txt");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(3)).GET().build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(expectedVersion, result.version());
+      assertEquals(200, result.statusCode());
+      assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+      assertArrayEquals(
+          "static over transport: €\n".getBytes(StandardCharsets.UTF_8), result.body());
+      assertEquals(tls, result.sslSession().isPresent());
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false, true, HTTP_2", "true, false, HTTP_1_1", "true, true, HTTP_2"})
+  @Timeout(10)
+  void returnsMountedFileHeadMetadataWithoutBytesOverTheConfiguredProtocol(
+      boolean tls, boolean http2, HttpClient.Version expectedVersion) throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = staticTransportClient(app, tls, http2)) {
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var target =
+          URI.create((tls ? "https" : "http") + "://127.0.0.1:" + app.port() + "/assets/site.txt");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(target)
+                  .timeout(Duration.ofSeconds(3))
+                  .method("HEAD", HttpRequest.BodyPublishers.noBody())
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(expectedVersion, result.version());
+      assertEquals(200, result.statusCode());
+      assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+      assertEquals("27", result.headers().firstValue("Content-Length").orElseThrow());
+      assertEquals(0, result.body().length);
+      assertEquals(tls, result.sslSession().isPresent());
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false, true, HTTP_2", "true, false, HTTP_1_1", "true, true, HTTP_2"})
+  @Timeout(10)
+  void returnsNotModifiedForAnUnchangedMountedFileAcrossResponseDates(
+      boolean tls, boolean http2, HttpClient.Version expectedVersion) throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
+    Files.setLastModifiedTime(
+        temporaryDirectory.resolve("site.txt"),
+        FileTime.from(Instant.parse("2020-01-01T00:00:00.500Z")));
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = staticTransportClient(app, tls, http2)) {
+      app.beforeRouteHandler(
+          (request, response) ->
+              response.setHeader(
+                  "Date",
+                  request.header("If-None-Match").isPresent()
+                      ? "Wed, 01 Jan 2020 00:00:01 GMT"
+                      : "Wed, 01 Jan 2020 00:00:00 GMT"));
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var target =
+          URI.create((tls ? "https" : "http") + "://127.0.0.1:" + app.port() + "/assets/site.txt");
+      var full =
+          client.send(
+              HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(3)).GET().build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+      assertEquals(expectedVersion, full.version());
+      assertEquals(200, full.statusCode());
+      assertArrayEquals("static over transport: €\n".getBytes(StandardCharsets.UTF_8), full.body());
+      assertEquals(
+          "Wed, 01 Jan 2020 00:00:00 GMT", full.headers().firstValue("Date").orElseThrow());
+      assertEquals(
+          Instant.parse("2020-01-01T00:00:00Z"),
+          ZonedDateTime.parse(
+                  full.headers().firstValue("Last-Modified").orElseThrow(),
+                  DateTimeFormatter.RFC_1123_DATE_TIME)
+              .toInstant());
+      var etag = full.headers().firstValue("ETag").orElseThrow();
+
+      var conditional =
+          client.send(
+              HttpRequest.newBuilder(target)
+                  .timeout(Duration.ofSeconds(3))
+                  .header("If-None-Match", etag)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(expectedVersion, conditional.version());
+      assertEquals(
+          "Wed, 01 Jan 2020 00:00:01 GMT", conditional.headers().firstValue("Date").orElseThrow());
+      assertEquals(
+          304,
+          conditional.statusCode(),
+          () -> "Requested ETag " + etag + "; returned headers " + conditional.headers().map());
+      assertEquals(etag, conditional.headers().firstValue("ETag").orElseThrow());
+      assertEquals(0, conditional.body().length);
+      assertEquals(tls, conditional.sslSession().isPresent());
+    }
+  }
+
   @Test
   void compressesMountedFilesWhenGzipIsAccepted() throws Exception {
     assumeSecureDirectoryOperations();
@@ -1033,6 +1163,40 @@ class StaticResourcesTest {
           stream instanceof SecureDirectoryStream<?>,
           "Filesystem static mounts require SecureDirectoryStream support");
     }
+  }
+
+  private static HttpClient staticTransportClient(Shoostr app, boolean tls, boolean http2)
+      throws Exception {
+    var client =
+        HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(3))
+            .version(http2 ? HttpClient.Version.HTTP_2 : HttpClient.Version.HTTP_1_1);
+    if (http2) {
+      app.http2();
+    }
+
+    if (tls) {
+      var store = KeyStore.getInstance("PKCS12");
+
+      try (var input =
+          Objects.requireNonNull(
+              StaticResourcesTest.class.getResourceAsStream("/localhost-test.p12"))) {
+        store.load(input, "changeit".toCharArray());
+      }
+
+      app.tls(
+          context -> {
+            context.setKeyStore(store);
+            context.setKeyStorePassword("changeit");
+          });
+      var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+      trust.init(store);
+      var context = SSLContext.getInstance("TLS");
+      context.init(null, trust.getTrustManagers(), null);
+      client.sslContext(context);
+    }
+
+    return client.build();
   }
 
   private static String rawGet(Shoostr app, String path) throws IOException {
