@@ -211,6 +211,14 @@ errors fail the awaited futures. The fixture uses a public listener class,
 matching Jetty's reflective callback-access requirement, and explicitly aborts
 the owned client socket during cleanup. No callback or protocol wrapper is added.
 
+Issue 76 B02 adds `MultipartRequestTest`
+`sendsContinueBeforeReceivingAndPreservingABinaryMultipartUpload`. An owned,
+bounded socket sends only headers with `Expect: 100-continue`, uses native
+`HttpTester` to observe the actual interim 100, then transmits multipart bytes.
+The final 200 preserves named file metadata and exact binary content. It does
+not mistake a client-hidden interim response or eager body transmission for
+continue support. No native policy or production code is changed.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:

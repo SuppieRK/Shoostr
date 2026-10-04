@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -12,6 +13,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -28,6 +30,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.eclipse.jetty.http.HttpTester;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -37,6 +40,58 @@ class MultipartRequestTest {
   private static final String BOUNDARY = "multipart-test-boundary";
   private static final byte[] BINARY_CONTENT = {0, 1, -1, 127, -128};
   @TempDir Path temporaryDirectory;
+
+  @Test
+  void sendsContinueBeforeReceivingAndPreservingABinaryMultipartUpload() throws Exception {
+    var body = binaryBody();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.routes()
+          .post(
+              "/upload",
+              (request, response) -> {
+                var upload = request.file("document").orElseThrow();
+                assertEquals("document", upload.name());
+                assertEquals("binary.bin", upload.fileName());
+                assertEquals(5, upload.size());
+
+                try (var content = upload.content()) {
+                  response.body("application/octet-stream", content.readAllBytes());
+                }
+              });
+      app.start();
+
+      try (var socket = new Socket()) {
+        socket.setSoTimeout(3000);
+        socket.connect(
+            new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+        var output = socket.getOutputStream();
+        var input = HttpTester.from(socket.getInputStream());
+        output.write(
+            ("POST /upload HTTP/1.1\r\nHost: localhost\r\n"
+                    + "Expect: 100-continue\r\n"
+                    + "Content-Type: multipart/form-data; boundary="
+                    + BOUNDARY
+                    + "\r\nContent-Length: "
+                    + body.length
+                    + "\r\nConnection: close\r\n\r\n")
+                .getBytes(StandardCharsets.US_ASCII));
+        output.flush();
+
+        var interim = HttpTester.parseResponse(input);
+        assertNotNull(interim);
+        assertEquals(100, interim.getStatus());
+
+        output.write(body);
+        output.flush();
+        var result = HttpTester.parseResponse(input);
+        assertNotNull(result);
+        assertEquals(200, result.getStatus());
+        assertEquals("application/octet-stream", result.get("Content-Type"));
+        assertArrayEquals(BINARY_CONTENT, result.getContentBytes());
+      }
+    }
+  }
 
   @Test
   void preservesALargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage() throws Exception {
