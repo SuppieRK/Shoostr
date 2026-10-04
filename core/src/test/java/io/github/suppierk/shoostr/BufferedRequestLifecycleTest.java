@@ -24,6 +24,8 @@ import java.time.Duration;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.jetty.http.HttpTester;
+import org.eclipse.jetty.io.QuietException;
+import org.eclipse.jetty.server.HttpStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -195,7 +197,13 @@ class BufferedRequestLifecycleTest {
       assertEquals(413, outcome.statusCode());
       assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
       assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
-      assertNull(outcome.transportFailure());
+      // Rejection before END_STREAM may reset this HTTP/2 stream without closing the connection.
+      var transportFailure = outcome.transportFailure();
+      if (transportFailure != null) {
+        assertSame(
+            HttpStream.CONTENT_NOT_CONSUMED,
+            assertInstanceOf(QuietException.RuntimeException.class, transportFailure).getCause());
+      }
 
       var accepted =
           client.send(
