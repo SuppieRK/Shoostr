@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.pac4j.core.context.Cookie;
 import org.pac4j.core.credentials.TokenCredentials;
@@ -49,6 +50,95 @@ import org.pac4j.jwt.profile.JwtGenerator;
 
 class Pac4jTest {
   @TempDir private Path temporary;
+
+  @Test
+  @Timeout(10)
+  void authenticatesWithoutCreatingASessionWhenSessionsAreEnabled() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      var auth = new Pac4j(authenticatedAliceClient(), "Basic");
+      app.sessions()
+          .authentication(auth)
+          .routes()
+          .get(
+              "/me",
+              (request, response) -> {
+                assertTrue(request.session(false).isEmpty());
+                response.text(request.principal().orElseThrow().getName());
+              },
+              e -> e.get(auth).required());
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA==")
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, result.statusCode());
+      assertEquals("alice", result.body());
+      assertTrue(result.headers().allValues("Set-Cookie").isEmpty());
+    }
+  }
+
+  @Test
+  @Timeout(15)
+  void createsAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      var auth = new Pac4j(authenticatedAliceClient(), "Basic");
+      app.sessions()
+          .authentication(auth)
+          .routes()
+          .get(
+              "/session",
+              (request, response) -> {
+                var identity = request.principal().orElseThrow().getName();
+                var existing = request.session(false);
+                if (existing.isPresent()) {
+                  assertEquals("handler-owned", existing.orElseThrow().getAttribute("marker"));
+                  response.text(identity + ":resumed");
+                } else {
+                  request.session(true).orElseThrow().setAttribute("marker", "handler-owned");
+                  response.text(identity + ":created");
+                }
+              },
+              e -> e.get(auth).required());
+      app.start();
+      var uri = URI.create("http://127.0.0.1:" + app.port() + "/session");
+
+      var created =
+          client.send(
+              HttpRequest.newBuilder(uri)
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA==")
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, created.statusCode());
+      assertEquals("alice:created", created.body());
+      var cookies = created.headers().allValues("Set-Cookie");
+      assertEquals(1, cookies.size());
+      var cookie = cookies.getFirst().split(";", 2)[0];
+      assertTrue(cookie.startsWith("JSESSIONID="));
+
+      var resumed =
+          client.send(
+              HttpRequest.newBuilder(uri)
+                  .timeout(Duration.ofSeconds(3))
+                  .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA==")
+                  .header("Cookie", cookie)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, resumed.statusCode());
+      assertEquals("alice:resumed", resumed.body());
+      assertTrue(resumed.headers().allValues("Set-Cookie").isEmpty());
+    }
+  }
 
   @Test
   void exposesEveryDuplicateCookieToTheAuthenticationProvider() throws Exception {
@@ -815,5 +905,21 @@ class Pac4jTest {
       assertEquals(200, result.statusCode());
       assertEquals("alice", result.body());
     }
+  }
+
+  private static DirectBasicAuthClient authenticatedAliceClient() {
+    return new DirectBasicAuthClient(
+        (_, supplied) -> {
+          if (!(supplied instanceof UsernamePasswordCredentials credentials)
+              || !"alice".equals(credentials.getUsername())
+              || !"correct".equals(credentials.getPassword())) {
+            return Optional.empty();
+          }
+
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          credentials.setUserProfile(profile);
+          return Optional.of(credentials);
+        });
   }
 }
