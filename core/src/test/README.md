@@ -172,6 +172,14 @@ a real session and same-origin request. POST/PUT/PATCH/DELETE each have a
 valid-token control followed by missing-token or invalid-token rejection before
 business logic. This does not rely on implicit HEAD or OPTIONS handling.
 
+Issue 76 T26 adds `ServerSentEventsTest`
+`completesOneHundredLargeUtf8EventsWithoutLossDuplicationOrReordering`,
+independently adapting pinned Jooby 4.5.4 `Issue2462`. The live handler sends
+100 numbered events, each containing a 17 KiB UTF-8 payload. An independent
+expected wire sequence checks the complete response's bytes, count and order
+under default bounded streaming, with a request deadline and handler-owned
+completion. This is correctness coverage, not a throughput benchmark.
+
 Query/form parsing and repeated raw headers are covered in `RequestParametersTest`; global mapper selection, reset/fallback behavior, and typed media output are covered by `ExceptionHandlerTest` and `MediaTypeResponseTest`. See the [current HTTP contract checklist](../../HTTP_CONTRACT.md) for tested behavior versus source-derived expectations. `ResponseMetadataTest` covers response inspection, append/remove, distinct Set-Cookie fields and redirects, including input validation and lifecycle boundaries. `CookieTest` covers request parsing/snapshots, validated response values, scoped replacement/deletion, error/lifetime boundaries, and a JDK CookieManager round trip. `SessionTest`, `CsrfTest`, `LifecycleHooksTest`, `ServerSentEventsTest`, `WebSocketRoutesTest` and `TransportTest` now exercise the later features through real listeners and clients. Do not add disabled tests or silently import different upstream defaults.
 
 Run the focused suite with the repository wrapper:

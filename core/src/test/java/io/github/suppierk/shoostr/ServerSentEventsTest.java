@@ -167,6 +167,43 @@ class ServerSentEventsTest {
   }
 
   @Test
+  @Timeout(15)
+  void completesOneHundredLargeUtf8EventsWithoutLossDuplicationOrReordering() throws Exception {
+    var payload = "é".repeat(8_704);
+    var expected = new StringBuilder();
+    for (int sequence = 0; sequence < 100; sequence++) {
+      expected.append("data: ").append(sequence).append(':').append(payload).append("\n\n");
+    }
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.routes()
+          .sse(
+              "/events",
+              (_, response) -> {
+                var events = response.startEventStream();
+                for (int sequence = 0; sequence < 100; sequence++) {
+                  events.send(sequence + ":" + payload);
+                }
+              });
+      app.start();
+
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
+                  .timeout(Duration.ofSeconds(5))
+                  .build(),
+              HttpResponse.BodyHandlers.ofByteArray());
+
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          "text/event-stream; charset=utf-8",
+          result.headers().firstValue("Content-Type").orElseThrow());
+      assertArrayEquals(expected.toString().getBytes(StandardCharsets.UTF_8), result.body());
+    }
+  }
+
+  @Test
   void sendsUtf8MultilineDataAsOneCompleteEvent() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
