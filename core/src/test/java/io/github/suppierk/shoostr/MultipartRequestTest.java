@@ -1287,12 +1287,13 @@ class MultipartRequestTest {
   }
 
   private static void assertNoUploads(Request request) throws IOException {
-    assertEquals(Map.of(), request.files());
-    assertEquals(List.of(), request.files("document"));
+    var files = request.files();
+    var namedFiles = request.files("document");
+    assertEquals(Map.of(), files);
+    assertEquals(List.of(), namedFiles);
     assertTrue(request.file("document").isEmpty());
-    assertThrows(
-        UnsupportedOperationException.class, () -> request.files().put("document", List.of()));
-    assertThrows(UnsupportedOperationException.class, () -> request.files("document").clear());
+    assertThrows(UnsupportedOperationException.class, () -> files.put("document", namedFiles));
+    assertThrows(UnsupportedOperationException.class, namedFiles::clear);
   }
 
   private static byte[] body() {
