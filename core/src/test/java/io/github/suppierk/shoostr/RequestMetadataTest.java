@@ -745,8 +745,54 @@ class RequestMetadataTest {
     assertEquals(List.of("kept"), snapshot.get().get("X-VALUE"));
   }
 
+  @Test
+  void matchesAnEncodedUtf8LiteralAtTheLiveListener() throws Exception {
+    app.routes().get("/tést", (_, response) -> response.text("unicode-literal"));
+    app.routes().get("/{value}", (_, response) -> response.text("parameter"));
+    app.start();
+    var result = send(request("/t%C3%A9st"));
+    assertEquals(200, result.statusCode());
+    assertEquals("unicode-literal", result.body());
+  }
+
+  @Test
+  void rejectsAnEncodedSlashBeforeInvokingEitherSegmentShape() throws Exception {
+    var calls = new AtomicInteger();
+    app.routes()
+        .get(
+            "/segments/{value}",
+            (request, response) -> {
+              calls.incrementAndGet();
+              response.text(request.pathParam("value").orElseThrow());
+            });
+    app.routes()
+        .get(
+            "/segments/a/b",
+            (_, response) -> {
+              calls.incrementAndGet();
+              response.text("split");
+            });
+    app.start();
+    var parameter = send(request("/segments/a"));
+    assertEquals(200, parameter.statusCode());
+    assertEquals("a", parameter.body());
+    var split = send(request("/segments/a/b"));
+    assertEquals(200, split.statusCode());
+    assertEquals("split", split.body());
+    assertEquals(2, calls.get());
+    var rejected =
+        HttpTester.parseResponse(
+            exchange(
+                "GET /segments/a%2Fb HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"));
+    assertNotNull(rejected);
+    assertEquals(400, rejected.getStatus());
+    assertEquals(2, calls.get());
+  }
+
   private String exchange(String message) throws Exception {
-    try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
       socket.setSoTimeout(3000);
       socket.getOutputStream().write(message.getBytes(StandardCharsets.US_ASCII));
       return new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
