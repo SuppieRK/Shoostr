@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -18,6 +19,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
 import java.security.Principal;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -32,7 +34,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocket;
+import javax.net.ssl.TrustManagerFactory;
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.http.HttpTester;
 import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.io.EndPoint;
@@ -541,6 +547,64 @@ class RequestMetadataTest {
       assertEquals(Integer.toString(index), result.body());
     }
     assertEquals("fresh", send(request("/concurrent/fresh")).body());
+  }
+
+  @Test
+  void normalizesAnExplicitHttpsDefaultPortAndPreservesTheRawQueryOverTls() throws Exception {
+    var keyStore = KeyStore.getInstance("PKCS12");
+
+    try (var input =
+        Objects.requireNonNull(getClass().getResourceAsStream("/localhost-test.p12"))) {
+      keyStore.load(input, "changeit".toCharArray());
+    }
+
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(keyStore);
+    var context = SSLContext.getInstance("TLS");
+    context.init(null, trust.getTrustManagers(), null);
+    app.tls(
+        tls -> {
+          tls.setKeyStore(keyStore);
+          tls.setKeyStorePassword("changeit");
+        });
+    app.routes()
+        .get(
+            "/metadata",
+            (request, response) -> {
+              assertTrue(request.isSecure());
+              assertEquals("https", request.scheme().orElseThrow());
+              assertEquals("localhost", request.authority().orElseThrow());
+              assertEquals("localhost", request.serverName().orElseThrow());
+              assertEquals(443, request.serverPort());
+              assertEquals("https://localhost/metadata", request.url());
+              assertEquals(
+                  "https://localhost/metadata?encoded=a%2Bb&empty=&slash=%2f", request.fullUrl());
+              assertEquals("encoded=a%2Bb&empty=&slash=%2f", request.queryString().orElseThrow());
+              response.text("secure metadata");
+            });
+    app.start();
+
+    try (var socket = (SSLSocket) context.getSocketFactory().createSocket()) {
+      socket.setSoTimeout(3000);
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.startHandshake();
+      socket
+          .getOutputStream()
+          .write(
+              String.join(
+                      "\r\n",
+                      "GET /metadata?encoded=a%2Bb&empty=&slash=%2f HTTP/1.1",
+                      "Host: localhost:443",
+                      "Connection: close",
+                      "",
+                      "")
+                  .getBytes(StandardCharsets.US_ASCII));
+      var result = HttpTester.parseResponse(HttpTester.from(socket.getInputStream()));
+      assertNotNull(result);
+      assertEquals(200, result.getStatus());
+      assertEquals("secure metadata", result.getContent());
+    }
   }
 
   @Test
