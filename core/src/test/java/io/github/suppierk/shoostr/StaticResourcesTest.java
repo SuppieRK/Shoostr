@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import io.github.suppierk.shoostr.extensions.AdmissionExtension;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.exceptions.UnauthorizedException;
@@ -239,19 +240,24 @@ class StaticResourcesTest {
               true,
               Set.of(),
               5));
-      app.routes()
-          .protect(
+      var admission =
+          new AdmissionExtension(
               (request, _) -> {
                 admissions.incrementAndGet();
                 if (request.header("Authorization").filter("Bearer allowed"::equals).isEmpty()) {
                   throw new UnauthorizedException();
                 }
-              },
+              });
+      app.extensions(admission)
+          .routes()
+          .path(
+              "/",
               routes ->
                   routes.staticFiles(
                       "/assets",
                       temporaryDirectory,
-                      StaticOptions.defaults().withSpaFallback("index.html")));
+                      StaticOptions.defaults().withSpaFallback("index.html")),
+              e -> e.get(admission));
       app.start();
 
       var preflight =

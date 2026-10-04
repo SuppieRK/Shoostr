@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
@@ -18,6 +19,57 @@ import org.junit.jupiter.api.Test;
 
 class CsrfTest {
   @Test
+  void repeatedInheritedRequirementsRegisterExactlyOneVerification() throws Exception {
+    var csrf = new Csrf();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.extensions(csrf)
+          .routes()
+          .path(
+              "/browser",
+              routes ->
+                  routes.post("/submit", (_, _) -> {}, e -> e.get(csrf).required().required()),
+              e -> e.get(csrf).required().required());
+
+      var router = app.routes().compile();
+
+      try {
+        var endpoint = router.match("/browser/submit", HttpMethods.POST);
+        assertNotNull(endpoint);
+        var behavior = endpoint.behavior();
+        assertNotNull(behavior);
+        assertEquals(1, behavior.before().size());
+      } finally {
+        router.close();
+      }
+    }
+  }
+
+  @Test
+  void installationAloneDoesNotProtectRoutesOrEnableSessions() throws Exception {
+    var csrf = new Csrf();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      app.extensions(csrf)
+          .routes()
+          .post(
+              "/unselected",
+              (request, response) ->
+                  response.text(
+                      request.session(true).isEmpty() ? "no session" : "session enabled"));
+      app.start();
+      var result =
+          client.send(
+              request(app, "/unselected").POST(HttpRequest.BodyPublishers.noBody()).build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("no session", result.body());
+      assertTrue(result.headers().allValues("Set-Cookie").isEmpty());
+    }
+  }
+
+  @Test
   @SuppressWarnings("NullAway") // A missing token is part of the rejection scenario.
   void protectsCookieAuthenticatedMutationWithSessionTokenAndOrigin() throws Exception {
     var executions = new AtomicInteger();
@@ -25,10 +77,10 @@ class CsrfTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.sessions();
+      app.sessions().extensions(csrf);
       app.routes()
-          .protect(
-              csrf::verify,
+          .path(
+              "/",
               routes -> {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
                 routes.post(
@@ -37,7 +89,8 @@ class CsrfTest {
                       executions.incrementAndGet();
                       response.text("accepted");
                     });
-              });
+              },
+              e -> e.get(csrf).required());
       app.start();
 
       var form =
@@ -62,13 +115,15 @@ class CsrfTest {
         var client = HttpClient.newHttpClient()) {
       var csrf = new Csrf();
       app.sessions();
+      app.extensions(csrf);
       app.routes()
-          .protect(
-              csrf::verify,
+          .path(
+              "/",
               routes -> {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
                 routes.post("/submit", (_, response) -> response.text("accepted"));
-              });
+              },
+              e -> e.get(csrf).required());
       app.start();
 
       var form =
@@ -115,13 +170,15 @@ class CsrfTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.sessions();
+      app.extensions(csrf);
       app.routes()
-          .protect(
-              csrf::verify,
+          .path(
+              "/",
               routes -> {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
                 routes.post("/submit", (_, _) -> executions.incrementAndGet());
-              });
+              },
+              e -> e.get(csrf).required());
       app.start();
 
       var form =
@@ -196,10 +253,12 @@ class CsrfTest {
         var client = HttpClient.newHttpClient()) {
       var csrf = new Csrf();
       app.sessions();
+      app.extensions(csrf);
       app.routes()
-          .protect(
-              csrf::verify,
-              routes -> routes.post("/submit", (_, _) -> executions.incrementAndGet()));
+          .path(
+              "/",
+              routes -> routes.post("/submit", (_, _) -> executions.incrementAndGet()),
+              e -> e.get(csrf).required());
       app.start();
 
       var result =
@@ -221,10 +280,12 @@ class CsrfTest {
         var client = HttpClient.newHttpClient()) {
       var csrf = new Csrf();
       app.sessions();
+      app.extensions(csrf);
       app.routes()
-          .protect(
-              csrf::verify,
-              routes -> routes.post("/browser", (_, response) -> response.text("browser")));
+          .path(
+              "/",
+              routes -> routes.post("/browser", (_, response) -> response.text("browser")),
+              e -> e.get(csrf).required());
       app.routes().post("/api", (_, response) -> response.text("api"));
       app.start();
 
@@ -254,9 +315,10 @@ class CsrfTest {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       app.sessions();
+      app.extensions(csrf);
       app.routes()
-          .protect(
-              csrf::verify,
+          .path(
+              "/",
               routes -> {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
                 routes.post(
@@ -272,7 +334,8 @@ class CsrfTest {
                       request.session(false).orElseThrow().invalidate();
                       response.removeCookie("JSESSIONID").text("logged out");
                     });
-              });
+              },
+              e -> e.get(csrf).required());
       app.start();
 
       var form =
@@ -327,9 +390,10 @@ class CsrfTest {
               true,
               Set.of(),
               5));
+      app.extensions(csrf);
       app.routes()
-          .protect(
-              csrf::verify,
+          .path(
+              "/",
               routes -> {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
                 routes.post(
@@ -338,7 +402,8 @@ class CsrfTest {
                       executions.incrementAndGet();
                       response.text("accepted");
                     });
-              });
+              },
+              e -> e.get(csrf).required());
       app.start();
 
       var form =

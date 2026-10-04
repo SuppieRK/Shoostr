@@ -839,6 +839,15 @@ public final class Request {
   }
 
   /**
+   * Reads behavior from the selected immutable endpoint without an extension registry lookup.
+   *
+   * @return local behavior, or null before matching or for routes without local runtime behavior
+   */
+  @Nullable EndpointBehavior behavior() {
+    return endpoint == null ? null : endpoint.behavior();
+  }
+
+  /**
    * Supplies Jetty's parsed offers immediately before invoking the WebSocket listener factory.
    *
    * @param protocols client-offered subprotocols

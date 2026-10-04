@@ -1,7 +1,10 @@
 package io.github.suppierk.shoostr.micrometer;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Options;
@@ -22,6 +25,30 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 class MicrometerMetricsTest {
+  @Test
+  void installationRequiresExplicitActivationAndLeavesTheRegistryBorrowed() throws Exception {
+    var registry = new SimpleMeterRegistry();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      var metrics = new MicrometerMetrics(registry);
+      app.extensions(metrics);
+      assertThrows(IllegalStateException.class, metrics::allRequests);
+      app.routes().get("/", (_, response) -> response.text("ok"));
+      app.start();
+      client.send(
+          HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/")).build(),
+          HttpResponse.BodyHandlers.discarding());
+      assertTrue(registry.find("http.server.requests").timers().isEmpty());
+      app.close();
+      assertFalse(registry.isClosed());
+      var active = new MicrometerMetrics(registry);
+      assertSame(active, active.allRequests());
+    } finally {
+      registry.close();
+    }
+  }
+
   @ParameterizedTest
   @CsvSource({"499, none", "500, server"})
   void classifiesExplicitResponseStatusesWithoutApplicationFailures(int status, String error)
@@ -31,7 +58,7 @@ class MicrometerMetricsTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.observe(new MicrometerMetrics(registry));
+      app.extensions(new MicrometerMetrics(registry).allRequests());
       app.afterRequest(_ -> completed.complete(null));
       app.routes().get("/explicit", (_, response) -> response.status(status).text("explicit"));
       app.start();
@@ -64,7 +91,7 @@ class MicrometerMetricsTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.observe(new MicrometerMetrics(registry));
+      app.extensions(new MicrometerMetrics(registry).allRequests());
       app.afterRequest(outcomes::add);
       app.routes()
           .get(
@@ -137,7 +164,7 @@ class MicrometerMetricsTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.observe(new MicrometerMetrics(registry));
+      app.extensions(new MicrometerMetrics(registry).allRequests());
       app.afterRequest(_ -> completed.complete(null));
       app.routes()
           .get(

@@ -42,16 +42,16 @@ class PublishedIntegrationsTest {
     try (var client = HttpClient.newHttpClient();
         var server =
             TestServer.start(
-                app ->
-                    app.routes()
-                        .protect(
-                            new Pac4j(provider, "Basic"),
-                            routes ->
-                                routes.get(
-                                    "/secure",
-                                    (request, response) ->
-                                        response.text(
-                                            request.principal().orElseThrow().getName()))))) {
+                app -> {
+                  var auth = new Pac4j(provider, "Basic");
+                  app.authentication(auth)
+                      .routes()
+                      .get(
+                          "/secure",
+                          (request, response) ->
+                              response.text(request.principal().orElseThrow().getName()),
+                          e -> e.get(auth).required());
+                })) {
       var target = server.baseUri().resolve("secure");
       var missing =
           client.send(
@@ -81,7 +81,7 @@ class PublishedIntegrationsTest {
         var server =
             TestServer.start(
                 app -> {
-                  app.observe(new MicrometerMetrics(registry));
+                  app.extensions(new MicrometerMetrics(registry).allRequests());
                   app.afterRequest(_ -> completed.countDown());
                   app.routes().get("/metered", (_, response) -> response.text("ok"));
                 })) {
@@ -114,7 +114,7 @@ class PublishedIntegrationsTest {
             TestServer.start(
                 app -> {
                   var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
-                  app.observe(new OpenTelemetryTracing(telemetry));
+                  app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
                   app.afterRequest(_ -> completed.countDown());
                   app.routes().get("/traced", (_, response) -> response.text("ok"));
                 })) {

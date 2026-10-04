@@ -18,14 +18,16 @@ import java.util.Objects;
 import java.util.Set;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.server.Session;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Session-bound synchronizer tokens for explicitly protected browser routes. Create one instance
- * per application, enable {@link Shoostr#sessions()}, then register {@code csrf::verify} through
- * {@link Routes#protect(Handler, java.util.function.Consumer)}. Token values are never put in a
- * cookie or URL; an application embeds {@link #token(Request)} in a page or response body.
+ * per application, enable {@link Shoostr#sessions()}, install with {@code app.extensions(csrf)},
+ * then select {@code extensions.get(csrf).required()} on browser routes. Installation alone does
+ * not enable protection or sessions. Token values are never put in a cookie or URL; an application
+ * embeds {@link #token(Request)} in a page or response body.
  */
-public final class Csrf {
+public final class Csrf implements Extension<Csrf.Requirement> {
   /** A token is valid only while its issuing session keeps the same identifier. */
   private record Token(String sessionId, String value) implements Serializable {
     @Serial private static final long serialVersionUID = 1L;
@@ -73,6 +75,50 @@ public final class Csrf {
     }
 
     random = new SecureRandom();
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public Requirement configure(Extensions endpoint, @Nullable Requirement inherited) {
+    var requirement = new Requirement(endpoint, this);
+    if (inherited != null && inherited.required) {
+      requirement.required();
+    }
+
+    return requirement;
+  }
+
+  /** Opt-in protection for one route or group, inherited independently by child bindings. */
+  public static final class Requirement {
+    private final Extensions endpoint;
+    private final Csrf csrf;
+    private boolean required;
+
+    /**
+     * Creates independently inherited protection settings for a binding.
+     *
+     * @param endpoint contribution collector
+     * @param csrf installed protection extension
+     */
+    private Requirement(Extensions endpoint, Csrf csrf) {
+      this.endpoint = Objects.requireNonNull(endpoint);
+      this.csrf = Objects.requireNonNull(csrf);
+    }
+
+    /**
+     * Adds one verification callback in this extension's first-selection position.
+     *
+     * @return this configuration
+     */
+    public Requirement required() {
+      endpoint.requireMutable();
+      if (!required) {
+        endpoint.beforeRouteHandler(csrf::verify);
+        required = true;
+      }
+
+      return this;
+    }
   }
 
   /**

@@ -12,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.extensions.AdmissionExtension;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
@@ -331,20 +332,25 @@ public class WebSocketRoutesTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
+      var admission =
+          new AdmissionExtension(
               (request, _) -> {
                 if (request.header("Origin").filter("https://allowed.example"::equals).isEmpty()) {
                   throw new ForbiddenException();
                 }
-              },
+              });
+      app.extensions(admission)
+          .routes()
+          .path(
+              "/",
               routes ->
                   routes.websocket(
                       "/private",
                       (_, _) -> {
                         factoryCalls.incrementAndGet();
                         return new EchoListener();
-                      }));
+                      }),
+              e -> e.get(admission));
       app.start();
 
       var failure =
@@ -374,20 +380,28 @@ public class WebSocketRoutesTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              (request, _) -> {
-                if (request.header("Authorization").filter("Bearer secret"::equals).isEmpty()) {
-                  throw new AuthenticationRequiredException("Bearer realm=\"chat\"");
-                }
+      var admission =
+          new AuthenticationExtension() {
+            @Override
+            public void handle(Request request, Response response) throws Exception {
 
-                request.principal((Principal) () -> "alice");
-              },
+              if (request.header("Authorization").filter("Bearer secret"::equals).isEmpty()) {
+                throw new AuthenticationRequiredException("Bearer realm=\"chat\"");
+              }
+
+              request.principal((Principal) () -> "alice");
+            }
+          };
+      app.authentication(admission)
+          .routes()
+          .path(
+              "/",
               routes ->
                   routes.websocket(
                       "/authenticated",
                       (request, _) ->
-                          new EchoListener(request.principal().orElseThrow().getName() + ":")));
+                          new EchoListener(request.principal().orElseThrow().getName() + ":")),
+              e -> e.get(admission).required());
       app.start();
 
       var rejected =

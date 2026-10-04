@@ -1,5 +1,7 @@
 package io.github.suppierk.shoostr.opentelemetry;
 
+import io.github.suppierk.shoostr.ApplicationCallbacks;
+import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestObservation;
 import io.github.suppierk.shoostr.RequestOutcome;
@@ -16,7 +18,8 @@ import java.util.function.Function;
 import org.jspecify.annotations.Nullable;
 
 /** Optional SERVER spans with application-owned SDK, exporters and propagation configuration. */
-public final class OpenTelemetryTracing implements Function<Request, RequestObservation> {
+public final class OpenTelemetryTracing
+    implements Extension<Void>, Function<Request, RequestObservation> {
   private static final TextMapGetter<Request> HEADERS =
       new TextMapGetter<>() {
         /** {@inheritDoc} */
@@ -34,6 +37,8 @@ public final class OpenTelemetryTracing implements Function<Request, RequestObse
 
   private final OpenTelemetry telemetry;
   private final Tracer tracer;
+  private boolean allRequests;
+  private boolean installed;
 
   /**
    * Uses an explicit provider without installing globals or owning its lifetime.
@@ -118,5 +123,33 @@ public final class OpenTelemetryTracing implements Function<Request, RequestObse
         }
       }
     };
+  }
+
+  /**
+   * Enables app-wide instrumentation explicitly before extension installation.
+   *
+   * @return this extension
+   * @throws IllegalStateException if already installed
+   */
+  public synchronized OpenTelemetryTracing allRequests() {
+    if (installed) {
+      throw new IllegalStateException("Configure instrumentation before installation");
+    }
+
+    allRequests = true;
+    return this;
+  }
+
+  /**
+   * Installs configured observation without owning borrowed dependencies.
+   *
+   * @param callbacks registration-only application callbacks
+   */
+  @Override
+  public synchronized void install(ApplicationCallbacks callbacks) {
+    installed = true;
+    if (allRequests) {
+      callbacks.observe(this);
+    }
   }
 }

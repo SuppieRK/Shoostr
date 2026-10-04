@@ -68,10 +68,14 @@ class Pac4jTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic"),
-              routes -> routes.get("/me", (_, response) -> response.text("authenticated")));
+      var security = new Pac4j(provider, "Basic");
+      app.authentication(security)
+          .routes(
+              routes ->
+                  routes.get(
+                      "/me",
+                      (_, response) -> response.text("authenticated"),
+                      e -> e.get(security).required()));
       app.start();
 
       var encoded =
@@ -114,10 +118,13 @@ class Pac4jTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic"),
-              routes -> routes.get("/me", (_, response) -> response.text("authenticated")));
+      var auth = new Pac4j(provider, "Basic");
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
+              routes -> routes.get("/me", (_, response) -> response.text("authenticated")),
+              e -> e.get(auth).required());
       app.start();
       expectedPort.set(app.port());
 
@@ -163,10 +170,13 @@ class Pac4jTest {
           AuthenticationRequiredException.class,
           (_, request, response) ->
               response.text(request.principal().map(Object::toString).orElse("null")));
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic"),
-              routes -> routes.get("/me", (_, response) -> response.text("private")));
+      var auth = new Pac4j(provider, "Basic");
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
+              routes -> routes.get("/me", (_, response) -> response.text("private")),
+              e -> e.get(auth).required());
       app.start();
 
       var encoded =
@@ -194,10 +204,13 @@ class Pac4jTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic"),
-              routes -> routes.get("/me", (_, response) -> response.text("private")));
+      var auth = new Pac4j(provider, "Basic");
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
+              routes -> routes.get("/me", (_, response) -> response.text("private")),
+              e -> e.get(auth).required());
       app.start();
 
       var encoded =
@@ -229,10 +242,13 @@ class Pac4jTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic"),
-              routes -> routes.get("/me", (_, response) -> response.text("private")));
+      var auth = new Pac4j(provider, "Basic");
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
+              routes -> routes.get("/me", (_, response) -> response.text("private")),
+              e -> e.get(auth).required());
       app.start();
 
       var encoded =
@@ -269,10 +285,13 @@ class Pac4jTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic"),
-              routes -> routes.post("/me", (_, response) -> response.text("authenticated")));
+      var auth = new Pac4j(provider, "Basic");
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
+              routes -> routes.post("/me", (_, response) -> response.text("authenticated")),
+              e -> e.get(auth).required());
       app.start();
       var encoded =
           Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
@@ -307,11 +326,14 @@ class Pac4jTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic"),
+      var auth = new Pac4j(provider, "Basic");
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
               routes ->
-                  routes.post("/me", (request, response) -> response.text(request.bodyText())));
+                  routes.post("/me", (request, response) -> response.text(request.bodyText())),
+              e -> e.get(auth).required());
       app.start();
       var encoded =
           Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
@@ -348,10 +370,13 @@ class Pac4jTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic"),
-              routes -> routes.get("/me", (_, response) -> response.text("authenticated")));
+      var auth = new Pac4j(provider, "Basic");
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
+              routes -> routes.get("/me", (_, response) -> response.text("authenticated")),
+              e -> e.get(auth).required());
       app.start();
       var encoded =
           Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
@@ -390,11 +415,14 @@ class Pac4jTest {
 
     try (var app = new Shoostr(new Options("127.0.0.1", 0, 16, 1024, 1024, 5000));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Bearer"),
+      var auth = new Pac4j(provider, "Bearer");
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
               routes ->
-                  routes.post("/me", (request, response) -> response.text(request.bodyText())));
+                  routes.post("/me", (request, response) -> response.text(request.bodyText())),
+              e -> e.get(auth).required());
       app.start();
 
       var result =
@@ -428,11 +456,14 @@ class Pac4jTest {
     var provider = new DirectBasicAuthClient((_, _) -> Optional.empty());
 
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic realm=\"api\""),
+      var auth = new Pac4j(provider, "Basic realm=\"api\"");
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
               routes ->
-                  routes.post("/upload", (request, response) -> response.text(request.bodyText())));
+                  routes.post("/upload", (request, response) -> response.text(request.bodyText())),
+              e -> e.get(auth).required());
       app.start();
 
       try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
@@ -470,10 +501,13 @@ class Pac4jTest {
             });
 
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic", (context, _, _) -> context.isSecure()),
-              routes -> routes.get("/secure", (_, response) -> response.text("private")));
+      var auth = new Pac4j(provider, "Basic", (context, _, _) -> context.isSecure());
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
+              routes -> routes.get("/secure", (_, response) -> response.text("private")),
+              e -> e.get(auth).required());
       app.start();
 
       var encoded =
@@ -534,10 +568,13 @@ class Pac4jTest {
             server.setKeyStorePath(keyStorePath.toString());
             server.setKeyStorePassword("changeit");
           });
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic", (context, _, _) -> context.isSecure()),
-              routes -> routes.get("/secure", (_, response) -> response.text("private")));
+      var auth = new Pac4j(provider, "Basic", (context, _, _) -> context.isSecure());
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
+              routes -> routes.get("/secure", (_, response) -> response.text("private")),
+              e -> e.get(auth).required());
       app.start();
 
       var encoded =
@@ -573,14 +610,17 @@ class Pac4jTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Basic"),
+      var auth = new Pac4j(provider, "Basic");
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
               routes ->
                   routes.get(
                       "/me",
                       (request, response) ->
-                          response.text(request.principal().orElseThrow().getName())));
+                          response.text(request.principal().orElseThrow().getName())),
+              e -> e.get(auth).required());
       app.routes()
           .get(
               "/public",
@@ -639,14 +679,17 @@ class Pac4jTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              new Pac4j(provider, "Bearer"),
+      var auth = new Pac4j(provider, "Bearer");
+      app.authentication(auth)
+          .routes()
+          .path(
+              "/",
               routes ->
                   routes.get(
                       "/me",
                       (request, response) ->
-                          response.text(request.principal().orElseThrow().getName())));
+                          response.text(request.principal().orElseThrow().getName())),
+              e -> e.get(auth).required());
       app.start();
 
       var uri = URI.create("http://127.0.0.1:" + app.port() + "/me");
@@ -695,9 +738,12 @@ class Pac4jTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              security, routes -> routes.get("/private", (_, response) -> response.text("secret")));
+      app.authentication(security)
+          .routes()
+          .path(
+              "/",
+              routes -> routes.get("/private", (_, response) -> response.text("secret")),
+              e -> e.get(security).required());
       app.start();
 
       var uri = URI.create("http://127.0.0.1:" + app.port() + "/private");
@@ -742,14 +788,16 @@ class Pac4jTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .protect(
-              security,
+      app.authentication(security)
+          .routes()
+          .path(
+              "/",
               routes ->
                   routes.get(
                       "/me",
                       (request, response) ->
-                          response.text(request.principal().orElseThrow().getName())));
+                          response.text(request.principal().orElseThrow().getName())),
+              e -> e.get(security).required());
       app.start();
 
       var request =

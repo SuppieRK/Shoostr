@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr.opentelemetry;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Options;
@@ -36,6 +37,39 @@ import org.junit.jupiter.api.Test;
 
 class OpenTelemetryTracingTest {
   @Test
+  void bareInstallationDoesNotCreateSpansOrOwnTheProvider() throws Exception {
+    var exporter = InMemorySpanExporter.create();
+
+    try (var provider =
+            SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                .build();
+        var app = new Shoostr(Options.defaults().withPort(0));
+        var client = HttpClient.newHttpClient()) {
+      var tracing =
+          new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build());
+      app.extensions(tracing);
+      assertThrows(IllegalStateException.class, tracing::allRequests);
+      app.routes()
+          .get(
+              "/",
+              (_, response) ->
+                  response.text(Boolean.toString(Span.current().getSpanContext().isValid())));
+      app.start();
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/")).build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals("false", result.body());
+      assertTrue(exporter.getFinishedSpanItems().isEmpty());
+      app.close();
+      var span = provider.get("borrowed").spanBuilder("still usable").startSpan();
+      span.end();
+      assertEquals(1, exporter.getFinishedSpanItems().size());
+    }
+  }
+
+  @Test
   void recordsExplicitServerErrorResponsesWithoutApplicationFailures() throws Exception {
     var exporter = InMemorySpanExporter.create();
     var completed = new CompletableFuture<Void>();
@@ -46,8 +80,9 @@ class OpenTelemetryTracingTest {
                 .build();
         var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.observe(
-          new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build()));
+      app.extensions(
+          new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build())
+              .allRequests());
       app.afterRequest(_ -> completed.complete(null));
       app.routes().get("/explicit", (_, response) -> response.status(500).text("explicit"));
       app.start();
@@ -70,7 +105,7 @@ class OpenTelemetryTracingTest {
   void noOpTracingDoesNotChangeRequestHandlingOrInstallCurrentSpans() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.observe(new OpenTelemetryTracing(OpenTelemetry.noop()));
+      app.extensions(new OpenTelemetryTracing(OpenTelemetry.noop()).allRequests());
       app.routes()
           .get(
               "/ok",
@@ -101,7 +136,7 @@ class OpenTelemetryTracingTest {
         var app = new Shoostr(Options.defaults().withPort(0));
         var client = HttpClient.newHttpClient()) {
       var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
-      app.observe(new OpenTelemetryTracing(telemetry));
+      app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
       app.afterRequest(
           outcome -> {
             assertFalse(Span.current().getSpanContext().isValid());
@@ -173,7 +208,7 @@ class OpenTelemetryTracingTest {
               .setTracerProvider(provider)
               .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
               .build();
-      app.observe(new OpenTelemetryTracing(telemetry));
+      app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
       app.afterRequest(outcomes::add);
       app.routes()
           .get(
@@ -237,7 +272,7 @@ class OpenTelemetryTracingTest {
               .setTracerProvider(provider)
               .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
               .build();
-      app.observe(new OpenTelemetryTracing(telemetry));
+      app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
       app.afterRequest(_ -> completed.complete(null));
       app.routes()
           .get(
