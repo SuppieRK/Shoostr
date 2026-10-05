@@ -167,6 +167,34 @@ class PortSelectionTest {
   }
 
   @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void releasesTheReservationWhenEitherNamedPortFixtureCloses(boolean range) throws Exception {
+    int port;
+
+    try (var socket = bind(0)) {
+      port = socket.getLocalPort();
+    }
+
+    try (var test =
+        range
+            ? TestServer.startOnPortRange(new Shoostr(), port, port)
+            : TestServer.startOnPort(new Shoostr(), port)) {
+      assertEquals(port, test.baseUri().getPort());
+      assertThrows(
+          BindException.class,
+          () -> {
+            try (var _ = bind(port)) {
+              fail("The fixture must reserve its listener until close");
+            }
+          });
+    }
+
+    try (var rebound = bind(port)) {
+      assertEquals(port, rebound.getLocalPort());
+    }
+  }
+
+  @ParameterizedTest
   @ValueSource(ints = {-1, 0, 65536})
   void rejectsInvalidFixedPortsBeforeTakingOwnership(int port) throws Exception {
     try (var app = new Shoostr()) {
