@@ -64,6 +64,9 @@ JDK client and cookie state; retain it across test methods if shared app/cookies
 and close it in your testing framework's teardown. It does not reset mocks or dependencies.
 Callers own returned streams/subscriptions; close or consume them. Fixture cleanup cancels
 outstanding client work before stopping the app instead of waiting indefinitely for a body.
+Client termination waits at most three seconds; application shutdown still uses its configured
+native drain timeout and reports stop failures. The fixture does not finish caller-owned work,
+reset dependencies or replace native shutdown settings to hide a blocked handler.
 
 The owned client defaults to isolated cookies, redirects disabled, no system proxy and a
 three-second connect timeout, with normal JDK protocol negotiation and TLS verification.

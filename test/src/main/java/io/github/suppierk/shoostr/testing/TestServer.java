@@ -341,6 +341,8 @@ public final class TestServer implements Closeable {
   /**
    * Cancels owned client work, then stops the application and releases its listener. Safe to call
    * repeatedly. Waits at most three seconds for client termination, not indefinitely for a body.
+   * Application shutdown retains its native drain timeout and reports stop failures; it does not
+   * promise to finish caller-owned work or an uncooperative handler.
    *
    * @throws IOException if the application cannot stop cleanly
    */
