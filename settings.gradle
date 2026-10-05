@@ -1,5 +1,5 @@
 rootProject.name = 'Shoostr'
-include 'http', 'core', 'test-support', 'pac4j', 'benchmarks', 'microbenchmarks'
+include 'http', 'core', 'test', 'pac4j', 'benchmarks', 'microbenchmarks'
 
 include 'micrometer', 'opentelemetry'
 

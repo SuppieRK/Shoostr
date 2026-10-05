@@ -18,7 +18,7 @@ app.routes(routes -> {
 
 `Closeable` also extends `AutoCloseable`: try-with-resources still closes the app when its block ends. Use it for scoped lifetimes such as tests; normal server setup can use the unscoped example above. Registration is thread-safe across the root and every nested scope and must finish before `start()`. No builder is involved.
 
-For integration tests, add the separate `io.github.suppierk:shoostr-test-support` artifact as a
+For integration tests, add the separate `io.github.suppierk:shoostr-test` artifact as a
 test dependency. `TestServer` starts a fresh `Shoostr` on an OS-selected loopback port and
 closes it at the end of a try-with-resources scope. Its callback runs before startup, so
 routes and native Jetty configuration use the ordinary public API:
@@ -37,7 +37,7 @@ Each fixture has its own listener and routes. Configuration/startup failures pro
 after cleanup; `close()` reports Jetty stop failures as `IOException`. For lifecycle
 notifications, register Jetty's `LifeCycle.Listener` through `Shoostr.modifyServer` before
 startup. No framework-specific lifecycle annotation is required. Run
-`./gradlew consumerSmoke` to publish `http`, `core`, `test-support`, `pac4j`,
+`./gradlew consumerSmoke` to publish `http`, `core`, `test`, `pac4j`,
 `micrometer` and `opentelemetry` into `build/consumer-repository` and execute
 the independent Java 25 consumer under `examples/consumer-smoke`; this does not
 publish to Maven Local or a remote repository. Its JUnit 5 tests exercise the
@@ -72,7 +72,7 @@ The configuration pattern follows [Javalin 7.2.3's native callbacks](https://git
 Java 25 is required; the Gradle wrapper supplies the build tool. Run `cmdshape ./gradlew clean spotlessApply build` to apply formatting, compile, and execute the JUnit 5 test suites and quality checks. Add `:benchmarks:installDist` when runnable benchmark distributions are needed. Use `gradlew.bat` on Windows. See [benchmark commands](benchmarks/README.md) for runnable candidate and Jooby servers.
 
 Run `cmdshape ./gradlew mutationTest` for diagnostic PiTest analysis of `core`, `http`,
-`micrometer`, `opentelemetry`, `pac4j` and `test-support`. It produces native HTML/XML
+`micrometer`, `opentelemetry`, `pac4j` and `test`. It produces native HTML/XML
 reports and is independent of `build`, `check` and CI, with no mutation-score gate.
 See [mutation testing](core/MUTATION_TESTING.md) for scope, module-specific commands,
 report locations and interpretation. The initial full baseline took 54 minutes.

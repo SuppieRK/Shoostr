@@ -7,7 +7,7 @@ cmdshape ./gradlew mutationTest --console=plain
 ```
 
 The root task delegates to `:core:pitest`, `:http:pitest`, `:micrometer:pitest`,
-`:opentelemetry:pitest`, `:pac4j:pitest` and `:test-support:pitest`. The plugin generates
+`:opentelemetry:pitest`, `:pac4j:pitest` and `:test:pitest`. The plugin generates
 its standard HTML report (`index.html`) and XML (`mutations.xml`) under
 `<module>/build/reports/pitest/<timestamp>/`. Open the HTML report to inspect surviving
 changes and covering tests. Timestamped runs preserve earlier reports until `clean`;
@@ -34,7 +34,7 @@ For a module-specific diagnostic rerun, use its task directly, for example
 | `micrometer` | All module-local production classes and all tests | Metrics registration, request measurements and cleanup. |
 | `opentelemetry` | All module-local production classes and all tests | Instrumentation scope, span completion and propagation. |
 | `pac4j` | All module-local production classes and all tests | Authentication/authorization adaptation and request context. |
-| `test-support` | All module-local production classes and all tests | Consumer test application/client and resource ownership. |
+| `test` | All module-local production classes and all tests | Consumer test application/client and resource ownership. |
 
 Both class and test selectors are `io.github.suppierk.*`, including nested classes;
 PIT's mutable code paths are each module's own production output. Dependency classes
@@ -87,7 +87,7 @@ modules. Native reports and the full execution log are archived under
 | micrometer | 26/27 | 6 | 4 | 2 | 0 | 0 |
 | opentelemetry | 39/44 | 17 | 8 | 5 | 3 | 1 |
 | pac4j | 69/103 | 52 | 21 | 9 | 22 | 0 |
-| test-support | 15/17 | 6 | 5 | 0 | 1 | 0 |
+| test | 15/17 | 6 | 5 | 0 | 1 | 0 |
 
 The full candidate run completed in **54m21s** with unchanged production Java and
 the same 2,339 mutation identities. It killed 39 additional mutations. Inspection
@@ -105,7 +105,7 @@ from the full candidate run; they are not a second full-suite execution.
 | micrometer | 27/27 | 6 | 6 | 0 | 0 | 0 |
 | opentelemetry | 39/44 | 17 | 11 | 2 | 3 | 1 |
 | pac4j | 74/103 | 52 | 30 | 6 | 16 | 0 |
-| test-support | 15/17 | 6 | 5 | 0 | 1 | 0 |
+| test | 15/17 | 6 | 5 | 0 | 1 | 0 |
 | **Total** | **3,762/4,046** | **2,339** | **1,580** | **573** | **130** | **56** |
 
 This is **40 additional assertion/exception kills**: 27 former survivors and 13
@@ -139,7 +139,7 @@ mutations still satisfy the equality contract; defensive/private states may be
 unreachable through public construction. Other survivors require individual
 triage, particularly resource ownership, compression overrides, multipart provider
 adaptation and exceptional tracing setup. Ordinary startup cleanup does not reach
-test-support's uncovered suppression branch. This pass establishes no current
+test's uncovered suppression branch. This pass establishes no current
 production defect in the selected contracts and does not claim complete mutation
 classification or a 100% kill rate.
 
