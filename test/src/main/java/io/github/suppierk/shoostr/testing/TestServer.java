@@ -3,23 +3,29 @@ package io.github.suppierk.shoostr.testing;
 import io.github.suppierk.shoostr.Shoostr;
 import java.io.Closeable;
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.net.BindException;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
+import java.nio.channels.ServerSocketChannel;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.SslConnectionFactory;
+import org.jspecify.annotations.Nullable;
 
 /** A real HTTP fixture owning the supplied application's lifetime on loopback. */
 public final class TestServer implements Closeable {
   private final Shoostr app;
   private final URI baseUri;
   private final HttpClient client;
+  private final @Nullable ServerSocketChannel reservation;
   private volatile boolean closed;
 
   /**
@@ -28,11 +34,14 @@ public final class TestServer implements Closeable {
    * @param app started application owned by this fixture
    * @param baseUri actual default listener origin
    * @param client HTTP client owned by this fixture
+   * @param reservation pre-start socket binding, if a fixed port or range was requested
    */
-  private TestServer(Shoostr app, URI baseUri, HttpClient client) {
+  private TestServer(
+      Shoostr app, URI baseUri, HttpClient client, @Nullable ServerSocketChannel reservation) {
     this.app = app;
     this.baseUri = baseUri;
     this.client = client;
+    this.reservation = reservation;
     closed = false;
   }
 
@@ -65,16 +74,116 @@ public final class TestServer implements Closeable {
    * @throws Exception if client configuration or application startup fails
    * @throws NullPointerException if an argument is null
    */
-  @SuppressWarnings("java:S1181") // Cleanup must run even when startup or cleanup throws Error.
   public static TestServer start(Shoostr app, Consumer<HttpClient.Builder> configureClient)
+      throws Exception {
+    return start(app, 0, 0, configureClient);
+  }
+
+  /**
+   * Starts a single-listener app on an exact loopback port, without automatic fallback.
+   *
+   * @param app existing unstarted application owned by the fixture
+   * @param port exact port between 1 and 65535
+   * @return started fixture
+   * @throws Exception if the listener cannot bind or startup fails
+   * @throws IllegalArgumentException if the port is invalid or multiple listeners are configured
+   * @throws NullPointerException if app is null
+   */
+  public static TestServer startOnPort(Shoostr app, int port) throws Exception {
+    return startOnPort(app, port, _ -> {});
+  }
+
+  /**
+   * Starts a single-listener app on an exact loopback port with an owned-client builder callback.
+   * Client defaults and ownership are the same as {@link #start(Shoostr, Consumer)}.
+   *
+   * @param app existing unstarted application owned by the fixture
+   * @param port exact port between 1 and 65535
+   * @param configureClient callback applied after client defaults
+   * @return started fixture
+   * @throws Exception if client configuration, binding or startup fails
+   * @throws IllegalArgumentException if the port is invalid or multiple listeners are configured
+   * @throws NullPointerException if an argument is null
+   */
+  public static TestServer startOnPort(
+      Shoostr app, int port, Consumer<HttpClient.Builder> configureClient) throws Exception {
+    if (port < 1 || port > 65535) {
+      throw new IllegalArgumentException("Fixed test port must be between 1 and 65535");
+    }
+
+    return start(app, port, port, configureClient);
+  }
+
+  /**
+   * Starts a single-listener app on the first bindable loopback port in an inclusive range.
+   * Candidates are tried in ascending order; exhaustion fails without out-of-range fallback.
+   *
+   * @param app existing unstarted application owned by the fixture
+   * @param minimum inclusive minimum port between 1 and 65535
+   * @param maximum inclusive maximum port between minimum and 65535
+   * @return started fixture reporting the actual selected port
+   * @throws Exception if no candidate binds or startup fails
+   * @throws IllegalArgumentException if bounds are invalid or multiple listeners are configured
+   * @throws NullPointerException if app is null
+   */
+  public static TestServer startOnPortRange(Shoostr app, int minimum, int maximum)
+      throws Exception {
+    return startOnPortRange(app, minimum, maximum, _ -> {});
+  }
+
+  /**
+   * Starts a single-listener app within an inclusive range with an owned-client builder callback.
+   * Client defaults and ownership are the same as {@link #start(Shoostr, Consumer)}. A successful
+   * binding remains reserved until shutdown; bind failures are retained as exception causes.
+   *
+   * @param app existing unstarted application owned by the fixture
+   * @param minimum inclusive minimum port between 1 and 65535
+   * @param maximum inclusive maximum port between minimum and 65535
+   * @param configureClient callback applied after client defaults
+   * @return started fixture reporting the actual selected port
+   * @throws Exception if client configuration, binding or startup fails
+   * @throws IllegalArgumentException if bounds are invalid or multiple listeners are configured
+   * @throws NullPointerException if an argument is null
+   */
+  public static TestServer startOnPortRange(
+      Shoostr app, int minimum, int maximum, Consumer<HttpClient.Builder> configureClient)
+      throws Exception {
+    if (minimum < 1 || minimum > maximum || maximum > 65535) {
+      throw new IllegalArgumentException(
+          "Test port range must satisfy 1 <= minimum <= maximum <= 65535");
+    }
+
+    return start(app, minimum, maximum, configureClient);
+  }
+
+  /**
+   * Applies test transport settings through native configuration and owns startup cleanup.
+   *
+   * @param app existing unstarted application
+   * @param minimum automatic port zero or a validated positive minimum
+   * @param maximum automatic port zero or a validated positive maximum
+   * @param configureClient owned-client configuration
+   * @return started fixture
+   * @throws Exception if configuration or startup fails
+   */
+  @SuppressWarnings("java:S1181") // Cleanup must run even when startup or cleanup throws Error.
+  private static TestServer start(
+      Shoostr app, int minimum, int maximum, Consumer<HttpClient.Builder> configureClient)
       throws Exception {
     Objects.requireNonNull(app);
     Objects.requireNonNull(configureClient);
     var connectors = new ArrayList<ServerConnector>();
+    var reservation = new AtomicReference<@Nullable ServerSocketChannel>();
+    var bindingBridge = new AtomicReference<@Nullable UncheckedIOException>();
     synchronized (app) {
       // Registration rejects ineligible apps before this fixture acquires ownership.
       app.modifyServer(
           server -> {
+            if (minimum > 0 && server.getConnectors().length != 1) {
+              throw new IllegalArgumentException(
+                  "Fixed/range test ports require exactly one listener");
+            }
+
             for (var connector : server.getConnectors()) {
               if (!(connector instanceof ServerConnector listener) || listener.getLocalPort() > 0) {
                 throw new IllegalArgumentException(
@@ -86,8 +195,25 @@ public final class TestServer implements Closeable {
 
             for (var listener : connectors) {
               listener.setHost("127.0.0.1");
-              listener.setPort(0);
+              listener.setPort(minimum);
               listener.setInheritChannel(false);
+            }
+
+            if (minimum > 0) {
+              var listener = connectors.getFirst();
+
+              try {
+                bind(listener, minimum, maximum);
+              } catch (IOException failure) {
+                var bridge =
+                    new UncheckedIOException("Could not bind requested test ports", failure);
+                bindingBridge.set(bridge);
+                throw bridge;
+              } finally {
+                if (listener.getTransport() instanceof ServerSocketChannel channel) {
+                  reservation.set(channel);
+                }
+              }
             }
           });
 
@@ -103,23 +229,36 @@ public final class TestServer implements Closeable {
         configureClient.accept(builder);
         client = builder.build();
         app.start();
-        var port = app.port();
+        var boundPort = app.port();
         var secure =
             connectors.stream()
                 .anyMatch(
                     listener ->
-                        listener.getLocalPort() == port
+                        listener.getLocalPort() == boundPort
                             && listener.getConnectionFactories().stream()
                                 .anyMatch(SslConnectionFactory.class::isInstance));
         return new TestServer(
-            app, URI.create((secure ? "https" : "http") + "://127.0.0.1:" + port + "/"), client);
+            app,
+            URI.create((secure ? "https" : "http") + "://127.0.0.1:" + boundPort + "/"),
+            client,
+            reservation.get());
       } catch (Exception | Error failure) {
-        try (app) {
+        try (var _ = reservation.get();
+            app) {
           if (client != null) {
             closeClient(client);
           }
         } catch (Exception | Error cleanup) {
           failure.addSuppressed(cleanup);
+        }
+
+        if (failure == bindingBridge.get()) {
+          var original = Objects.requireNonNull(((UncheckedIOException) failure).getCause());
+          for (var cleanup : failure.getSuppressed()) {
+            original.addSuppressed(cleanup);
+          }
+
+          throw original;
         }
 
         throw failure;
@@ -213,9 +352,58 @@ public final class TestServer implements Closeable {
 
     closed = true;
 
-    try (app) {
+    try (var _ = reservation;
+        app) {
       closeClient(client);
     }
+  }
+
+  /**
+   * Retains the first successful actual bind without probing and releasing a candidate socket.
+   * Retries only I/O failures caused by a bind rejection; unrelated I/O failures abort selection.
+   *
+   * @param listener unbound single listener
+   * @param minimum inclusive validated minimum
+   * @param maximum inclusive validated maximum
+   * @throws IOException if no candidate binds or another I/O failure occurs
+   */
+  private static void bind(ServerConnector listener, int minimum, int maximum) throws IOException {
+    IOException firstFailure = null;
+
+    for (int port = minimum; port <= maximum; port++) {
+      listener.setPort(port);
+
+      try {
+        listener.open();
+        return;
+      } catch (IOException failure) {
+        if (!isBindFailure(failure)) {
+          throw failure;
+        }
+
+        if (firstFailure == null) {
+          firstFailure = failure;
+        }
+      }
+    }
+
+    throw Objects.requireNonNull(firstFailure);
+  }
+
+  /**
+   * Recognizes a bind rejection even when Jetty wraps it in another I/O exception.
+   *
+   * @param failure binding failure
+   * @return whether a cause is a bind exception
+   */
+  private static boolean isBindFailure(IOException failure) {
+    for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+      if (cause instanceof BindException) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**

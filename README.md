@@ -82,6 +82,18 @@ publisher use. Do not close it separately. Direct requests need their own URI (r
 returned streams, subscriptions or WebSockets; callers must consume, close or cancel these.
 A request timeout is not an independent deadline for reading a returned streaming body.
 
+Automatic startup binds every supported listener to `127.0.0.1:0`, preserving its native
+TLS/HTTP2 configuration. For a stable browser/debugging URL, use
+`TestServer.startOnPort(app, 8081)`; an occupied port fails instead of choosing another.
+`TestServer.startOnPortRange(app, 8081, 8090)` tries the inclusive range in ascending order,
+retains the first successful binding and fails if exhausted. Both named factories require
+exactly one unbound Jetty `ServerConnector`, accept ports from 1 through 65535 and offer the
+same optional client-builder callback. Automatic startup supports multiple/reordered
+listeners; `baseUri()` always reports the application's original default listener.
+Fixed ports help browser reuse, not authentication or cookie isolation. The fixture never
+widens loopback binding or disables application security settings. Range selection finishes
+within one app startup attempt, and reserved sockets are released on failure and shutdown.
+
 Configure Jetty directly before startup, using ordered callbacks similar to Javalin:
 
 ```java

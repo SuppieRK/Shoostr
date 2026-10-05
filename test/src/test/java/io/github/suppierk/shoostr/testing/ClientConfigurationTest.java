@@ -103,9 +103,7 @@ class ClientConfigurationTest {
     app.close();
     assertThrows(
         IllegalStateException.class,
-        () ->
-            TestServer.start(
-                app, _ -> fail("must not configure a client for a rejected app")));
+        () -> TestServer.start(app, _ -> fail("must not configure a client for a rejected app")));
   }
 
   @Test
