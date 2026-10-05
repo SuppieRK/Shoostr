@@ -9,7 +9,6 @@ import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.util.component.AbstractLifeCycle;
 import org.junit.jupiter.api.Test;
 
@@ -17,10 +16,13 @@ class TestServerTest {
   @Test
   void startsIsolatedServersOnEphemeralPortsAndStopsThemAtScopeExit() throws Exception {
     TestServer first;
+    var firstApp = new Shoostr();
+    firstApp.routes().get("/id", (_, res) -> res.text("one"));
+    var secondApp = new Shoostr();
+    secondApp.routes().get("/id", (_, res) -> res.text("two"));
 
-    try (var running =
-            TestServer.start(app -> app.routes().get("/id", (_, res) -> res.text("one")));
-        var second = TestServer.start(app -> app.routes().get("/id", (_, res) -> res.text("two")));
+    try (var running = TestServer.start(firstApp);
+        var second = TestServer.start(secondApp);
         var client = HttpClient.newHttpClient()) {
       first = running;
       assertNotEquals(running.baseUri().getPort(), second.baseUri().getPort());
@@ -33,37 +35,31 @@ class TestServerTest {
 
   @Test
   void closesAppWhenConfigurationFails() {
-    var captured = new AtomicReference<Shoostr>();
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            TestServer.start(
-                app -> {
-                  captured.set(app);
-                  app.routes().get("/", (_, res) -> res.text("unused"));
-                  throw new IllegalArgumentException("invalid fixture configuration");
-                }));
-    var routes = captured.get().routes();
+    var app = new Shoostr();
+    app.modifyServer(
+        _ -> {
+          throw new IllegalArgumentException("invalid fixture configuration");
+        });
+    assertThrows(IllegalArgumentException.class, () -> TestServer.start(app));
+    var routes = app.routes();
     assertThrows(
         IllegalStateException.class, () -> routes.get("/later", (_, res) -> res.text("late")));
   }
 
   @Test
   void reportsNativeStopFailuresThroughClose() throws Exception {
-    var server =
-        TestServer.start(
-            app -> {
-              app.modifyServer(
-                  jetty ->
-                      jetty.addBean(
-                          new AbstractLifeCycle() {
-                            @Override
-                            protected void doStop() throws Exception {
-                              throw new IOException("forced native stop failure");
-                            }
-                          }));
-              app.routes().get("/", (_, response) -> response.text("ready"));
-            });
+    var app = new Shoostr();
+    app.modifyServer(
+        jetty ->
+            jetty.addBean(
+                new AbstractLifeCycle() {
+                  @Override
+                  protected void doStop() throws Exception {
+                    throw new IOException("forced native stop failure");
+                  }
+                }));
+    app.routes().get("/", (_, response) -> response.text("ready"));
+    var server = TestServer.start(app);
 
     var failure = assertThrows(IOException.class, server::close);
     assertEquals("Could not stop HTTP server", failure.getMessage());

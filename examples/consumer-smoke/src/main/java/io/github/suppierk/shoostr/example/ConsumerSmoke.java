@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.example;
 
+import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -26,41 +27,39 @@ public final class ConsumerSmoke {
     var started = new AtomicInteger();
     var stopped = new AtomicInteger();
     URI firstUri;
+    var firstApp = new Shoostr();
+    firstApp.modifyHttpConfiguration(http -> http.setRequestHeaderSize(512));
+    firstApp.modifyServer(
+        server ->
+            server.addEventListener(
+                new LifeCycle.Listener() {
+                  /**
+                   * Records that the published app completed native startup.
+                   *
+                   * @param event started Jetty component
+                   */
+                  @Override
+                  public void lifeCycleStarted(LifeCycle event) {
+                    started.incrementAndGet();
+                  }
 
-    try (var client = HttpClient.newHttpClient();
-        var first =
-            TestServer.start(
-                app -> {
-                  app.modifyHttpConfiguration(http -> http.setRequestHeaderSize(512));
-                  app.modifyServer(
-                      server ->
-                          server.addEventListener(
-                              new LifeCycle.Listener() {
-                                /**
-                                 * Records that the published app completed native startup.
-                                 *
-                                 * @param event started Jetty component
-                                 */
-                                @Override
-                                public void lifeCycleStarted(LifeCycle event) {
-                                  started.incrementAndGet();
-                                }
+                  /**
+                   * Records that fixture closure stopped the native server.
+                   *
+                   * @param event stopped Jetty component
+                   */
+                  @Override
+                  public void lifeCycleStopped(LifeCycle event) {
+                    stopped.incrementAndGet();
+                  }
+                }));
+    firstApp.routes().get("/value", (_, response) -> response.text("first"));
+    var secondApp = new Shoostr();
+    secondApp.routes().get("/value", (_, response) -> response.text("second"));
 
-                                /**
-                                 * Records that fixture closure stopped the native server.
-                                 *
-                                 * @param event stopped Jetty component
-                                 */
-                                @Override
-                                public void lifeCycleStopped(LifeCycle event) {
-                                  stopped.incrementAndGet();
-                                }
-                              }));
-                  app.routes().get("/value", (_, response) -> response.text("first"));
-                });
-        var second =
-            TestServer.start(
-                app -> app.routes().get("/value", (_, response) -> response.text("second")))) {
+    try (var first = TestServer.start(firstApp);
+        var second = TestServer.start(secondApp);
+        var client = HttpClient.newHttpClient()) {
       firstUri = first.baseUri();
       require(firstUri.getPort() != second.baseUri().getPort(), "fixtures share a port");
       require("first".equals(body(client, firstUri.resolve("value"))), "first route failed");
@@ -84,13 +83,13 @@ public final class ConsumerSmoke {
       // The listener is no longer bound.
     }
 
-    try (var ignored =
-        TestServer.start(
-            app ->
-                app.modifyServer(
-                    _ -> {
-                      throw new IllegalStateException("invalid native configuration");
-                    }))) {
+    var invalidApp = new Shoostr();
+    invalidApp.modifyServer(
+        _ -> {
+          throw new IllegalStateException("invalid native configuration");
+        });
+
+    try (var ignored = TestServer.start(invalidApp)) {
       throw new AssertionError("invalid native configuration unexpectedly started");
     } catch (IllegalStateException expected) {
       require(

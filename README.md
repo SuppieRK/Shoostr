@@ -19,13 +19,15 @@ app.routes(routes -> {
 `Closeable` also extends `AutoCloseable`: try-with-resources still closes the app when its block ends. Use it for scoped lifetimes such as tests; normal server setup can use the unscoped example above. Registration is thread-safe across the root and every nested scope and must finish before `start()`. No builder is involved.
 
 For integration tests, add the separate `io.github.suppierk:shoostr-test` artifact as a
-test dependency. `TestServer` starts a fresh `Shoostr` on an OS-selected loopback port and
-closes it at the end of a try-with-resources scope. Its callback runs before startup, so
-routes and native Jetty configuration use the ordinary public API:
+test dependency. `TestServer` starts an existing unstarted `Shoostr` on OS-selected loopback
+ports and closes that same application at the end of a try-with-resources scope. Configure
+routes, extensions, dependencies and native Jetty settings before startup through the ordinary
+public API:
 
 ```java
-try (var server = TestServer.start(app ->
-        app.routes().get("/hello", (request, response) -> response.text("hello")));
+var app = new Shoostr();
+app.routes().get("/hello", (request, response) -> response.text("hello"));
+try (var server = TestServer.start(app);
      var client = java.net.http.HttpClient.newHttpClient()) {
     var request = java.net.http.HttpRequest.newBuilder(server.baseUri().resolve("hello")).build();
     var reply = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
@@ -33,7 +35,8 @@ try (var server = TestServer.start(app ->
 }
 ```
 
-Each fixture has its own listener and routes. Configuration/startup failures propagate
+Each fixture owns its supplied app and listener lifetime, not user dependencies or mocks.
+Startup failures propagate
 after cleanup; `close()` reports Jetty stop failures as `IOException`. For lifecycle
 notifications, register Jetty's `LifeCycle.Listener` through `Shoostr.modifyServer` before
 startup. No framework-specific lifecycle annotation is required. Run
