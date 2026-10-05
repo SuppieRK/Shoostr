@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -36,21 +37,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(15)
 class RequestParametersTest {
   private Shoostr app;
-  private HttpClient client;
 
   @BeforeEach
   void prepare() {
     app = new Shoostr(Options.defaults().withPort(0));
-    client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
   }
 
   @AfterEach
   void close() throws Exception {
-    try {
-      client.close();
-    } finally {
-      app.close();
-    }
+    app.close();
   }
 
   @Test
@@ -65,11 +60,18 @@ class RequestParametersTest {
                         + request.queryParams("name")
                         + "|"
                         + request.queryParam("token").orElseThrow()));
-    app.start();
-    var result =
-        send(request("/query?na%6De=M%C3%BCnchen+city&name=one%2Btwo&token=a=b%2526").build());
-    assertEquals(200, result.statusCode());
-    assertEquals("München city|[München city, one+two]|a=b%26", result.body());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/query?na%6De=M%C3%BCnchen+city&name=one%2Btwo&token=a=b%2526")
+                      .timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("München city|[München city, one+two]|a=b%26", result.body());
+    }
   }
 
   @Test
@@ -106,10 +108,18 @@ class RequestParametersTest {
               assertEquals(Optional.of(""), request.queryParam("empty"));
               response.text("ok");
             });
-    app.start();
-    var result = send(request("/query?flag&empty=&=anon&name=first&name=&Name=case&&").build());
-    assertEquals(200, result.statusCode());
-    assertEquals("ok", result.body());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/query?flag&empty=&=anon&name=first&name=&Name=case&&")
+                      .timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("ok", result.body());
+    }
   }
 
   @ParameterizedTest
@@ -125,11 +135,17 @@ class RequestParametersTest {
         .get(
             "/query",
             (request, response) -> response.text(request.queryParam("good").orElseThrow()));
-    app.start();
-    var result = send(request("/query?good=first&bad=" + encoded).build());
-    assertEquals(400, result.statusCode());
-    assertEquals("bad input", result.body());
-    assertEquals("bad-query", result.headers().firstValue("X-Handled").orElseThrow());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request.path("/query?good=first&bad=" + encoded).timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, result.statusCode());
+      assertEquals("bad input", result.body());
+      assertEquals("bad-query", result.headers().firstValue("X-Handled").orElseThrow());
+    }
   }
 
   @ParameterizedTest
@@ -148,14 +164,25 @@ class RequestParametersTest {
                 response.text(
                     Integer.toString(
                         request.queryParamMap().values().stream().mapToInt(List::size).sum())));
-    app.start();
-    String query = repeated ? "a=1&a=2" : "a=1&b=2";
-    var accepted = send(request("/query?" + query).build());
-    assertEquals(200, accepted.statusCode());
-    assertEquals("2", accepted.body());
-    var rejected = send(request("/query?" + query + (repeated ? "&a=3" : "&c=3")).build());
-    assertEquals(400, rejected.statusCode());
-    assertEquals("Bad Request", rejected.body());
+
+    try (var test = TestServer.start(app)) {
+      String query = repeated ? "a=1&a=2" : "a=1&b=2";
+      var accepted =
+          test.send(
+              request -> request.path("/query?" + query).timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, accepted.statusCode());
+      assertEquals("2", accepted.body());
+      var rejected =
+          test.send(
+              request ->
+                  request
+                      .path("/query?" + query + (repeated ? "&a=3" : "&c=3"))
+                      .timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, rejected.statusCode());
+      assertEquals("Bad Request", rejected.body());
+    }
   }
 
   @Test
@@ -173,16 +200,21 @@ class RequestParametersTest {
               assertThrows(UnsupportedOperationException.class, () -> values.add("x"));
               response.text("ok");
             });
-    app.start();
-    var result =
-        send(
-            request("/headers")
-                .header("X-Values", "first,second")
-                .header("X-Values", "third")
-                .header("X-Empty", "")
-                .build());
-    assertEquals(200, result.statusCode());
-    assertEquals("ok", result.body());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/headers")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("X-Values", "first,second")
+                      .header("X-Values", "third")
+                      .header("X-Empty", ""),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("ok", result.body());
+    }
   }
 
   @Test
@@ -220,15 +252,21 @@ class RequestParametersTest {
               assertArrayEquals(encoded.getBytes(StandardCharsets.UTF_8), request.bodyBytes());
               response.text("ok");
             });
-    app.start();
-    var result =
-        send(
-            request("/form?name=query")
-                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
-                .POST(HttpRequest.BodyPublishers.ofString(encoded))
-                .build());
-    assertEquals(200, result.statusCode());
-    assertEquals("ok", result.body());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/form?name=query")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+                      .method("POST")
+                      .body(encoded.getBytes(StandardCharsets.UTF_8)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("ok", result.body());
+    }
   }
 
   @Test
@@ -247,19 +285,21 @@ class RequestParametersTest {
               assertEquals(encoded, request.bodyText());
               response.body(MediaType.APPLICATION_OCTET_STREAM, request.bodyBytes());
             });
-    app.start();
-    var result =
-        client.send(
-            request("/form")
-                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
-                .POST(
-                    HttpRequest.BodyPublishers.ofByteArray(
-                        encoded.getBytes(StandardCharsets.UTF_8)))
-                .build(),
-            HttpResponse.BodyHandlers.ofByteArray());
 
-    assertEquals(200, result.statusCode());
-    assertArrayEquals(encoded.getBytes(StandardCharsets.UTF_8), result.body());
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/form")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+                      .method("POST")
+                      .body(encoded.getBytes(StandardCharsets.UTF_8)));
+
+      assertEquals(200, result.statusCode());
+      assertArrayEquals(encoded.getBytes(StandardCharsets.UTF_8), result.body());
+    }
   }
 
   @ParameterizedTest
@@ -276,18 +316,29 @@ class RequestParametersTest {
         "application/x-www-form-urlencoded; charset=\"UTF-8"
       })
   void rejectsUnsupportedFormRepresentations(String contentType) throws Exception {
+
     app.routes()
         .post(
             "/form", (request, response) -> response.text(request.formParam("name").orElseThrow()));
-    app.start();
-    var outgoing = request("/form").POST(HttpRequest.BodyPublishers.ofString("name=value"));
-    if (contentType != null) {
-      outgoing.header("Content-Type", contentType);
-    }
 
-    var result = send(outgoing.build());
-    assertEquals(415, result.statusCode());
-    assertEquals("Unsupported Media Type", result.body());
+    try (var test = TestServer.start(app)) {
+
+      var result =
+          test.send(
+              request -> {
+                request
+                    .path("/form")
+                    .timeout(Duration.ofSeconds(3))
+                    .method("POST")
+                    .body("name=value".getBytes(StandardCharsets.UTF_8));
+                if (contentType != null) {
+                  request.header("Content-Type", contentType);
+                }
+              },
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(415, result.statusCode());
+      assertEquals("Unsupported Media Type", result.body());
+    }
   }
 
   @ParameterizedTest
@@ -302,46 +353,58 @@ class RequestParametersTest {
     app.routes()
         .post(
             "/form", (request, response) -> response.text(request.formParam("good").orElseThrow()));
-    app.start();
-    byte[] invalid =
-        encoded
-            ? "good=first&bad=%FF".getBytes(StandardCharsets.UTF_8)
-            : new byte[] {'g', 'o', 'o', 'd', '=', '1', '&', 'b', 'a', 'd', '=', (byte) 0xFF};
-    var result =
-        send(
-            request("/form")
-                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
-                .POST(HttpRequest.BodyPublishers.ofByteArray(invalid))
-                .build());
-    assertEquals(400, result.statusCode());
-    assertEquals("invalid form", result.body());
+
+    try (var test = TestServer.start(app)) {
+      byte[] invalid =
+          encoded
+              ? "good=first&bad=%FF".getBytes(StandardCharsets.UTF_8)
+              : new byte[] {'g', 'o', 'o', 'd', '=', '1', '&', 'b', 'a', 'd', '=', (byte) 0xFF};
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/form")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+                      .method("POST")
+                      .body(invalid),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, result.statusCode());
+      assertEquals("invalid form", result.body());
+    }
   }
 
   @Test
   void keepsOversizedChunkedBodyRejectedOnRepeatedAccess() throws Exception {
-    app.close();
-    app = new Shoostr(new Options("127.0.0.1", 0, 7, 1024, 64, 30_000));
-    app.exception(
-        ContentTooLargeException.class,
-        (_, request, response) -> {
-          assertThrows(ContentTooLargeException.class, request::bodyBytes);
-          assertThrows(ContentTooLargeException.class, request::formParamMap);
-          response.text("still oversized");
-        });
-    app.routes()
-        .post("/form", (request, response) -> response.text(request.formParam("a").orElseThrow()));
-    app.start();
-    var result =
-        send(
-            request("/form")
-                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
-                .POST(
-                    HttpRequest.BodyPublishers.ofInputStream(
-                        () ->
-                            new ByteArrayInputStream("a=123456".getBytes(StandardCharsets.UTF_8))))
-                .build());
-    assertEquals(413, result.statusCode());
-    assertEquals("still oversized", result.body());
+    // Independent transport access is required by this test's wire/client behavior.
+    try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.close();
+      app = new Shoostr(new Options("127.0.0.1", 0, 7, 1024, 64, 30_000));
+      app.exception(
+          ContentTooLargeException.class,
+          (_, request, response) -> {
+            assertThrows(ContentTooLargeException.class, request::bodyBytes);
+            assertThrows(ContentTooLargeException.class, request::formParamMap);
+            response.text("still oversized");
+          });
+      app.routes()
+          .post(
+              "/form", (request, response) -> response.text(request.formParam("a").orElseThrow()));
+      app.start();
+      var result =
+          client.send(
+              request("/form")
+                  .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+                  .POST(
+                      HttpRequest.BodyPublishers.ofInputStream(
+                          () ->
+                              new ByteArrayInputStream(
+                                  "a=123456".getBytes(StandardCharsets.UTF_8))))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(413, result.statusCode());
+      assertEquals("still oversized", result.body());
+    }
   }
 
   @ParameterizedTest
@@ -360,15 +423,21 @@ class RequestParametersTest {
               assertEquals("city=München", request.bodyText());
               response.text(request.formParam("city").orElseThrow());
             });
-    app.start();
-    var result =
-        send(
-            request("/form")
-                .header("Content-Type", contentType)
-                .POST(HttpRequest.BodyPublishers.ofString("city=München"))
-                .build());
-    assertEquals(200, result.statusCode());
-    assertEquals("München", result.body());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/form")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Content-Type", contentType)
+                      .method("POST")
+                      .body("city=München".getBytes(StandardCharsets.UTF_8)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("München", result.body());
+    }
   }
 
   @ParameterizedTest
@@ -377,15 +446,21 @@ class RequestParametersTest {
     app.routes()
         .post(
             "/form", (request, response) -> response.text(request.formParam("name").orElseThrow()));
-    app.start();
-    var result =
-        send(
-            request("/form")
-                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
-                .POST(HttpRequest.BodyPublishers.ofString("name=" + encoded))
-                .build());
-    assertEquals(400, result.statusCode());
-    assertEquals("Bad Request", result.body());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/form")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+                      .method("POST")
+                      .body(("name=" + encoded).getBytes(StandardCharsets.UTF_8)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, result.statusCode());
+      assertEquals("Bad Request", result.body());
+    }
   }
 
   @Test
@@ -399,46 +474,61 @@ class RequestParametersTest {
               assertEquals(List.of("q1", "q2"), request.queryParams("a"));
               response.text(request.formParams("a").toString());
             });
-    app.start();
-    var accepted =
-        send(
-            request("/form?a=q1&a=q2")
-                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
-                .POST(HttpRequest.BodyPublishers.ofString("a=f1&a=f2&&"))
-                .build());
-    assertEquals(200, accepted.statusCode());
-    assertEquals("[f1, f2]", accepted.body());
-    var rejected =
-        send(
-            request("/form?a=q1&a=q2")
-                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
-                .POST(HttpRequest.BodyPublishers.ofString("a=f1&a=f2&a=f3"))
-                .build());
-    assertEquals(400, rejected.statusCode());
+
+    try (var test = TestServer.start(app)) {
+      var accepted =
+          test.send(
+              request ->
+                  request
+                      .path("/form?a=q1&a=q2")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+                      .method("POST")
+                      .body("a=f1&a=f2&&".getBytes(StandardCharsets.UTF_8)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, accepted.statusCode());
+      assertEquals("[f1, f2]", accepted.body());
+      var rejected =
+          test.send(
+              request ->
+                  request
+                      .path("/form?a=q1&a=q2")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+                      .method("POST")
+                      .body("a=f1&a=f2&a=f3".getBytes(StandardCharsets.UTF_8)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, rejected.statusCode());
+    }
   }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void enforcesFormByteBoundary(boolean chunked) throws Exception {
-    app.close();
-    app = new Shoostr(new Options("127.0.0.1", 0, 7, 1024, 64, 30_000));
-    app.routes()
-        .post("/form", (request, response) -> response.text(request.formParam("a").orElseThrow()));
-    app.start();
-    for (String body : List.of("a=12345", "a=123456")) {
-      var publisher =
-          chunked
-              ? HttpRequest.BodyPublishers.ofInputStream(
-                  () -> new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)))
-              : HttpRequest.BodyPublishers.ofString(body);
-      var result =
-          send(
-              request("/form")
-                  .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
-                  .POST(publisher)
-                  .build());
-      assertEquals(body.length() == 7 ? 200 : 413, result.statusCode());
-      assertEquals(body.length() == 7 ? "12345" : "Content Too Large", result.body());
+    // Independent transport access is required by this test's wire/client behavior.
+    try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+      app.close();
+      app = new Shoostr(new Options("127.0.0.1", 0, 7, 1024, 64, 30_000));
+      app.routes()
+          .post(
+              "/form", (request, response) -> response.text(request.formParam("a").orElseThrow()));
+      app.start();
+      for (String body : List.of("a=12345", "a=123456")) {
+        var publisher =
+            chunked
+                ? HttpRequest.BodyPublishers.ofInputStream(
+                    () -> new ByteArrayInputStream(body.getBytes(StandardCharsets.UTF_8)))
+                : HttpRequest.BodyPublishers.ofString(body);
+        var result =
+            client.send(
+                request("/form")
+                    .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+                    .POST(publisher)
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(body.length() == 7 ? 200 : 413, result.statusCode());
+        assertEquals(body.length() == 7 ? "12345" : "Content Too Large", result.body());
+      }
     }
   }
 
@@ -455,29 +545,41 @@ class RequestParametersTest {
               assertTrue(request.formParam("missing").isEmpty());
               response.text("ok");
             });
-    app.start();
-    var result =
-        send(
-            request("/form")
-                .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
-                .POST(HttpRequest.BodyPublishers.ofString(body))
-                .build());
-    assertEquals(200, result.statusCode());
-    assertEquals("ok", result.body());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/form")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
+                      .method("POST")
+                      .body(body.getBytes(StandardCharsets.UTF_8)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("ok", result.body());
+    }
   }
 
   @Test
   void parsesOnlyWhenParameterAccessIsRequested() throws Exception {
     app.routes().post("/raw", (request, response) -> response.text(request.bodyText()));
-    app.start();
-    var result =
-        send(
-            request("/raw?bad=%FF")
-                .header("Content-Type", "text/plain")
-                .POST(HttpRequest.BodyPublishers.ofString("bad=%FF"))
-                .build());
-    assertEquals(200, result.statusCode());
-    assertEquals("bad=%FF", result.body());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/raw?bad=%FF")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Content-Type", "text/plain")
+                      .method("POST")
+                      .body("bad=%FF".getBytes(StandardCharsets.UTF_8)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("bad=%FF", result.body());
+    }
   }
 
   @Test
@@ -493,7 +595,27 @@ class RequestParametersTest {
               response.text(request.queryParam("first").orElseThrow());
             });
     app.start();
-    var result = exchange("/query?first=one;second=two&third=three");
+    HttpTester.Response result;
+
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      var outgoing =
+          String.join(
+              "\r\n",
+              "GET " + "/query?first=one;second=two&third=three" + " HTTP/1.1",
+              "Host: example.test",
+              "Connection: close",
+              "",
+              "");
+      socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
+      result =
+          HttpTester.parseResponse(
+              new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+      assertNotNull(result);
+    }
+
     assertEquals(200, result.getStatus());
     assertEquals("one;second=two", result.getContent());
   }
@@ -510,39 +632,53 @@ class RequestParametersTest {
               response.text(request.queryParam("value").orElseThrow());
             });
     app.start();
-    var encoded = exchange("/query?value=one%23fragment");
-    assertEquals(200, encoded.getStatus());
-    assertEquals("one#fragment", encoded.getContent());
-    assertEquals(1, calls.get());
-    var rejected = exchange("/query?value=one#fragment");
-    assertEquals(400, rejected.getStatus());
-    assertEquals(1, calls.get());
-  }
+    HttpTester.Response encoded;
 
-  private HttpTester.Response exchange(String target) throws Exception {
     try (var socket = new Socket()) {
       socket.connect(
           new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
       socket.setSoTimeout(3000);
-      var message =
+      var outgoing =
           String.join(
               "\r\n",
-              "GET " + target + " HTTP/1.1",
+              "GET " + "/query?value=one%23fragment" + " HTTP/1.1",
               "Host: example.test",
               "Connection: close",
               "",
               "");
-      socket.getOutputStream().write(message.getBytes(StandardCharsets.US_ASCII));
-      var result =
+      socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
+      encoded =
           HttpTester.parseResponse(
               new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
-      assertNotNull(result);
-      return result;
+      assertNotNull(encoded);
     }
-  }
 
-  private HttpResponse<String> send(HttpRequest request) throws Exception {
-    return client.send(request, HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, encoded.getStatus());
+    assertEquals("one#fragment", encoded.getContent());
+    assertEquals(1, calls.get());
+    HttpTester.Response rejected;
+
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      var outgoing =
+          String.join(
+              "\r\n",
+              "GET " + "/query?value=one#fragment" + " HTTP/1.1",
+              "Host: example.test",
+              "Connection: close",
+              "",
+              "");
+      socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
+      rejected =
+          HttpTester.parseResponse(
+              new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+      assertNotNull(rejected);
+    }
+
+    assertEquals(400, rejected.getStatus());
+    assertEquals(1, calls.get());
   }
 
   private HttpRequest.Builder request(String path) {

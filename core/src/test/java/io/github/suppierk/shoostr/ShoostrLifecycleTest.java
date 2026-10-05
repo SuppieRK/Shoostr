@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -54,19 +55,18 @@ class ShoostrLifecycleTest {
 
   @Test
   void omitsTheServerHeaderOnTheDefaultListenerWithoutNativeOverrides() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().get("/", (_, response) -> response.text("default listener"));
-      app.start();
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals("default listener", result.body());
-      assertTrue(result.headers().firstValue("Server").isEmpty());
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request -> request.path("/").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("default listener", result.body());
+        assertTrue(result.headers().firstValue("Server").isEmpty());
+      }
     }
   }
 
@@ -74,8 +74,7 @@ class ShoostrLifecycleTest {
   void acceptsALargerThanDefaultHeaderAfterRaisingTheNativeLimit() throws Exception {
     var value = "x".repeat(12_288);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.modifyHttpConfiguration(
           configuration -> {
             assertEquals(8192, configuration.getRequestHeaderSize());
@@ -85,17 +84,18 @@ class ShoostrLifecycleTest {
           .get(
               "/",
               (request, response) -> response.text(request.header("User-Agent").orElseThrow()));
-      app.start();
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
-                  .timeout(Duration.ofSeconds(3))
-                  .header("User-Agent", value)
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals(HttpClient.Version.HTTP_1_1, result.version());
-      assertEquals(value, result.body());
+
+      try (var test =
+          TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+        var result =
+            test.send(
+                request ->
+                    request.path("/").timeout(Duration.ofSeconds(3)).header("User-Agent", value),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals(HttpClient.Version.HTTP_1_1, result.version());
+        assertEquals(value, result.body());
+      }
     }
   }
 
@@ -103,8 +103,7 @@ class ShoostrLifecycleTest {
   void nativeConfigurationRunsInOrderAfterDefaultsAndChangesTheListener() throws Exception {
     var nativeServer = new AtomicReference<Server>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.modifyHttpConfiguration(http -> http.setSendServerVersion(true));
       app.modifyHttpConfiguration(
           http -> {
@@ -133,18 +132,20 @@ class ShoostrLifecycleTest {
                     .getRequestHeaderSize());
           });
       app.routes().get("/", (_, res) -> res.text("configured"));
-      app.start();
-      var uri = URI.create("http://127.0.0.1:" + app.port() + "/");
-      var response =
-          client.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString());
-      assertEquals("configured", response.body());
-      assertTrue(response.headers().firstValue("Server").isEmpty());
-      var oversized =
-          client.send(
-              HttpRequest.newBuilder(uri).header("X-Large", "x".repeat(1024)).build(),
-              HttpResponse.BodyHandlers.discarding());
-      assertEquals(431, oversized.statusCode());
-      assertEquals(2345, nativeServer.get().getConnectors()[0].getIdleTimeout());
+
+      try (var test = TestServer.start(app)) {
+
+        var response =
+            test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString());
+        assertEquals("configured", response.body());
+        assertTrue(response.headers().firstValue("Server").isEmpty());
+        var oversized =
+            test.send(
+                request -> request.path("/").header("X-Large", "x".repeat(1024)),
+                HttpResponse.BodyHandlers.discarding());
+        assertEquals(431, oversized.statusCode());
+        assertEquals(2345, nativeServer.get().getConnectors()[0].getIdleTimeout());
+      }
     }
 
     assertTrue(nativeServer.get().isStopped());
@@ -566,8 +567,7 @@ class ShoostrLifecycleTest {
 
   @Test
   void closingRoutesAfterStartupLeavesCompiledHandlersRunning() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var child = new AtomicReference<Routes>();
       app.routes()
           .path(
@@ -576,18 +576,20 @@ class ShoostrLifecycleTest {
                 child.set(routes);
                 routes.get("/{id}", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
               });
-      app.start();
-      app.routes().close();
-      child.get().close();
-      var request =
-          HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/api/42"))
-              .timeout(Duration.ofSeconds(3))
-              .build();
-      var response = client.send(request, HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, response.statusCode());
-      assertEquals("42", response.body());
-      var closedChild = child.get();
-      assertThrows(IllegalStateException.class, () -> closedChild.get("/later", (_, _) -> {}));
+
+      try (var test = TestServer.start(app)) {
+        app.routes().close();
+        child.get().close();
+
+        var response =
+            test.send(
+                request -> request.path("/api/42").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
+        assertEquals("42", response.body());
+        var closedChild = child.get();
+        assertThrows(IllegalStateException.class, () -> closedChild.get("/later", (_, _) -> {}));
+      }
     }
   }
 

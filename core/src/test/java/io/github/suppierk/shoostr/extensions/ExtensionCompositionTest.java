@@ -11,9 +11,7 @@ import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Shoostr;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
@@ -41,8 +39,7 @@ class ExtensionCompositionTest {
     Handler shared =
         (request, response) -> response.text(request.principal().orElseThrow().getName());
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       assertSame(app, app.authentication(auth));
       assertSame(app, app.extensions(docs, otherDocs));
       app.routes(
@@ -67,28 +64,32 @@ class ExtensionCompositionTest {
                   e.get(docs).summary("API description");
                 });
           });
-      app.start();
 
-      assertEquals(1, groupCalls.get());
-      assertEquals("alice", send(client, app, "/users/123").body());
-      assertEquals("alice", send(client, app, "/users/search").body());
-      retained.get().summary("Changed after startup");
-      assertEquals(
-          "GET /users/{id} users One user\nGET /users/search users Users\nGET /openapi.json  API description",
-          send(client, app, "/openapi.json").body());
-      assertEquals(3, calls.get());
-      assertEquals(
-          List.of(
-              "GET /users/{id} public Other document", "GET /users/search public Other document"),
-          otherDocs.operations);
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(1, groupCalls.get());
+        assertEquals(
+            "alice",
+            test.send(request -> request.path("/users/123"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "alice",
+            test.send(
+                    request -> request.path("/users/search"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        retained.get().summary("Changed after startup");
+        assertEquals(
+            "GET /users/{id} users One user\nGET /users/search users Users\nGET /openapi.json  API description",
+            test.send(
+                    request -> request.path("/openapi.json"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(3, calls.get());
+        assertEquals(
+            List.of(
+                "GET /users/{id} public Other document", "GET /users/search public Other document"),
+            otherDocs.operations);
+      }
     }
-  }
-
-  private static HttpResponse<String> send(HttpClient client, Shoostr app, String path)
-      throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + path)).GET().build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 
   private static final class Documentation implements Extension<Description> {

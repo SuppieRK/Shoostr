@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.micrometer.MicrometerMetrics;
 import io.github.suppierk.shoostr.opentelemetry.OpenTelemetryTracing;
 import io.github.suppierk.shoostr.pac4j.Pac4j;
@@ -15,8 +16,6 @@ import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -39,33 +38,25 @@ class PublishedIntegrationsTest {
               return Optional.of(credentials);
             });
 
-    try (var client = HttpClient.newHttpClient();
-        var server =
-            TestServer.start(
-                app -> {
-                  var auth = new Pac4j(provider, "Basic");
-                  app.authentication(auth)
-                      .routes()
-                      .get(
-                          "/secure",
-                          (request, response) ->
-                              response.text(request.principal().orElseThrow().getName()),
-                          e -> e.get(auth).required());
-                })) {
-      var target = server.baseUri().resolve("secure");
-      var missing =
-          client.send(
-              HttpRequest.newBuilder(target).build(), HttpResponse.BodyHandlers.discarding());
+    var app = new Shoostr();
+    var auth = new Pac4j(provider, "Basic");
+    app.authentication(auth)
+        .routes()
+        .get(
+            "/secure",
+            (request, response) -> response.text(request.principal().orElseThrow().getName()),
+            e -> e.get(auth).required());
+
+    try (var server = TestServer.start(app)) {
+      var missing = server.send(request -> request.path("/secure"));
       assertEquals(401, missing.statusCode());
       assertEquals("Basic", missing.headers().firstValue("WWW-Authenticate").orElseThrow());
 
       var credentials =
           Base64.getEncoder().encodeToString("consumer:secret".getBytes(StandardCharsets.UTF_8));
       var authenticated =
-          client.send(
-              HttpRequest.newBuilder(target)
-                  .header("Authorization", "Basic " + credentials)
-                  .build(),
+          server.send(
+              request -> request.path("/secure").header("Authorization", "Basic " + credentials),
               HttpResponse.BodyHandlers.ofString());
       assertEquals(200, authenticated.statusCode());
       assertEquals("consumer", authenticated.body());
@@ -76,19 +67,14 @@ class PublishedIntegrationsTest {
   void publishedMicrometerAdapterRecordsAConsumerRequest() throws Exception {
     var completed = new CountDownLatch(1);
     var registry = new SimpleMeterRegistry();
+    var app = new Shoostr();
+    app.extensions(new MicrometerMetrics(registry).allRequests());
+    app.afterRequest(_ -> completed.countDown());
+    app.routes().get("/metered", (_, response) -> response.text("ok"));
 
-    try (var client = HttpClient.newHttpClient();
-        var server =
-            TestServer.start(
-                app -> {
-                  app.extensions(new MicrometerMetrics(registry).allRequests());
-                  app.afterRequest(_ -> completed.countDown());
-                  app.routes().get("/metered", (_, response) -> response.text("ok"));
-                })) {
+    try (var server = TestServer.start(app)) {
       var response =
-          client.send(
-              HttpRequest.newBuilder(server.baseUri().resolve("metered")).build(),
-              HttpResponse.BodyHandlers.ofString());
+          server.send(request -> request.path("/metered"), HttpResponse.BodyHandlers.ofString());
       assertEquals(200, response.statusCode());
       assertEquals("ok", response.body());
       assertTrue(completed.await(5, TimeUnit.SECONDS));
@@ -106,32 +92,29 @@ class PublishedIntegrationsTest {
     var exporter = InMemorySpanExporter.create();
 
     try (var provider =
-            SdkTracerProvider.builder()
-                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
-                .build();
-        var client = HttpClient.newHttpClient();
-        var server =
-            TestServer.start(
-                app -> {
-                  var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
-                  app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
-                  app.afterRequest(_ -> completed.countDown());
-                  app.routes().get("/traced", (_, response) -> response.text("ok"));
-                })) {
-      var response =
-          client.send(
-              HttpRequest.newBuilder(server.baseUri().resolve("traced")).build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, response.statusCode());
-      assertEquals("ok", response.body());
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      var spans = exporter.getFinishedSpanItems();
-      assertEquals(1, spans.size());
-      var span = spans.getFirst();
-      assertEquals(SpanKind.SERVER, span.getKind());
-      assertEquals("GET /traced", span.getName());
-      assertEquals(
-          200L, span.getAttributes().get(AttributeKey.longKey("http.response.status_code")));
+        SdkTracerProvider.builder()
+            .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+            .build()) {
+      var app = new Shoostr();
+      var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
+      app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
+      app.afterRequest(_ -> completed.countDown());
+      app.routes().get("/traced", (_, response) -> response.text("ok"));
+
+      try (var server = TestServer.start(app)) {
+        var response =
+            server.send(request -> request.path("/traced"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
+        assertEquals("ok", response.body());
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        var spans = exporter.getFinishedSpanItems();
+        assertEquals(1, spans.size());
+        var span = spans.getFirst();
+        assertEquals(SpanKind.SERVER, span.getKind());
+        assertEquals("GET /traced", span.getName());
+        assertEquals(
+            200L, span.getAttributes().get(AttributeKey.longKey("http.response.status_code")));
+      }
     }
   }
 }

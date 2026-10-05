@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpMethods;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -29,8 +30,7 @@ class RouteCompositionTest {
   private final AtomicReference<Routes> retainedScope;
   private final AtomicReference<Request> retainedRequest;
   private Shoostr app;
-  private HttpClient client;
-  private String base;
+  private TestServer test;
 
   RouteCompositionTest() {
     retainedScope = new AtomicReference<>();
@@ -45,7 +45,6 @@ class RouteCompositionTest {
           assertTrue(request.pathParam("id").isEmpty());
           assertTrue(request.routePattern().isEmpty());
         });
-    client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     app.routes()
         .path(
             "/api",
@@ -116,87 +115,159 @@ class RouteCompositionTest {
               assertEquals(Optional.empty(), req.pathParam("missing"));
               res.text("checked");
             });
-    app.start();
-    base = "http://127.0.0.1:" + app.port();
+    test = TestServer.start(app);
   }
 
   @AfterEach
   void close() throws Exception {
-    try {
-      if (client != null) {
-        client.close();
-      }
-    } finally {
-      if (app != null) {
-        app.close();
-      }
+    if (test != null) {
+      test.close();
+    } else if (app != null) {
+      app.close();
     }
   }
 
   @Test
   void composesAndReusesGroupsWithOptionalBoundarySlashes() throws Exception {
-    assertEquals("root", send("/", HttpMethods.GET).body());
+    assertEquals(
+        "root",
+        test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString()).body());
     for (String prefix : new String[] {"/api/orders", "/v2/orders"}) {
-      assertEquals("list", send(prefix, HttpMethods.GET).body());
-      assertEquals("create", send(prefix, HttpMethods.POST).body());
-      assertEquals("7", send(prefix + "/7", HttpMethods.GET).body());
-      assertEquals("update:7", send(prefix + "/7", HttpMethods.PATCH).body());
-      assertEquals(204, send(prefix + "/7", HttpMethods.DELETE).statusCode());
-      assertEquals("slash", send(prefix + "/", HttpMethods.GET).body());
+      assertEquals(
+          "list",
+          test.send(request -> request.path(prefix), HttpResponse.BodyHandlers.ofString()).body());
+      assertEquals(
+          "create",
+          test.send(
+                  request -> request.path(prefix).method(HttpMethods.POST),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "7",
+          test.send(request -> request.path(prefix + "/7"), HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "update:7",
+          test.send(
+                  request -> request.path(prefix + "/7").method(HttpMethods.PATCH),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          204,
+          test.send(request -> request.path(prefix + "/7").method(HttpMethods.DELETE))
+              .statusCode());
+      assertEquals(
+          "slash",
+          test.send(request -> request.path(prefix + "/"), HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
   @Test
   void exposesParametersFromParentAndChildScopesWithHandlerLifetime() throws Exception {
-    assertEquals("a:42", send("/api/accounts/a/orders/42", HttpMethods.GET).body());
+    assertEquals(
+        "a:42",
+        test.send(
+                request -> request.path("/api/accounts/a/orders/42"),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
     var closedRequest = retainedRequest.get();
     assertThrows(IllegalStateException.class, () -> closedRequest.pathParam("id"));
-    assertEquals("checked", send("/unknown-param", HttpMethods.GET).body());
+    assertEquals(
+        "checked",
+        test.send(request -> request.path("/unknown-param"), HttpResponse.BodyHandlers.ofString())
+            .body());
   }
 
   @Test
   void groupedAndFlatRoutesExposeTheSameDecodedValues() throws Exception {
     for (String value : new String[] {"abc", "a+b", "a%2Bb", "hello%20world", "caf%C3%A9"}) {
-      var flat = send("/flat/" + value, HttpMethods.GET);
-      var grouped = send("/api/orders/" + value, HttpMethods.GET);
+      var flat =
+          test.send(
+              request -> request.path("/flat/" + value), HttpResponse.BodyHandlers.ofString());
+      var grouped =
+          test.send(
+              request -> request.path("/api/orders/" + value),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, flat.statusCode());
       assertEquals(200, grouped.statusCode());
       assertEquals(flat.body(), grouped.body());
     }
-    assertEquals("hello world", send("/flat/hello%20world", HttpMethods.GET).body());
-    assertEquals("a+b", send("/flat/a+b", HttpMethods.GET).body());
-    assertEquals("café", send("/flat/caf%C3%A9", HttpMethods.GET).body());
+    assertEquals(
+        "hello world",
+        test.send(
+                request -> request.path("/flat/hello%20world"),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
+    assertEquals(
+        "a+b",
+        test.send(request -> request.path("/flat/a+b"), HttpResponse.BodyHandlers.ofString())
+            .body());
+    assertEquals(
+        "café",
+        test.send(request -> request.path("/flat/caf%C3%A9"), HttpResponse.BodyHandlers.ofString())
+            .body());
   }
 
   @Test
   void retainsTransportRejectionOfAmbiguousPaths() throws Exception {
-    assertEquals(400, send("/flat/%252F", HttpMethods.GET).statusCode());
-    assertEquals(400, send("/api/accounts//orders/42", HttpMethods.GET).statusCode());
+    // An independent client preserves the exact target spelling under transport rejection tests.
+    try (var client = HttpClient.newHttpClient()) {
+      for (var path : new String[] {"/flat/%252F", "/api/accounts//orders/42"}) {
+        var reply =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
+                    .timeout(Duration.ofSeconds(5))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(400, reply.statusCode());
+      }
+    }
   }
 
   @Test
   void prefersLiteralRoutesAndContinuesAfterAPathOrMethodMismatch() throws Exception {
-    assertEquals("literal", send("/order/latest", HttpMethods.GET).body());
-    assertEquals("literal", send("/reverse-order/latest", HttpMethods.GET).body());
-    assertEquals("post", send("/order/latest", HttpMethods.POST).body());
-    assertEquals("fixed", send("/fallback/fixed/y", HttpMethods.GET).body());
+    assertEquals(
+        "literal",
+        test.send(request -> request.path("/order/latest"), HttpResponse.BodyHandlers.ofString())
+            .body());
+    assertEquals(
+        "literal",
+        test.send(
+                request -> request.path("/reverse-order/latest"),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
+    assertEquals(
+        "post",
+        test.send(
+                request -> request.path("/order/latest").method(HttpMethods.POST),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
+    assertEquals(
+        "fixed",
+        test.send(
+                request -> request.path("/fallback/fixed/y"), HttpResponse.BodyHandlers.ofString())
+            .body());
   }
 
   @Test
   void distinguishesNotFoundFromMethodNotAllowedAndIncludesAllMatchingMethods() throws Exception {
-    assertEquals(404, send("/api/accounts/a/orders", HttpMethods.GET).statusCode());
-    var result = send("/order/latest", HttpMethods.DELETE);
+    assertEquals(404, test.send(request -> request.path("/api/accounts/a/orders")).statusCode());
+    var result = test.send(request -> request.path("/order/latest").method(HttpMethods.DELETE));
     assertEquals(405, result.statusCode());
     assertEquals("GET, POST", result.headers().firstValue("Allow").orElseThrow());
     var unknown =
-        client.send(
-            HttpRequest.newBuilder(URI.create(base + "/order/latest"))
-                .method("CUSTOM", HttpRequest.BodyPublishers.noBody())
-                .build(),
+        test.send(
+            request -> request.path("/order/latest").method("CUSTOM"),
             HttpResponse.BodyHandlers.ofString());
     assertEquals(405, unknown.statusCode());
     assertEquals("GET, POST", unknown.headers().firstValue("Allow").orElseThrow());
-    assertEquals("PROPFIND", send("/properties", HttpMethods.PROPFIND).body());
+    assertEquals(
+        "PROPFIND",
+        test.send(
+                request -> request.path("/properties").method(HttpMethods.PROPFIND),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
   }
 
   @Test
@@ -213,19 +284,31 @@ class RouteCompositionTest {
   void exposesOneRootAndRoutesStringMethodsThroughGroupedAndFlatPaths() throws Exception {
     var rootRoutes = app.routes();
     assertSame(rootRoutes, app.routes());
-    assertEquals("PROPFIND", send("/string-properties", HttpMethods.PROPFIND).body());
-    assertEquals("group", send("/string", HttpMethods.GET).body());
-    assertEquals("42", send("/string/42", HttpMethods.POST).body());
-    assertEquals(204, send("/string", HttpMethods.DELETE).statusCode());
-    var rejected = send("/string", HttpMethods.PUT);
+    assertEquals(
+        "PROPFIND",
+        test.send(
+                request -> request.path("/string-properties").method(HttpMethods.PROPFIND),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
+    assertEquals(
+        "group",
+        test.send(request -> request.path("/string"), HttpResponse.BodyHandlers.ofString()).body());
+    assertEquals(
+        "42",
+        test.send(
+                request -> request.path("/string/42").method(HttpMethods.POST),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
+    assertEquals(
+        204, test.send(request -> request.path("/string").method(HttpMethods.DELETE)).statusCode());
+    var rejected = test.send(request -> request.path("/string").method(HttpMethods.PUT));
     assertEquals(405, rejected.statusCode());
     assertEquals("DELETE, GET", rejected.headers().firstValue("Allow").orElseThrow());
   }
 
   @Test
   void rootCallbackRegistersFlatAndComposedRoutesAndReturnsApplication() throws Exception {
-    try (var candidate = new Shoostr(Options.defaults().withPort(0));
-        var candidateClient = HttpClient.newHttpClient()) {
+    try (var candidate = new Shoostr()) {
       assertSame(
           candidate,
           candidate.routes(
@@ -242,18 +325,31 @@ class RouteCompositionTest {
                       orders.get("/latest", (_, response) -> response.text("latest"));
                     });
               }));
-      candidate.start();
 
-      assertEquals("ok", send(candidateClient, candidate, "/health").body());
-      assertEquals("latest", send(candidateClient, candidate, "/orders/latest").body());
-      assertEquals("order:42", send(candidateClient, candidate, "/orders/42").body());
+      try (var fixture = TestServer.start(candidate)) {
+        assertEquals(
+            "ok",
+            fixture
+                .send(request -> request.path("/health"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "latest",
+            fixture
+                .send(
+                    request -> request.path("/orders/latest"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "order:42",
+            fixture
+                .send(request -> request.path("/orders/42"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
   @Test
   void rootCallbackPropagatesFailureAndKeepsEarlierRegistrations() throws Exception {
-    try (var candidate = new Shoostr(Options.defaults().withPort(0));
-        var candidateClient = HttpClient.newHttpClient()) {
+    try (var candidate = new Shoostr()) {
       var failure = new IllegalArgumentException("registration failed");
       assertSame(
           failure,
@@ -270,11 +366,20 @@ class RouteCompositionTest {
           candidate,
           candidate.routes(
               routes -> routes.get("/after", (_, response) -> response.text("after"))));
-      candidate.start();
 
-      assertEquals("before", send(candidateClient, candidate, "/before").body());
-      assertEquals("after", send(candidateClient, candidate, "/after").body());
-      assertThrows(IllegalStateException.class, () -> candidate.routes(_ -> {}));
+      try (var fixture = TestServer.start(candidate)) {
+        assertEquals(
+            "before",
+            fixture
+                .send(request -> request.path("/before"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "after",
+            fixture
+                .send(request -> request.path("/after"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertThrows(IllegalStateException.class, () -> candidate.routes(_ -> {}));
+      }
     }
   }
 
@@ -335,8 +440,7 @@ class RouteCompositionTest {
 
   @Test
   void rejectsPathParameterAccessFromAnotherThread() throws Exception {
-    try (var candidate = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-        var candidateClient = HttpClient.newHttpClient()) {
+    try (var candidate = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
       candidate
           .routes()
           .get(
@@ -356,33 +460,15 @@ class RouteCompositionTest {
                 assertInstanceOf(IllegalStateException.class, failure.get());
                 res.text("checked");
               });
-      candidate.start();
-      var result =
-          candidateClient.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + candidate.port() + "/42"))
-                  .timeout(Duration.ofSeconds(5))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals("checked", result.body());
+
+      try (var candidateTest = TestServer.start(candidate)) {
+        var result =
+            candidateTest.send(
+                request -> request.path("/42").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals("checked", result.body());
+      }
     }
-  }
-
-  private HttpResponse<String> send(String path, HttpMethods method) throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create(base + path))
-            .timeout(Duration.ofSeconds(5))
-            .method(method.value(), HttpRequest.BodyPublishers.noBody())
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static HttpResponse<String> send(HttpClient client, Shoostr app, String path)
-      throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-            .timeout(Duration.ofSeconds(5))
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 
   private static void orders(Routes orders) {

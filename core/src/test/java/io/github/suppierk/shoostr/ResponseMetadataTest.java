@@ -7,9 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -31,21 +29,15 @@ import org.junit.jupiter.api.io.TempDir;
 class ResponseMetadataTest {
   @TempDir Path temporaryDirectory;
   private Shoostr app;
-  private HttpClient client;
 
   @BeforeEach
   void prepare() {
     app = new Shoostr(Options.defaults().withPort(0));
-    client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
   }
 
   @AfterEach
   void close() throws Exception {
-    try {
-      client.close();
-    } finally {
-      app.close();
-    }
+    app.close();
   }
 
   @Test
@@ -61,11 +53,16 @@ class ResponseMetadataTest {
               assertEquals("first", response.setHeader("x-value"));
               response.text("ok");
             });
-    app.start();
-    var result = send("/metadata");
-    assertEquals(202, result.statusCode());
-    assertEquals("first", result.headers().firstValue("X-Value").orElseThrow());
-    assertEquals("ok", result.body());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request -> request.path("/metadata").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(202, result.statusCode());
+      assertEquals("first", result.headers().firstValue("X-Value").orElseThrow());
+      assertEquals("ok", result.body());
+    }
   }
 
   @Test
@@ -80,11 +77,16 @@ class ResponseMetadataTest {
                   .body("application/json", "\"kept\"".getBytes(StandardCharsets.UTF_8));
               assertThrows(NullPointerException.class, () -> response.text(null));
             });
-    app.start();
-    var result = send("/null-text");
-    assertEquals(202, result.statusCode());
-    assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
-    assertEquals("\"kept\"", result.body());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request -> request.path("/null-text").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(202, result.statusCode());
+      assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
+      assertEquals("\"kept\"", result.body());
+    }
   }
 
   @Test
@@ -111,12 +113,17 @@ class ResponseMetadataTest {
               assertEquals(List.of("a,b", "c"), response.headers("x-values"));
               response.text("ok");
             });
-    app.start();
-    var result = send("/headers");
-    assertEquals(200, result.statusCode());
-    assertEquals(
-        List.of("first=1; Path=/", "second=2; Path=/"), result.headers().allValues("Set-Cookie"));
-    assertEquals(List.of("a,b", "c"), result.headers().allValues("X-Values"));
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request -> request.path("/headers").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          List.of("first=1; Path=/", "second=2; Path=/"), result.headers().allValues("Set-Cookie"));
+      assertEquals(List.of("a,b", "c"), result.headers().allValues("X-Values"));
+    }
   }
 
   @Test
@@ -137,11 +144,16 @@ class ResponseMetadataTest {
               assertNull(response.headerMap().get("X-Value"));
               response.text("ok");
             });
-    app.start();
-    var result = send("/remove");
-    assertEquals(200, result.statusCode());
-    assertEquals(List.of(), result.headers().allValues("X-Value"));
-    assertEquals("kept", result.headers().firstValue("X-Keep").orElseThrow());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request -> request.path("/remove").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(List.of(), result.headers().allValues("X-Value"));
+      assertEquals("kept", result.headers().firstValue("X-Keep").orElseThrow());
+    }
   }
 
   @Test
@@ -161,10 +173,15 @@ class ResponseMetadataTest {
               }
               response.text("ok");
             });
-    app.start();
-    var result = send("/invalid");
-    assertEquals(200, result.statusCode());
-    assertEquals(List.of("kept"), result.headers().allValues("X-Value"));
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request -> request.path("/invalid").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(List.of("kept"), result.headers().allValues("X-Value"));
+    }
   }
 
   @Test
@@ -194,12 +211,17 @@ class ResponseMetadataTest {
               response.setHeader("X-Tab", "a\tb").text("ok");
               assertEquals("a\tb", response.setHeader("X-Tab"));
             });
-    app.start();
-    var result = send("/framing");
-    assertEquals(200, result.statusCode());
-    assertEquals("2", result.headers().firstValue("Content-Length").orElseThrow());
-    assertEquals("a b", result.headers().firstValue("X-Tab").orElseThrow());
-    assertEquals("kept", result.headers().firstValue("X-Value").orElseThrow());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request -> request.path("/framing").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("2", result.headers().firstValue("Content-Length").orElseThrow());
+      assertEquals("a b", result.headers().firstValue("X-Tab").orElseThrow());
+      assertEquals("kept", result.headers().firstValue("X-Value").orElseThrow());
+    }
   }
 
   @Test
@@ -243,55 +265,65 @@ class ResponseMetadataTest {
               assertThrows(IllegalStateException.class, () -> response.removeHeader("X-Value"));
               stream.write("streamed");
             });
-    app.start();
-    var result = send("/stream-metadata");
-    assertEquals(202, result.statusCode());
-    assertEquals("streamed", result.body());
-    var closedResponse = retained.get();
-    assertThrows(IllegalStateException.class, closedResponse::status);
-    assertThrows(IllegalStateException.class, () -> closedResponse.setHeader("X-Value"));
-    assertThrows(IllegalStateException.class, () -> closedResponse.headers("X-Value"));
-    assertThrows(IllegalStateException.class, closedResponse::headerMap);
-    assertThrows(IllegalStateException.class, closedResponse::isCommitted);
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request -> request.path("/stream-metadata").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(202, result.statusCode());
+      assertEquals("streamed", result.body());
+      var closedResponse = retained.get();
+      assertThrows(IllegalStateException.class, closedResponse::status);
+      assertThrows(IllegalStateException.class, () -> closedResponse.setHeader("X-Value"));
+      assertThrows(IllegalStateException.class, () -> closedResponse.headers("X-Value"));
+      assertThrows(IllegalStateException.class, closedResponse::headerMap);
+      assertThrows(IllegalStateException.class, closedResponse::isCommitted);
+    }
   }
 
   @Test
   void stagesRedirectUntilHandlerReturns() throws Exception {
-    var entered = new CountDownLatch(1);
-    var release = new CountDownLatch(1);
-    app.routes()
-        .get(
-            "/redirect",
-            (_, response) -> {
-              response
-                  .text("obsolete")
-                  .redirect("/next?value=%2F#top")
-                  .setHeader("X-After", "continued");
-              assertFalse(response.isCommitted());
-              assertEquals(302, response.status());
-              entered.countDown();
-              assertTrue(release.await(3, TimeUnit.SECONDS));
-            });
-    app.start();
-    var future =
-        client.sendAsync(
-            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/redirect"))
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
+    try (var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
+      var entered = new CountDownLatch(1);
+      var release = new CountDownLatch(1);
+      app.routes()
+          .get(
+              "/redirect",
+              (_, response) -> {
+                response
+                    .text("obsolete")
+                    .redirect("/next?value=%2F#top")
+                    .setHeader("X-After", "continued");
+                assertFalse(response.isCommitted());
+                assertEquals(302, response.status());
+                entered.countDown();
+                assertTrue(release.await(3, TimeUnit.SECONDS));
+              });
 
-    try {
-      assertTrue(entered.await(3, TimeUnit.SECONDS));
-      assertFalse(future.isDone());
-    } finally {
-      release.countDown();
+      try (var test = TestServer.start(app)) {
+        var future =
+            testRequests.submit(
+                () ->
+                    test.send(
+                        request -> request.path("/redirect"),
+                        HttpResponse.BodyHandlers.ofString()));
+
+        try {
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
+          assertFalse(future.isDone());
+        } finally {
+          release.countDown();
+        }
+
+        var result = future.get(3, TimeUnit.SECONDS);
+        assertEquals(302, result.statusCode());
+        assertEquals("/next?value=%2F#top", result.headers().firstValue("Location").orElseThrow());
+        assertEquals("continued", result.headers().firstValue("X-After").orElseThrow());
+        assertEquals(List.of(), result.headers().allValues("Content-Type"));
+        assertEquals("", result.body());
+      }
     }
-
-    var result = future.get(3, TimeUnit.SECONDS);
-    assertEquals(302, result.statusCode());
-    assertEquals("/next?value=%2F#top", result.headers().firstValue("Location").orElseThrow());
-    assertEquals("continued", result.headers().firstValue("X-After").orElseThrow());
-    assertEquals(List.of(), result.headers().allValues("Content-Type"));
-    assertEquals("", result.body());
   }
 
   @Test
@@ -299,17 +331,22 @@ class ResponseMetadataTest {
     var file = Files.writeString(temporaryDirectory.resolve("report.txt"), "file contents");
     app.routes()
         .get("/report", (_, response) -> response.file(file, "text/plain").redirect("/next"));
-    app.start();
 
-    var result = send("/report");
+    try (var test = TestServer.start(app)) {
 
-    assertEquals(302, result.statusCode());
-    assertEquals("/next", result.headers().firstValue("Location").orElseThrow());
-    assertEquals("", result.body());
-    assertEquals(List.of(), result.headers().allValues("Content-Range"));
-    assertEquals(List.of(), result.headers().allValues("ETag"));
-    assertEquals(List.of(), result.headers().allValues("Accept-Ranges"));
-    assertEquals(List.of(), result.headers().allValues("Content-Type"));
+      var result =
+          test.send(
+              request -> request.path("/report").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(302, result.statusCode());
+      assertEquals("/next", result.headers().firstValue("Location").orElseThrow());
+      assertEquals("", result.body());
+      assertEquals(List.of(), result.headers().allValues("Content-Range"));
+      assertEquals(List.of(), result.headers().allValues("ETag"));
+      assertEquals(List.of(), result.headers().allValues("Accept-Ranges"));
+      assertEquals(List.of(), result.headers().allValues("Content-Type"));
+    }
   }
 
   @Test
@@ -326,12 +363,17 @@ class ResponseMetadataTest {
       app.routes()
           .get("/redirect-" + code.value(), (_, response) -> response.redirect("../next", code));
     }
-    app.start();
-    for (var code : codes) {
-      var result = send("/redirect-" + code.value());
-      assertEquals(code.value(), result.statusCode());
-      assertEquals("../next", result.headers().firstValue("Location").orElseThrow());
-      assertEquals("", result.body());
+
+    try (var test = TestServer.start(app)) {
+      for (var code : codes) {
+        var result =
+            test.send(
+                request -> request.path("/redirect-" + code.value()).timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(code.value(), result.statusCode());
+        assertEquals("../next", result.headers().firstValue("Location").orElseThrow());
+        assertEquals("", result.body());
+      }
     }
   }
 
@@ -369,13 +411,18 @@ class ResponseMetadataTest {
               assertThrows(NullPointerException.class, () -> response.redirect(null));
               assertThrows(NullPointerException.class, () -> response.redirect("/valid", null));
             });
-    app.start();
-    var result = send("/invalid-redirect");
-    assertEquals(202, result.statusCode());
-    assertEquals("/original", result.headers().firstValue("Location").orElseThrow());
-    assertEquals(
-        "text/plain; charset=utf-8", result.headers().firstValue("Content-Type").orElseThrow());
-    assertEquals("kept", result.body());
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request -> request.path("/invalid-redirect").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(202, result.statusCode());
+      assertEquals("/original", result.headers().firstValue("Location").orElseThrow());
+      assertEquals(
+          "text/plain; charset=utf-8", result.headers().firstValue("Content-Type").orElseThrow());
+      assertEquals("kept", result.body());
+    }
   }
 
   @Test
@@ -394,11 +441,17 @@ class ResponseMetadataTest {
       var destination = destinations[index][0];
       app.routes().get("/destination-" + index, (_, response) -> response.redirect(destination));
     }
-    app.start();
-    for (int index = 0; index < destinations.length; index++) {
-      var result = send("/destination-" + index);
-      assertEquals(302, result.statusCode());
-      assertEquals(destinations[index][1], result.headers().firstValue("Location").orElseThrow());
+
+    try (var test = TestServer.start(app)) {
+      for (int index = 0; index < destinations.length; index++) {
+        var path = "/destination-" + index;
+        var result =
+            test.send(
+                request -> request.path(path).timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(302, result.statusCode());
+        assertEquals(destinations[index][1], result.headers().firstValue("Location").orElseThrow());
+      }
     }
   }
 
@@ -421,31 +474,29 @@ class ResponseMetadataTest {
               throw new IllegalArgumentException("private details");
             });
     app.routes().head("/head-redirect", (_, response) -> response.redirect("/next"));
-    app.start();
-    var streamed = send("/stream-redirect");
-    assertEquals(200, streamed.statusCode());
-    assertEquals("original", streamed.body());
-    assertEquals(List.of(), streamed.headers().allValues("Location"));
-    var failed = send("/failed-redirect");
-    assertEquals(500, failed.statusCode());
-    assertEquals("Internal Server Error", failed.body());
-    assertEquals(List.of(), failed.headers().allValues("Location"));
-    var head =
-        client.send(
-            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/head-redirect"))
-                .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(302, head.statusCode());
-    assertEquals("/next", head.headers().firstValue("Location").orElseThrow());
-    assertEquals("", head.body());
-  }
 
-  private HttpResponse<String> send(String path) throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-            .timeout(Duration.ofSeconds(3))
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
+    try (var test = TestServer.start(app)) {
+      var streamed =
+          test.send(
+              request -> request.path("/stream-redirect").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, streamed.statusCode());
+      assertEquals("original", streamed.body());
+      assertEquals(List.of(), streamed.headers().allValues("Location"));
+      var failed =
+          test.send(
+              request -> request.path("/failed-redirect").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(500, failed.statusCode());
+      assertEquals("Internal Server Error", failed.body());
+      assertEquals(List.of(), failed.headers().allValues("Location"));
+      var head =
+          test.send(
+              request -> request.path("/head-redirect").method("HEAD"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(302, head.statusCode());
+      assertEquals("/next", head.headers().firstValue("Location").orElseThrow());
+      assertEquals("", head.body());
+    }
   }
 }

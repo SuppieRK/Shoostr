@@ -17,10 +17,8 @@ import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Shoostr;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
@@ -79,8 +77,7 @@ class ExtensionLifecycleTest {
     var missing = new Capability("same", events);
     var retained = new AtomicReference<Extensions>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.extensions(installed);
       var routes = app.routes();
       assertThrows(
@@ -97,9 +94,14 @@ class ExtensionLifecycleTest {
       var configuration = retained.get();
       assertThrows(
           IllegalStateException.class, () -> configuration.afterRouteHandler((_, _) -> {}));
-      app.start();
-      assertThrows(IllegalStateException.class, () -> app.extensions(missing));
-      assertEquals("ok", send(client, app, "GET", "/route").body());
+
+      try (var test = TestServer.start(app)) {
+        assertThrows(IllegalStateException.class, () -> app.extensions(missing));
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/route"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
@@ -163,17 +165,21 @@ class ExtensionLifecycleTest {
   void runsLocalMatchBeforeAppMatch() throws Exception {
     var events = new LinkedBlockingQueue<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.onRouteMatched((_, _) -> events.add("app"));
       app.routes()
           .get(
               "/ordered",
               (_, response) -> response.text("ok"),
               e -> e.onRouteMatched((_, _) -> events.add("local")));
-      app.start();
-      assertEquals("ok", send(client, app, "GET", "/ordered").body());
-      assertEquals(List.of("local", "app"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/ordered"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(List.of("local", "app"), List.copyOf(events));
+      }
     }
   }
 
@@ -181,17 +187,21 @@ class ExtensionLifecycleTest {
   void runsDirectLocalAdmissionBeforeAppAdmission() throws Exception {
     var events = new LinkedBlockingQueue<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.beforeRouteHandler((_, _) -> events.add("app"));
       app.routes()
           .get(
               "/ordered",
               (_, response) -> response.text("ok"),
               e -> e.beforeRouteHandler((_, _) -> events.add("local")));
-      app.start();
-      assertEquals("ok", send(client, app, "GET", "/ordered").body());
-      assertEquals(List.of("local", "app"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/ordered"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(List.of("local", "app"), List.copyOf(events));
+      }
     }
   }
 
@@ -199,17 +209,21 @@ class ExtensionLifecycleTest {
   void runsLocalAfterHandlerBeforeAppAfterHandler() throws Exception {
     var events = new LinkedBlockingQueue<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.afterRouteHandler((_, _) -> events.add("app"));
       app.routes()
           .get(
               "/ordered",
               (_, response) -> response.text("ok"),
               e -> e.afterRouteHandler((_, _) -> events.add("local")));
-      app.start();
-      assertEquals("ok", send(client, app, "GET", "/ordered").body());
-      assertEquals(List.of("local", "app"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/ordered"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(List.of("local", "app"), List.copyOf(events));
+      }
     }
   }
 
@@ -218,8 +232,7 @@ class ExtensionLifecycleTest {
     var events = new LinkedBlockingQueue<String>();
     var admission = new AdmissionExtension((_, _) -> events.add("extension"));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.extensions(admission)
           .routes()
           .get(
@@ -229,9 +242,14 @@ class ExtensionLifecycleTest {
                 e.beforeRouteHandler((_, _) -> events.add("local"));
                 e.get(admission);
               });
-      app.start();
-      assertEquals("ok", send(client, app, "GET", "/ordered").body());
-      assertEquals(List.of("extension", "local"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/ordered"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(List.of("extension", "local"), List.copyOf(events));
+      }
     }
   }
 
@@ -243,8 +261,7 @@ class ExtensionLifecycleTest {
             (request, _) ->
                 request.attribute("identity", request.principal().orElseThrow().getName()));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.authentication(auth)
           .extensions(admission)
           .routes()
@@ -256,8 +273,13 @@ class ExtensionLifecycleTest {
                 e.get(admission);
                 e.get(auth).required();
               });
-      app.start();
-      assertEquals("alice", send(client, app, "GET", "/identity").body());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "alice",
+            test.send(request -> request.path("/identity"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
@@ -266,8 +288,7 @@ class ExtensionLifecycleTest {
     var calls = new AtomicInteger();
     var auth = authenticator((_, _) -> calls.incrementAndGet());
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.authentication(auth)
           .routes()
           .path(
@@ -278,9 +299,14 @@ class ExtensionLifecycleTest {
                       (_, response) -> response.text("ok"),
                       e -> e.get(auth).required().required()),
               e -> e.get(auth).required());
-      app.start();
-      assertEquals("ok", send(client, app, "GET", "/identity").body());
-      assertEquals(1, calls.get());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/identity"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(1, calls.get());
+      }
     }
   }
 
@@ -288,8 +314,7 @@ class ExtensionLifecycleTest {
   void evaluatesAvailabilityAfterAppAdmissionAndBeforeTheEndpoint() throws Exception {
     var events = new LinkedBlockingQueue<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.beforeRouteHandler((_, _) -> events.add("app"));
       app.routes()
           .when(
@@ -304,9 +329,14 @@ class ExtensionLifecycleTest {
                         events.add("endpoint");
                         response.text("ok");
                       }));
-      app.start();
-      assertEquals("ok", send(client, app, "GET", "/ordered").body());
-      assertEquals(List.of("app", "availability", "endpoint"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/ordered"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(List.of("app", "availability", "endpoint"), List.copyOf(events));
+      }
     }
   }
 
@@ -314,8 +344,7 @@ class ExtensionLifecycleTest {
   void makesAuthenticatedPrincipalAvailableToAvailability() throws Exception {
     var auth = authenticator((request, _) -> request.principal(() -> "alice"));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.authentication(auth)
           .routes()
           .when(
@@ -325,8 +354,13 @@ class ExtensionLifecycleTest {
                       "/identity",
                       (_, response) -> response.text("ok"),
                       e -> e.get(auth).required()));
-      app.start();
-      assertEquals("ok", send(client, app, "GET", "/identity").body());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/identity"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
@@ -336,8 +370,7 @@ class ExtensionLifecycleTest {
     var innerCalls = new AtomicInteger();
     var groupCalls = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.status(404, (_, response) -> response.text("app missing"));
       app.routes()
           .when(
@@ -357,25 +390,35 @@ class ExtensionLifecycleTest {
                                 e.status(404, (_, response) -> response.text("locally disabled"))));
               });
       app.routes().get("/users/{id}", (_, response) -> response.text("fallback"));
-      app.start();
-      var denied = send(client, app, "GET", "/users/fixed");
-      assertEquals(404, denied.statusCode());
-      assertEquals("locally disabled", denied.body());
-      assertEquals("no-store", denied.headers().firstValue("Cache-Control").orElseThrow());
-      assertEquals(0, innerCalls.get());
-      assertEquals(405, send(client, app, "POST", "/users/fixed").statusCode());
-      enabled.set(true);
-      var admitted =
-          client.send(
-              HttpRequest.newBuilder(uri(app, "/users/fixed"))
-                  .header("Accept-Language", "fr-FR")
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals("enabled", admitted.body());
-      assertTrue(admitted.headers().firstValue("Cache-Control").isEmpty());
-      assertEquals(1, groupCalls.get());
-      assertEquals(1, innerCalls.get());
-      assertEquals("app missing", send(client, app, "GET", "/missing").body());
+
+      try (var test = TestServer.start(app)) {
+        var denied =
+            test.send(
+                request -> request.path("/users/fixed"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(404, denied.statusCode());
+        assertEquals("locally disabled", denied.body());
+        assertEquals("no-store", denied.headers().firstValue("Cache-Control").orElseThrow());
+        assertEquals(0, innerCalls.get());
+        assertEquals(
+            405,
+            test.send(
+                    request -> request.path("/users/fixed").method("POST"),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        enabled.set(true);
+        var admitted =
+            test.send(
+                request -> request.path("/users/fixed").header("Accept-Language", "fr-FR"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals("enabled", admitted.body());
+        assertTrue(admitted.headers().firstValue("Cache-Control").isEmpty());
+        assertEquals(1, groupCalls.get());
+        assertEquals(1, innerCalls.get());
+        assertEquals(
+            "app missing",
+            test.send(request -> request.path("/missing"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
@@ -383,8 +426,7 @@ class ExtensionLifecycleTest {
   void localFailureSkipsAppGatesEndpointAndPostCallbacksAndUsesLocalRenderer() throws Exception {
     var events = new LinkedBlockingQueue<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.beforeRouteHandler((_, _) -> events.add("app"));
       app.afterRouteHandler((_, _) -> events.add("after-app"));
       app.exception(IllegalArgumentException.class, (_, _, response) -> response.text("app error"));
@@ -406,10 +448,18 @@ class ExtensionLifecycleTest {
               (_, _) -> {
                 throw new IllegalArgumentException();
               });
-      app.start();
-      assertEquals("local error", send(client, app, "GET", "/fail").body());
-      assertTrue(events.isEmpty());
-      assertEquals("app error", send(client, app, "GET", "/fallback").body());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "local error",
+            test.send(request -> request.path("/fail"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertTrue(events.isEmpty());
+        assertEquals(
+            "app error",
+            test.send(request -> request.path("/fallback"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
@@ -417,8 +467,7 @@ class ExtensionLifecycleTest {
   void observesLocalTerminalCompletionWithoutGlobalObserversAndIsolatesFailures() throws Exception {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .get(
               "/observed",
@@ -430,13 +479,18 @@ class ExtensionLifecycleTest {
                     });
                 e.afterRequest(outcomes::add);
               });
-      app.start();
-      assertEquals(200, send(client, app, "GET", "/observed").statusCode());
-      var outcome = outcomes.poll(5, TimeUnit.SECONDS);
-      assertNotNull(outcome);
-      assertEquals("/observed", outcome.routePattern());
-      assertEquals(200, outcome.statusCode());
-      assertTrue(outcomes.isEmpty());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            200,
+            test.send(request -> request.path("/observed"), HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+        assertNotNull(outcome);
+        assertEquals("/observed", outcome.routePattern());
+        assertEquals(200, outcome.statusCode());
+        assertTrue(outcomes.isEmpty());
+      }
     }
   }
 
@@ -445,8 +499,7 @@ class ExtensionLifecycleTest {
     var events = new LinkedBlockingQueue<String>();
     var completed = new LinkedBlockingQueue<RequestOutcome>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.beforeResponseFlush((_, _) -> events.add("app-before"));
       app.afterResponseFlush((_, _) -> events.add("app-after"));
       app.afterRequest(
@@ -463,17 +516,23 @@ class ExtensionLifecycleTest {
                 e.afterResponseFlush((_, _) -> events.add("local-after"));
                 e.afterRequest(_ -> events.add("local-terminal"));
               });
-      app.start();
-      assertEquals("data: a\n\ndata: b\n\n", send(client, app, "GET", "/events").body());
-      assertNotNull(completed.poll(5, TimeUnit.SECONDS));
-      var order = List.copyOf(events);
-      assertTrue(order.size() >= 10);
-      assertEquals(
-          List.of("local-terminal", "app-terminal"), order.subList(order.size() - 2, order.size()));
-      for (int index = 0; index < order.size() - 2; index += 4) {
+
+      try (var test = TestServer.start(app)) {
         assertEquals(
-            List.of("local-before", "app-before", "local-after", "app-after"),
-            order.subList(index, index + 4));
+            "data: a\n\ndata: b\n\n",
+            test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertNotNull(completed.poll(5, TimeUnit.SECONDS));
+        var order = List.copyOf(events);
+        assertTrue(order.size() >= 10);
+        assertEquals(
+            List.of("local-terminal", "app-terminal"),
+            order.subList(order.size() - 2, order.size()));
+        for (int index = 0; index < order.size() - 2; index += 4) {
+          assertEquals(
+              List.of("local-before", "app-before", "local-after", "app-after"),
+              order.subList(index, index + 4));
+        }
       }
     }
   }
@@ -482,8 +541,7 @@ class ExtensionLifecycleTest {
   void conditionExceptionsUseLocalErrorRenderingAndAreObserved() throws Exception {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .when(
               () -> {
@@ -499,14 +557,17 @@ class ExtensionLifecycleTest {
                             (_, _, response) -> response.text("flag failed"));
                         e.afterRequest(outcomes::add);
                       }));
-      app.start();
-      var result = send(client, app, "GET", "/flag");
-      assertEquals(500, result.statusCode());
-      assertEquals("flag failed", result.body());
-      var outcome = outcomes.poll(5, TimeUnit.SECONDS);
-      assertNotNull(outcome);
-      assertEquals("/flag", outcome.routePattern());
-      assertInstanceOf(IllegalArgumentException.class, outcome.applicationFailure());
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(request -> request.path("/flag"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(500, result.statusCode());
+        assertEquals("flag failed", result.body());
+        var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+        assertNotNull(outcome);
+        assertEquals("/flag", outcome.routePattern());
+        assertInstanceOf(IllegalArgumentException.class, outcome.applicationFailure());
+      }
     }
   }
 
@@ -525,17 +586,21 @@ class ExtensionLifecycleTest {
           }
         };
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.authentication(auth).extensions(nested);
       var routes = app.routes();
       assertThrows(
           IllegalStateException.class,
           () -> routes.get("/nested", (_, _) -> {}, e -> e.get(nested)));
       app.routes().get("/nested", (_, response) -> response.text("retry"));
-      app.start();
-      assertEquals("retry", send(client, app, "GET", "/nested").body());
-      assertEquals(0, calls.get());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "retry",
+            test.send(request -> request.path("/nested"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(0, calls.get());
+      }
     }
   }
 
@@ -546,8 +611,7 @@ class ExtensionLifecycleTest {
     var first = callbackProvider("first", events);
     var second = callbackProvider("second", events);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.extensions(first, second);
       app.beforeRouteHandler((_, _) -> events.add("app"));
       app.routes()
@@ -573,11 +637,18 @@ class ExtensionLifecycleTest {
                 e.get(second);
                 assertSame(e.get(first), e.get(first));
               });
-      app.start();
-      assertEquals("ok", send(client, app, "GET", "/outer/inner/endpoint").body());
-      assertEquals(
-          List.of("second", "first", "outer", "inner", "endpoint", "app", "handler"),
-          List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(
+                    request -> request.path("/outer/inner/endpoint"),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            List.of("second", "first", "outer", "inner", "endpoint", "app", "handler"),
+            List.copyOf(events));
+      }
     }
   }
 
@@ -600,19 +671,6 @@ class ExtensionLifecycleTest {
         handler.handle(request, response);
       }
     };
-  }
-
-  private static URI uri(Shoostr app, String path) {
-    return URI.create("http://127.0.0.1:" + app.port() + path);
-  }
-
-  private static HttpResponse<String> send(
-      HttpClient client, Shoostr app, String method, String path) throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(uri(app, path))
-            .method(method, HttpRequest.BodyPublishers.noBody())
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 
   private record Capability(String name, List<String> events) implements Extension<Object> {

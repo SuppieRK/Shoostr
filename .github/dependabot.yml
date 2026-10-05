@@ -6,7 +6,7 @@ updates:
       - /buildSrc
       - /http
       - /core
-      - /test-support
+      - /test
       - /pac4j
       - /micrometer
       - /opentelemetry

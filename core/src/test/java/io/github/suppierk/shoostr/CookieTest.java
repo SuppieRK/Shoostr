@@ -11,10 +11,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.Cookie;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.CookieManager;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
+import java.net.CookiePolicy;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
@@ -35,21 +34,15 @@ import org.junit.jupiter.api.Timeout;
 @Timeout(15)
 class CookieTest {
   private Shoostr app;
-  private HttpClient client;
 
   @BeforeEach
   void prepare() {
     app = new Shoostr(Options.defaults().withPort(0));
-    client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
   }
 
   @AfterEach
   void close() throws Exception {
-    try {
-      client.close();
-    } finally {
-      app.close();
-    }
+    app.close();
   }
 
   @Test
@@ -74,14 +67,23 @@ class CookieTest {
               assertThrows(UnsupportedOperationException.class, () -> tokens.add("bad"));
               response.text("ok");
             });
-    app.start();
-    var result =
-        send(
-            request("/cookies")
-                .header("Cookie", "token=first; Token=upper; empty=")
-                .header("Cookie", "token=second; encoded=a+b%2F"));
-    assertEquals(200, result.statusCode());
-    assertEquals("ok", result.body());
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/cookies")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Cookie", "token=first; Token=upper; empty=")
+                      .header("Cookie", "token=second; encoded=a+b%2F"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("ok", result.body());
+    }
   }
 
   @Test
@@ -91,10 +93,22 @@ class CookieTest {
             "/cookies",
             (request, response) ->
                 response.text(Objects.toString(request.cookieMap().get("token"))));
-    app.start();
-    var result = send(request("/cookies").header("Cookie", "token=first; token=second"));
-    assertEquals(200, result.statusCode());
-    assertEquals("[first, second]", result.body());
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/cookies")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Cookie", "token=first; token=second"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("[first, second]", result.body());
+    }
   }
 
   @Test
@@ -113,29 +127,50 @@ class CookieTest {
               handlers.incrementAndGet();
               response.text("ok");
             });
-    app.start();
-    var rejected = send(request("/cookies").header("Cookie", "token=first; invalid"));
-    assertEquals(400, rejected.statusCode());
-    assertEquals(0, admissions.get());
-    assertEquals(0, handlers.get());
-    var rejectedOutcome = outcomes.poll(3, TimeUnit.SECONDS);
-    assertNotNull(rejectedOutcome);
-    assertEquals(400, rejectedOutcome.statusCode());
-    assertNull(rejectedOutcome.routePattern());
-    var failure =
-        assertInstanceOf(
-            org.eclipse.jetty.http.HttpException.RuntimeException.class,
-            rejectedOutcome.applicationFailure());
-    assertEquals(400, failure.getCode());
 
-    assertEquals(200, send(request("/cookies").header("Cookie", "token=valid")).statusCode());
-    var acceptedOutcome = outcomes.poll(3, TimeUnit.SECONDS);
-    assertNotNull(acceptedOutcome);
-    assertEquals(200, acceptedOutcome.statusCode());
-    assertNull(acceptedOutcome.applicationFailure());
-    assertEquals(1, admissions.get());
-    assertEquals(1, handlers.get());
-    assertNull(outcomes.poll());
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var rejected =
+          test.send(
+              request ->
+                  request
+                      .path("/cookies")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Cookie", "token=first; invalid"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, rejected.statusCode());
+      assertEquals(0, admissions.get());
+      assertEquals(0, handlers.get());
+      var rejectedOutcome = outcomes.poll(3, TimeUnit.SECONDS);
+      assertNotNull(rejectedOutcome);
+      assertEquals(400, rejectedOutcome.statusCode());
+      assertNull(rejectedOutcome.routePattern());
+      var failure =
+          assertInstanceOf(
+              org.eclipse.jetty.http.HttpException.RuntimeException.class,
+              rejectedOutcome.applicationFailure());
+      assertEquals(400, failure.getCode());
+
+      assertEquals(
+          200,
+          test.send(
+                  request ->
+                      request
+                          .path("/cookies")
+                          .timeout(Duration.ofSeconds(3))
+                          .header("Cookie", "token=valid"),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      var acceptedOutcome = outcomes.poll(3, TimeUnit.SECONDS);
+      assertNotNull(acceptedOutcome);
+      assertEquals(200, acceptedOutcome.statusCode());
+      assertNull(acceptedOutcome.applicationFailure());
+      assertEquals(1, admissions.get());
+      assertEquals(1, handlers.get());
+      assertNull(outcomes.poll());
+    }
   }
 
   @Test
@@ -172,16 +207,33 @@ class CookieTest {
               assertTrue(request.cookie("quoted").isEmpty());
               response.text("empty");
             });
-    app.start();
-    assertEquals(
-        "captured",
-        send(request("/capture").header("Cookie", "quoted=\"quoted\"; invalid")).body());
-    assertEquals("empty", send(request("/empty")).body());
-    assertEquals(Map.of("quoted", List.of("quoted")), snapshot.get());
-    var closedRequest = retained.get();
-    assertThrows(IllegalStateException.class, () -> closedRequest.cookie("quoted"));
-    assertThrows(IllegalStateException.class, () -> closedRequest.cookies("quoted"));
-    assertThrows(IllegalStateException.class, closedRequest::cookieMap);
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      assertEquals(
+          "captured",
+          test.send(
+                  request ->
+                      request
+                          .path("/capture")
+                          .timeout(Duration.ofSeconds(3))
+                          .header("Cookie", "quoted=\"quoted\"; invalid"),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "empty",
+          test.send(
+                  request -> request.path("/empty").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(Map.of("quoted", List.of("quoted")), snapshot.get());
+      var closedRequest = retained.get();
+      assertThrows(IllegalStateException.class, () -> closedRequest.cookie("quoted"));
+      assertThrows(IllegalStateException.class, () -> closedRequest.cookies("quoted"));
+      assertThrows(IllegalStateException.class, closedRequest::cookieMap);
+    }
   }
 
   @Test
@@ -193,14 +245,22 @@ class CookieTest {
               response.cookie("first", "a+b%2F").cookie(new Cookie("empty", ""));
               response.text("ok");
             });
-    app.start();
-    var result = send(request("/set"));
-    assertEquals(200, result.statusCode());
-    assertEquals(
-        List.of("first=a+b%2F; Path=/", "empty=; Path=/"),
-        result.headers().allValues("Set-Cookie"));
-    assertEquals(List.of(), result.headers().allValues("Expires"));
-    assertEquals(List.of(), result.headers().allValues("Cache-Control"));
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var result =
+          test.send(
+              request -> request.path("/set").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          List.of("first=a+b%2F; Path=/", "empty=; Path=/"),
+          result.headers().allValues("Set-Cookie"));
+      assertEquals(List.of(), result.headers().allValues("Expires"));
+      assertEquals(List.of(), result.headers().allValues("Cache-Control"));
+    }
   }
 
   @Test
@@ -226,15 +286,23 @@ class CookieTest {
             "/attributes",
             (_, response) ->
                 response.setHeader("Expires", "Thu, 01 Jan 1970 00:00:00 GMT").cookie(configured));
-    app.start();
-    var result = send(request("/attributes"));
-    assertEquals(200, result.statusCode());
-    assertEquals(
-        List.of(
-            "session=value; Path=/app; Domain=example.test; Max-Age=60; Expires=Tue, 01 Jan 2030 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax"),
-        result.headers().allValues("Set-Cookie"));
-    assertEquals(
-        "Thu, 01 Jan 1970 00:00:00 GMT", result.headers().firstValue("Expires").orElseThrow());
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var result =
+          test.send(
+              request -> request.path("/attributes").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          List.of(
+              "session=value; Path=/app; Domain=example.test; Max-Age=60; Expires=Tue, 01 Jan 2030 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax"),
+          result.headers().allValues("Set-Cookie"));
+      assertEquals(
+          "Thu, 01 Jan 1970 00:00:00 GMT", result.headers().firstValue("Expires").orElseThrow());
+    }
   }
 
   @Test
@@ -252,17 +320,25 @@ class CookieTest {
                     .cookie("id", "replacement")
                     .cookie(
                         new Cookie("id", "scoped").withPath("/app").withDomain("example.test")));
-    app.start();
-    var result = send(request("/replace"));
-    assertEquals(200, result.statusCode());
-    assertEquals(
-        List.of(
-            "id=path; Path=/app",
-            "Id=case; Path=/",
-            "malformed",
-            "id=replacement; Path=/",
-            "id=scoped; Path=/app; Domain=example.test"),
-        result.headers().allValues("Set-Cookie"));
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var result =
+          test.send(
+              request -> request.path("/replace").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          List.of(
+              "id=path; Path=/app",
+              "Id=case; Path=/",
+              "malformed",
+              "id=replacement; Path=/",
+              "id=scoped; Path=/app; Domain=example.test"),
+          result.headers().allValues("Set-Cookie"));
+    }
   }
 
   @Test
@@ -286,19 +362,27 @@ class CookieTest {
                         new Cookie("zero", "value")
                             .withMaxAge(0)
                             .withExpires(Instant.parse("2030-01-01T00:00:00Z"))));
-    app.start();
-    var result = send(request("/delete"));
-    assertEquals(200, result.statusCode());
-    assertEquals(
-        List.of(
-            "id=keep; Path=/app",
-            "id=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-            "id=; Path=/app; Domain=example.test; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-            "secure=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=None",
-            "zero=value; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"),
-        result.headers().allValues("Set-Cookie"));
-    assertEquals("value", secured.value());
-    assertEquals(-1, secured.maxAge());
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var result =
+          test.send(
+              request -> request.path("/delete").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          List.of(
+              "id=keep; Path=/app",
+              "id=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+              "id=; Path=/app; Domain=example.test; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+              "secure=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=None",
+              "zero=value; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"),
+          result.headers().allValues("Set-Cookie"));
+      assertEquals("value", secured.value());
+      assertEquals(-1, secured.maxAge());
+    }
   }
 
   @Test
@@ -326,15 +410,23 @@ class CookieTest {
                   .cookie(host)
                   .removeCookie(host);
             });
-    app.start();
-    var result = send(request("/security"));
-    assertEquals(200, result.statusCode());
-    assertEquals(
-        List.of(
-            "cross=value; Path=/; Secure; SameSite=None",
-            "__Secure-id=value; Path=/app; Secure",
-            "__Host-id=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly"),
-        result.headers().allValues("Set-Cookie"));
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var result =
+          test.send(
+              request -> request.path("/security").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          List.of(
+              "cross=value; Path=/; Secure; SameSite=None",
+              "__Secure-id=value; Path=/app; Secure",
+              "__Host-id=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly"),
+          result.headers().allValues("Set-Cookie"));
+    }
   }
 
   @Test
@@ -388,10 +480,18 @@ class CookieTest {
               assertThrows(NullPointerException.class, () -> response.cookie("id", null));
               assertEquals(List.of("id=kept; Path=/"), response.headers("Set-Cookie"));
             });
-    app.start();
-    var result = send(request("/invalid"));
-    assertEquals(200, result.statusCode());
-    assertEquals(List.of("id=kept; Path=/"), result.headers().allValues("Set-Cookie"));
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var result =
+          test.send(
+              request -> request.path("/invalid").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(List.of("id=kept; Path=/"), result.headers().allValues("Set-Cookie"));
+    }
   }
 
   @Test
@@ -407,12 +507,20 @@ class CookieTest {
                     IllegalArgumentException.class, () -> response.cookie("quoted", value));
               }
             });
-    app.start();
-    var result = send(request("/quoted"));
-    assertEquals(200, result.statusCode());
-    assertEquals(
-        List.of("quoted=\"abc\"; Path=/", "empty=\"\"; Path=/"),
-        result.headers().allValues("Set-Cookie"));
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var result =
+          test.send(
+              request -> request.path("/quoted").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          List.of("quoted=\"abc\"; Path=/", "empty=\"\"; Path=/"),
+          result.headers().allValues("Set-Cookie"));
+    }
   }
 
   @Test
@@ -442,15 +550,23 @@ class CookieTest {
                     .cookie(new Cookie("only", "value").withExpires(expiry))
                     .cookie(new Cookie("huge", "value").withMaxAge(Long.MAX_VALUE))
                     .cookie(reset));
-    app.start();
-    var result = send(request("/expiry"));
-    assertEquals(200, result.statusCode());
-    assertEquals(
-        List.of(
-            "only=value; Path=/; Expires=Tue, 01 Jan 2030 00:00:00 GMT",
-            "huge=value; Path=/; Max-Age=9223372036854775807",
-            "reset=value; Path=/"),
-        result.headers().allValues("Set-Cookie"));
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var result =
+          test.send(
+              request -> request.path("/expiry").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(
+          List.of(
+              "only=value; Path=/; Expires=Tue, 01 Jan 2030 00:00:00 GMT",
+              "huge=value; Path=/; Max-Age=9223372036854775807",
+              "reset=value; Path=/"),
+          result.headers().allValues("Set-Cookie"));
+    }
   }
 
   @Test
@@ -503,51 +619,85 @@ class CookieTest {
               throw new IllegalArgumentException("private");
             });
     app.routes().head("/head", (_, response) -> response.cookie("head", "value"));
-    app.start();
-    var streamed = send(request("/stream"));
-    assertEquals("streamed", streamed.body());
-    assertEquals(List.of("before=value; Path=/"), streamed.headers().allValues("Set-Cookie"));
-    var closedResponse = retained.get();
-    assertThrows(IllegalStateException.class, () -> closedResponse.cookie("late", "value"));
-    assertThrows(IllegalStateException.class, () -> closedResponse.removeCookie("before"));
-    var failed = send(request("/failed"));
-    assertEquals(400, failed.statusCode());
-    assertEquals(List.of(), failed.headers().allValues("Set-Cookie"));
-    var mapped = send(request("/mapped").header("Cookie", "incoming=value"));
-    assertEquals(409, mapped.statusCode());
-    assertEquals(List.of("mapped=value; Path=/"), mapped.headers().allValues("Set-Cookie"));
-    var head = send(request("/head").method("HEAD", HttpRequest.BodyPublishers.noBody()));
-    assertEquals(200, head.statusCode());
-    assertEquals("", head.body());
-    assertEquals(List.of("head=value; Path=/"), head.headers().allValues("Set-Cookie"));
+
+    try (var test =
+        TestServer.start(
+            app,
+            client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var streamed =
+          test.send(
+              request -> request.path("/stream").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals("streamed", streamed.body());
+      assertEquals(List.of("before=value; Path=/"), streamed.headers().allValues("Set-Cookie"));
+      var closedResponse = retained.get();
+      assertThrows(IllegalStateException.class, () -> closedResponse.cookie("late", "value"));
+      assertThrows(IllegalStateException.class, () -> closedResponse.removeCookie("before"));
+      var failed =
+          test.send(
+              request -> request.path("/failed").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, failed.statusCode());
+      assertEquals(List.of(), failed.headers().allValues("Set-Cookie"));
+      var mapped =
+          test.send(
+              request ->
+                  request
+                      .path("/mapped")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Cookie", "incoming=value"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(409, mapped.statusCode());
+      assertEquals(List.of("mapped=value; Path=/"), mapped.headers().allValues("Set-Cookie"));
+      var head =
+          test.send(
+              request -> request.path("/head").timeout(Duration.ofSeconds(3)).method("HEAD"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, head.statusCode());
+      assertEquals("", head.body());
+      assertEquals(List.of("head=value; Path=/"), head.headers().allValues("Set-Cookie"));
+    }
   }
 
   @Test
   void roundTripsAndDeletesThroughAClientCookieStore() throws Exception {
-    client.close();
-    client =
-        HttpClient.newBuilder()
-            .cookieHandler(new CookieManager())
-            .connectTimeout(Duration.ofSeconds(3))
-            .build();
+
     app.routes().get("/set", (_, response) -> response.cookie("id", "value"));
     app.routes()
         .get("/read", (request, response) -> response.text(request.cookie("id").orElse("missing")));
     app.routes().get("/delete", (_, response) -> response.removeCookie("id"));
-    app.start();
-    assertEquals("missing", send(request("/read")).body());
-    assertEquals(200, send(request("/set")).statusCode());
-    assertEquals("value", send(request("/read")).body());
-    assertEquals(200, send(request("/delete")).statusCode());
-    assertEquals("missing", send(request("/read")).body());
-  }
 
-  private HttpRequest.Builder request(String path) {
-    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-        .timeout(Duration.ofSeconds(3));
-  }
-
-  private HttpResponse<String> send(HttpRequest.Builder request) throws Exception {
-    return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    try (var test = TestServer.start(app, client -> client.cookieHandler(new CookieManager()))) {
+      assertEquals(
+          "missing",
+          test.send(
+                  request -> request.path("/read").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          200,
+          test.send(
+                  request -> request.path("/set").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          "value",
+          test.send(
+                  request -> request.path("/read").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          200,
+          test.send(
+                  request -> request.path("/delete").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          "missing",
+          test.send(
+                  request -> request.path("/read").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+    }
   }
 }

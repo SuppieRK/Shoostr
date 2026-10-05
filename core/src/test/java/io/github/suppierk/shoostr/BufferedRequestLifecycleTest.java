@@ -87,11 +87,34 @@ class BufferedRequestLifecycleTest {
           client.send(
               HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
                   .timeout(Duration.ofSeconds(3))
+                  // Await header-based rejection instead of racing it with the upload.
+                  .expectContinue(knownLength)
                   .POST(publisher)
                   .build(),
               HttpResponse.BodyHandlers.ofString());
       assertEquals(413, result.statusCode());
       assertEquals("Content Too Large", result.body());
+    }
+  }
+
+  @Test
+  void rejectsAnOversizedContentLengthWithoutWaitingForTheBody() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
+      app.start();
+
+      try (var socket = new Socket()) {
+        connect(socket, app.port());
+        socket
+            .getOutputStream()
+            .write(
+                "POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1048577\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var rejected = receive(HttpTester.from(socket.getInputStream()));
+        assertEquals(413, rejected.getStatus());
+        assertEquals("Content Too Large", rejected.getContent());
+      }
     }
   }
 
@@ -107,12 +130,15 @@ class BufferedRequestLifecycleTest {
       try (var socket = new Socket()) {
         connect(socket, app.port());
         var input = HttpTester.from(socket.getInputStream());
-        send(
-            socket,
-            "POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
-                + "20\r\n"
-                + PAYLOAD
-                + "\r\n0\r\n\r\n");
+        socket
+            .getOutputStream()
+            .write(
+                ("POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
+                        + "20\r\n"
+                        + PAYLOAD
+                        + "\r\n0\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
         var rejected = receive(input);
         assertEquals(413, rejected.getStatus());
         assertEquals("too large", rejected.getContent());
@@ -122,7 +148,11 @@ class BufferedRequestLifecycleTest {
         assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
         assertNull(outcome.transportFailure());
 
-        send(socket, "GET /ok HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        socket
+            .getOutputStream()
+            .write(
+                "GET /ok HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
         var accepted = receive(input);
         assertEquals(200, accepted.getStatus());
         assertEquals(Integer.toString(socket.getLocalPort()), accepted.getContent());
@@ -143,12 +173,15 @@ class BufferedRequestLifecycleTest {
 
       try (var socket = new Socket()) {
         connect(socket, app.port());
-        send(
-            socket,
-            "POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
-                + "11\r\n"
-                + PAYLOAD.substring(0, 17)
-                + "\r\n");
+        socket
+            .getOutputStream()
+            .write(
+                ("POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
+                        + "11\r\n"
+                        + PAYLOAD.substring(0, 17)
+                        + "\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
         var rejected = receive(HttpTester.from(socket.getInputStream()));
         assertEquals(413, rejected.getStatus());
         assertEquals("too large", rejected.getContent());
@@ -199,9 +232,12 @@ class BufferedRequestLifecycleTest {
       try (var socket = new Socket()) {
         connect(socket, app.port());
         var input = HttpTester.from(socket.getInputStream());
-        send(
-            socket,
-            "POST /bad HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n" + PAYLOAD);
+        socket
+            .getOutputStream()
+            .write(
+                ("POST /bad HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n" + PAYLOAD)
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
         var rejected = receive(input);
         assertEquals(400, rejected.getStatus());
         assertEquals("bad length", rejected.getContent());
@@ -211,7 +247,11 @@ class BufferedRequestLifecycleTest {
         assertInstanceOf(BadRequestException.class, outcome.applicationFailure());
         assertNull(outcome.transportFailure());
 
-        send(socket, "GET /ok HTTP/1.1\r\nHost: localhost\r\n\r\n");
+        socket
+            .getOutputStream()
+            .write(
+                "GET /ok HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
         assertEquals(200, receive(input).getStatus());
         assertSuccessfulCompletion(outcomes);
         assertNull(outcomes.poll());
@@ -309,11 +349,6 @@ class BufferedRequestLifecycleTest {
   private static void connect(Socket socket, int port) throws IOException {
     socket.setSoTimeout(3000);
     socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], port), 3000);
-  }
-
-  private static void send(Socket socket, String request) throws IOException {
-    socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-    socket.getOutputStream().flush();
   }
 
   private static HttpTester.Response receive(HttpTester.Input input) throws IOException {

@@ -3,9 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.function.Consumer;
@@ -18,26 +16,46 @@ import org.junit.jupiter.params.provider.ValueSource;
 class CatchAllRoutingTest {
   @Test
   void capturesOneOrManyPathSegmentsButNotAnEmptyTail() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
       app.routes()
           .get(
               "/files/{*path}",
               (request, response) -> response.text(request.pathParam("path").orElseThrow()));
-      app.start();
 
-      assertEquals("a", send(client, app, "/files/a").body());
-      assertEquals("a/b", send(client, app, "/files/a/b").body());
-      assertEquals(404, send(client, app, "/files/").statusCode());
-      assertEquals(404, send(client, app, "/files").statusCode());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            "a",
+            test.send(
+                    request -> request.path("/files/a").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "a/b",
+            test.send(
+                    request -> request.path("/files/a/b").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/files/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/files").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
   }
 
   @Test
   void prefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder() throws Exception {
     for (boolean catchAllFirst : new boolean[] {true, false}) {
-      try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-          var client = HttpClient.newHttpClient()) {
+      try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
         Consumer<Routes> catchAll =
             routes -> {
               routes.get(
@@ -67,24 +85,58 @@ class CatchAllRoutingTest {
                     catchAll.accept(routes);
                   }
                 });
-        app.start();
 
-        assertEquals("literal", send(client, app, "/files/fixed").body());
-        assertEquals("segment:a", send(client, app, "/files/a").body());
-        assertEquals("literal-end", send(client, app, "/files/fixed/end").body());
-        assertEquals("tail:fixed/other", send(client, app, "/files/fixed/other").body());
-        assertEquals("post-tail", send(client, app, "/files/fixed", "POST").body());
-        var wrongMethod = send(client, app, "/files/fixed", "PUT");
-        assertEquals(405, wrongMethod.statusCode());
-        assertEquals("GET, POST", wrongMethod.headers().firstValue("Allow").orElseThrow());
+        try (var test = TestServer.start(app)) {
+
+          assertEquals(
+              "literal",
+              test.send(
+                      request -> request.path("/files/fixed").timeout(Duration.ofSeconds(5)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "segment:a",
+              test.send(
+                      request -> request.path("/files/a").timeout(Duration.ofSeconds(5)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "literal-end",
+              test.send(
+                      request -> request.path("/files/fixed/end").timeout(Duration.ofSeconds(5)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "tail:fixed/other",
+              test.send(
+                      request -> request.path("/files/fixed/other").timeout(Duration.ofSeconds(5)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "post-tail",
+              test.send(
+                      request ->
+                          request
+                              .path("/files/fixed")
+                              .timeout(Duration.ofSeconds(5))
+                              .method("POST"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          var wrongMethod =
+              test.send(
+                  request ->
+                      request.path("/files/fixed").timeout(Duration.ofSeconds(5)).method("PUT"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(405, wrongMethod.statusCode());
+          assertEquals("GET, POST", wrongMethod.headers().firstValue("Allow").orElseThrow());
+        }
       }
     }
   }
 
   @Test
   void composesCatchAllWithParentParametersAndPreservesDecodedTailSpelling() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
       app.routes()
           .path(
               "/accounts/{accountId}",
@@ -99,13 +151,39 @@ class CatchAllRoutingTest {
                                       request.pathParam("accountId").orElseThrow()
                                           + ":"
                                           + request.pathParam("path").orElseThrow()))));
-      app.start();
 
-      assertEquals("a:a b/c+d/", send(client, app, "/accounts/a/files/a%20b/c+d/").body());
-      assertEquals(
-          "é:café/€", send(client, app, "/accounts/%C3%A9/files/caf%C3%A9/%E2%82%AC").body());
-      assertEquals(404, send(client, app, "/accounts/a/files/").statusCode());
-      assertEquals(400, send(client, app, "/accounts/a/files/%252F").statusCode());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            "a:a b/c+d/",
+            test.send(
+                    request ->
+                        request.path("/accounts/a/files/a%20b/c+d/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "é:café/€",
+            test.send(
+                    request ->
+                        request
+                            .path("/accounts/%C3%A9/files/caf%C3%A9/%E2%82%AC")
+                            .timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/accounts/a/files/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            400,
+            test.send(
+                    request ->
+                        request.path("/accounts/a/files/%252F").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
   }
 
@@ -141,52 +219,67 @@ class CatchAllRoutingTest {
 
   @Test
   void serverSentEventRouteUsesTheSameCatchAllCapture() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
       app.routes()
           .sse(
               "/events/{*topic}",
               (request, response) ->
                   response.startEventStream().send(request.pathParam("topic").orElseThrow()));
-      app.start();
 
-      var result = send(client, app, "/events/a/b");
-      assertEquals(200, result.statusCode());
-      assertEquals("data: a/b\n\n", result.body());
-      assertEquals(404, send(client, app, "/events/").statusCode());
+      try (var test = TestServer.start(app)) {
+
+        var result =
+            test.send(
+                request -> request.path("/events/a/b").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("data: a/b\n\n", result.body());
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/events/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
   }
 
   @Test
   void keepsCaseAndTrailingSeparatorsDistinctWithoutReadingAnUnusedCapture() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
       app.routes()
           .get(
               "/Docs/{*path}",
               (request, response) ->
                   response.text(request.routePattern().orElseThrow() + ":" + request.path()));
-      app.start();
 
-      assertEquals("/Docs/{*path}:/Docs/a/", send(client, app, "/Docs/a/").body());
-      assertEquals(404, send(client, app, "/docs/a/").statusCode());
-      assertEquals(400, send(client, app, "/Docs/a%2Fb").statusCode());
-      assertEquals(400, send(client, app, "/Docs/a%252Fb").statusCode());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            "/Docs/{*path}:/Docs/a/",
+            test.send(
+                    request -> request.path("/Docs/a/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/docs/a/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            400,
+            test.send(
+                    request -> request.path("/Docs/a%2Fb").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            400,
+            test.send(
+                    request -> request.path("/Docs/a%252Fb").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
-  }
-
-  private static HttpResponse<String> send(HttpClient client, Shoostr app, String path)
-      throws Exception {
-    return send(client, app, path, "GET");
-  }
-
-  private static HttpResponse<String> send(
-      HttpClient client, Shoostr app, String path, String method) throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-            .timeout(Duration.ofSeconds(5))
-            .method(method, HttpRequest.BodyPublishers.noBody())
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 }

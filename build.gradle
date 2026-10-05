@@ -123,7 +123,7 @@ tasks.named('assemble') {
 def frameworkModules = [
 	'http',
 	'core',
-	'test-support',
+	'test',
 	'pac4j',
 	'micrometer',
 	'opentelemetry'
@@ -184,7 +184,7 @@ tasks.named('sonar') {
 configure([
 	project(':http'),
 	project(':core'),
-	project(':test-support'),
+	project(':test'),
 	project(':pac4j'),
 	project(':micrometer'),
 	project(':opentelemetry')
@@ -221,7 +221,7 @@ tasks.register('consumerSmoke', Exec) {
 	description = 'Publishes locally and runs the independent consumer smoke build.'
 	dependsOn ':http:publishMavenJavaPublicationToConsumerRepository'
 	dependsOn ':core:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':test-support:publishMavenJavaPublicationToConsumerRepository'
+	dependsOn ':test:publishMavenJavaPublicationToConsumerRepository'
 	dependsOn ':pac4j:publishMavenJavaPublicationToConsumerRepository'
 	dependsOn ':micrometer:publishMavenJavaPublicationToConsumerRepository'
 	dependsOn ':opentelemetry:publishMavenJavaPublicationToConsumerRepository'

@@ -11,6 +11,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.exceptions.NotFoundException;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -729,61 +730,56 @@ class TransportTest {
   void responseCompressionIsOptInAndVariesOnAcceptEncoding() throws Exception {
     var payload = "compressible-body-".repeat(100);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().get("/data", (_, response) -> response.text(payload));
-      app.start();
-      var uri = URI.create("http://127.0.0.1:" + app.port() + "/data");
 
-      var encoded =
-          client.send(
-              HttpRequest.newBuilder(uri).header("Accept-Encoding", "gzip").build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(200, encoded.statusCode());
-      assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
-      assertTrue(encoded.headers().allValues("Vary").contains("Accept-Encoding"));
+      try (var test = TestServer.start(app)) {
 
-      try (var gzip = new GZIPInputStream(new ByteArrayInputStream(encoded.body()))) {
-        assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        var encoded = test.send(request -> request.path("/data").header("Accept-Encoding", "gzip"));
+        assertEquals(200, encoded.statusCode());
+        assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
+        assertTrue(encoded.headers().allValues("Vary").contains("Accept-Encoding"));
+
+        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(encoded.body()))) {
+          assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        }
+
+        var gzipOnly =
+            test.send(
+                request ->
+                    request.path("/data").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+        assertEquals(200, gzipOnly.statusCode());
+        assertEquals("gzip", gzipOnly.headers().firstValue("Content-Encoding").orElseThrow());
+
+        var plain =
+            test.send(request -> request.path("/data"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(payload, plain.body());
+        assertTrue(plain.headers().firstValue("Content-Encoding").isEmpty());
+        assertTrue(plain.headers().allValues("Vary").contains("Accept-Encoding"));
+
+        var excluded =
+            test.send(
+                request -> request.path("/data").header("Accept-Encoding", "gzip;q=0"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(payload, excluded.body());
+        assertTrue(excluded.headers().firstValue("Content-Encoding").isEmpty());
+
+        var rejectedWithWildcard =
+            test.send(
+                request -> request.path("/data").header("Accept-Encoding", "gzip;q=0, *;q=1"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(payload, rejectedWithWildcard.body());
+        assertEquals(
+            "identity",
+            rejectedWithWildcard.headers().firstValue("Content-Encoding").orElseThrow());
       }
-
-      var gzipOnly =
-          client.send(
-              HttpRequest.newBuilder(uri)
-                  .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(200, gzipOnly.statusCode());
-      assertEquals("gzip", gzipOnly.headers().firstValue("Content-Encoding").orElseThrow());
-
-      var plain =
-          client.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString());
-      assertEquals(payload, plain.body());
-      assertTrue(plain.headers().firstValue("Content-Encoding").isEmpty());
-      assertTrue(plain.headers().allValues("Vary").contains("Accept-Encoding"));
-
-      var excluded =
-          client.send(
-              HttpRequest.newBuilder(uri).header("Accept-Encoding", "gzip;q=0").build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(payload, excluded.body());
-      assertTrue(excluded.headers().firstValue("Content-Encoding").isEmpty());
-
-      var rejectedWithWildcard =
-          client.send(
-              HttpRequest.newBuilder(uri).header("Accept-Encoding", "gzip;q=0, *;q=1").build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(payload, rejectedWithWildcard.body());
-      assertEquals(
-          "identity", rejectedWithWildcard.headers().firstValue("Content-Encoding").orElseThrow());
     }
   }
 
   @Test
   void compressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().get("/finite", (_, response) -> response.text("body"));
       app.routes().head("/finite", (_, response) -> response.text("body"));
@@ -804,58 +800,57 @@ class TransportTest {
                   response
                       .setHeader("Content-Encoding", "br")
                       .body("application/octet-stream", new byte[] {1}));
-      app.start();
-      var base = "http://127.0.0.1:" + app.port();
 
-      for (var path : List.of("/finite", "/stream")) {
-        var result =
-            client.send(
-                HttpRequest.newBuilder(URI.create(base + path))
-                    .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray());
-        assertEquals(406, result.statusCode());
-        assertEquals(0, result.body().length);
-        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      try (var test = TestServer.start(app)) {
+
+        for (var path : List.of("/finite", "/stream")) {
+          var result =
+              test.send(
+                  request ->
+                      request
+                          .path(path)
+                          .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+          assertEquals(406, result.statusCode());
+          assertEquals(0, result.body().length);
+          assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        }
+
+        var empty =
+            test.send(
+                request ->
+                    request
+                        .path("/empty")
+                        .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+        assertEquals(204, empty.statusCode());
+
+        var head =
+            test.send(
+                request ->
+                    request
+                        .path("/finite")
+                        .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
+                        .method("HEAD"));
+        assertEquals(406, head.statusCode());
+        assertEquals(0, head.body().length);
+        assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
+
+        var custom =
+            test.send(
+                request ->
+                    request
+                        .path("/custom")
+                        .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+        assertEquals(200, custom.statusCode());
+        assertEquals("br", custom.headers().firstValue("Content-Encoding").orElseThrow());
+
+        var optOut =
+            test.send(
+                request ->
+                    request.path("/opt-out").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+        assertEquals(406, optOut.statusCode());
+        assertEquals(0, optOut.body().length);
+        assertTrue(optOut.headers().allValues("Vary").contains("Accept-Encoding"));
       }
-
-      var empty =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/empty"))
-                  .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(204, empty.statusCode());
-
-      var head =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/finite"))
-                  .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
-                  .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(406, head.statusCode());
-      assertEquals(0, head.body().length);
-      assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
-
-      var custom =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/custom"))
-                  .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(200, custom.statusCode());
-      assertEquals("br", custom.headers().firstValue("Content-Encoding").orElseThrow());
-
-      var optOut =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/opt-out"))
-                  .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(406, optOut.statusCode());
-      assertEquals(0, optOut.body().length);
-      assertTrue(optOut.headers().allValues("Vary").contains("Accept-Encoding"));
     }
   }
 
@@ -863,30 +858,30 @@ class TransportTest {
   void compressionRejectsRangedFileWhenIdentityIsForbidden() throws Exception {
     var file = Files.writeString(temporary.resolve("range-rejected.txt"), "0123456789".repeat(300));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/file"))
-                  .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                  .header("Range", "bytes=0-1999")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(406, result.statusCode());
-      assertEquals(0, result.body().length);
-      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
-      assertTrue(result.headers().firstValue("Content-Range").isEmpty());
+      try (var test = TestServer.start(app)) {
+
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/file")
+                        .header("Accept-Encoding", "gzip;q=1, identity;q=0")
+                        .header("Range", "bytes=0-1999"));
+        assertEquals(406, result.statusCode());
+        assertEquals(0, result.body().length);
+        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        assertTrue(result.headers().firstValue("Content-Range").isEmpty());
+      }
     }
   }
 
   @Test
   void compressionRejectsUnacceptableExceptionHandlerRecovery() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.exception(
           NotFoundException.class, (_, _, response) -> response.status(200).text("recovered"));
@@ -896,17 +891,19 @@ class TransportTest {
               (_, _) -> {
                 throw new NotFoundException();
               });
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/failure"))
-                  .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(406, result.statusCode());
-      assertEquals(0, result.body().length);
-      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      try (var test = TestServer.start(app)) {
+
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/failure")
+                        .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+        assertEquals(406, result.statusCode());
+        assertEquals(0, result.body().length);
+        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      }
     }
   }
 
@@ -914,27 +911,27 @@ class TransportTest {
   void compressionCanBeDisabledPerResponseAndHonorsAnExcludedEncoding() throws Exception {
     var payload = "uncompressed-".repeat(100);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().get("/opt-out", (_, response) -> response.disableCompression().text(payload));
-      app.start();
-      var uri = URI.create("http://127.0.0.1:" + app.port() + "/opt-out");
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(uri).header("Accept-Encoding", "gzip").build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(payload, result.body());
-      assertEquals("identity", result.headers().firstValue("Content-Encoding").orElseThrow());
-      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      try (var test = TestServer.start(app)) {
 
-      var denied =
-          client.send(
-              HttpRequest.newBuilder(uri).header("Accept-Encoding", "gzip;q=0").build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(payload, denied.body());
-      assertEquals("identity", denied.headers().firstValue("Content-Encoding").orElseThrow());
+        var result =
+            test.send(
+                request -> request.path("/opt-out").header("Accept-Encoding", "gzip"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(payload, result.body());
+        assertEquals("identity", result.headers().firstValue("Content-Encoding").orElseThrow());
+        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+
+        var denied =
+            test.send(
+                request -> request.path("/opt-out").header("Accept-Encoding", "gzip;q=0"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(payload, denied.body());
+        assertEquals("identity", denied.headers().firstValue("Content-Encoding").orElseThrow());
+      }
     }
   }
 
@@ -943,65 +940,53 @@ class TransportTest {
     var content = "0123456789".repeat(300);
     var file = Files.writeString(temporary.resolve("range.txt"), content);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
       app.routes().head("/file", (_, response) -> response.file(file, "text/plain"));
       app.routes().get("/empty", (_, response) -> response.status(204));
       app.routes().head("/empty", (_, response) -> response.status(204));
-      app.start();
-      var base = "http://127.0.0.1:" + app.port();
 
-      var partial =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/file"))
-                  .header("Accept-Encoding", "gzip")
-                  .header("Range", "bytes=0-1999")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(206, partial.statusCode());
-      assertEquals(
-          "bytes 0-1999/3000", partial.headers().firstValue("Content-Range").orElseThrow());
-      assertEquals(content.substring(0, 2000), new String(partial.body(), StandardCharsets.UTF_8));
-      assertFalse(
-          partial.headers().firstValue("Content-Encoding").filter("gzip"::equals).isPresent());
+      try (var test = TestServer.start(app)) {
 
-      var head =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/file"))
-                  .header("Accept-Encoding", "gzip")
-                  .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(200, head.statusCode());
-      assertEquals(0, head.body().length);
-      assertTrue(
-          head.headers().firstValue("Content-Length").isEmpty(), head.headers().map().toString());
-      assertTrue(head.headers().firstValue("Content-Encoding").isEmpty());
-      assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
+        var partial =
+            test.send(
+                request ->
+                    request
+                        .path("/file")
+                        .header("Accept-Encoding", "gzip")
+                        .header("Range", "bytes=0-1999"));
+        assertEquals(206, partial.statusCode());
+        assertEquals(
+            "bytes 0-1999/3000", partial.headers().firstValue("Content-Range").orElseThrow());
+        assertEquals(
+            content.substring(0, 2000), new String(partial.body(), StandardCharsets.UTF_8));
+        assertFalse(
+            partial.headers().firstValue("Content-Encoding").filter("gzip"::equals).isPresent());
 
-      var empty =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/empty"))
-                  .header("Accept-Encoding", "gzip")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(204, empty.statusCode());
-      assertEquals(0, empty.body().length);
-      assertTrue(empty.headers().firstValue("Content-Encoding").isEmpty());
+        var head =
+            test.send(
+                request -> request.path("/file").header("Accept-Encoding", "gzip").method("HEAD"));
+        assertEquals(200, head.statusCode());
+        assertEquals(0, head.body().length);
+        assertTrue(
+            head.headers().firstValue("Content-Length").isEmpty(), head.headers().map().toString());
+        assertTrue(head.headers().firstValue("Content-Encoding").isEmpty());
+        assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
 
-      var emptyHead =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/empty"))
-                  .header("Accept-Encoding", "gzip")
-                  .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(204, emptyHead.statusCode());
-      assertEquals(0, emptyHead.body().length);
-      assertTrue(emptyHead.headers().firstValue("Transfer-Encoding").isEmpty());
-      assertTrue(emptyHead.headers().firstValue("Content-Length").isEmpty());
+        var empty = test.send(request -> request.path("/empty").header("Accept-Encoding", "gzip"));
+        assertEquals(204, empty.statusCode());
+        assertEquals(0, empty.body().length);
+        assertTrue(empty.headers().firstValue("Content-Encoding").isEmpty());
+
+        var emptyHead =
+            test.send(
+                request -> request.path("/empty").header("Accept-Encoding", "gzip").method("HEAD"));
+        assertEquals(204, emptyHead.statusCode());
+        assertEquals(0, emptyHead.body().length);
+        assertTrue(emptyHead.headers().firstValue("Transfer-Encoding").isEmpty());
+        assertTrue(emptyHead.headers().firstValue("Content-Length").isEmpty());
+      }
     }
   }
 
@@ -1010,37 +995,36 @@ class TransportTest {
     var content = "compressible-file-".repeat(300);
     var file = Files.writeString(temporary.resolve("head-gzip.txt"), content);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().get("/head-gzip", (_, response) -> response.file(file, "text/plain"));
       app.routes().head("/head-gzip", (_, response) -> response.file(file, "text/plain"));
-      app.start();
-      var uri = URI.create("http://127.0.0.1:" + app.port() + "/head-gzip");
-      var get =
-          client.send(
-              HttpRequest.newBuilder(uri)
-                  .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(200, get.statusCode());
-      assertEquals("gzip", get.headers().firstValue("Content-Encoding").orElseThrow());
 
-      try (var gzip = new GZIPInputStream(new ByteArrayInputStream(get.body()))) {
-        assertEquals(content, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+      try (var test = TestServer.start(app)) {
+
+        var get =
+            test.send(
+                request ->
+                    request.path("/head-gzip").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+        assertEquals(200, get.statusCode());
+        assertEquals("gzip", get.headers().firstValue("Content-Encoding").orElseThrow());
+
+        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(get.body()))) {
+          assertEquals(content, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        }
+
+        var head =
+            test.send(
+                request ->
+                    request
+                        .path("/head-gzip")
+                        .header("Accept-Encoding", "gzip;q=1, identity;q=0")
+                        .method("HEAD"));
+        assertEquals(200, head.statusCode());
+        assertEquals(0, head.body().length);
+        assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
+        assertTrue(head.headers().firstValue("Content-Length").isEmpty());
       }
-
-      var head =
-          client.send(
-              HttpRequest.newBuilder(uri)
-                  .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                  .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(200, head.statusCode());
-      assertEquals(0, head.body().length);
-      assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
-      assertTrue(head.headers().firstValue("Content-Length").isEmpty());
     }
   }
 
@@ -1188,23 +1172,26 @@ class TransportTest {
       gzip.write(payload);
     }
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes()
           .post(
               "/bytes",
               (request, response) -> response.text(Integer.toString(request.bodyBytes().length)));
-      app.start();
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/bytes"))
-                  .header("Content-Encoding", "gzip")
-                  .POST(HttpRequest.BodyPublishers.ofByteArray(encoded.toByteArray()))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals(Integer.toString(encoded.size()), result.body());
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/bytes")
+                        .header("Content-Encoding", "gzip")
+                        .method("POST")
+                        .body(encoded.toByteArray()),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals(Integer.toString(encoded.size()), result.body());
+      }
     }
   }
 
@@ -1212,67 +1199,60 @@ class TransportTest {
   void compressionSkipsAlreadyCompressedMediaAndEventStreams() throws Exception {
     var content = new byte[2048];
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().get("/image", (_, response) -> response.body("image/png", content));
       app.routes().get("/events", (_, response) -> response.body("text/event-stream", content));
-      app.start();
-      var base = "http://127.0.0.1:" + app.port();
 
-      for (var path : new String[] {"/image", "/events"}) {
-        var result =
-            client.send(
-                HttpRequest.newBuilder(URI.create(base + path))
-                    .header("Accept-Encoding", "gzip")
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray());
-        assertEquals(200, result.statusCode());
-        assertEquals(content.length, result.body().length);
-        assertTrue(result.headers().firstValue("Content-Encoding").isEmpty());
+      try (var test = TestServer.start(app)) {
+
+        for (var path : new String[] {"/image", "/events"}) {
+          var result = test.send(request -> request.path(path).header("Accept-Encoding", "gzip"));
+          assertEquals(200, result.statusCode());
+          assertEquals(content.length, result.body().length);
+          assertTrue(result.headers().firstValue("Content-Encoding").isEmpty());
+        }
       }
     }
   }
 
   @Test
   void rejectsForbiddenIdentityWhenNativeCompressionExcludesMedia() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().get("/image", (_, response) -> response.body("image/png", new byte[2048]));
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/image"))
-                  .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(406, result.statusCode());
-      assertEquals(0, result.body().length);
-      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        var result =
+            test.send(
+                request ->
+                    request.path("/image").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+
+        assertEquals(406, result.statusCode());
+        assertEquals(0, result.body().length);
+        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      }
     }
   }
 
   @Test
   void rejectsForbiddenIdentityBelowTheNativeCompressionThreshold() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().get("/small", (_, response) -> response.text("tiny"));
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/small"))
-                  .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(406, result.statusCode());
-      assertEquals(0, result.body().length);
-      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        var result =
+            test.send(
+                request ->
+                    request.path("/small").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+
+        assertEquals(406, result.statusCode());
+        assertEquals(0, result.body().length);
+        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      }
     }
   }
 
@@ -1280,8 +1260,7 @@ class TransportTest {
   void honorsNativeCompressionExclusionsWhenIdentityIsForbidden() throws Exception {
     var payload = "otherwise-compressible-".repeat(100);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.modifyServer(
           server -> {
@@ -1296,18 +1275,18 @@ class TransportTest {
                     .build());
           });
       app.routes().get("/text", (_, response) -> response.text(payload));
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/text"))
-                  .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(406, result.statusCode());
-      assertEquals(0, result.body().length);
-      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        var result =
+            test.send(
+                request ->
+                    request.path("/text").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+
+        assertEquals(406, result.statusCode());
+        assertEquals(0, result.body().length);
+        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      }
     }
   }
 
@@ -1315,8 +1294,7 @@ class TransportTest {
   void honorsCompressionConfigurationMatchedOutsideTheApplicationContext() throws Exception {
     var payload = "context-path-content-".repeat(100);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.modifyServer(
           server -> {
@@ -1334,18 +1312,18 @@ class TransportTest {
             compressor.setHandler(context);
           });
       app.routes().get("/text", (_, response) -> response.text(payload));
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/app/text"))
-                  .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(406, result.statusCode());
-      assertEquals(0, result.body().length);
-      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        var result =
+            test.send(
+                request ->
+                    request.path("/app/text").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+
+        assertEquals(406, result.statusCode());
+        assertEquals(0, result.body().length);
+        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+      }
     }
   }
 
@@ -1353,8 +1331,7 @@ class TransportTest {
   void usesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden() throws Exception {
     var payload = "selected-gzip-content-".repeat(100);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.modifyServer(
           server -> {
@@ -1372,42 +1349,43 @@ class TransportTest {
             compressor.putCompression(unselected);
           });
       app.routes().get("/selected", (_, response) -> response.text(payload));
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/selected"))
-                  .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("gzip", result.headers().firstValue("Content-Encoding").orElseThrow());
+        var result =
+            test.send(
+                request ->
+                    request.path("/selected").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
 
-      try (var gzip = new GZIPInputStream(new ByteArrayInputStream(result.body()))) {
-        assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        assertEquals(200, result.statusCode());
+        assertEquals("gzip", result.headers().firstValue("Content-Encoding").orElseThrow());
+
+        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(result.body()))) {
+          assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        }
       }
     }
   }
 
   @Test
   void rejectsForbiddenIdentityWhenNativeMethodExcludesCompression() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().put("/data", (_, response) -> response.text("method response"));
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
-                  .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                  .PUT(HttpRequest.BodyPublishers.noBody())
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(406, result.statusCode());
-      assertEquals(0, result.body().length);
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/data")
+                        .header("Accept-Encoding", "gzip;q=1, identity;q=0")
+                        .method("PUT"));
+
+        assertEquals(406, result.statusCode());
+        assertEquals(0, result.body().length);
+      }
     }
   }
 
@@ -1415,8 +1393,7 @@ class TransportTest {
   void streamingResponsesCompressAndCanOptOutBeforeTheFirstWrite() throws Exception {
     var payload = "streamed-text-".repeat(150);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes()
           .get(
@@ -1436,28 +1413,24 @@ class TransportTest {
                 stream.flush();
                 stream.write(payload);
               });
-      app.start();
-      var base = "http://127.0.0.1:" + app.port();
-      var compressed =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/stream"))
-                  .header("Accept-Encoding", "gzip")
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals("gzip", compressed.headers().firstValue("Content-Encoding").orElseThrow());
 
-      try (var gzip = new GZIPInputStream(new ByteArrayInputStream(compressed.body()))) {
-        assertEquals(payload + payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+      try (var test = TestServer.start(app)) {
+
+        var compressed =
+            test.send(request -> request.path("/stream").header("Accept-Encoding", "gzip"));
+        assertEquals("gzip", compressed.headers().firstValue("Content-Encoding").orElseThrow());
+
+        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(compressed.body()))) {
+          assertEquals(payload + payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        }
+
+        var plain =
+            test.send(
+                request -> request.path("/plain").header("Accept-Encoding", "gzip"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(payload + payload, plain.body());
+        assertEquals("identity", plain.headers().firstValue("Content-Encoding").orElseThrow());
       }
-
-      var plain =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/plain"))
-                  .header("Accept-Encoding", "gzip")
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(payload + payload, plain.body());
-      assertEquals("identity", plain.headers().firstValue("Content-Encoding").orElseThrow());
     }
   }
 
@@ -1465,8 +1438,7 @@ class TransportTest {
   void recoveredResponsesRetainCompressionCacheVariation() throws Exception {
     var payload = "recovered-response-".repeat(100);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.exception(
           IllegalStateException.class, (_, _, response) -> response.status(200).text(payload));
@@ -1476,27 +1448,26 @@ class TransportTest {
               (_, _) -> {
                 throw new IllegalStateException("recoverable");
               });
-      app.start();
-      var uri = URI.create("http://127.0.0.1:" + app.port() + "/recover");
 
-      var encoded =
-          client.send(
-              HttpRequest.newBuilder(uri).header("Accept-Encoding", "gzip").build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(200, encoded.statusCode());
-      assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
-      assertTrue(encoded.headers().allValues("Vary").contains("Accept-Encoding"));
+      try (var test = TestServer.start(app)) {
 
-      try (var gzip = new GZIPInputStream(new ByteArrayInputStream(encoded.body()))) {
-        assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        var encoded =
+            test.send(request -> request.path("/recover").header("Accept-Encoding", "gzip"));
+        assertEquals(200, encoded.statusCode());
+        assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
+        assertTrue(encoded.headers().allValues("Vary").contains("Accept-Encoding"));
+
+        try (var gzip = new GZIPInputStream(new ByteArrayInputStream(encoded.body()))) {
+          assertEquals(payload, new String(gzip.readAllBytes(), StandardCharsets.UTF_8));
+        }
+
+        var plain =
+            test.send(request -> request.path("/recover"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, plain.statusCode());
+        assertEquals(payload, plain.body());
+        assertTrue(plain.headers().firstValue("Content-Encoding").isEmpty());
+        assertTrue(plain.headers().allValues("Vary").contains("Accept-Encoding"));
       }
-
-      var plain =
-          client.send(HttpRequest.newBuilder(uri).build(), HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, plain.statusCode());
-      assertEquals(payload, plain.body());
-      assertTrue(plain.headers().firstValue("Content-Encoding").isEmpty());
-      assertTrue(plain.headers().allValues("Vary").contains("Accept-Encoding"));
     }
   }
 

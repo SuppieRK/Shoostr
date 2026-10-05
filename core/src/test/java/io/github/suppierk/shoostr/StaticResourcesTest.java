@@ -11,6 +11,7 @@ import io.github.suppierk.shoostr.extensions.AdmissionExtension;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.exceptions.UnauthorizedException;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -83,8 +84,7 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+        var app = new Shoostr(Options.defaults().withPort(0))) {
       Thread.currentThread().setContextClassLoader(loader);
       if (classpath) {
         app.routes().classpathResources("/assets", "/issue76-mime");
@@ -92,17 +92,14 @@ class StaticResourcesTest {
         app.routes().staticFiles("/assets", directory);
       }
 
-      app.start();
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/" + fileName))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(200, result.statusCode());
-      assertEquals(expectedType, result.headers().firstValue("Content-Type").orElseThrow());
-      assertArrayEquals(content, result.body());
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request -> request.path("/assets/" + fileName).timeout(Duration.ofSeconds(3)));
+        assertEquals(200, result.statusCode());
+        assertEquals(expectedType, result.headers().firstValue("Content-Type").orElseThrow());
+        assertArrayEquals(content, result.body());
+      }
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -145,17 +142,20 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.start();
 
-      var result = send(client, app, "/assets/site.txt");
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("filesystem resource", result.body());
-      assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
-      assertEquals("no-cache", result.headers().firstValue("Cache-Control").orElseThrow());
+        var result =
+            test.send(
+                request -> request.path("/assets/site.txt"), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("filesystem resource", result.body());
+        assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+        assertEquals("no-cache", result.headers().firstValue("Cache-Control").orElseThrow());
+      }
     }
   }
 
@@ -164,8 +164,7 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.onRouteMatched(
           (request, response) ->
               response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
@@ -173,21 +172,19 @@ class StaticResourcesTest {
           (request, response) ->
               response.addHeader("X-Stage", "after:" + request.routePattern().orElseThrow()));
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt"))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("filesystem resource", result.body());
-      assertEquals(
-          List.of("matched:/assets", "after:/assets"), result.headers().allValues("X-Stage"));
+        var result =
+            test.send(
+                request -> request.path("/assets/site.txt").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("filesystem resource", result.body());
+        assertEquals(
+            List.of("matched:/assets", "after:/assets"), result.headers().allValues("X-Stage"));
+      }
     }
   }
 
@@ -198,36 +195,30 @@ class StaticResourcesTest {
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
     var stages = new CopyOnWriteArrayList<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.onRouteMatched((_, _) -> stages.add("matched"));
       app.afterRouteHandler((_, _) -> stages.add("after"));
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.start();
-      var base = "http://127.0.0.1:" + app.port();
 
-      var hit =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/assets/site.txt"))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, hit.statusCode());
-      assertEquals("filesystem resource", hit.body());
-      assertEquals(List.of("matched", "after"), stages);
-      stages.clear();
+      try (var test = TestServer.start(app)) {
 
-      var miss =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + path))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+        var hit =
+            test.send(
+                request -> request.path("/assets/site.txt").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, hit.statusCode());
+        assertEquals("filesystem resource", hit.body());
+        assertEquals(List.of("matched", "after"), stages);
+        stages.clear();
 
-      assertEquals(404, miss.statusCode());
-      assertTrue(stages.isEmpty());
+        var miss =
+            test.send(
+                request -> request.path(path).timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(404, miss.statusCode());
+        assertTrue(stages.isEmpty());
+      }
     }
   }
 
@@ -238,27 +229,37 @@ class StaticResourcesTest {
     var nested = Files.createDirectory(temporaryDirectory.resolve("nested"));
     Files.writeString(nested.resolve("index.html"), "<h1>nested</h1>");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .staticFiles(
               "/assets",
               temporaryDirectory,
               StaticOptions.defaults().withWelcomeFile("index.html"));
-      app.start();
 
-      for (String path : List.of("/assets", "/assets/")) {
-        var result = send(client, app, path);
-        assertEquals(200, result.statusCode());
-        assertEquals("<h1>root</h1>", result.body());
-        assertEquals("text/html", result.headers().firstValue("Content-Type").orElseThrow());
+      try (var test = TestServer.start(app)) {
+
+        for (String path : List.of("/assets", "/assets/")) {
+          var result =
+              test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("<h1>root</h1>", result.body());
+          assertEquals("text/html", result.headers().firstValue("Content-Type").orElseThrow());
+        }
+
+        for (String path : List.of("/assets/nested", "/assets/nested/")) {
+          assertEquals(
+              "<h1>nested</h1>",
+              test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
+
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/assets/missing"),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
       }
-
-      for (String path : List.of("/assets/nested", "/assets/nested/")) {
-        assertEquals("<h1>nested</h1>", send(client, app, path).body());
-      }
-
-      assertEquals(404, send(client, app, "/assets/missing").statusCode());
     }
   }
 
@@ -268,27 +269,51 @@ class StaticResourcesTest {
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
     Files.writeString(temporaryDirectory.resolve("app.js"), "console.log('app');");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .staticFiles(
               "/assets",
               temporaryDirectory,
               StaticOptions.defaults().withSpaFallback("index.html"));
       app.routes().get("/assets/health", (_, response) -> response.text("endpoint"));
-      app.start();
 
-      assertEquals("<h1>app</h1>", send(client, app, "/assets/orders/42").body());
-      assertEquals("<h1>app</h1>", send(client, app, "/assets/missing.js").body());
-      assertEquals(
-          "text/html",
-          send(client, app, "/assets/missing.js")
-              .headers()
-              .firstValue("Content-Type")
-              .orElseThrow());
-      assertEquals("console.log('app');", send(client, app, "/assets/app.js").body());
-      assertEquals("endpoint", send(client, app, "/assets/health").body());
-      assertEquals(404, send(client, app, "/outside").statusCode());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            "<h1>app</h1>",
+            test.send(
+                    request -> request.path("/assets/orders/42"),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "<h1>app</h1>",
+            test.send(
+                    request -> request.path("/assets/missing.js"),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "text/html",
+            test.send(
+                    request -> request.path("/assets/missing.js"),
+                    HttpResponse.BodyHandlers.ofString())
+                .headers()
+                .firstValue("Content-Type")
+                .orElseThrow());
+        assertEquals(
+            "console.log('app');",
+            test.send(
+                    request -> request.path("/assets/app.js"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "endpoint",
+            test.send(
+                    request -> request.path("/assets/health"), HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            404,
+            test.send(request -> request.path("/outside"), HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
   }
 
@@ -297,8 +322,7 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.onRouteMatched(
           (request, response) ->
               response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
@@ -310,49 +334,68 @@ class StaticResourcesTest {
               "/assets",
               temporaryDirectory,
               StaticOptions.defaults().withSpaFallback("index.html"));
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/orders/42"))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("<h1>app</h1>", result.body());
-      assertEquals(
-          List.of("matched:/assets", "after:/assets"), result.headers().allValues("X-Stage"));
+        var result =
+            test.send(
+                request -> request.path("/assets/orders/42").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("<h1>app</h1>", result.body());
+        assertEquals(
+            List.of("matched:/assets", "after:/assets"), result.headers().allValues("X-Stage"));
+      }
     }
   }
 
   @Test
   void servesConfiguredClasspathWelcomeFileWithoutEnablingFallback() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .classpathResources(
               "/assets", "/", StaticOptions.defaults().withWelcomeFile("static-resource.txt"));
-      app.start();
 
-      assertEquals("classpath resource", send(client, app, "/assets").body().trim());
-      assertEquals(404, send(client, app, "/assets/missing").statusCode());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            "classpath resource",
+            test.send(request -> request.path("/assets"), HttpResponse.BodyHandlers.ofString())
+                .body()
+                .trim());
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/assets/missing"),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
   }
 
   @Test
   void servesConfiguredClasspathSpaFallbackWithoutEnablingWelcomeFile() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .classpathResources(
               "/assets", "/", StaticOptions.defaults().withSpaFallback("static-resource.txt"));
-      app.start();
 
-      assertEquals("classpath resource", send(client, app, "/assets").body().trim());
-      assertEquals("classpath resource", send(client, app, "/assets/missing").body().trim());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            "classpath resource",
+            test.send(request -> request.path("/assets"), HttpResponse.BodyHandlers.ofString())
+                .body()
+                .trim());
+        assertEquals(
+            "classpath resource",
+            test.send(
+                    request -> request.path("/assets/missing"),
+                    HttpResponse.BodyHandlers.ofString())
+                .body()
+                .trim());
+      }
     }
   }
 
@@ -369,8 +412,7 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.beforeRouteHandler(
           (request, _) -> {
             if ("/assets/blocked".equals(request.path())) {
@@ -382,19 +424,23 @@ class StaticResourcesTest {
               "/assets",
               temporaryDirectory,
               StaticOptions.defaults().withSpaFallback("index.html"));
-      app.start();
 
-      assertEquals(401, send(client, app, "/assets/blocked").statusCode());
-      var head =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/missing"))
-                  .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, head.statusCode());
-      assertEquals("", head.body());
-      assertEquals("12", head.headers().firstValue("Content-Length").orElseThrow());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            401,
+            test.send(
+                    request -> request.path("/assets/blocked"),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        var head =
+            test.send(
+                request -> request.path("/assets/missing").method("HEAD"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, head.statusCode());
+        assertEquals("", head.body());
+        assertEquals("12", head.headers().firstValue("Content-Length").orElseThrow());
+      }
     }
   }
 
@@ -404,8 +450,7 @@ class StaticResourcesTest {
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
     var admissions = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.cors(
           new CorsPolicy(
               Set.of("https://client.example"),
@@ -432,53 +477,51 @@ class StaticResourcesTest {
                       temporaryDirectory,
                       StaticOptions.defaults().withSpaFallback("index.html")),
               e -> e.get(admission));
-      app.start();
 
-      var preflight =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/missing"))
-                  .header("Origin", "https://client.example")
-                  .header("Access-Control-Request-Method", "GET")
-                  .header("Access-Control-Request-Headers", "Authorization")
-                  .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(204, preflight.statusCode());
-      assertEquals(0, admissions.get());
-      assertEquals(
-          "authorization",
-          preflight.headers().firstValue("Access-Control-Allow-Headers").orElseThrow());
+      try (var test = TestServer.start(app)) {
 
-      var denied =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/missing"))
-                  .header("Origin", "https://client.example")
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(401, denied.statusCode());
-      assertEquals(1, admissions.get());
-      assertEquals(
-          "https://client.example",
-          denied.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
+        var preflight =
+            test.send(
+                request ->
+                    request
+                        .path("/assets/missing")
+                        .header("Origin", "https://client.example")
+                        .header("Access-Control-Request-Method", "GET")
+                        .header("Access-Control-Request-Headers", "Authorization")
+                        .method("OPTIONS"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(204, preflight.statusCode());
+        assertEquals(0, admissions.get());
+        assertEquals(
+            "authorization",
+            preflight.headers().firstValue("Access-Control-Allow-Headers").orElseThrow());
 
-      var allowed =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/missing"))
-                  .header("Origin", "https://client.example")
-                  .header("Authorization", "Bearer allowed")
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, allowed.statusCode());
-      assertEquals("<h1>app</h1>", allowed.body());
-      assertEquals(2, admissions.get());
-      assertEquals(
-          "https://client.example",
-          allowed.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
+        var denied =
+            test.send(
+                request ->
+                    request.path("/assets/missing").header("Origin", "https://client.example"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, denied.statusCode());
+        assertEquals(1, admissions.get());
+        assertEquals(
+            "https://client.example",
+            denied.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
+
+        var allowed =
+            test.send(
+                request ->
+                    request
+                        .path("/assets/missing")
+                        .header("Origin", "https://client.example")
+                        .header("Authorization", "Bearer allowed"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, allowed.statusCode());
+        assertEquals("<h1>app</h1>", allowed.body());
+        assertEquals(2, admissions.get());
+        assertEquals(
+            "https://client.example",
+            allowed.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
+      }
     }
   }
 
@@ -489,19 +532,22 @@ class StaticResourcesTest {
     Files.writeString(selected, "selected");
     Files.writeString(temporaryDirectory.resolve("index.html"), "fallback");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.beforeRouteHandler((_, _) -> Files.delete(selected));
       app.routes()
           .staticFiles(
               "/assets",
               temporaryDirectory,
               StaticOptions.defaults().withSpaFallback("index.html"));
-      app.start();
 
-      var result = send(client, app, "/assets/app.js");
-      assertEquals(404, result.statusCode());
-      assertFalse(result.body().contains("fallback"));
+      try (var test = TestServer.start(app)) {
+
+        var result =
+            test.send(
+                request -> request.path("/assets/app.js"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(404, result.statusCode());
+        assertFalse(result.body().contains("fallback"));
+      }
     }
   }
 
@@ -514,17 +560,26 @@ class StaticResourcesTest {
     Files.createSymbolicLink(
         publicDirectory.resolve("link.txt"), temporaryDirectory.resolve("secret.txt"));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .staticFiles(
               "/assets", publicDirectory, StaticOptions.defaults().withSpaFallback("index.html"));
-      app.start();
 
-      var traversal = send(client, app, "/assets/%2e%2e/secret.txt");
-      assertEquals(400, traversal.statusCode());
-      assertFalse(traversal.body().contains("top-secret-content"));
-      assertEquals("fallback", send(client, app, "/assets/link.txt").body());
+      try (var test = TestServer.start(app)) {
+
+        var traversal =
+            test.send(
+                request -> request.path("/assets/%2e%2e/secret.txt"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(400, traversal.statusCode());
+        assertFalse(traversal.body().contains("top-secret-content"));
+        assertEquals(
+            "fallback",
+            test.send(
+                    request -> request.path("/assets/link.txt"),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
@@ -533,21 +588,25 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().staticFiles("/assets", temporaryDirectory);
       app.afterRouteHandler((_, response) -> response.redirect("/next"));
-      app.start();
 
-      var result = send(client, app, "/assets/site.txt", "Range", "bytes=0-3");
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(302, result.statusCode());
-      assertEquals("/next", result.headers().firstValue("Location").orElseThrow());
-      assertEquals("", result.body());
-      assertEquals(List.of(), result.headers().allValues("Content-Range"));
-      assertEquals(List.of(), result.headers().allValues("ETag"));
-      assertEquals(List.of(), result.headers().allValues("Accept-Ranges"));
-      assertEquals(List.of(), result.headers().allValues("Content-Type"));
+        var result =
+            test.send(
+                request -> request.path("/assets/site.txt").header("Range", "bytes=0-3"),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(302, result.statusCode());
+        assertEquals("/next", result.headers().firstValue("Location").orElseThrow());
+        assertEquals("", result.body());
+        assertEquals(List.of(), result.headers().allValues("Content-Range"));
+        assertEquals(List.of(), result.headers().allValues("ETag"));
+        assertEquals(List.of(), result.headers().allValues("Accept-Ranges"));
+        assertEquals(List.of(), result.headers().allValues("Content-Type"));
+      }
     }
   }
 
@@ -562,32 +621,26 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+        var app = new Shoostr(Options.defaults().withPort(0))) {
       Thread.currentThread().setContextClassLoader(loader);
       app.routes().classpathResources("/assets", "/issue76-utf8-public");
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/t%C3%A9st.txt"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertArrayEquals(content, result.body());
+        var result =
+            test.send(
+                request -> request.path("/assets/t%C3%A9st.txt").timeout(Duration.ofSeconds(3)));
 
-      var outside =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/priv%C3%A9.txt"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(404, outside.statusCode());
-      assertFalse(outside.body().contains("outside-mount-secret"));
+        assertEquals(200, result.statusCode());
+        assertArrayEquals(content, result.body());
+
+        var outside =
+            test.send(
+                request -> request.path("/assets/priv%C3%A9.txt").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(404, outside.statusCode());
+        assertFalse(outside.body().contains("outside-mount-secret"));
+      }
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -606,33 +659,34 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+        var app = new Shoostr(Options.defaults().withPort(0))) {
       Thread.currentThread().setContextClassLoader(loader);
       registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
-      app.start();
-      var uri = URI.create("http://127.0.0.1:" + app.port() + "/assets/fallback.txt");
 
-      var selected =
-          client.send(
-              HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(3)).build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, selected.statusCode());
-      assertEquals("selected fallback resource", selected.body());
-      var etag = selected.headers().firstValue("ETag").orElseThrow();
-      assertFalse(etag.isBlank());
+      try (var test = TestServer.start(app)) {
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(uri)
-                  .timeout(Duration.ofSeconds(3))
-                  .header("If-None-Match", etag)
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+        var selected =
+            test.send(
+                request -> request.path("/assets/fallback.txt").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, selected.statusCode());
+        assertEquals("selected fallback resource", selected.body());
+        var etag = selected.headers().firstValue("ETag").orElseThrow();
+        assertFalse(etag.isBlank());
 
-      assertEquals(304, result.statusCode());
-      assertEquals("", result.body());
-      assertEquals(etag, result.headers().firstValue("ETag").orElseThrow());
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/assets/fallback.txt")
+                        .timeout(Duration.ofSeconds(3))
+                        .header("If-None-Match", etag),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(304, result.statusCode());
+        assertEquals("", result.body());
+        assertEquals(etag, result.headers().firstValue("ETag").orElseThrow());
+      }
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -651,33 +705,28 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+        var app = new Shoostr(Options.defaults().withPort(0))) {
       Thread.currentThread().setContextClassLoader(loader);
       registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
-      app.start();
 
-      var control =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/shared.txt"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, control.statusCode());
-      assertEquals(filesystemFirst ? "filesystem content" : "classpath content", control.body());
+      try (var test = TestServer.start(app)) {
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/missing.txt"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+        var control =
+            test.send(
+                request -> request.path("/assets/shared.txt").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, control.statusCode());
+        assertEquals(filesystemFirst ? "filesystem content" : "classpath content", control.body());
 
-      assertEquals(404, result.statusCode());
-      assertEquals("Not found", result.body());
-      assertTrue(result.headers().allValues("ETag").isEmpty());
+        var result =
+            test.send(
+                request -> request.path("/assets/missing.txt").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(404, result.statusCode());
+        assertEquals("Not found", result.body());
+        assertTrue(result.headers().allValues("ETag").isEmpty());
+      }
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -696,22 +745,20 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+        var app = new Shoostr(Options.defaults().withPort(0))) {
       Thread.currentThread().setContextClassLoader(loader);
       registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/shared.txt"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals(filesystemFirst ? "filesystem winner" : "classpath candidate", result.body());
+        var result =
+            test.send(
+                request -> request.path("/assets/shared.txt").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals(filesystemFirst ? "filesystem winner" : "classpath candidate", result.body());
+      }
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -730,31 +777,28 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+        var app = new Shoostr(Options.defaults().withPort(0))) {
       Thread.currentThread().setContextClassLoader(loader);
       registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
-      app.start();
 
-      var filesystemResult =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/filesystem-only.txt"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, filesystemResult.statusCode());
-      assertEquals("filesystem content", filesystemResult.body());
+      try (var test = TestServer.start(app)) {
 
-      var classpathResult =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/classpath-only.txt"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, classpathResult.statusCode());
-      assertEquals("classpath content", classpathResult.body());
+        var filesystemResult =
+            test.send(
+                request ->
+                    request.path("/assets/filesystem-only.txt").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, filesystemResult.statusCode());
+        assertEquals("filesystem content", filesystemResult.body());
+
+        var classpathResult =
+            test.send(
+                request ->
+                    request.path("/assets/classpath-only.txt").timeout(Duration.ofSeconds(3)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, classpathResult.statusCode());
+        assertEquals("classpath content", classpathResult.body());
+      }
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -762,16 +806,20 @@ class StaticResourcesTest {
 
   @Test
   void servesClasspathFilesBelowTheMountedPath() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().classpathResources("/assets", "/");
-      app.start();
 
-      var result = send(client, app, "/assets/static-resource.txt");
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("classpath resource", result.body().trim());
-      assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+        var result =
+            test.send(
+                request -> request.path("/assets/static-resource.txt"),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("classpath resource", result.body().trim());
+        assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+      }
     }
   }
 
@@ -845,21 +893,25 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {archive.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+        var app = new Shoostr(Options.defaults().withPort(0))) {
       Thread.currentThread().setContextClassLoader(loader);
       var routes = app.routes();
       routes.classpathResources("/assets", "/archive");
       var filesystem = registeredArchiveFilesystem(routes);
       assertTrue(filesystem.isOpen());
-      app.start();
 
-      var result = send(client, app, "/assets/resource.txt");
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("archived resource", result.body());
-      app.close();
-      assertFalse(filesystem.isOpen());
+        var result =
+            test.send(
+                request -> request.path("/assets/resource.txt"),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("archived resource", result.body());
+        test.close();
+        assertFalse(filesystem.isOpen());
+      }
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -871,33 +923,36 @@ class StaticResourcesTest {
     var file = temporaryDirectory.resolve("site.txt");
     Files.writeString(file, "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.start();
 
-      var full = send(client, app, "/assets/site.txt");
-      var range = send(client, app, "/assets/site.txt", "Range", "bytes=5-8");
-      var conditional =
-          send(
-              client,
-              app,
-              "/assets/site.txt",
-              "If-None-Match",
-              full.headers().firstValue("ETag").orElseThrow());
-      var head =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt"))
-                  .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(206, range.statusCode());
-      assertEquals("yste", range.body());
-      assertEquals(304, conditional.statusCode());
-      assertEquals(200, head.statusCode());
-      assertEquals("19", head.headers().firstValue("Content-Length").orElseThrow());
+        var full =
+            test.send(
+                request -> request.path("/assets/site.txt"), HttpResponse.BodyHandlers.ofString());
+        var range =
+            test.send(
+                request -> request.path("/assets/site.txt").header("Range", "bytes=5-8"),
+                HttpResponse.BodyHandlers.ofString());
+        var conditional =
+            test.send(
+                request ->
+                    request
+                        .path("/assets/site.txt")
+                        .header("If-None-Match", full.headers().firstValue("ETag").orElseThrow()),
+                HttpResponse.BodyHandlers.ofString());
+        var head =
+            test.send(
+                request -> request.path("/assets/site.txt").method("HEAD"),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(206, range.statusCode());
+        assertEquals("yste", range.body());
+        assertEquals(304, conditional.statusCode());
+        assertEquals(200, head.statusCode());
+        assertEquals("19", head.headers().firstValue("Content-Length").orElseThrow());
+      }
     }
   }
 
@@ -1029,27 +1084,26 @@ class StaticResourcesTest {
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.start();
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt"))
-                  .timeout(Duration.ofSeconds(3))
-                  .header("Accept-Encoding", "gzip")
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(200, result.statusCode());
-      assertEquals("gzip", result.headers().firstValue("Content-Encoding").orElseThrow());
-      assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
-      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
 
-      try (var decoded = new GZIPInputStream(new ByteArrayInputStream(result.body()))) {
-        assertArrayEquals(payload.getBytes(StandardCharsets.UTF_8), decoded.readAllBytes());
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/assets/site.txt")
+                        .timeout(Duration.ofSeconds(3))
+                        .header("Accept-Encoding", "gzip"));
+        assertEquals(200, result.statusCode());
+        assertEquals("gzip", result.headers().firstValue("Content-Encoding").orElseThrow());
+        assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
+        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+
+        try (var decoded = new GZIPInputStream(new ByteArrayInputStream(result.body()))) {
+          assertArrayEquals(payload.getBytes(StandardCharsets.UTF_8), decoded.readAllBytes());
+        }
       }
     }
   }
@@ -1061,24 +1115,23 @@ class StaticResourcesTest {
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.start();
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt"))
-                  .timeout(Duration.ofSeconds(3))
-                  .header("Accept-Encoding", acceptEncoding)
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(200, result.statusCode());
-      assertTrue(result.headers().firstValue("Content-Encoding").isEmpty());
-      assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
-      assertArrayEquals(payload.getBytes(StandardCharsets.UTF_8), result.body());
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/assets/site.txt")
+                        .timeout(Duration.ofSeconds(3))
+                        .header("Accept-Encoding", acceptEncoding));
+        assertEquals(200, result.statusCode());
+        assertTrue(result.headers().firstValue("Content-Encoding").isEmpty());
+        assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
+        assertArrayEquals(payload.getBytes(StandardCharsets.UTF_8), result.body());
+      }
     }
   }
 
@@ -1095,38 +1148,37 @@ class StaticResourcesTest {
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.compression();
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.start();
-      var uri = URI.create("http://127.0.0.1:" + app.port() + "/assets/site.txt");
-      var full =
-          client.send(
-              HttpRequest.newBuilder(uri)
-                  .timeout(Duration.ofSeconds(3))
-                  .header("Accept-Encoding", acceptEncoding)
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(200, full.statusCode());
-      assertEquals(
-          acceptEncoding, full.headers().firstValue("Content-Encoding").orElse("identity"));
-      var validator = full.headers().firstValue(responseHeader).orElseThrow();
 
-      var conditional =
-          client.send(
-              HttpRequest.newBuilder(uri)
-                  .timeout(Duration.ofSeconds(3))
-                  .header("Accept-Encoding", acceptEncoding)
-                  .header(requestHeader, validator)
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(304, conditional.statusCode());
-      assertEquals(0, conditional.body().length);
-      assertEquals(validator, conditional.headers().firstValue(responseHeader).orElseThrow());
-      assertTrue(conditional.headers().allValues("Vary").contains("Accept-Encoding"));
+      try (var test = TestServer.start(app)) {
+
+        var full =
+            test.send(
+                request ->
+                    request
+                        .path("/assets/site.txt")
+                        .timeout(Duration.ofSeconds(3))
+                        .header("Accept-Encoding", acceptEncoding));
+        assertEquals(200, full.statusCode());
+        assertEquals(
+            acceptEncoding, full.headers().firstValue("Content-Encoding").orElse("identity"));
+        var validator = full.headers().firstValue(responseHeader).orElseThrow();
+
+        var conditional =
+            test.send(
+                request ->
+                    request
+                        .path("/assets/site.txt")
+                        .timeout(Duration.ofSeconds(3))
+                        .header("Accept-Encoding", acceptEncoding)
+                        .header(requestHeader, validator));
+        assertEquals(304, conditional.statusCode());
+        assertEquals(0, conditional.body().length);
+        assertEquals(validator, conditional.headers().firstValue(responseHeader).orElseThrow());
+        assertTrue(conditional.headers().allValues("Vary").contains("Accept-Encoding"));
+      }
     }
   }
 
@@ -1135,16 +1187,19 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().staticFiles("/assets", temporaryDirectory);
       app.routes().get("/assets/site.txt", (_, response) -> response.text("endpoint"));
-      app.start();
 
-      var result = send(client, app, "/assets/site.txt");
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("endpoint", result.body());
+        var result =
+            test.send(
+                request -> request.path("/assets/site.txt"), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("endpoint", result.body());
+      }
     }
   }
 
@@ -1153,15 +1208,19 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "composed resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().path("/api", routes -> routes.staticFiles("assets", temporaryDirectory));
-      app.start();
 
-      var result = send(client, app, "/api/assets/site.txt");
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("composed resource", result.body());
+        var result =
+            test.send(
+                request -> request.path("/api/assets/site.txt"),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("composed resource", result.body());
+      }
     }
   }
 
@@ -1171,15 +1230,19 @@ class StaticResourcesTest {
     var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("public"));
     Files.writeString(temporaryDirectory.resolve("secret.txt"), "top-secret-content");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().staticFiles("/assets", publicDirectory);
-      app.start();
 
-      var result = send(client, app, "/assets/%2e%2e/secret.txt");
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(400, result.statusCode());
-      assertFalse(result.body().contains("top-secret-content"));
+        var result =
+            test.send(
+                request -> request.path("/assets/%2e%2e/secret.txt"),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(400, result.statusCode());
+        assertFalse(result.body().contains("top-secret-content"));
+      }
     }
   }
 
@@ -1191,17 +1254,31 @@ class StaticResourcesTest {
     Files.writeString(publicDirectory.resolve("site.txt"), "public resource");
     Files.writeString(temporaryDirectory.resolve("secret.txt"), "outside-mount-secret");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().staticFiles("/assets", publicDirectory);
-      app.start();
-      var allowed = send(client, app, "/assets/site.txt");
-      assertEquals(200, allowed.statusCode());
-      assertEquals("public resource", allowed.body());
 
-      var rejected = rawGet(app, "/assets" + path);
-      assertTrue(rejected.startsWith("HTTP/1.1 400 "), rejected);
-      assertFalse(rejected.contains("outside-mount-secret"));
+      try (var test = TestServer.start(app)) {
+        var allowed =
+            test.send(
+                request -> request.path("/assets/site.txt"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, allowed.statusCode());
+        assertEquals("public resource", allowed.body());
+
+        String rejected;
+
+        try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
+          socket.setSoTimeout(3000);
+          var outgoing =
+              "GET "
+                  + ("/assets" + path)
+                  + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+          socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
+          rejected = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        assertTrue(rejected.startsWith("HTTP/1.1 400 "), rejected);
+        assertFalse(rejected.contains("outside-mount-secret"));
+      }
     }
   }
 
@@ -1214,18 +1291,32 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+        var app = new Shoostr(Options.defaults().withPort(0))) {
       Thread.currentThread().setContextClassLoader(loader);
       app.routes().classpathResources("/assets", "/issue76-public");
-      app.start();
-      var allowed = send(client, app, "/assets/site.txt");
-      assertEquals(200, allowed.statusCode());
-      assertEquals("public resource", allowed.body());
 
-      var rejected = rawGet(app, "/assets" + path);
-      assertTrue(rejected.startsWith("HTTP/1.1 400 "), rejected);
-      assertFalse(rejected.contains("outside-mount-secret"));
+      try (var test = TestServer.start(app)) {
+        var allowed =
+            test.send(
+                request -> request.path("/assets/site.txt"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, allowed.statusCode());
+        assertEquals("public resource", allowed.body());
+
+        String rejected;
+
+        try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
+          socket.setSoTimeout(3000);
+          var outgoing =
+              "GET "
+                  + ("/assets" + path)
+                  + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+          socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
+          rejected = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        }
+
+        assertTrue(rejected.startsWith("HTTP/1.1 400 "), rejected);
+        assertFalse(rejected.contains("outside-mount-secret"));
+      }
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -1240,25 +1331,27 @@ class StaticResourcesTest {
     assertTrue(process.waitFor(5, TimeUnit.SECONDS));
     assertEquals(0, process.exitValue());
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.start();
 
-      var missing = send(client, app, "/assets/missing.txt");
-      var directory = send(client, app, "/assets/directory");
-      var pipe =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/assets/named-pipe"))
-                  .timeout(Duration.ofSeconds(2))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(404, missing.statusCode());
-      assertEquals(404, directory.statusCode());
-      assertEquals(404, pipe.statusCode());
+        var missing =
+            test.send(
+                request -> request.path("/assets/missing.txt"),
+                HttpResponse.BodyHandlers.ofString());
+        var directory =
+            test.send(
+                request -> request.path("/assets/directory"), HttpResponse.BodyHandlers.ofString());
+        var pipe =
+            test.send(
+                request -> request.path("/assets/named-pipe").timeout(Duration.ofSeconds(2)),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(404, missing.statusCode());
+        assertEquals(404, directory.statusCode());
+        assertEquals(404, pipe.statusCode());
+      }
     }
   }
 
@@ -1267,18 +1360,21 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.beforeRouteHandler(
           (_, _) -> {
             throw new UnauthorizedException();
           });
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.start();
 
-      var result = send(client, app, "/assets/site.txt");
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(401, result.statusCode());
+        var result =
+            test.send(
+                request -> request.path("/assets/site.txt"), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(401, result.statusCode());
+      }
     }
   }
 
@@ -1289,20 +1385,26 @@ class StaticResourcesTest {
     var outcome = new AtomicReference<RequestOutcome>();
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.afterRequest(
           value -> {
             outcome.set(value);
             completed.countDown();
           });
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.start();
 
-      assertEquals(200, send(client, app, "/assets/site.txt").statusCode());
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertEquals(200, outcome.get().statusCode());
-      assertEquals("/assets", outcome.get().routePattern());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            200,
+            test.send(
+                    request -> request.path("/assets/site.txt"),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals(200, outcome.get().statusCode());
+        assertEquals("/assets", outcome.get().routePattern());
+      }
     }
   }
 
@@ -1312,14 +1414,25 @@ class StaticResourcesTest {
     var file = temporaryDirectory.resolve("site.txt");
     Files.writeString(file, "first");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.start();
 
-      assertEquals("first", send(client, app, "/assets/site.txt").body());
-      Files.writeString(file, "second");
-      assertEquals("second", send(client, app, "/assets/site.txt").body());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            "first",
+            test.send(
+                    request -> request.path("/assets/site.txt"),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        Files.writeString(file, "second");
+        assertEquals(
+            "second",
+            test.send(
+                    request -> request.path("/assets/site.txt"),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
@@ -1332,20 +1445,23 @@ class StaticResourcesTest {
     Files.writeString(publicDirectory.resolve("site.txt"), "mounted content");
     Files.writeString(externalDirectory.resolve("site.txt"), "external content");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.beforeRouteHandler(
           (_, _) -> {
             Files.move(publicDirectory, relocatedDirectory);
             Files.createSymbolicLink(publicDirectory, externalDirectory);
           });
       app.routes().staticFiles("/assets", publicDirectory);
-      app.start();
 
-      var result = send(client, app, "/assets/site.txt");
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("mounted content", result.body());
+        var result =
+            test.send(
+                request -> request.path("/assets/site.txt"), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("mounted content", result.body());
+      }
     }
   }
 
@@ -1357,15 +1473,18 @@ class StaticResourcesTest {
     Files.writeString(secret, "top-secret-content");
     Files.createSymbolicLink(publicDirectory.resolve("link.txt"), secret);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes().staticFiles("/assets", publicDirectory);
-      app.start();
 
-      var result = send(client, app, "/assets/link.txt");
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(404, result.statusCode());
-      assertFalse(result.body().contains("top-secret-content"));
+        var result =
+            test.send(
+                request -> request.path("/assets/link.txt"), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(404, result.statusCode());
+        assertFalse(result.body().contains("top-secret-content"));
+      }
     }
   }
 
@@ -1374,8 +1493,7 @@ class StaticResourcesTest {
     var file = temporaryDirectory.resolve("report.txt");
     Files.writeString(file, "download");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       String[] filenames = {"", "line\nbreak.txt", "folder/report.txt", "folder\\report.txt"};
       for (int index = 0; index < filenames.length; index++) {
         var filename = filenames[index];
@@ -1384,10 +1502,16 @@ class StaticResourcesTest {
                 "/download-" + index,
                 (_, response) -> response.attachment(file, "text/plain", filename));
       }
-      app.start();
 
-      for (int index = 0; index < filenames.length; index++) {
-        assertEquals(500, send(client, app, "/download-" + index).statusCode());
+      try (var test = TestServer.start(app)) {
+
+        for (int index = 0; index < filenames.length; index++) {
+          var path = "/download-" + index;
+          assertEquals(
+              500,
+              test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString())
+                  .statusCode());
+        }
       }
     }
   }
@@ -1397,21 +1521,23 @@ class StaticResourcesTest {
     var file = temporaryDirectory.resolve("report.txt");
     Files.writeString(file, "download");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .get(
               "/download",
               (_, response) -> response.attachment(file, "text/plain", "résumé 2026.txt"));
-      app.start();
 
-      var result = send(client, app, "/download");
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("download", result.body());
-      assertEquals(
-          "attachment; filename=\"r_sum_ 2026.txt\"; filename*=UTF-8''r%C3%A9sum%C3%A9%202026.txt",
-          result.headers().firstValue("Content-Disposition").orElseThrow());
+        var result =
+            test.send(request -> request.path("/download"), HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("download", result.body());
+        assertEquals(
+            "attachment; filename=\"r_sum_ 2026.txt\"; filename*=UTF-8''r%C3%A9sum%C3%A9%202026.txt",
+            result.headers().firstValue("Content-Disposition").orElseThrow());
+      }
     }
   }
 
@@ -1466,22 +1592,6 @@ class StaticResourcesTest {
     return client.build();
   }
 
-  private static String rawGet(Shoostr app, String path) throws IOException {
-    try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
-      socket.setSoTimeout(3000);
-      var request = "GET " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
-      socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-      return new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-    }
-  }
-
-  private static HttpResponse<String> send(HttpClient client, Shoostr app, String path)
-      throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path)).GET().build(),
-        HttpResponse.BodyHandlers.ofString());
-  }
-
   private static FileSystem registeredArchiveFilesystem(Routes routes)
       throws ReflectiveOperationException {
     Field field = Routes.class.getDeclaredField("staticFiles");
@@ -1489,16 +1599,6 @@ class StaticResourcesTest {
     var staticFiles = (List<?>) field.get(routes);
     var files = (StaticFiles) staticFiles.getFirst();
     return Objects.requireNonNull(files.archiveFileSystem());
-  }
-
-  private static HttpResponse<String> send(
-      HttpClient client, Shoostr app, String path, String header, String value) throws Exception {
-    var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path));
-    if (header != null) {
-      request.header(header, value);
-    }
-
-    return client.send(request.GET().build(), HttpResponse.BodyHandlers.ofString());
   }
 
   private static void writeArchive(Path archive) throws Exception {

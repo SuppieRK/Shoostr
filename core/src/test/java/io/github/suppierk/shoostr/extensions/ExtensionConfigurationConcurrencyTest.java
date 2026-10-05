@@ -8,9 +8,7 @@ import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.Extensions;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -21,20 +19,18 @@ import org.junit.jupiter.api.Timeout;
 class ExtensionConfigurationConcurrencyTest {
   @Test
   void rejectsStartupDuringEndpointConfigurationAndPublishesAfterItFinishes() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .get(
               "/configured",
               (_, response) -> response.text("registered"),
               _ -> assertThrows(IllegalStateException.class, app::start));
-      app.start();
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/configured"))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals("registered", result.body());
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(request -> request.path("/configured"), HttpResponse.BodyHandlers.ofString());
+        assertEquals("registered", result.body());
+      }
     }
   }
 
@@ -51,8 +47,7 @@ class ExtensionConfigurationConcurrencyTest {
 
   @Test
   void reservesShapesDuringReentrantConfigurationAndReleasesFailedReservations() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
@@ -62,16 +57,13 @@ class ExtensionConfigurationConcurrencyTest {
                   (_, _) -> {},
                   _ -> routes.get("/reserved/{other}", (_, _) -> {})));
       app.routes().get("/reserved/{id}", (_, response) -> response.text("retry"));
-      app.start();
-      assertEquals(
-          "retry",
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create("http://127.0.0.1:" + app.port() + "/reserved/42"))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "retry",
+            test.send(request -> request.path("/reserved/42"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 

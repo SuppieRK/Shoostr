@@ -18,26 +18,40 @@ app.routes(routes -> {
 
 `Closeable` also extends `AutoCloseable`: try-with-resources still closes the app when its block ends. Use it for scoped lifetimes such as tests; normal server setup can use the unscoped example above. Registration is thread-safe across the root and every nested scope and must finish before `start()`. No builder is involved.
 
-For integration tests, add the separate `io.github.suppierk:shoostr-test-support` artifact as a
-test dependency. `TestServer` starts a fresh `Shoostr` on an OS-selected loopback port and
-closes it at the end of a try-with-resources scope. Its callback runs before startup, so
-routes and native Jetty configuration use the ordinary public API:
+For integration tests, add the separate `io.github.suppierk:shoostr-test` artifact as a
+test dependency. `TestServer` starts an existing unstarted `Shoostr` on OS-selected loopback
+ports and closes that same application at the end of a try-with-resources scope. Configure
+routes, extensions, dependencies and native Jetty settings before startup through the ordinary
+public API:
 
 ```java
-try (var server = TestServer.start(app ->
-        app.routes().get("/hello", (request, response) -> response.text("hello")));
-     var client = java.net.http.HttpClient.newHttpClient()) {
-    var request = java.net.http.HttpRequest.newBuilder(server.baseUri().resolve("hello")).build();
-    var reply = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
-    // Assert reply.statusCode() == 200 and reply.body().equals("hello") in the test.
+var app = new Shoostr();
+app.routes().get("/hello", (request, response) -> response.text("hello"));
+try (var server = TestServer.start(app)) {
+    var reply = server.send(request -> request.path("/hello"));
+    // Assert reply.statusCode() and reply.body() (byte[]) with your test framework.
+    var text = server.send(request -> request.path("/hello"),
+        java.net.http.HttpResponse.BodyHandlers.ofString());
+    // Or consume text.body() as a String through an explicit JDK BodyHandler.
 }
 ```
 
-Each fixture has its own listener and routes. Configuration/startup failures propagate
+Inside the fixture scope, fetch a response once, then use your testing framework's assertions.
+For example, JUnit's ordinary multiple-assertion style needs no harness-specific DSL:
+
+```java
+var reply = server.send(request -> request.path("/hello"));
+assertAll("hello response",
+    () -> assertEquals(200, reply.statusCode()),
+    () -> assertArrayEquals("hello".getBytes(java.nio.charset.StandardCharsets.UTF_8), reply.body()));
+```
+
+Each fixture owns its supplied app and listener lifetime, not user dependencies or mocks.
+Startup failures propagate
 after cleanup; `close()` reports Jetty stop failures as `IOException`. For lifecycle
 notifications, register Jetty's `LifeCycle.Listener` through `Shoostr.modifyServer` before
 startup. No framework-specific lifecycle annotation is required. Run
-`./gradlew consumerSmoke` to publish `http`, `core`, `test-support`, `pac4j`,
+`./gradlew consumerSmoke` to publish `http`, `core`, `test`, `pac4j`,
 `micrometer` and `opentelemetry` into `build/consumer-repository` and execute
 the independent Java 25 consumer under `examples/consumer-smoke`; this does not
 publish to Maven Local or a remote repository. Its JUnit 5 tests exercise the
@@ -48,6 +62,61 @@ notifications and error propagation. The example is also the `:consumer-smoke`
 Gradle module: `./gradlew :consumer-smoke:test` and the root `build` run its
 tests against project dependencies, while `consumerSmoke` verifies published
 artifacts from the independent build.
+
+Configure outgoing requests through the single `send(request -> ...)` interface:
+`path`, `method`, repeated `header`, raw `body(byte[])` and `timeout(Duration)`.
+`method` and `header` also accept existing `HttpMethods` and `HttpHeaders` values.
+GET/no body and a ten-second request timeout are defaults. Paths are explicitly required,
+relative to the fixture's origin, and may include encoded queries; schemes, authorities
+and fragments are rejected. Each request has fresh configuration and copies body bytes.
+No JSON conversion, response wrapper or assertion DSL is involved. The fixture owns its
+JDK client and cookie state; retain it across test methods if shared app/cookies are desired,
+and close it in your testing framework's teardown. It does not reset mocks or dependencies.
+Callers own returned streams/subscriptions; close or consume them. Fixture cleanup cancels
+outstanding client work before stopping the app instead of waiting indefinitely for a body.
+Client termination waits at most three seconds; application shutdown still uses its configured
+native drain timeout and reports stop failures. The fixture does not finish caller-owned work,
+reset dependencies or replace native shutdown settings to hide a blocked handler.
+
+For a shared fixture, assign `TestServer.start(app)` in your framework's before-all setup
+and call `close()` in after-all teardown. The same application, dependency and cookie state
+remains available across test methods; resets are your responsibility. See the executable
+JUnit 5 [shared fixture example](test/src/test/java/io/github/suppierk/shoostr/testing/SharedFixtureTest.java).
+If additional setup fails after startup, close the fixture before propagating the failure.
+
+Shoostr's own ordinary routing tests use this same harness through a core test-only
+dependency. The build order is core production → harness production → core tests;
+core production and the published `shoostr-core` artifact do not depend on `shoostr-test`.
+Native transport, lifecycle and malformed-wire tests retain direct facilities where needed.
+
+The owned client defaults to isolated cookies, redirects disabled, no system proxy and a
+three-second connect timeout, with normal JDK protocol negotiation and TLS verification.
+Customize it only when needed; the callback runs after these defaults:
+
+```java
+try (var server = TestServer.start(app,
+        client -> client.followRedirects(java.net.http.HttpClient.Redirect.ALWAYS))) {
+    var reply = server.send(request -> request.path("/redirect"));
+}
+```
+
+Ordinary requests use only `server.send(request -> ...)`. For native async, WebSocket or
+advanced body-publisher tests, create and close an independent client and connect it to
+`server.baseUri()`. The harness never exposes its owned client. Caller-supplied executors,
+external clients and returned streams/subscriptions remain caller-owned. A request timeout
+is not an independent deadline for reading a returned streaming body.
+
+Automatic startup binds every supported listener to `127.0.0.1:0`, preserving its native
+TLS/HTTP2 configuration. For a stable browser/debugging URL, use
+`TestServer.startOnPort(app, 8081)`; an occupied port fails instead of choosing another.
+`TestServer.startOnPortRange(app, 8081, 8090)` tries the inclusive range in ascending order,
+retains the first successful binding and fails if exhausted. Both named factories require
+exactly one unbound Jetty `ServerConnector`, accept ports from 1 through 65535 and offer the
+same optional client-builder callback. Automatic startup supports multiple/reordered
+listeners; `baseUri()` always reports the application's original default listener.
+Fixed ports help browser reuse, not authentication or cookie isolation. The fixture never
+widens loopback binding or disables application security settings. Range selection finishes
+within one app startup attempt, and reserved sockets are released on failure and shutdown.
 
 Configure Jetty directly before startup, using ordered callbacks similar to Javalin:
 
@@ -72,7 +141,7 @@ The configuration pattern follows [Javalin 7.2.3's native callbacks](https://git
 Java 25 is required; the Gradle wrapper supplies the build tool. Run `cmdshape ./gradlew clean spotlessApply build` to apply formatting, compile, and execute the JUnit 5 test suites and quality checks. Add `:benchmarks:installDist` when runnable benchmark distributions are needed. Use `gradlew.bat` on Windows. See [benchmark commands](benchmarks/README.md) for runnable candidate and Jooby servers.
 
 Run `cmdshape ./gradlew mutationTest` for diagnostic PiTest analysis of `core`, `http`,
-`micrometer`, `opentelemetry`, `pac4j` and `test-support`. It produces native HTML/XML
+`micrometer`, `opentelemetry`, `pac4j` and `test`. It produces native HTML/XML
 reports and is independent of `build`, `check` and CI, with no mutation-score gate.
 See [mutation testing](core/MUTATION_TESTING.md) for scope, module-specific commands,
 report locations and interpretation. The initial full baseline took 54 minutes.

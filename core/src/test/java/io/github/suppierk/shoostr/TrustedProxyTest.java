@@ -7,11 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.ForwardedHeaders;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.Collections;
@@ -27,25 +26,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(15)
 class TrustedProxyTest {
   private Shoostr app;
-  private HttpClient client;
 
   @BeforeEach
   void prepare() {
     app = new Shoostr(Options.defaults().withPort(0));
-    client =
-        HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(Duration.ofSeconds(3))
-            .build();
   }
 
   @AfterEach
   void close() throws Exception {
-    try {
-      client.close();
-    } finally {
-      app.close();
-    }
+    app.close();
   }
 
   @Test
@@ -65,10 +54,19 @@ class TrustedProxyTest {
                       .getHostAddress());
               response.text("direct");
             });
-    app.start();
-    var result = send("/default?raw=a%2Bb", "not=a=valid;for=spoofed");
-    assertEquals(200, result.statusCode());
-    assertEquals("direct", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/default?raw=a%2Bb")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Forwarded", "not=a=valid;for=spoofed"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("direct", result.body());
+    }
   }
 
   @Test
@@ -96,11 +94,20 @@ class TrustedProxyTest {
                       .getHostAddress());
               response.text("forwarded");
             });
-    app.start();
-    var result =
-        send("/forwarded/a+b?raw=%2B", "for=\"203.0.113.7:4123\";host=public.example;proto=https");
-    assertEquals(200, result.statusCode());
-    assertEquals("forwarded", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/forwarded/a+b?raw=%2B")
+                      .timeout(Duration.ofSeconds(3))
+                      .header(
+                          "Forwarded", "for=\"203.0.113.7:4123\";host=public.example;proto=https"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("forwarded", result.body());
+    }
   }
 
   @Test
@@ -128,11 +135,21 @@ class TrustedProxyTest {
                       .getAddress());
               response.text("ipv6");
             });
-    app.start();
-    var result =
-        send("/ipv6?raw=%2B", "for=\"[2001:db8::7]:4123\";host=\"[2001:db8::8]:8443\";proto=https");
-    assertEquals(200, result.statusCode());
-    assertEquals("ipv6", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/ipv6?raw=%2B")
+                      .timeout(Duration.ofSeconds(3))
+                      .header(
+                          "Forwarded",
+                          "for=\"[2001:db8::7]:4123\";host=\"[2001:db8::8]:8443\";proto=https"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("ipv6", result.body());
+    }
   }
 
   @Test
@@ -159,16 +176,34 @@ class TrustedProxyTest {
                       .getAddress());
               response.text("boundary");
             });
-    app.start();
-    String attacker = "for=198.51.100.99;host=evil.example;proto=http";
-    String boundary = "for=\"203.0.113.7:4123\";host=public.example;proto=https";
-    String ingress = "for=192.0.2.10;host=internal.example;proto=http";
-    var combined = send("/repeated?raw=%2B", attacker + ", " + boundary + ", " + ingress);
-    var repeated = send("/repeated?raw=%2B", attacker, boundary, ingress);
-    assertEquals(200, combined.statusCode());
-    assertEquals("boundary", combined.body());
-    assertEquals(200, repeated.statusCode());
-    assertEquals("boundary", repeated.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      String attacker = "for=198.51.100.99;host=evil.example;proto=http";
+      String boundary = "for=\"203.0.113.7:4123\";host=public.example;proto=https";
+      String ingress = "for=192.0.2.10;host=internal.example;proto=http";
+      var combined =
+          test.send(
+              request ->
+                  request
+                      .path("/repeated?raw=%2B")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Forwarded", attacker + ", " + boundary + ", " + ingress),
+              HttpResponse.BodyHandlers.ofString());
+      var repeated =
+          test.send(
+              request ->
+                  request
+                      .path("/repeated?raw=%2B")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Forwarded", attacker)
+                      .header("Forwarded", boundary)
+                      .header("Forwarded", ingress),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, combined.statusCode());
+      assertEquals("boundary", combined.body());
+      assertEquals(200, repeated.statusCode());
+      assertEquals("boundary", repeated.body());
+    }
   }
 
   @Test
@@ -196,21 +231,39 @@ class TrustedProxyTest {
             (_, _) -> {
               throw new IllegalStateException();
             });
-    app.start();
-    var result = send("/gated", "for=203.0.113.7;host=public.example;proto=https");
-    assertEquals(500, result.statusCode());
-    assertEquals("203.0.113.7|https://public.example/gated", result.body());
-    assertTrue(gateInvoked.get());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/gated")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(500, result.statusCode());
+      assertEquals("203.0.113.7|https://public.example/gated", result.body());
+      assertTrue(gateInvoked.get());
+    }
   }
 
   @Test
   void ignoresMalformedForwardingFromAnUntrustedPeer() throws Exception {
     app.trustedProxies(_ -> false);
     app.routes().get("/untrusted", (request, response) -> response.text(request.effectiveUrl()));
-    app.start();
-    var result = send("/untrusted", "for=localhost;host=bad.example;proto=javascript");
-    assertEquals(200, result.statusCode());
-    assertEquals("http://127.0.0.1:" + app.port() + "/untrusted", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/untrusted")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Forwarded", "for=localhost;host=bad.example;proto=javascript"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("http://127.0.0.1:" + app.port() + "/untrusted", result.body());
+    }
   }
 
   @Test
@@ -240,33 +293,39 @@ class TrustedProxyTest {
                     request.clientAddress().orElseThrow().getAddress().getHostAddress()
                         + "|"
                         + request.effectiveUrl()));
-    app.start();
-    var result =
-        client.send(
-            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/legacy"))
-                .header("X-Forwarded-For", "198.51.100.7")
-                .header("X-Forwarded-Host", "public.example")
-                .header("X-Forwarded-Proto", "https")
-                .header("Forwarded", "for=203.0.113.9;host=ignored.example;proto=http")
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, result.statusCode());
-    assertEquals("198.51.100.7|https://public.example/legacy", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/legacy")
+                      .header("X-Forwarded-For", "198.51.100.7")
+                      .header("X-Forwarded-Host", "public.example")
+                      .header("X-Forwarded-Proto", "https")
+                      .header("Forwarded", "for=203.0.113.9;host=ignored.example;proto=http"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("198.51.100.7|https://public.example/legacy", result.body());
+    }
   }
 
   @Test
   void rejectsMisalignedLegacyForwardingLists() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED);
     app.routes().get("/legacy", (_, response) -> response.text("unexpected"));
-    app.start();
-    var result =
-        client.send(
-            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/legacy"))
-                .header("X-Forwarded-For", "198.51.100.7, 192.0.2.10")
-                .header("X-Forwarded-Host", "public.example")
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(400, result.statusCode());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/legacy")
+                      .header("X-Forwarded-For", "198.51.100.7, 192.0.2.10")
+                      .header("X-Forwarded-Host", "public.example"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, result.statusCode());
+    }
   }
 
   @Test
@@ -282,17 +341,20 @@ class TrustedProxyTest {
                     request.clientAddress().orElseThrow().getAddress().getHostAddress()
                         + "|"
                         + request.effectiveUrl()));
-    app.start();
-    var result =
-        client.send(
-            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/legacy-chain"))
-                .header("X-Forwarded-For", "198.51.100.7, 203.0.113.7, 192.0.2.10")
-                .header("X-Forwarded-Host", "evil.example, public.example, proxy.example")
-                .header("X-Forwarded-Proto", "http, https, http")
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, result.statusCode());
-    assertEquals("203.0.113.7|https://public.example/legacy-chain", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/legacy-chain")
+                      .header("X-Forwarded-For", "198.51.100.7, 203.0.113.7, 192.0.2.10")
+                      .header("X-Forwarded-Host", "evil.example, public.example, proxy.example")
+                      .header("X-Forwarded-Proto", "http, https, http"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("203.0.113.7|https://public.example/legacy-chain", result.body());
+    }
   }
 
   @Test
@@ -306,48 +368,57 @@ class TrustedProxyTest {
                     request.effectiveUrl()
                         + "|"
                         + request.clientAddress().orElseThrow().getPort()));
-    app.start();
-    var result =
-        client.send(
-            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/legacy-ipv6"))
-                .header("X-Forwarded-For", "2001:db8::7")
-                .header("X-Forwarded-Host", "public.example:8443")
-                .header("X-Forwarded-Port", "8443")
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, result.statusCode());
-    assertEquals("http://public.example:8443/legacy-ipv6|0", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/legacy-ipv6")
+                      .header("X-Forwarded-For", "2001:db8::7")
+                      .header("X-Forwarded-Host", "public.example:8443")
+                      .header("X-Forwarded-Port", "8443"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("http://public.example:8443/legacy-ipv6|0", result.body());
+    }
   }
 
   @Test
   void rejectsConflictingLegacyHostAndPort() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED);
     app.routes().get("/legacy-port", (_, response) -> response.text("unexpected"));
-    app.start();
-    var result =
-        client.send(
-            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/legacy-port"))
-                .header("X-Forwarded-For", "198.51.100.7")
-                .header("X-Forwarded-Host", "public.example:8443")
-                .header("X-Forwarded-Port", "443")
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(400, result.statusCode());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/legacy-port")
+                      .header("X-Forwarded-For", "198.51.100.7")
+                      .header("X-Forwarded-Host", "public.example:8443")
+                      .header("X-Forwarded-Port", "443"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, result.statusCode());
+    }
   }
 
   @Test
   void rejectsMalformedLegacyOriginOutsideTheSelectedBoundary() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED);
     app.routes().get("/legacy-origin", (_, response) -> response.text("unexpected"));
-    app.start();
-    var result =
-        client.send(
-            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/legacy-origin"))
-                .header("X-Forwarded-For", "198.51.100.7, 192.0.2.10")
-                .header("X-Forwarded-Proto", "javascript, https")
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(400, result.statusCode());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/legacy-origin")
+                      .header("X-Forwarded-For", "198.51.100.7, 192.0.2.10")
+                      .header("X-Forwarded-Proto", "javascript, https"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, result.statusCode());
+    }
   }
 
   @Test
@@ -362,15 +433,17 @@ class TrustedProxyTest {
         },
         ForwardedHeaders.X_FORWARDED);
     app.routes().get("/legacy-predicate", (_, response) -> response.text("unexpected"));
-    app.start();
-    var result =
-        client.send(
-            HttpRequest.newBuilder(
-                    URI.create("http://127.0.0.1:" + app.port() + "/legacy-predicate"))
-                .header("X-Forwarded-For", "198.51.100.7, 192.0.2.10")
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(500, result.statusCode());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/legacy-predicate")
+                      .header("X-Forwarded-For", "198.51.100.7, 192.0.2.10"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(500, result.statusCode());
+    }
   }
 
   @Test
@@ -387,17 +460,34 @@ class TrustedProxyTest {
                         + request.clientAddress().orElseThrow().getPort()
                         + "|"
                         + request.effectiveUrl()));
-    app.start();
-    var result =
-        send(
-            "/chain",
-            "for=198.51.100.99;host=evil.example;proto=http, "
-                + "for=203.0.113.7;host=public.example;proto=https, for=192.0.2.10");
-    assertEquals(200, result.statusCode());
-    assertEquals("203.0.113.7|0|https://public.example/chain", result.body());
-    var stopped = send("/chain", "for=198.51.100.99;host=evil.example;proto=https, for=192.0.2.11");
-    assertEquals(200, stopped.statusCode());
-    assertEquals("192.0.2.11|0|http://127.0.0.1:" + app.port() + "/chain", stopped.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/chain")
+                      .timeout(Duration.ofSeconds(3))
+                      .header(
+                          "Forwarded",
+                          "for=198.51.100.99;host=evil.example;proto=http, "
+                              + "for=203.0.113.7;host=public.example;proto=https, for=192.0.2.10"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("203.0.113.7|0|https://public.example/chain", result.body());
+      var stopped =
+          test.send(
+              request ->
+                  request
+                      .path("/chain")
+                      .timeout(Duration.ofSeconds(3))
+                      .header(
+                          "Forwarded",
+                          "for=198.51.100.99;host=evil.example;proto=https, for=192.0.2.11"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, stopped.statusCode());
+      assertEquals("192.0.2.11|0|http://127.0.0.1:" + app.port() + "/chain", stopped.body());
+    }
   }
 
   @ParameterizedTest
@@ -435,10 +525,19 @@ class TrustedProxyTest {
     app.trustedProxies(InetAddress::isLoopbackAddress);
     app.beforeRouteHandler((_, _) -> calls.incrementAndGet());
     app.routes().get("/invalid", (_, _) -> calls.incrementAndGet());
-    app.start();
-    var result = send("/invalid", value);
-    assertEquals(400, result.statusCode(), value);
-    assertEquals(0, calls.get());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/invalid")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Forwarded", value),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, result.statusCode(), value);
+      assertEquals(0, calls.get());
+    }
   }
 
   @ParameterizedTest
@@ -455,13 +554,23 @@ class TrustedProxyTest {
               assertEquals("https://boundary.example/unknown", request.effectiveUrl());
               response.text("unknown");
             });
-    app.start();
-    var result =
-        send(
-            "/unknown",
-            "for=198.51.100.1;host=evil.example, " + node + "host=boundary.example;proto=https");
-    assertEquals(200, result.statusCode());
-    assertEquals("unknown", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/unknown")
+                      .timeout(Duration.ofSeconds(3))
+                      .header(
+                          "Forwarded",
+                          "for=198.51.100.1;host=evil.example, "
+                              + node
+                              + "host=boundary.example;proto=https"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("unknown", result.body());
+    }
   }
 
   @ParameterizedTest
@@ -471,10 +580,16 @@ class TrustedProxyTest {
     app.trustedProxies(InetAddress::isLoopbackAddress);
     app.beforeRouteHandler((_, _) -> calls.incrementAndGet());
     app.routes().get("/empty", (_, _) -> calls.incrementAndGet());
-    app.start();
-    var result = send("/empty", value);
-    assertEquals(400, result.statusCode(), value);
-    assertEquals(0, calls.get());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request.path("/empty").timeout(Duration.ofSeconds(3)).header("Forwarded", value),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, result.statusCode(), value);
+      assertEquals(0, calls.get());
+    }
   }
 
   @Test
@@ -483,22 +598,40 @@ class TrustedProxyTest {
     app.trustedProxies(InetAddress::isLoopbackAddress);
     app.beforeRouteHandler((_, _) -> calls.incrementAndGet());
     app.routes().get("/bounded", (_, _) -> calls.incrementAndGet());
-    app.start();
-    var value = String.join(",", Collections.nCopies(65, "for=203.0.113.7"));
-    var result = send("/bounded", value);
-    assertEquals(400, result.statusCode());
-    assertEquals(0, calls.get());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var value = String.join(",", Collections.nCopies(65, "for=203.0.113.7"));
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/bounded")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Forwarded", value),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, result.statusCode());
+      assertEquals(0, calls.get());
+    }
   }
 
   @Test
   void acceptsForwardedChainAtTheWorkBound() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress);
     app.routes().get("/bounded", (_, response) -> response.text("accepted"));
-    app.start();
-    var value = String.join(",", Collections.nCopies(64, "for=203.0.113.7"));
-    var result = send("/bounded", value);
-    assertEquals(200, result.statusCode());
-    assertEquals("accepted", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var value = String.join(",", Collections.nCopies(64, "for=203.0.113.7"));
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/bounded")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Forwarded", value),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("accepted", result.body());
+    }
   }
 
   @Test
@@ -507,22 +640,42 @@ class TrustedProxyTest {
     app.trustedProxies(InetAddress::isLoopbackAddress);
     app.beforeRouteHandler((_, _) -> calls.incrementAndGet());
     app.routes().get("/bounded", (_, _) -> calls.incrementAndGet());
-    app.start();
-    var accepted = String.join(",", Collections.nCopies(64, "for=203.0.113.7"));
-    var result = send("/bounded", accepted, "for=203.0.113.8");
-    assertEquals(400, result.statusCode());
-    assertEquals(0, calls.get());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var accepted = String.join(",", Collections.nCopies(64, "for=203.0.113.7"));
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/bounded")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Forwarded", accepted)
+                      .header("Forwarded", "for=203.0.113.8"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, result.statusCode());
+      assertEquals(0, calls.get());
+    }
   }
 
   @Test
   void acceptsLongQuotedForwardedExtension() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress);
     app.routes().get("/quoted", (_, response) -> response.text("accepted"));
-    app.start();
 
-    var result = send("/quoted", "for=203.0.113.7;extension=\"" + "x".repeat(4000) + "\"");
-    assertEquals(200, result.statusCode());
-    assertEquals("accepted", result.body());
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/quoted")
+                      .timeout(Duration.ofSeconds(3))
+                      .header(
+                          "Forwarded", "for=203.0.113.7;extension=\"" + "x".repeat(4000) + "\""),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("accepted", result.body());
+    }
   }
 
   @ParameterizedTest
@@ -531,28 +684,39 @@ class TrustedProxyTest {
   void acceptsEscapedQuotedForwardedExtensions(String value) throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress);
     app.routes().get("/quoted", (_, response) -> response.text("accepted"));
-    app.start();
 
-    assertEquals(200, send("/quoted", value).statusCode());
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+
+      assertEquals(
+          200,
+          test.send(
+                  request ->
+                      request
+                          .path("/quoted")
+                          .timeout(Duration.ofSeconds(3))
+                          .header("Forwarded", value),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+    }
   }
 
   @Test
   void rejectsEscapedClosingQuoteWithoutTerminator() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress);
     app.routes().get("/quoted", (_, response) -> response.text("unexpected"));
-    app.start();
 
-    assertEquals(400, send("/quoted", "for=203.0.113.7;extension=\"abc\\\"").statusCode());
-  }
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
 
-  private HttpResponse<String> send(String path, String... forwarded) throws Exception {
-    var request =
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-            .timeout(Duration.ofSeconds(3));
-    for (var value : forwarded) {
-      request.header("Forwarded", value);
+      assertEquals(
+          400,
+          test.send(
+                  request ->
+                      request
+                          .path("/quoted")
+                          .timeout(Duration.ofSeconds(3))
+                          .header("Forwarded", "for=203.0.113.7;extension=\"abc\\\""),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
-
-    return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
   }
 }

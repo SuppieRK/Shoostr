@@ -7,12 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
@@ -71,8 +69,7 @@ class RequestObservationTest {
     var result = new CompletableFuture<RequestOutcome>();
     var closed = new AtomicBoolean();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.observe(
           _ -> {
             throw new IllegalStateException("factory failed");
@@ -104,18 +101,16 @@ class RequestObservationTest {
                 }
               });
       app.routes().get("/ok", (_, response) -> response.text("ok"));
-      app.start();
-      var response =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/ok"))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals("ok", response.body());
-      var outcome = result.get(5, TimeUnit.SECONDS);
-      assertEquals(200, outcome.statusCode());
-      assertTrue(closed.get());
-      assertNull(outcome.applicationFailure());
+
+      try (var test = TestServer.start(app)) {
+        var response =
+            test.send(request -> request.path("/ok"), HttpResponse.BodyHandlers.ofString());
+        assertEquals("ok", response.body());
+        var outcome = result.get(5, TimeUnit.SECONDS);
+        assertEquals(200, outcome.statusCode());
+        assertTrue(closed.get());
+        assertNull(outcome.applicationFailure());
+      }
     }
   }
 
@@ -125,8 +120,7 @@ class RequestObservationTest {
     var closed = new AtomicBoolean();
     var result = new CompletableFuture<RequestOutcome>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.observe(
           _ -> {
             current.set("observed");
@@ -146,18 +140,16 @@ class RequestObservationTest {
             };
           });
       app.onRequestHeaders((_, _) -> assertEquals("observed", current.get()));
-      app.start();
 
-      var response =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/missing"))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.discarding());
-      assertEquals(404, response.statusCode());
-      assertEquals(404, result.get(5, TimeUnit.SECONDS).statusCode());
-      assertNull(result.get().routePattern());
-      assertThrows(IllegalStateException.class, () -> app.observe(_ -> _ -> {}));
+      try (var test = TestServer.start(app)) {
+
+        var response =
+            test.send(request -> request.path("/missing"), HttpResponse.BodyHandlers.discarding());
+        assertEquals(404, response.statusCode());
+        assertEquals(404, result.get(5, TimeUnit.SECONDS).statusCode());
+        assertNull(result.get().routePattern());
+        assertThrows(IllegalStateException.class, () -> app.observe(_ -> _ -> {}));
+      }
     }
   }
 }

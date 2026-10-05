@@ -12,6 +12,7 @@ dependencies {
 	api 'org.eclipse.jetty.compression:jetty-compression-server:12.1.13'
 	api 'org.eclipse.jetty.websocket:jetty-websocket-jetty-server:12.1.13'
 	runtimeOnly 'org.eclipse.jetty.compression:jetty-compression-gzip:12.1.13'
+	testImplementation project(':test')
 	testImplementation 'org.eclipse.jetty.compression:jetty-compression-gzip:12.1.13'
 	testImplementation 'org.eclipse.jetty.http2:jetty-http2-client:12.1.13'
 	testRuntimeOnly 'org.eclipse.jetty:jetty-alpn-java-client:12.1.13'

@@ -23,7 +23,7 @@ configurations {
 }
 
 dependencies {
-	implementation standaloneBuild ? 'io.github.suppierk:shoostr-test-support:0.1.0-SNAPSHOT' : project(':test-support')
+	implementation standaloneBuild ? 'io.github.suppierk:shoostr-test:0.1.0-SNAPSHOT' : project(':test')
 	baseRuntime standaloneBuild ? 'io.github.suppierk:shoostr-core:0.1.0-SNAPSHOT' : project(':core')
 	compileOnly 'org.jspecify:jspecify:1.0.1'
 	testImplementation standaloneBuild ? 'io.github.suppierk:shoostr-pac4j:0.1.0-SNAPSHOT' : project(':pac4j')
@@ -58,7 +58,7 @@ tasks.register('verifyBaseDependencies') {
 			'pac4j',
 			'micrometer',
 			'opentelemetry',
-			'test-support'
+			'test'
 		].collect {
 			modulePrefix + it
 		}

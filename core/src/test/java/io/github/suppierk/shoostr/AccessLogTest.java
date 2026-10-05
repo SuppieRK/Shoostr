@@ -8,12 +8,15 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
+import io.github.suppierk.shoostr.testing.TestServer;
+import java.net.CookieManager;
+import java.net.CookiePolicy;
 import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -132,8 +135,7 @@ class AccessLogTest {
   void logsTerminalMetadataWithoutCredentialsIdentifiersBodiesOrFailureMessages() throws Exception {
     var lines = new LinkedBlockingQueue<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.afterRequest(new AccessLog(lines::add));
       app.routes()
           .post(
@@ -141,25 +143,30 @@ class AccessLogTest {
               (_, _) -> {
                 throw new IllegalStateException("private failure details");
               });
-      app.start();
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create(
-                          "http://127.0.0.1:" + app.port() + "/orders/private-id?secret=value"))
-                  .header("Authorization", "Bearer private-token")
-                  .header("Cookie", "session=private-cookie")
-                  .POST(HttpRequest.BodyPublishers.ofString("private body"))
-                  .build(),
-              HttpResponse.BodyHandlers.discarding());
-      assertEquals(500, result.statusCode());
-      var line = lines.poll(5, TimeUnit.SECONDS);
-      assertNotNull(line);
-      assertTrue(line.startsWith("method=POST route=/orders/{id} status=500 duration_ns="));
-      assertTrue(line.endsWith(" application_failure=true transport_failure=false"));
-      assertFalse(line.contains("private"));
-      assertFalse(line.contains("secret"));
-      assertTrue(lines.isEmpty());
+
+      try (var test =
+          TestServer.start(
+              app,
+              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/orders/private-id?secret=value")
+                        .header("Authorization", "Bearer private-token")
+                        .header("Cookie", "session=private-cookie")
+                        .method("POST")
+                        .body("private body".getBytes(StandardCharsets.UTF_8)),
+                HttpResponse.BodyHandlers.discarding());
+        assertEquals(500, result.statusCode());
+        var line = lines.poll(5, TimeUnit.SECONDS);
+        assertNotNull(line);
+        assertTrue(line.startsWith("method=POST route=/orders/{id} status=500 duration_ns="));
+        assertTrue(line.endsWith(" application_failure=true transport_failure=false"));
+        assertFalse(line.contains("private"));
+        assertFalse(line.contains("secret"));
+        assertTrue(lines.isEmpty());
+      }
     }
   }
 }
