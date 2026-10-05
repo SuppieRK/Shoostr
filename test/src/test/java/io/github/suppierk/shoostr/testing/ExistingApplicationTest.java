@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr.testing;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.Options;
@@ -8,9 +9,17 @@ import io.github.suppierk.shoostr.Shoostr;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.Arrays;
 import org.junit.jupiter.api.Test;
 
 class ExistingApplicationTest {
+  @Test
+  void doesNotExposeTheOwnedClientThroughItsPublicInterface() {
+    assertFalse(
+        Arrays.stream(TestServer.class.getMethods())
+            .anyMatch(method -> HttpClient.class.isAssignableFrom(method.getReturnType())));
+  }
+
   @Test
   void servesRoutesRegisteredOnTheSuppliedApplication() throws Exception {
     var app = new Shoostr();

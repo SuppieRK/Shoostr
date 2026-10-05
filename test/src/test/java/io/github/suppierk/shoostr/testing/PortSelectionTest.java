@@ -16,7 +16,6 @@ import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
 import org.eclipse.jetty.server.ServerConnector;
@@ -100,16 +99,18 @@ class PortSelectionTest {
 
     var app = new Shoostr();
     app.routes().get("/value", (_, response) -> response.text("custom client"));
+    app.routes().get("/redirect", (_, response) -> response.redirect("/value"));
 
     try (var test =
         range
             ? TestServer.startOnPortRange(
-                app, port, port, client -> client.connectTimeout(Duration.ofSeconds(7)))
+                app, port, port, client -> client.followRedirects(HttpClient.Redirect.ALWAYS))
             : TestServer.startOnPort(
-                app, port, client -> client.connectTimeout(Duration.ofSeconds(7)))) {
-      assertEquals(Duration.ofSeconds(7), test.httpClient().connectTimeout().orElseThrow());
-      assertEquals(HttpClient.Redirect.NEVER, test.httpClient().followRedirects());
-      assertEquals(200, test.send(request -> request.path("/value")).statusCode());
+                app, port, client -> client.followRedirects(HttpClient.Redirect.ALWAYS))) {
+      var response =
+          test.send(request -> request.path("/redirect"), HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, response.statusCode());
+      assertEquals("custom client", response.body());
     }
   }
 
@@ -183,7 +184,9 @@ class PortSelectionTest {
       assertThrows(
           BindException.class,
           () -> {
-            try (var _ = bind(port)) {}
+            try (var _ = bind(port)) {
+              // A successful bind makes assertThrows fail after closing the unexpected socket.
+            }
           });
     }
 
@@ -246,7 +249,9 @@ class PortSelectionTest {
                       assertThrows(
                           BindException.class,
                           () -> {
-                            try (var _ = bind(port)) {}
+                            try (var _ = bind(port)) {
+                              // A successful bind makes assertThrows fail after socket cleanup.
+                            }
                           });
                       throw expected;
                     }

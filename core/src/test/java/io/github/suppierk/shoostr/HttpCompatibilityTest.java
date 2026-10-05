@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -27,25 +28,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(15)
 class HttpCompatibilityTest {
   private Shoostr app;
-  private HttpClient client;
 
   @BeforeEach
   void prepare() {
     app = new Shoostr(new Options("127.0.0.1", 0, 16, 1024, 8, 5000));
-    client =
-        HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(Duration.ofSeconds(3))
-            .build();
   }
 
   @AfterEach
   void close() throws Exception {
-    try {
-      client.close();
-    } finally {
-      app.close();
-    }
+    app.close();
   }
 
   @ParameterizedTest
@@ -59,33 +50,39 @@ class HttpCompatibilityTest {
             "/dispatch",
             (request, response) ->
                 response.setHeader("X-Handled-Method", request.method()).text(request.method()));
-    app.start();
-    var response =
-        client.send(
-            request("/dispatch")
-                .method(method.value(), HttpRequest.BodyPublishers.noBody())
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, response.statusCode());
-    assertEquals(method.value(), response.headers().firstValue("X-Handled-Method").orElseThrow());
-    assertEquals(method == HttpMethods.HEAD ? "" : method.value(), response.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var response =
+          test.send(
+              request ->
+                  request.path("/dispatch").timeout(Duration.ofSeconds(3)).method(method.value()),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, response.statusCode());
+      assertEquals(method.value(), response.headers().firstValue("X-Handled-Method").orElseThrow());
+      assertEquals(method == HttpMethods.HEAD ? "" : method.value(), response.body());
+    }
   }
 
   @ParameterizedTest
   @ValueSource(strings = {"/versions/v2.1", "/jobs/name:run", "/search/a+b", "/price/$value"})
   void matchesLiteralPunctuationWithoutInterpretingItAsPatternSyntax(String path) throws Exception {
     app.routes().get(path, (request, response) -> response.text(request.path()));
-    app.start();
-    var response =
-        client.send(
-            request(path + "?ignored=/another/path").build(), HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, response.statusCode());
-    assertEquals(path, response.body());
-    assertEquals(
-        404,
-        client
-            .send(request(path + "-extra").build(), HttpResponse.BodyHandlers.ofString())
-            .statusCode());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var response =
+          test.send(
+              request ->
+                  request.path(path + "?ignored=/another/path").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, response.statusCode());
+      assertEquals(path, response.body());
+      assertEquals(
+          404,
+          test.send(
+                  request -> request.path(path + "-extra").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+    }
   }
 
   @ParameterizedTest
@@ -95,21 +92,26 @@ class HttpCompatibilityTest {
         .get(
             "/values/{item}",
             (request, response) -> response.text(request.pathParam("item").orElseThrow()));
-    app.start();
-    String expected =
-        switch (raw) {
-          case "M%C3%BCnchen" -> "München";
-          default -> raw;
-        };
-    var response =
-        client.send(request("/values/" + raw).build(), HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, response.statusCode());
-    assertEquals(expected, response.body());
-    assertEquals(
-        404,
-        client
-            .send(request("/VALUES/" + raw).build(), HttpResponse.BodyHandlers.ofString())
-            .statusCode());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      String expected =
+          switch (raw) {
+            case "M%C3%BCnchen" -> "München";
+            default -> raw;
+          };
+      var response =
+          test.send(
+              request -> request.path("/values/" + raw).timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, response.statusCode());
+      assertEquals(expected, response.body());
+      assertEquals(
+          404,
+          test.send(
+                  request -> request.path("/VALUES/" + raw).timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+    }
   }
 
   @Test
@@ -122,13 +124,16 @@ class HttpCompatibilityTest {
               invoked.set(true);
               response.text(request.pathParam("item").orElseThrow());
             });
-    app.start();
-    assertEquals(
-        400,
-        client
-            .send(request("/values/rate%25done").build(), HttpResponse.BodyHandlers.ofString())
-            .statusCode());
-    assertFalse(invoked.get());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      assertEquals(
+          400,
+          test.send(
+                  request -> request.path("/values/rate%25done").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertFalse(invoked.get());
+    }
   }
 
   @ParameterizedTest
@@ -149,36 +154,51 @@ class HttpCompatibilityTest {
               assertEquals(text, request.bodyText());
               response.body("application/octet-stream", request.bodyBytes());
             });
-    app.start();
-    var response =
-        client.send(
-            request("/body").POST(HttpRequest.BodyPublishers.ofByteArray(expected)).build(),
-            HttpResponse.BodyHandlers.ofByteArray());
-    assertEquals(200, response.statusCode());
-    assertArrayEquals(expected, response.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var response =
+          test.send(
+              request ->
+                  request
+                      .path("/body")
+                      .timeout(Duration.ofSeconds(3))
+                      .method("POST")
+                      .body(expected));
+      assertEquals(200, response.statusCode());
+      assertArrayEquals(expected, response.body());
+    }
   }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void acceptsTheByteLimitAndRejectsOneAdditionalByte(boolean chunked) throws Exception {
-    app.routes()
-        .post(
-            "/bounded",
-            (request, response) -> response.body("application/octet-stream", request.bodyBytes()));
-    app.start();
-    byte[] atLimit = "é".repeat(8).getBytes(StandardCharsets.UTF_8);
-    for (byte[] bytes :
-        new byte[][] {atLimit, ("é".repeat(8) + "x").getBytes(StandardCharsets.UTF_8)}) {
-      var publisher =
-          chunked
-              ? HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))
-              : HttpRequest.BodyPublishers.ofByteArray(bytes);
-      var response =
-          client.send(
-              request("/bounded").POST(publisher).build(), HttpResponse.BodyHandlers.ofByteArray());
-      assertEquals(bytes.length == 16 ? 200 : 413, response.statusCode());
-      if (bytes.length == 16) {
-        assertArrayEquals(atLimit, response.body());
+    // Independent transport access is required by this test's wire/client behavior.
+    try (var client =
+        HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
+            .connectTimeout(Duration.ofSeconds(3))
+            .build()) {
+      app.routes()
+          .post(
+              "/bounded",
+              (request, response) ->
+                  response.body("application/octet-stream", request.bodyBytes()));
+      app.start();
+      byte[] atLimit = "é".repeat(8).getBytes(StandardCharsets.UTF_8);
+      for (byte[] bytes :
+          new byte[][] {atLimit, ("é".repeat(8) + "x").getBytes(StandardCharsets.UTF_8)}) {
+        var publisher =
+            chunked
+                ? HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))
+                : HttpRequest.BodyPublishers.ofByteArray(bytes);
+        var response =
+            client.send(
+                request("/bounded").POST(publisher).build(),
+                HttpResponse.BodyHandlers.ofByteArray());
+        assertEquals(bytes.length == 16 ? 200 : 413, response.statusCode());
+        if (bytes.length == 16) {
+          assertArrayEquals(atLimit, response.body());
+        }
       }
     }
   }
@@ -197,16 +217,22 @@ class HttpCompatibilityTest {
                   .status(201)
                   .text("café");
             });
-    app.start();
-    var response =
-        client.send(
-            request("/headers").header(spelling, "current").build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(201, response.statusCode());
-    assertEquals(List.of("current"), response.headers().allValues("X-Result"));
-    assertEquals("café", response.body());
-    assertEquals(
-        5, response.headers().firstValueAsLong(HttpHeaders.CONTENT_LENGTH.value()).orElseThrow());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var response =
+          test.send(
+              request ->
+                  request
+                      .path("/headers")
+                      .timeout(Duration.ofSeconds(3))
+                      .header(spelling, "current"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(201, response.statusCode());
+      assertEquals(List.of("current"), response.headers().allValues("X-Result"));
+      assertEquals("café", response.body());
+      assertEquals(
+          5, response.headers().firstValueAsLong(HttpHeaders.CONTENT_LENGTH.value()).orElseThrow());
+    }
   }
 
   @Test
@@ -219,15 +245,21 @@ class HttpCompatibilityTest {
                 response
                     .setHeader(tenant.value(), request.header(tenant.value()).orElseThrow())
                     .text("ok"));
-    app.start();
 
-    var response =
-        client.send(
-            request("/tenant").header("x-tenant", "revolut").build(),
-            HttpResponse.BodyHandlers.ofString());
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
 
-    assertEquals("revolut", response.headers().firstValue(tenant.value()).orElseThrow());
-    assertEquals("ok", response.body());
+      var response =
+          test.send(
+              request ->
+                  request
+                      .path("/tenant")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("x-tenant", "revolut"),
+              HttpResponse.BodyHandlers.ofString());
+
+      assertEquals("revolut", response.headers().firstValue(tenant.value()).orElseThrow());
+      assertEquals("ok", response.body());
+    }
   }
 
   private HttpRequest.Builder request(String path) {

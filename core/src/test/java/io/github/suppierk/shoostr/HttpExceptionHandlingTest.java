@@ -13,6 +13,7 @@ import io.github.suppierk.shoostr.http.exceptions.HttpException;
 import io.github.suppierk.shoostr.http.exceptions.HttpServerException;
 import io.github.suppierk.shoostr.http.exceptions.NotFoundException;
 import io.github.suppierk.shoostr.http.exceptions.ServiceUnavailableException;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -43,8 +44,7 @@ class HttpExceptionHandlingTest {
     var retainedRequest = new AtomicReference<Request>();
     var retainedResponse = new AtomicReference<Response>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .get(
               "/error",
@@ -57,22 +57,26 @@ class HttpExceptionHandlingTest {
                     .body("text/html", new byte[] {1, 2});
                 throw failure;
               });
-      app.start();
-      var result =
-          client.send(request(app, "/error").build(), HttpResponse.BodyHandlers.ofString());
 
-      assertEquals(failure.statusCode().value(), result.statusCode());
-      assertEquals(failure.statusCode().reasonPhrase(), result.body());
-      assertTrue(result.headers().firstValue("X-Leak").isEmpty());
-      assertEquals(
-          "text/plain; charset=utf-8", result.headers().firstValue("Content-Type").orElseThrow());
-      assertEquals(
-          result.body().getBytes(StandardCharsets.UTF_8).length,
-          result.headers().firstValueAsLong("Content-Length").orElseThrow());
-      var closedRequest = retainedRequest.get();
-      var closedResponse = retainedResponse.get();
-      assertThrows(IllegalStateException.class, closedRequest::path);
-      assertThrows(IllegalStateException.class, () -> closedResponse.text("too late"));
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request -> request.path("/error").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(failure.statusCode().value(), result.statusCode());
+        assertEquals(failure.statusCode().reasonPhrase(), result.body());
+        assertTrue(result.headers().firstValue("X-Leak").isEmpty());
+        assertEquals(
+            "text/plain; charset=utf-8", result.headers().firstValue("Content-Type").orElseThrow());
+        assertEquals(
+            result.body().getBytes(StandardCharsets.UTF_8).length,
+            result.headers().firstValueAsLong("Content-Length").orElseThrow());
+        var closedRequest = retainedRequest.get();
+        var closedResponse = retainedResponse.get();
+        assertThrows(IllegalStateException.class, closedRequest::path);
+        assertThrows(IllegalStateException.class, () -> closedResponse.text("too late"));
+      }
     }
   }
 
@@ -112,19 +116,22 @@ class HttpExceptionHandlingTest {
 
   @Test
   void doesNotUnwrapAnHttpExceptionCause() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .get(
               "/error",
               (_, _) -> {
                 throw new CompletionException(new NotFoundException("secret"));
               });
-      app.start();
-      var result =
-          client.send(request(app, "/error").build(), HttpResponse.BodyHandlers.ofString());
-      assertEquals(500, result.statusCode());
-      assertEquals("Internal Server Error", result.body());
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request -> request.path("/error").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(500, result.statusCode());
+        assertEquals("Internal Server Error", result.body());
+      }
     }
   }
 
@@ -133,8 +140,7 @@ class HttpExceptionHandlingTest {
   void omitsReasonPhraseWhenItExceedsTheResponseLimit(boolean httpFailure) throws Exception {
     var options = new Options("127.0.0.1", 0, 16, 1, 8, 5000);
 
-    try (var app = new Shoostr(options);
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(options)) {
       app.routes()
           .get(
               "/error",
@@ -146,12 +152,16 @@ class HttpExceptionHandlingTest {
 
                 throw new IllegalStateException("secret");
               });
-      app.start();
-      var result =
-          client.send(request(app, "/error").build(), HttpResponse.BodyHandlers.ofString());
-      assertEquals(httpFailure ? 503 : 500, result.statusCode());
-      assertTrue(result.body().isEmpty());
-      assertEquals(0, result.headers().firstValueAsLong("Content-Length").orElseThrow());
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request -> request.path("/error").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(httpFailure ? 503 : 500, result.statusCode());
+        assertTrue(result.body().isEmpty());
+        assertEquals(0, result.headers().firstValueAsLong("Content-Length").orElseThrow());
+      }
     }
   }
 
@@ -162,8 +172,7 @@ class HttpExceptionHandlingTest {
     var release = new CountDownLatch(1);
     var retainedStream = new AtomicReference<Response.Stream>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .get(
               "/stream",
@@ -183,33 +192,37 @@ class HttpExceptionHandlingTest {
 
                 throw new BadRequestException("secret");
               });
-      app.start();
 
-      try {
-        var result =
-            client.send(request(app, "/stream").build(), HttpResponse.BodyHandlers.ofInputStream());
-        assertEquals(200, result.statusCode());
+      try (var test = TestServer.start(app)) {
 
-        try (var input = result.body()) {
-          assertEquals("partial\n", new String(input.readNBytes(8), StandardCharsets.UTF_8));
+        try {
+          var result =
+              test.send(
+                  request -> request.path("/stream").timeout(Duration.ofSeconds(5)),
+                  HttpResponse.BodyHandlers.ofInputStream());
+          assertEquals(200, result.statusCode());
+
+          try (var input = result.body()) {
+            assertEquals("partial\n", new String(input.readNBytes(8), StandardCharsets.UTF_8));
+            release.countDown();
+            var received = new StringBuilder();
+            assertThrows(
+                IOException.class,
+                () -> {
+                  int value;
+                  while ((value = input.read()) != -1) {
+                    received.append((char) value);
+                  }
+                });
+            assertEquals(
+                "", received.toString(), "No pending bytes or replacement error body may be sent");
+          }
+
+          var closedStream = retainedStream.get();
+          assertThrows(IllegalStateException.class, () -> closedStream.write("too late"));
+        } finally {
           release.countDown();
-          var received = new StringBuilder();
-          assertThrows(
-              IOException.class,
-              () -> {
-                int value;
-                while ((value = input.read()) != -1) {
-                  received.append((char) value);
-                }
-              });
-          assertEquals(
-              "", received.toString(), "No pending bytes or replacement error body may be sent");
         }
-
-        var closedStream = retainedStream.get();
-        assertThrows(IllegalStateException.class, () -> closedStream.write("too late"));
-      } finally {
-        release.countDown();
       }
     }
   }
@@ -240,22 +253,23 @@ class HttpExceptionHandlingTest {
 
   @Test
   void suppressesErrorBodyForHeadRequests() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
           .head(
               "/error",
               (_, _) -> {
                 throw new NotFoundException("secret");
               });
-      app.start();
-      var result =
-          client.send(
-              request(app, "/error").method("HEAD", HttpRequest.BodyPublishers.noBody()).build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(404, result.statusCode());
-      assertTrue(result.body().isEmpty());
-      assertFalse(result.headers().firstValue("Content-Type").isEmpty());
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request -> request.path("/error").timeout(Duration.ofSeconds(5)).method("HEAD"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(404, result.statusCode());
+        assertTrue(result.body().isEmpty());
+        assertFalse(result.headers().firstValue("Content-Type").isEmpty());
+      }
     }
   }
 

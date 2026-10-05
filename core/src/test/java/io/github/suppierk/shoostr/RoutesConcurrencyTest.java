@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -25,8 +26,7 @@ class RoutesConcurrencyTest {
   @Test
   void preservesRegistrationsAcrossRootAndSharedPathScopes() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
-        var workers = Executors.newVirtualThreadPerTaskExecutor();
-        var client = HttpClient.newHttpClient()) {
+        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       var scopes = scopes(app);
       var ready = new CountDownLatch(1);
       var tasks = new ArrayList<Future<?>>();
@@ -47,20 +47,18 @@ class RoutesConcurrencyTest {
       for (var task : tasks) {
         task.get(5, TimeUnit.SECONDS);
       }
-      app.start();
-      for (int worker = 0; worker < 8; worker++) {
-        for (int route = 0; route < 8; route++) {
-          String path = worker + "/" + route;
-          assertEquals(
-              path,
-              client
-                  .send(
-                      HttpRequest.newBuilder(
-                              URI.create("http://127.0.0.1:" + app.port() + "/api/" + path))
-                          .timeout(Duration.ofSeconds(3))
-                          .build(),
-                      HttpResponse.BodyHandlers.ofString())
-                  .body());
+
+      try (var test = TestServer.start(app)) {
+        for (int worker = 0; worker < 8; worker++) {
+          for (int route = 0; route < 8; route++) {
+            String path = worker + "/" + route;
+            assertEquals(
+                path,
+                test.send(
+                        request -> request.path("/api/" + path).timeout(Duration.ofSeconds(3)),
+                        HttpResponse.BodyHandlers.ofString())
+                    .body());
+          }
         }
       }
     }
@@ -69,8 +67,7 @@ class RoutesConcurrencyTest {
   @Test
   void rejectsConcurrentDuplicateShapesAcrossDifferentScopes() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
-        var workers = Executors.newVirtualThreadPerTaskExecutor();
-        var client = HttpClient.newHttpClient()) {
+        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       var scopes = scopes(app);
       var ready = new CountDownLatch(1);
       var tasks = new ArrayList<Future<Boolean>>();
@@ -103,24 +100,22 @@ class RoutesConcurrencyTest {
         }
       }
       assertEquals(1, winners);
-      app.start();
-      assertEquals(
-          Integer.toString(winner),
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/api/42"))
-                      .timeout(Duration.ofSeconds(3))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            Integer.toString(winner),
+            test.send(
+                    request -> request.path("/api/42").timeout(Duration.ofSeconds(3)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
   @Test
   void callbacksCanWaitForRegistrationsFromOtherThreads() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0));
-        var workers = Executors.newVirtualThreadPerTaskExecutor();
-        var client = HttpClient.newHttpClient()) {
+        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       app.routes()
           .path(
               "/api",
@@ -135,17 +130,15 @@ class RoutesConcurrencyTest {
                     workers.submit(() -> assertThrows(IllegalStateException.class, app::start));
                 assertDoesNotThrow(() -> startup.get(3, TimeUnit.SECONDS));
               });
-      app.start();
-      assertEquals(
-          "ready",
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create("http://127.0.0.1:" + app.port() + "/api/nested"))
-                      .timeout(Duration.ofSeconds(3))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ready",
+            test.send(
+                    request -> request.path("/api/nested").timeout(Duration.ofSeconds(3)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
@@ -155,8 +148,7 @@ class RoutesConcurrencyTest {
     var release = new CountDownLatch(1);
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
-        var workers = Executors.newVirtualThreadPerTaskExecutor();
-        var client = HttpClient.newHttpClient()) {
+        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       var callback =
           workers.submit(
               () ->
@@ -175,16 +167,15 @@ class RoutesConcurrencyTest {
       }
 
       assertEquals(app, callback.get(3, TimeUnit.SECONDS));
-      app.start();
-      assertEquals(
-          "ready",
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/ready"))
-                      .timeout(Duration.ofSeconds(3))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ready",
+            test.send(
+                    request -> request.path("/ready").timeout(Duration.ofSeconds(3)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 

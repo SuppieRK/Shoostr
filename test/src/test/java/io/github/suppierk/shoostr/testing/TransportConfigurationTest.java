@@ -48,7 +48,10 @@ class TransportConfigurationTest {
         });
     app.routes().get("/value", (_, response) -> response.text("both listeners"));
 
-    try (var test = TestServer.start(app)) {
+    // The secondary listener is outside the harness's default request origin.
+
+    try (var test = TestServer.start(app);
+        var client = HttpClient.newHttpClient()) {
       assertEquals(listeners.get().getFirst().getLocalPort(), test.baseUri().getPort());
       assertEquals(app.port(), test.baseUri().getPort());
       assertNotEquals(
@@ -58,7 +61,7 @@ class TransportConfigurationTest {
         var target = URI.create("http://127.0.0.1:" + listener.getLocalPort() + "/value");
         assertEquals(
             "both listeners",
-            test.httpClient()
+            client
                 .send(HttpRequest.newBuilder(target).build(), HttpResponse.BodyHandlers.ofString())
                 .body());
       }

@@ -8,9 +8,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import io.github.suppierk.shoostr.extensions.AdmissionExtension;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -39,8 +37,7 @@ class RoutePolicyTest {
   @Test
   void protectionPreservesTheAlreadyComposedGroupEndpoint() throws Exception {
     try (var plain = new Shoostr(Options.defaults().withPort(0));
-        var guarded = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+        var guarded = new Shoostr(Options.defaults().withPort(0))) {
       plain
           .routes()
           .path("/api//", routes -> routes.get("", (_, response) -> response.text("plain")));
@@ -52,49 +49,39 @@ class RoutePolicyTest {
               "/api//",
               routes ->
                   routes.get("", (_, response) -> response.text("guarded"), e -> e.get(admission)));
-      plain.start();
-      guarded.start();
 
-      assertEquals(
-          200,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + plain.port() + "/api/"))
-                      .timeout(Duration.ofSeconds(5))
-                      .GET()
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
-      assertEquals(
-          404,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + plain.port() + "/api"))
-                      .timeout(Duration.ofSeconds(5))
-                      .GET()
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
-      assertEquals(
-          200,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + guarded.port() + "/api/"))
-                      .timeout(Duration.ofSeconds(5))
-                      .GET()
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
-      assertEquals(
-          404,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + guarded.port() + "/api"))
-                      .timeout(Duration.ofSeconds(5))
-                      .GET()
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
+      try (var plainTest = TestServer.start(plain);
+          var guardedTest = TestServer.start(guarded)) {
+
+        assertEquals(
+            200,
+            plainTest
+                .send(
+                    request -> request.path("/api/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            404,
+            plainTest
+                .send(
+                    request -> request.path("/api").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            200,
+            guardedTest
+                .send(
+                    request -> request.path("/api/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            404,
+            guardedTest
+                .send(
+                    request -> request.path("/api").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
   }
 
@@ -106,8 +93,7 @@ class RoutePolicyTest {
             (request, _) ->
                 request.attribute("order", request.attribute("order").orElseThrow() + ",inner"));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.extensions(outer, inner)
           .routes()
           .path(
@@ -119,18 +105,15 @@ class RoutePolicyTest {
                           response.text(request.attribute("order").orElseThrow() + ",handler"),
                       e -> e.get(inner)),
               e -> e.get(outer));
-      app.start();
-      assertEquals(
-          "outer,inner,handler",
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create("http://127.0.0.1:" + app.port() + "/api/order"))
-                      .timeout(Duration.ofSeconds(5))
-                      .GET()
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "outer,inner,handler",
+            test.send(
+                    request -> request.path("/api/order").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
@@ -142,29 +125,25 @@ class RoutePolicyTest {
                 assertThrows(
                     IllegalStateException.class, () -> response.startStream("text/plain")));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.extensions(admission)
           .routes()
           .get("/stream", (_, response) -> response.text("finite"), e -> e.get(admission));
-      app.start();
-      assertEquals(
-          "finite",
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/stream"))
-                      .timeout(Duration.ofSeconds(5))
-                      .GET()
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "finite",
+            test.send(
+                    request -> request.path("/stream").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 
   @Test
   void retainsAuthenticationChallengesThroughGlobalErrorRendering() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.exception(
           AuthenticationRequiredException.class,
           (_, _, response) -> response.text("login required"));
@@ -178,19 +157,18 @@ class RoutePolicyTest {
       app.authentication(auth)
           .routes()
           .get("/private", (_, response) -> response.text("secret"), e -> e.get(auth).required());
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/private"))
-                  .timeout(Duration.ofSeconds(5))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(401, result.statusCode());
-      assertEquals("login required", result.body());
-      assertEquals(
-          "Bearer realm=\"api\"", result.headers().firstValue("WWW-Authenticate").orElseThrow());
+      try (var test = TestServer.start(app)) {
+
+        var result =
+            test.send(
+                request -> request.path("/private").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, result.statusCode());
+        assertEquals("login required", result.body());
+        assertEquals(
+            "Bearer realm=\"api\"", result.headers().firstValue("WWW-Authenticate").orElseThrow());
+      }
     }
   }
 
@@ -204,8 +182,7 @@ class RoutePolicyTest {
 
     Files.writeString(directory.resolve("secret.txt"), "secret");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var admission =
           new AdmissionExtension(
               (_, _) -> {
@@ -214,26 +191,22 @@ class RoutePolicyTest {
       app.extensions(admission)
           .routes()
           .path("/", secured -> secured.staticFiles("/files", directory), e -> e.get(admission));
-      app.start();
 
-      assertEquals(
-          403,
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create("http://127.0.0.1:" + app.port() + "/files/secret.txt"))
-                      .timeout(Duration.ofSeconds(5))
-                      .GET()
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            403,
+            test.send(
+                    request -> request.path("/files/secret.txt").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
   }
 
   @Test
   void protectsScopedRoutesWithoutProtectingPublicSiblings() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var admission =
           new AdmissionExtension(
               (_, _) -> {
@@ -248,30 +221,22 @@ class RoutePolicyTest {
                     "/private", (_, response) -> response.text("secret"), e -> e.get(admission));
                 routes.get("/public", (_, response) -> response.text("public"));
               });
-      app.start();
 
-      assertEquals(
-          403,
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create("http://127.0.0.1:" + app.port() + "/api/private"))
-                      .timeout(Duration.ofSeconds(5))
-                      .GET()
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
-      assertEquals(
-          "public",
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create("http://127.0.0.1:" + app.port() + "/api/public"))
-                      .timeout(Duration.ofSeconds(5))
-                      .GET()
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            403,
+            test.send(
+                    request -> request.path("/api/private").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            "public",
+            test.send(
+                    request -> request.path("/api/public").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 }

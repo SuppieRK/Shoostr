@@ -211,15 +211,17 @@ class RouteCompositionTest {
 
   @Test
   void retainsTransportRejectionOfAmbiguousPaths() throws Exception {
-    for (var path : new String[] {"/flat/%252F", "/api/accounts//orders/42"}) {
-      var reply =
-          test.httpClient()
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-                      .timeout(Duration.ofSeconds(5))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString());
-      assertEquals(400, reply.statusCode());
+    // An independent client preserves the exact target spelling under transport rejection tests.
+    try (var client = HttpClient.newHttpClient()) {
+      for (var path : new String[] {"/flat/%252F", "/api/accounts//orders/42"}) {
+        var reply =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
+                    .timeout(Duration.ofSeconds(5))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(400, reply.statusCode());
+      }
     }
   }
 
@@ -438,8 +440,7 @@ class RouteCompositionTest {
 
   @Test
   void rejectsPathParameterAccessFromAnotherThread() throws Exception {
-    try (var candidate = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-        var candidateClient = HttpClient.newHttpClient()) {
+    try (var candidate = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
       candidate
           .routes()
           .get(
@@ -459,14 +460,14 @@ class RouteCompositionTest {
                 assertInstanceOf(IllegalStateException.class, failure.get());
                 res.text("checked");
               });
-      candidate.start();
-      var result =
-          candidateClient.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + candidate.port() + "/42"))
-                  .timeout(Duration.ofSeconds(5))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals("checked", result.body());
+
+      try (var test = TestServer.start(candidate)) {
+        var result =
+            test.send(
+                request -> request.path("/42").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals("checked", result.body());
+      }
     }
   }
 

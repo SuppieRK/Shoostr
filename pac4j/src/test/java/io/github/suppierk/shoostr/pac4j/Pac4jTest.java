@@ -7,12 +7,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.InputStreamReader;
+import java.net.CookieManager;
+import java.net.CookiePolicy;
 import java.net.InetAddress;
 import java.net.Socket;
-import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -29,6 +31,8 @@ import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLContext;
@@ -54,8 +58,7 @@ class Pac4jTest {
   @Test
   @Timeout(10)
   void authenticatesWithoutCreatingASessionWhenSessionsAreEnabled() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var auth = new Pac4j(authenticatedAliceClient(), "Basic");
       app.sessions()
           .authentication(auth)
@@ -67,28 +70,32 @@ class Pac4jTest {
                 response.text(request.principal().orElseThrow().getName());
               },
               e -> e.get(auth).required());
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
-                  .timeout(Duration.ofSeconds(3))
-                  .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA==")
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+      try (var test =
+          TestServer.start(
+              app,
+              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("alice", result.body());
-      assertTrue(result.headers().allValues("Set-Cookie").isEmpty());
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/me")
+                        .timeout(Duration.ofSeconds(3))
+                        .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("alice", result.body());
+        assertTrue(result.headers().allValues("Set-Cookie").isEmpty());
+      }
     }
   }
 
   @Test
   @Timeout(15)
   void createsAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var auth = new Pac4j(authenticatedAliceClient(), "Basic");
       app.sessions()
           .authentication(auth)
@@ -107,36 +114,40 @@ class Pac4jTest {
                 }
               },
               e -> e.get(auth).required());
-      app.start();
-      var uri = URI.create("http://127.0.0.1:" + app.port() + "/session");
 
-      var created =
-          client.send(
-              HttpRequest.newBuilder(uri)
-                  .timeout(Duration.ofSeconds(3))
-                  .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA==")
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, created.statusCode());
-      assertEquals("alice:created", created.body());
-      var cookies = created.headers().allValues("Set-Cookie");
-      assertEquals(1, cookies.size());
-      var cookie = cookies.getFirst().split(";", 2)[0];
-      assertTrue(cookie.startsWith("JSESSIONID="));
+      try (var test =
+          TestServer.start(
+              app,
+              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
 
-      var resumed =
-          client.send(
-              HttpRequest.newBuilder(uri)
-                  .timeout(Duration.ofSeconds(3))
-                  .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA==")
-                  .header("Cookie", cookie)
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, resumed.statusCode());
-      assertEquals("alice:resumed", resumed.body());
-      assertTrue(resumed.headers().allValues("Set-Cookie").isEmpty());
+        var created =
+            test.send(
+                request ->
+                    request
+                        .path("/session")
+                        .timeout(Duration.ofSeconds(3))
+                        .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, created.statusCode());
+        assertEquals("alice:created", created.body());
+        var cookies = created.headers().allValues("Set-Cookie");
+        assertEquals(1, cookies.size());
+        var cookie = cookies.getFirst().split(";", 2)[0];
+        assertTrue(cookie.startsWith("JSESSIONID="));
+
+        var resumed =
+            test.send(
+                request ->
+                    request
+                        .path("/session")
+                        .timeout(Duration.ofSeconds(3))
+                        .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA==")
+                        .header("Cookie", cookie),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, resumed.statusCode());
+        assertEquals("alice:resumed", resumed.body());
+        assertTrue(resumed.headers().allValues("Set-Cookie").isEmpty());
+      }
     }
   }
 
@@ -156,8 +167,7 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var security = new Pac4j(provider, "Basic");
       app.authentication(security)
           .routes(
@@ -166,22 +176,28 @@ class Pac4jTest {
                       "/me",
                       (_, response) -> response.text("authenticated"),
                       e -> e.get(security).required()));
-      app.start();
 
-      var encoded =
-          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Authorization", "Basic " + encoded)
-                  .header("Cookie", "token=first; token=second; Token=upper")
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals(
-          List.of("token=first", "token=second", "Token=upper"), received.get(3, TimeUnit.SECONDS));
+      try (var test =
+          TestServer.start(
+              app,
+              client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+
+        var encoded =
+            Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/me")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Authorization", "Basic " + encoded)
+                        .header("Cookie", "token=first; token=second; Token=upper"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals(
+            List.of("token=first", "token=second", "Token=upper"),
+            received.get(3, TimeUnit.SECONDS));
+      }
     }
   }
 
@@ -206,8 +222,7 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
@@ -215,25 +230,27 @@ class Pac4jTest {
               "/",
               routes -> routes.get("/me", (_, response) -> response.text("authenticated")),
               e -> e.get(auth).required());
-      app.start();
-      expectedPort.set(app.port());
 
-      var encoded =
-          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Authorization", "Basic " + encoded)
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals(
-          List.of(
-              "__Host-token=token; Path=/; Secure; HttpOnly; SameSite=None",
-              "__Secure-token=token; Path=/; Secure; HttpOnly; SameSite=None"),
-          result.headers().allValues("Set-Cookie"));
+      try (var test = TestServer.start(app)) {
+        expectedPort.set(app.port());
+
+        var encoded =
+            Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/me")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Authorization", "Basic " + encoded),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals(
+            List.of(
+                "__Host-token=token; Path=/; Secure; HttpOnly; SameSite=None",
+                "__Secure-token=token; Path=/; Secure; HttpOnly; SameSite=None"),
+            result.headers().allValues("Set-Cookie"));
+      }
     }
   }
 
@@ -254,8 +271,7 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.exception(
           AuthenticationRequiredException.class,
           (_, request, response) ->
@@ -267,20 +283,22 @@ class Pac4jTest {
               "/",
               routes -> routes.get("/me", (_, response) -> response.text("private")),
               e -> e.get(auth).required());
-      app.start();
 
-      var encoded =
-          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Authorization", "Basic " + encoded)
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(401, result.statusCode());
-      assertEquals("null", result.body());
+      try (var test = TestServer.start(app)) {
+
+        var encoded =
+            Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/me")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Authorization", "Basic " + encoded),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, result.statusCode());
+        assertEquals("null", result.body());
+      }
     }
   }
 
@@ -292,8 +310,7 @@ class Pac4jTest {
               throw new IllegalStateException("sensitive identity-store diagnostic");
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
@@ -301,21 +318,23 @@ class Pac4jTest {
               "/",
               routes -> routes.get("/me", (_, response) -> response.text("private")),
               e -> e.get(auth).required());
-      app.start();
 
-      var encoded =
-          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Authorization", "Basic " + encoded)
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(500, result.statusCode());
-      assertEquals("Internal Server Error", result.body());
-      assertEquals(Optional.empty(), result.headers().firstValue("WWW-Authenticate"));
+      try (var test = TestServer.start(app)) {
+
+        var encoded =
+            Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/me")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Authorization", "Basic " + encoded),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(500, result.statusCode());
+        assertEquals("Internal Server Error", result.body());
+        assertEquals(Optional.empty(), result.headers().firstValue("WWW-Authenticate"));
+      }
     }
   }
 
@@ -330,8 +349,7 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
@@ -339,20 +357,22 @@ class Pac4jTest {
               "/",
               routes -> routes.get("/me", (_, response) -> response.text("private")),
               e -> e.get(auth).required());
-      app.start();
 
-      var encoded =
-          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Authorization", "Basic " + encoded)
-                  .header("Authorization", "Basic " + encoded)
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(401, result.statusCode());
+      try (var test = TestServer.start(app)) {
+
+        var encoded =
+            Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/me")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Authorization", "Basic " + encoded)
+                        .header("Authorization", "Basic " + encoded),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, result.statusCode());
+      }
     }
   }
 
@@ -373,8 +393,7 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
@@ -382,22 +401,24 @@ class Pac4jTest {
               "/",
               routes -> routes.post("/me", (_, response) -> response.text("authenticated")),
               e -> e.get(auth).required());
-      app.start();
-      var encoded =
-          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create(
-                          "http://127.0.0.1:" + app.port() + "/me?shared=query&query=query-only"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Authorization", "Basic " + encoded)
-                  .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                  .POST(HttpRequest.BodyPublishers.ofString("shared=form&form=form-only"))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals("authenticated", result.body());
+
+      try (var test = TestServer.start(app)) {
+        var encoded =
+            Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/me?shared=query&query=query-only")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Authorization", "Basic " + encoded)
+                        .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                        .method("POST")
+                        .body("shared=form&form=form-only".getBytes(StandardCharsets.UTF_8)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("authenticated", result.body());
+      }
     }
   }
 
@@ -414,8 +435,7 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
@@ -424,21 +444,24 @@ class Pac4jTest {
               routes ->
                   routes.post("/me", (request, response) -> response.text(request.bodyText())),
               e -> e.get(auth).required());
-      app.start();
-      var encoded =
-          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
-      var result =
-          client.send(
-              HttpRequest.newBuilder(
-                      URI.create("http://127.0.0.1:" + app.port() + "/me?token=query"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Authorization", "Basic " + encoded)
-                  .header("Content-Type", "text/plain")
-                  .POST(HttpRequest.BodyPublishers.ofString("token=body&other=form"))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals("token=body&other=form", result.body());
+
+      try (var test = TestServer.start(app)) {
+        var encoded =
+            Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/me?token=query")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Authorization", "Basic " + encoded)
+                        .header("Content-Type", "text/plain")
+                        .method("POST")
+                        .body("token=body&other=form".getBytes(StandardCharsets.UTF_8)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("token=body&other=form", result.body());
+      }
     }
   }
 
@@ -458,8 +481,7 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
@@ -467,19 +489,21 @@ class Pac4jTest {
               "/",
               routes -> routes.get("/me", (_, response) -> response.text("authenticated")),
               e -> e.get(auth).required());
-      app.start();
-      var encoded =
-          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Authorization", "Basic " + encoded)
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertTrue(result.headers().allValues("X-Provider").isEmpty());
+
+      try (var test = TestServer.start(app)) {
+        var encoded =
+            Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/me")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Authorization", "Basic " + encoded),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertTrue(result.headers().allValues("X-Provider").isEmpty());
+      }
     }
   }
 
@@ -513,31 +537,35 @@ class Pac4jTest {
               routes ->
                   routes.post("/me", (request, response) -> response.text(request.bodyText())),
               e -> e.get(auth).required());
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Content-Type", "application/x-www-form-urlencoded")
-                  .POST(HttpRequest.BodyPublishers.ofString("token=allowed"))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals("token=allowed", result.body());
-      var oversized =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Content-Type", "application/x-www-form-urlencoded")
-                  .POST(
-                      HttpRequest.BodyPublishers.ofInputStream(
-                          () ->
-                              new ByteArrayInputStream(
-                                  ("token=" + "x".repeat(32)).getBytes(StandardCharsets.UTF_8))))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(413, oversized.statusCode());
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/me")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Content-Type", "application/x-www-form-urlencoded")
+                        .method("POST")
+                        .body("token=allowed".getBytes(StandardCharsets.UTF_8)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("token=allowed", result.body());
+        // An independent publisher preserves the unknown-length body limit under test.
+        var oversized =
+            client.send(
+                HttpRequest.newBuilder(test.baseUri().resolve("/me"))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Content-Type", "application/x-www-form-urlencoded")
+                    .POST(
+                        HttpRequest.BodyPublishers.ofInputStream(
+                            () ->
+                                new ByteArrayInputStream(
+                                    ("token=" + "x".repeat(32)).getBytes(StandardCharsets.UTF_8))))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(413, oversized.statusCode());
+      }
     }
   }
 
@@ -651,8 +679,7 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newBuilder().sslContext(tls).build()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.tls(
           server -> {
             server.setKeyStorePath(keyStorePath.toString());
@@ -665,20 +692,22 @@ class Pac4jTest {
               "/",
               routes -> routes.get("/secure", (_, response) -> response.text("private")),
               e -> e.get(auth).required());
-      app.start();
 
-      var encoded =
-          Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/secure"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Authorization", "Basic " + encoded)
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals("private", result.body());
+      try (var test = TestServer.start(app, client -> client.sslContext(tls))) {
+
+        var encoded =
+            Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/secure")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Authorization", "Basic " + encoded),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("private", result.body());
+      }
     }
   }
 
@@ -699,7 +728,7 @@ class Pac4jTest {
             });
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+        var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
@@ -716,39 +745,44 @@ class Pac4jTest {
               "/public",
               (request, response) ->
                   response.text(request.principal().map(Object::toString).orElse("null")));
-      app.start();
 
-      var requests = new ArrayList<CompletableFuture<HttpResponse<String>>>();
-      for (int index = 0; index < 20; index++) {
-        var credentials = "user-" + index + ":test-password";
-        requests.add(
-            client.sendAsync(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
-                    .timeout(Duration.ofSeconds(5))
-                    .header(
-                        "Authorization",
-                        "Basic "
-                            + Base64.getEncoder()
-                                .encodeToString(credentials.getBytes(StandardCharsets.UTF_8)))
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.ofString()));
-      }
-      for (int index = 0; index < requests.size(); index++) {
-        var result = requests.get(index).get(5, TimeUnit.SECONDS);
+      try (var test = TestServer.start(app)) {
+
+        var requests = new ArrayList<Future<HttpResponse<String>>>();
+        for (int index = 0; index < 20; index++) {
+          var credentials = "user-" + index + ":test-password";
+          requests.add(
+              testRequests.submit(
+                  () ->
+                      test.send(
+                          request ->
+                              request
+                                  .path("/me")
+                                  .timeout(Duration.ofSeconds(5))
+                                  .header(
+                                      "Authorization",
+                                      "Basic "
+                                          + Base64.getEncoder()
+                                              .encodeToString(
+                                                  credentials.getBytes(StandardCharsets.UTF_8))),
+                          HttpResponse.BodyHandlers.ofString())));
+        }
+        for (int index = 0; index < requests.size(); index++) {
+          var result = requests.get(index).get(5, TimeUnit.SECONDS);
+          assertEquals(200, result.statusCode());
+          assertEquals("user-" + index, result.body());
+        }
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/public")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Authorization", "garbage"),
+                HttpResponse.BodyHandlers.ofString());
         assertEquals(200, result.statusCode());
-        assertEquals("user-" + index, result.body());
+        assertEquals("null", result.body());
       }
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/public"))
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Authorization", "garbage")
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals("null", result.body());
     }
   }
 
@@ -767,8 +801,7 @@ class Pac4jTest {
     var expired = generator.generate(profile);
     var provider = new HeaderClient("Authorization", "Bearer ", new JwtAuthenticator(signing));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var auth = new Pac4j(provider, "Bearer");
       app.authentication(auth)
           .routes()
@@ -780,30 +813,31 @@ class Pac4jTest {
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName())),
               e -> e.get(auth).required());
-      app.start();
 
-      var uri = URI.create("http://127.0.0.1:" + app.port() + "/me");
-      var accepted =
-          client.send(
-              HttpRequest.newBuilder(uri)
-                  .timeout(Duration.ofSeconds(5))
-                  .header("Authorization", "Bearer " + valid)
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, accepted.statusCode());
-      assertEquals("alice", accepted.body());
-      for (var token : List.of(wrongKey, unsigned, expired, "malformed")) {
-        var rejected =
-            client.send(
-                HttpRequest.newBuilder(uri)
-                    .timeout(Duration.ofSeconds(5))
-                    .header("Authorization", "Bearer " + token)
-                    .GET()
-                    .build(),
+      try (var test = TestServer.start(app)) {
+
+        var accepted =
+            test.send(
+                request ->
+                    request
+                        .path("/me")
+                        .timeout(Duration.ofSeconds(5))
+                        .header("Authorization", "Bearer " + valid),
                 HttpResponse.BodyHandlers.ofString());
-        assertEquals(401, rejected.statusCode());
-        assertEquals("Bearer", rejected.headers().firstValue("WWW-Authenticate").orElseThrow());
+        assertEquals(200, accepted.statusCode());
+        assertEquals("alice", accepted.body());
+        for (var token : List.of(wrongKey, unsigned, expired, "malformed")) {
+          var rejected =
+              test.send(
+                  request ->
+                      request
+                          .path("/me")
+                          .timeout(Duration.ofSeconds(5))
+                          .header("Authorization", "Bearer " + token),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(401, rejected.statusCode());
+          assertEquals("Bearer", rejected.headers().firstValue("WWW-Authenticate").orElseThrow());
+        }
       }
     }
   }
@@ -826,34 +860,38 @@ class Pac4jTest {
             });
     var security = new Pac4j(provider, "Basic realm=\"api\"", (_, _, _) -> false);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.authentication(security)
           .routes()
           .path(
               "/",
               routes -> routes.get("/private", (_, response) -> response.text("secret")),
               e -> e.get(security).required());
-      app.start();
 
-      var uri = URI.create("http://127.0.0.1:" + app.port() + "/private");
-      for (var credentials : new String[] {"", "alice:wrong", "alice:correct"}) {
-        var request = HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(5));
-        if (!credentials.isEmpty()) {
-          request.header(
-              "Authorization",
-              "Basic "
-                  + Base64.getEncoder()
-                      .encodeToString(credentials.getBytes(StandardCharsets.UTF_8)));
+      try (var test = TestServer.start(app)) {
+
+        for (var credentials : new String[] {"", "alice:wrong", "alice:correct"}) {
+
+          var result =
+              test.send(
+                  request -> {
+                    request.path("/private").timeout(Duration.ofSeconds(5));
+                    if (!credentials.isEmpty()) {
+                      request.header(
+                          "Authorization",
+                          "Basic "
+                              + Base64.getEncoder()
+                                  .encodeToString(credentials.getBytes(StandardCharsets.UTF_8)));
+                    }
+                  },
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals("alice:correct".equals(credentials) ? 403 : 401, result.statusCode());
+          assertEquals(
+              "alice:correct".equals(credentials)
+                  ? Optional.empty()
+                  : Optional.of("Basic realm=\"api\""),
+              result.headers().firstValue("WWW-Authenticate"));
         }
-
-        var result = client.send(request.GET().build(), HttpResponse.BodyHandlers.ofString());
-        assertEquals("alice:correct".equals(credentials) ? 403 : 401, result.statusCode());
-        assertEquals(
-            "alice:correct".equals(credentials)
-                ? Optional.empty()
-                : Optional.of("Basic realm=\"api\""),
-            result.headers().firstValue("WWW-Authenticate"));
       }
     }
   }
@@ -876,8 +914,7 @@ class Pac4jTest {
             });
     var security = new Pac4j(provider, "Basic realm=\"api\"");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.authentication(security)
           .routes()
           .path(
@@ -888,22 +925,26 @@ class Pac4jTest {
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName())),
               e -> e.get(security).required());
-      app.start();
 
-      var request =
-          HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/me"))
-              .timeout(Duration.ofSeconds(5))
-              .header(
-                  "Authorization",
-                  "Basic "
-                      + Base64.getEncoder()
-                          .encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8)))
-              .GET()
-              .build();
-      var result = client.send(request, HttpResponse.BodyHandlers.ofString());
+      try (var test = TestServer.start(app)) {
 
-      assertEquals(200, result.statusCode());
-      assertEquals("alice", result.body());
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/me")
+                        .timeout(Duration.ofSeconds(5))
+                        .header(
+                            "Authorization",
+                            "Basic "
+                                + Base64.getEncoder()
+                                    .encodeToString(
+                                        "alice:correct".getBytes(StandardCharsets.UTF_8))),
+                HttpResponse.BodyHandlers.ofString());
+
+        assertEquals(200, result.statusCode());
+        assertEquals("alice", result.body());
+      }
     }
   }
 

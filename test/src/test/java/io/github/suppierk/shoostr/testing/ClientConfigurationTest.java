@@ -8,11 +8,11 @@ import static org.junit.jupiter.api.Assertions.fail;
 
 import io.github.suppierk.shoostr.Shoostr;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -35,33 +35,24 @@ class ClientConfigurationTest {
   }
 
   @Test
-  void exposesTheDefaultClientSettingsWithoutRequiredConfiguration() throws Exception {
-    try (var test = TestServer.start(new Shoostr())) {
-      var client = test.httpClient();
-      assertEquals(Duration.ofSeconds(3), client.connectTimeout().orElseThrow());
-      assertEquals(HttpClient.Redirect.NEVER, client.followRedirects());
-      assertEquals(HttpClient.Version.HTTP_2, client.version());
-      assertSame(HttpClient.Builder.NO_PROXY, client.proxy().orElseThrow());
-      assertTrue(client.cookieHandler().isPresent());
-    }
-  }
+  void appliesTheDefaultClientSettingsWithoutRequiredConfiguration() throws Exception {
+    var checked = new AtomicBoolean();
 
-  @Test
-  void servesAsyncRequestsThroughTheBorrowedClient() throws Exception {
-    var app = new Shoostr();
-    app.routes().get("/value", (_, response) -> response.text("async"));
-
-    try (var test = TestServer.start(app)) {
-      var reply =
-          test.httpClient()
-              .sendAsync(
-                  HttpRequest.newBuilder(test.baseUri().resolve("value"))
-                      .timeout(Duration.ofSeconds(2))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .get(5, TimeUnit.SECONDS);
-      assertEquals(200, reply.statusCode());
-      assertEquals("async", reply.body());
+    try (var test =
+        TestServer.start(
+            new Shoostr(),
+            builder -> {
+              try (var client = builder.build()) {
+                assertEquals(Duration.ofSeconds(3), client.connectTimeout().orElseThrow());
+                assertEquals(HttpClient.Redirect.NEVER, client.followRedirects());
+                assertEquals(HttpClient.Version.HTTP_2, client.version());
+                assertSame(HttpClient.Builder.NO_PROXY, client.proxy().orElseThrow());
+                assertTrue(client.cookieHandler().isPresent());
+                checked.set(true);
+              }
+            })) {
+      assertTrue(checked.get());
+      assertEquals(404, test.send(request -> request.path("/missing")).statusCode());
     }
   }
 
@@ -107,7 +98,7 @@ class ClientConfigurationTest {
   }
 
   @Test
-  void closesTheBorrowedClientWithTheFixture() throws Exception {
+  void terminatesTheOwnedClientWhenTheFixtureCloses() throws Exception {
     var test = TestServer.start(new Shoostr());
     var client = test.httpClient();
     test.close();

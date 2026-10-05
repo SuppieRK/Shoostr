@@ -12,10 +12,8 @@ import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.RequestObservation;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.lang.reflect.Modifier;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Arrays;
 import java.util.List;
@@ -139,8 +137,7 @@ class ApplicationCallbacksTest {
     var events = new LinkedBlockingQueue<String>();
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.onRequestHeaders((_, _) -> events.add("before"));
       app.extensions(
           extension(c -> assertSame(c, c.onRequestHeaders((_, _) -> events.add("first")))),
@@ -148,17 +145,14 @@ class ApplicationCallbacksTest {
       app.onRequestHeaders((_, _) -> events.add("after"));
       app.afterRequest(_ -> completed.countDown());
       app.routes().get("/", (_, response) -> response.text("ok"));
-      app.start();
-      assertEquals(
-          "ok",
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString()).body());
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+      }
     }
   }
 
@@ -167,8 +161,7 @@ class ApplicationCallbacksTest {
     var events = new LinkedBlockingQueue<String>();
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.onRouteMatched((_, _) -> events.add("before"));
       app.extensions(
           extension(c -> assertSame(c, c.onRouteMatched((_, _) -> events.add("first")))),
@@ -176,17 +169,14 @@ class ApplicationCallbacksTest {
       app.onRouteMatched((_, _) -> events.add("after"));
       app.afterRequest(_ -> completed.countDown());
       app.routes().get("/", (_, response) -> response.text("ok"));
-      app.start();
-      assertEquals(
-          "ok",
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString()).body());
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+      }
     }
   }
 
@@ -195,8 +185,7 @@ class ApplicationCallbacksTest {
     var events = new LinkedBlockingQueue<String>();
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.beforeRouteHandler((_, _) -> events.add("before"));
       app.extensions(
           extension(c -> assertSame(c, c.beforeRouteHandler((_, _) -> events.add("first")))),
@@ -204,17 +193,14 @@ class ApplicationCallbacksTest {
       app.beforeRouteHandler((_, _) -> events.add("after"));
       app.afterRequest(_ -> completed.countDown());
       app.routes().get("/", (_, response) -> response.text("ok"));
-      app.start();
-      assertEquals(
-          "ok",
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString()).body());
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+      }
     }
   }
 
@@ -223,8 +209,7 @@ class ApplicationCallbacksTest {
     var events = new LinkedBlockingQueue<String>();
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.afterRouteHandler((_, _) -> events.add("before"));
       app.extensions(
           extension(c -> assertSame(c, c.afterRouteHandler((_, _) -> events.add("first")))),
@@ -232,17 +217,14 @@ class ApplicationCallbacksTest {
       app.afterRouteHandler((_, _) -> events.add("after"));
       app.afterRequest(_ -> completed.countDown());
       app.routes().get("/", (_, response) -> response.text("ok"));
-      app.start();
-      assertEquals(
-          "ok",
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString()).body());
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+      }
     }
   }
 
@@ -251,8 +233,7 @@ class ApplicationCallbacksTest {
     var events = new LinkedBlockingQueue<String>();
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.beforeResponseFlush((_, _) -> events.add("before"));
       app.extensions(
           extension(c -> assertSame(c, c.beforeResponseFlush((_, _) -> events.add("first")))),
@@ -260,17 +241,14 @@ class ApplicationCallbacksTest {
       app.beforeResponseFlush((_, _) -> events.add("after"));
       app.afterRequest(_ -> completed.countDown());
       app.routes().get("/", (_, response) -> response.text("ok"));
-      app.start();
-      assertEquals(
-          "ok",
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString()).body());
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+      }
     }
   }
 
@@ -279,8 +257,7 @@ class ApplicationCallbacksTest {
     var events = new LinkedBlockingQueue<String>();
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.afterResponseFlush((_, _) -> events.add("before"));
       app.extensions(
           extension(c -> assertSame(c, c.afterResponseFlush((_, _) -> events.add("first")))),
@@ -288,17 +265,14 @@ class ApplicationCallbacksTest {
       app.afterResponseFlush((_, _) -> events.add("after"));
       app.afterRequest(_ -> completed.countDown());
       app.routes().get("/", (_, response) -> response.text("ok"));
-      app.start();
-      assertEquals(
-          "ok",
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            "ok",
+            test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString()).body());
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("before", "first", "second", "after"), List.copyOf(events));
+      }
     }
   }
 
@@ -307,8 +281,7 @@ class ApplicationCallbacksTest {
     var events = new LinkedBlockingQueue<String>();
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.extensions(
           extension(
               c ->
@@ -322,17 +295,15 @@ class ApplicationCallbacksTest {
             events.add("app");
             completed.countDown();
           });
-      app.start();
-      assertEquals(
-          404,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/missing"))
-                      .build(),
-                  HttpResponse.BodyHandlers.discarding())
-              .statusCode());
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertEquals(List.of("extension", "app"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            404,
+            test.send(request -> request.path("/missing"), HttpResponse.BodyHandlers.discarding())
+                .statusCode());
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("extension", "app"), List.copyOf(events));
+      }
     }
   }
 
@@ -341,8 +312,7 @@ class ApplicationCallbacksTest {
     var events = new LinkedBlockingQueue<String>();
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.extensions(
           extension(
               c ->
@@ -362,17 +332,15 @@ class ApplicationCallbacksTest {
                           }
                         };
                       })));
-      app.start();
-      assertEquals(
-          404,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/missing"))
-                      .build(),
-                  HttpResponse.BodyHandlers.discarding())
-              .statusCode());
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertEquals(List.of("begin", "close", "complete-404"), List.copyOf(events));
+
+      try (var test = TestServer.start(app)) {
+        assertEquals(
+            404,
+            test.send(request -> request.path("/missing"), HttpResponse.BodyHandlers.discarding())
+                .statusCode());
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertEquals(List.of("begin", "close", "complete-404"), List.copyOf(events));
+      }
     }
   }
 

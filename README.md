@@ -100,11 +100,11 @@ try (var server = TestServer.start(app,
 }
 ```
 
-`server.httpClient()` borrows that same client for advanced JDK async, WebSocket or body
-publisher use. Do not close it separately. Direct requests need their own URI (resolve against
-`server.baseUri()`) and timeout. The harness does not close caller-supplied executors or manage
-returned streams, subscriptions or WebSockets; callers must consume, close or cancel these.
-A request timeout is not an independent deadline for reading a returned streaming body.
+Ordinary requests use only `server.send(request -> ...)`. For native async, WebSocket or
+advanced body-publisher tests, create and close an independent client and connect it to
+`server.baseUri()`. The harness never exposes its owned client. Caller-supplied executors,
+external clients and returned streams/subscriptions remain caller-owned. A request timeout
+is not an independent deadline for reading a returned streaming body.
 
 Automatic startup binds every supported listener to `127.0.0.1:0`, preserving its native
 TLS/HTTP2 configuration. For a stable browser/debugging URL, use

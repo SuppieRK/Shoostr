@@ -3,9 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.function.Consumer;
@@ -18,63 +16,46 @@ import org.junit.jupiter.params.provider.ValueSource;
 class CatchAllRoutingTest {
   @Test
   void capturesOneOrManyPathSegmentsButNotAnEmptyTail() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
       app.routes()
           .get(
               "/files/{*path}",
               (request, response) -> response.text(request.pathParam("path").orElseThrow()));
-      app.start();
 
-      assertEquals(
-          "a",
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/files/a"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
-      assertEquals(
-          "a/b",
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create("http://127.0.0.1:" + app.port() + "/files/a/b"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
-      assertEquals(
-          404,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/files/"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
-      assertEquals(
-          404,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/files"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            "a",
+            test.send(
+                    request -> request.path("/files/a").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "a/b",
+            test.send(
+                    request -> request.path("/files/a/b").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/files/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/files").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
   }
 
   @Test
   void prefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder() throws Exception {
     for (boolean catchAllFirst : new boolean[] {true, false}) {
-      try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-          var client = HttpClient.newHttpClient()) {
+      try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
         Consumer<Routes> catchAll =
             routes -> {
               routes.get(
@@ -104,81 +85,58 @@ class CatchAllRoutingTest {
                     catchAll.accept(routes);
                   }
                 });
-        app.start();
 
-        assertEquals(
-            "literal",
-            client
-                .send(
-                    HttpRequest.newBuilder(
-                            URI.create("http://127.0.0.1:" + app.port() + "/files/fixed"))
-                        .timeout(Duration.ofSeconds(5))
-                        .method("GET", HttpRequest.BodyPublishers.noBody())
-                        .build(),
-                    HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(
-            "segment:a",
-            client
-                .send(
-                    HttpRequest.newBuilder(
-                            URI.create("http://127.0.0.1:" + app.port() + "/files/a"))
-                        .timeout(Duration.ofSeconds(5))
-                        .method("GET", HttpRequest.BodyPublishers.noBody())
-                        .build(),
-                    HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(
-            "literal-end",
-            client
-                .send(
-                    HttpRequest.newBuilder(
-                            URI.create("http://127.0.0.1:" + app.port() + "/files/fixed/end"))
-                        .timeout(Duration.ofSeconds(5))
-                        .method("GET", HttpRequest.BodyPublishers.noBody())
-                        .build(),
-                    HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(
-            "tail:fixed/other",
-            client
-                .send(
-                    HttpRequest.newBuilder(
-                            URI.create("http://127.0.0.1:" + app.port() + "/files/fixed/other"))
-                        .timeout(Duration.ofSeconds(5))
-                        .method("GET", HttpRequest.BodyPublishers.noBody())
-                        .build(),
-                    HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(
-            "post-tail",
-            client
-                .send(
-                    HttpRequest.newBuilder(
-                            URI.create("http://127.0.0.1:" + app.port() + "/files/fixed"))
-                        .timeout(Duration.ofSeconds(5))
-                        .method("POST", HttpRequest.BodyPublishers.noBody())
-                        .build(),
-                    HttpResponse.BodyHandlers.ofString())
-                .body());
-        var wrongMethod =
-            client.send(
-                HttpRequest.newBuilder(
-                        URI.create("http://127.0.0.1:" + app.port() + "/files/fixed"))
-                    .timeout(Duration.ofSeconds(5))
-                    .method("PUT", HttpRequest.BodyPublishers.noBody())
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(405, wrongMethod.statusCode());
-        assertEquals("GET, POST", wrongMethod.headers().firstValue("Allow").orElseThrow());
+        try (var test = TestServer.start(app)) {
+
+          assertEquals(
+              "literal",
+              test.send(
+                      request -> request.path("/files/fixed").timeout(Duration.ofSeconds(5)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "segment:a",
+              test.send(
+                      request -> request.path("/files/a").timeout(Duration.ofSeconds(5)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "literal-end",
+              test.send(
+                      request -> request.path("/files/fixed/end").timeout(Duration.ofSeconds(5)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "tail:fixed/other",
+              test.send(
+                      request -> request.path("/files/fixed/other").timeout(Duration.ofSeconds(5)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "post-tail",
+              test.send(
+                      request ->
+                          request
+                              .path("/files/fixed")
+                              .timeout(Duration.ofSeconds(5))
+                              .method("POST"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+          var wrongMethod =
+              test.send(
+                  request ->
+                      request.path("/files/fixed").timeout(Duration.ofSeconds(5)).method("PUT"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(405, wrongMethod.statusCode());
+          assertEquals("GET, POST", wrongMethod.headers().firstValue("Allow").orElseThrow());
+        }
       }
     }
   }
 
   @Test
   void composesCatchAllWithParentParametersAndPreservesDecodedTailSpelling() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
       app.routes()
           .path(
               "/accounts/{accountId}",
@@ -193,56 +151,39 @@ class CatchAllRoutingTest {
                                       request.pathParam("accountId").orElseThrow()
                                           + ":"
                                           + request.pathParam("path").orElseThrow()))));
-      app.start();
 
-      assertEquals(
-          "a:a b/c+d/",
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create(
-                              "http://127.0.0.1:" + app.port() + "/accounts/a/files/a%20b/c+d/"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
-      assertEquals(
-          "é:café/€",
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create(
-                              "http://127.0.0.1:"
-                                  + app.port()
-                                  + "/accounts/%C3%A9/files/caf%C3%A9/%E2%82%AC"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
-      assertEquals(
-          404,
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create("http://127.0.0.1:" + app.port() + "/accounts/a/files/"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
-      assertEquals(
-          400,
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create("http://127.0.0.1:" + app.port() + "/accounts/a/files/%252F"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            "a:a b/c+d/",
+            test.send(
+                    request ->
+                        request.path("/accounts/a/files/a%20b/c+d/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            "é:café/€",
+            test.send(
+                    request ->
+                        request
+                            .path("/accounts/%C3%A9/files/caf%C3%A9/%E2%82%AC")
+                            .timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/accounts/a/files/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            400,
+            test.send(
+                    request ->
+                        request.path("/accounts/a/files/%252F").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
   }
 
@@ -278,90 +219,67 @@ class CatchAllRoutingTest {
 
   @Test
   void serverSentEventRouteUsesTheSameCatchAllCapture() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
       app.routes()
           .sse(
               "/events/{*topic}",
               (request, response) ->
                   response.startEventStream().send(request.pathParam("topic").orElseThrow()));
-      app.start();
 
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events/a/b"))
-                  .timeout(Duration.ofSeconds(5))
-                  .method("GET", HttpRequest.BodyPublishers.noBody())
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals("data: a/b\n\n", result.body());
-      assertEquals(
-          404,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events/"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
+      try (var test = TestServer.start(app)) {
+
+        var result =
+            test.send(
+                request -> request.path("/events/a/b").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("data: a/b\n\n", result.body());
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/events/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
   }
 
   @Test
   void keepsCaseAndTrailingSeparatorsDistinctWithoutReadingAnUnusedCapture() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000));
-        var client = HttpClient.newHttpClient()) {
+    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
       app.routes()
           .get(
               "/Docs/{*path}",
               (request, response) ->
                   response.text(request.routePattern().orElseThrow() + ":" + request.path()));
-      app.start();
 
-      assertEquals(
-          "/Docs/{*path}:/Docs/a/",
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/Docs/a/"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .body());
-      assertEquals(
-          404,
-          client
-              .send(
-                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/docs/a/"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
-      assertEquals(
-          400,
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create("http://127.0.0.1:" + app.port() + "/Docs/a%2Fb"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
-      assertEquals(
-          400,
-          client
-              .send(
-                  HttpRequest.newBuilder(
-                          URI.create("http://127.0.0.1:" + app.port() + "/Docs/a%252Fb"))
-                      .timeout(Duration.ofSeconds(5))
-                      .method("GET", HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString())
-              .statusCode());
+      try (var test = TestServer.start(app)) {
+
+        assertEquals(
+            "/Docs/{*path}:/Docs/a/",
+            test.send(
+                    request -> request.path("/Docs/a/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+        assertEquals(
+            404,
+            test.send(
+                    request -> request.path("/docs/a/").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            400,
+            test.send(
+                    request -> request.path("/Docs/a%2Fb").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+        assertEquals(
+            400,
+            test.send(
+                    request -> request.path("/Docs/a%252Fb").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
+      }
     }
   }
 }

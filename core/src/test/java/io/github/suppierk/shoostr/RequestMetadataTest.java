@@ -10,13 +10,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.lang.reflect.Proxy;
+import java.net.CookieManager;
+import java.net.CookiePolicy;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
-import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
@@ -27,9 +28,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -55,25 +56,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(15)
 class RequestMetadataTest {
   private Shoostr app;
-  private HttpClient client;
 
   @BeforeEach
   void prepare() {
     app = new Shoostr(Options.defaults().withPort(0));
-    client =
-        HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(Duration.ofSeconds(3))
-            .build();
   }
 
   @AfterEach
   void close() throws Exception {
-    try {
-      client.close();
-    } finally {
-      app.close();
-    }
+    app.close();
   }
 
   @ParameterizedTest
@@ -88,11 +79,15 @@ class RequestMetadataTest {
               assertThrows(NullPointerException.class, () -> request.pathParam(name));
               response.text("rejected");
             });
-    app.start();
-    var result =
-        client.send(request("/null-name/one").build(), HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, result.statusCode());
-    assertEquals("rejected", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request -> request.path("/null-name/one").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("rejected", result.body());
+    }
   }
 
   @Test
@@ -137,11 +132,15 @@ class RequestMetadataTest {
               assertEquals(Optional.empty(), request.serverName());
               response.text("empty");
             });
-    app.start();
-    var result =
-        client.send(request("/missing-native").build(), HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, result.statusCode());
-    assertEquals("empty", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request -> request.path("/missing-native").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("empty", result.body());
+    }
   }
 
   @Test
@@ -199,15 +198,19 @@ class RequestMetadataTest {
               assertFalse(request.isForwarded());
               response.text("empty");
             });
-    app.start();
-    var result =
-        client.send(
-            request("/missing-addresses")
-                .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, result.statusCode());
-    assertEquals("empty", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/missing-addresses")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("empty", result.body());
+    }
   }
 
   @Test
@@ -236,19 +239,26 @@ class RequestMetadataTest {
               assertTrue(request.queryString().isEmpty());
               response.text("absent");
             });
-    app.start();
-    var result =
-        client.send(
-            request("/metadata?q=a+b%2F&q=second&empty=")
-                .header("X-Values", "a,b")
-                .header("x-values", "c")
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, result.statusCode());
-    assertEquals("ok", result.body());
-    assertEquals(
-        "absent",
-        client.send(request("/absent").build(), HttpResponse.BodyHandlers.ofString()).body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/metadata?q=a+b%2F&q=second&empty=")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("X-Values", "a,b")
+                      .header("x-values", "c"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("ok", result.body());
+      assertEquals(
+          "absent",
+          test.send(
+                  request -> request.path("/absent").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+    }
   }
 
   @Test
@@ -285,16 +295,26 @@ class RequestMetadataTest {
                         request.cookie("token").map(Object::toString).orElse("null"),
                         request.cookies("token").toString(),
                         Objects.toString(request.cookieMap().get("token")))));
-    app.start();
-    var result =
-        client.send(
-            request("/snapshot")
-                .header("X-Snapshot", "original")
-                .header("Cookie", "token=first")
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, result.statusCode());
-    assertEquals("original;[original];[original];first;[first];[first]", result.body());
+
+    try (var test =
+        TestServer.start(
+            app,
+            client ->
+                client
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/snapshot")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("X-Snapshot", "original")
+                      .header("Cookie", "token=first"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("original;[original];[original];first;[first];[first]", result.body());
+    }
   }
 
   @Test
@@ -353,17 +373,23 @@ class RequestMetadataTest {
               assertEquals(Map.of(), request.pathParamMap());
               response.text("literal");
             });
-    app.start();
-    var result =
-        client.send(
-            request("/groups/caf%C3%A9/items/a+b%20c").build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, result.statusCode());
-    assertEquals("/groups/{group}/items/{id}", result.body());
-    assertEquals(
-        "literal",
-        client.send(request("/literal").build(), HttpResponse.BodyHandlers.ofString()).body());
-    assertEquals(Map.of("group", "café", "id", "a+b c"), retained.get());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request ->
+                  request.path("/groups/caf%C3%A9/items/a+b%20c").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("/groups/{group}/items/{id}", result.body());
+      assertEquals(
+          "literal",
+          test.send(
+                  request -> request.path("/literal").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(Map.of("group", "café", "id", "a+b c"), retained.get());
+    }
   }
 
   @Test
@@ -481,14 +507,22 @@ class RequestMetadataTest {
               assertThrows(NullPointerException.class, () -> request.attribute(null, "bad"));
               response.text("ok");
             });
-    app.start();
-    assertEquals(
-        "ok",
-        client.send(request("/attributes").build(), HttpResponse.BodyHandlers.ofString()).body());
-    assertSame(value, retained.get().get("value"));
-    assertEquals(
-        "ok",
-        client.send(request("/attributes").build(), HttpResponse.BodyHandlers.ofString()).body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      assertEquals(
+          "ok",
+          test.send(
+                  request -> request.path("/attributes").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertSame(value, retained.get().get("value"));
+      assertEquals(
+          "ok",
+          test.send(
+                  request -> request.path("/attributes").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+    }
   }
 
   @Test
@@ -532,62 +566,83 @@ class RequestMetadataTest {
               assertEquals(Map.of(), request.attributeMap());
               response.text("anonymous");
             });
-    app.start();
-    var result = client.send(request("/users/alice").build(), HttpResponse.BodyHandlers.ofString());
-    assertEquals(409, result.statusCode());
-    assertEquals("alice", result.body());
-    assertEquals("alice", retained.get().getName());
-    assertEquals(
-        "anonymous",
-        client.send(request("/anonymous").build(), HttpResponse.BodyHandlers.ofString()).body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request -> request.path("/users/alice").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(409, result.statusCode());
+      assertEquals("alice", result.body());
+      assertEquals("alice", retained.get().getName());
+      assertEquals(
+          "anonymous",
+          test.send(
+                  request -> request.path("/anonymous").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+    }
   }
 
   @Test
   void isolatesStateAcrossConcurrentRequests() throws Exception {
-    var entered = new CountDownLatch(8);
-    var release = new CountDownLatch(1);
-    app.beforeRouteHandler(
-        (request, _) -> {
-          assertTrue(request.principal().isEmpty());
-          assertEquals(Map.of(), request.attributeMap());
-          var id = request.pathParam("id").orElseThrow();
-          request.principal(() -> id).attribute("id", id);
-        });
-    app.routes()
-        .get(
-            "/concurrent/{id}",
-            (request, response) -> {
-              entered.countDown();
-              assertTrue(release.await(5, TimeUnit.SECONDS));
-              assertEquals(
-                  request.pathParam("id").orElseThrow(), request.attribute("id").orElseThrow());
-              response.text(request.principal().orElseThrow().getName());
-            });
-    app.start();
-    var results = new ArrayList<CompletableFuture<HttpResponse<String>>>();
-    for (int index = 0; index < 8; index++) {
-      results.add(
-          client.sendAsync(
-              request("/concurrent/" + index).timeout(Duration.ofSeconds(8)).build(),
-              HttpResponse.BodyHandlers.ofString()));
-    }
+    try (var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
+      var entered = new CountDownLatch(8);
+      var release = new CountDownLatch(1);
+      app.beforeRouteHandler(
+          (request, _) -> {
+            assertTrue(request.principal().isEmpty());
+            assertEquals(Map.of(), request.attributeMap());
+            var id = request.pathParam("id").orElseThrow();
+            request.principal(() -> id).attribute("id", id);
+          });
+      app.routes()
+          .get(
+              "/concurrent/{id}",
+              (request, response) -> {
+                entered.countDown();
+                assertTrue(release.await(5, TimeUnit.SECONDS));
+                assertEquals(
+                    request.pathParam("id").orElseThrow(), request.attribute("id").orElseThrow());
+                response.text(request.principal().orElseThrow().getName());
+              });
 
-    try {
-      assertTrue(entered.await(5, TimeUnit.SECONDS));
-    } finally {
-      release.countDown();
-    }
+      try (var test =
+          TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+        var results = new ArrayList<Future<HttpResponse<String>>>();
+        for (int index = 0; index < 8; index++) {
+          var path = "/concurrent/" + index;
+          results.add(
+              testRequests.submit(
+                  () ->
+                      test.send(
+                          request ->
+                              request
+                                  .path(path)
+                                  .timeout(Duration.ofSeconds(3))
+                                  .timeout(Duration.ofSeconds(8)),
+                          HttpResponse.BodyHandlers.ofString())));
+        }
 
-    for (int index = 0; index < results.size(); index++) {
-      var result = results.get(index).get(3, TimeUnit.SECONDS);
-      assertEquals(200, result.statusCode());
-      assertEquals(Integer.toString(index), result.body());
+        try {
+          assertTrue(entered.await(5, TimeUnit.SECONDS));
+        } finally {
+          release.countDown();
+        }
+
+        for (int index = 0; index < results.size(); index++) {
+          var result = results.get(index).get(3, TimeUnit.SECONDS);
+          assertEquals(200, result.statusCode());
+          assertEquals(Integer.toString(index), result.body());
+        }
+        assertEquals(
+            "fresh",
+            test.send(
+                    request -> request.path("/concurrent/fresh").timeout(Duration.ofSeconds(3)),
+                    HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
-    assertEquals(
-        "fresh",
-        client
-            .send(request("/concurrent/fresh").build(), HttpResponse.BodyHandlers.ofString())
-            .body());
   }
 
   @Test
@@ -726,32 +781,37 @@ class RequestMetadataTest {
               pathCalls.incrementAndGet();
               response.text(request.pathParamMap().toString());
             });
-    app.start();
-    String raw;
 
-    try (var socket = new Socket()) {
-      socket.connect(
-          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
-      socket.setSoTimeout(3000);
-      socket
-          .getOutputStream()
-          .write(
-              "GET /raw?bad=%GG HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
-                  .getBytes(StandardCharsets.US_ASCII));
-      raw = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      String raw;
+
+      try (var socket = new Socket()) {
+        socket.connect(
+            new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+        socket.setSoTimeout(3000);
+        socket
+            .getOutputStream()
+            .write(
+                "GET /raw?bad=%GG HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        raw = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+      }
+
+      assertTrue(raw.startsWith("HTTP/1.1 200"), raw);
+      assertTrue(raw.endsWith("raw"), raw);
+      var rejected =
+          test.send(
+              request -> request.path("/path/%252e").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, rejected.statusCode());
+      assertEquals(0, pathCalls.get());
+      assertEquals(
+          404,
+          test.send(
+                  request -> request.path("/missing").timeout(Duration.ofSeconds(3)),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
-
-    assertTrue(raw.startsWith("HTTP/1.1 200"), raw);
-    assertTrue(raw.endsWith("raw"), raw);
-    var rejected =
-        client.send(request("/path/%252e").build(), HttpResponse.BodyHandlers.ofString());
-    assertEquals(400, rejected.statusCode());
-    assertEquals(0, pathCalls.get());
-    assertEquals(
-        404,
-        client
-            .send(request("/missing").build(), HttpResponse.BodyHandlers.ofString())
-            .statusCode());
   }
 
   @Test
@@ -814,38 +874,51 @@ class RequestMetadataTest {
               stream.write("streamed");
             });
     app.routes().get("/other", (_, response) -> response.text("other"));
-    app.start();
-    assertEquals(
-        "streamed",
-        client
-            .send(
-                request("/lifetime/one").header("X-Value", "kept").build(),
-                HttpResponse.BodyHandlers.ofString())
-            .body());
-    var closedRequest = retained.get();
-    for (var reader : readers) {
-      assertThrows(IllegalStateException.class, () -> reader.apply(closedRequest));
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      assertEquals(
+          "streamed",
+          test.send(
+                  request ->
+                      request
+                          .path("/lifetime/one")
+                          .timeout(Duration.ofSeconds(3))
+                          .header("X-Value", "kept"),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      var closedRequest = retained.get();
+      for (var reader : readers) {
+        assertThrows(IllegalStateException.class, () -> reader.apply(closedRequest));
+      }
+      assertThrows(IllegalStateException.class, () -> closedRequest.attribute("state", null));
+      assertThrows(IllegalStateException.class, () -> closedRequest.principal(null));
+      assertEquals(
+          "other",
+          test.send(
+                  request ->
+                      request
+                          .path("/other")
+                          .timeout(Duration.ofSeconds(3))
+                          .header("X-Value", "different"),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(List.of("kept"), snapshot.get().get("X-VALUE"));
     }
-    assertThrows(IllegalStateException.class, () -> closedRequest.attribute("state", null));
-    assertThrows(IllegalStateException.class, () -> closedRequest.principal(null));
-    assertEquals(
-        "other",
-        client
-            .send(
-                request("/other").header("X-Value", "different").build(),
-                HttpResponse.BodyHandlers.ofString())
-            .body());
-    assertEquals(List.of("kept"), snapshot.get().get("X-VALUE"));
   }
 
   @Test
   void matchesAnEncodedUtf8LiteralAtTheLiveListener() throws Exception {
     app.routes().get("/tést", (_, response) -> response.text("unicode-literal"));
     app.routes().get("/{value}", (_, response) -> response.text("parameter"));
-    app.start();
-    var result = client.send(request("/t%C3%A9st").build(), HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, result.statusCode());
-    assertEquals("unicode-literal", result.body());
+
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var result =
+          test.send(
+              request -> request.path("/t%C3%A9st").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("unicode-literal", result.body());
+    }
   }
 
   @Test
@@ -865,34 +938,41 @@ class RequestMetadataTest {
               calls.incrementAndGet();
               response.text("split");
             });
-    app.start();
-    var parameter =
-        client.send(request("/segments/a").build(), HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, parameter.statusCode());
-    assertEquals("a", parameter.body());
-    var split = client.send(request("/segments/a/b").build(), HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, split.statusCode());
-    assertEquals("split", split.body());
-    assertEquals(2, calls.get());
-    HttpTester.Response rejected;
 
-    try (var socket = new Socket()) {
-      socket.connect(
-          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
-      socket.setSoTimeout(3000);
-      socket
-          .getOutputStream()
-          .write(
-              "GET /segments/a%2Fb HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
-                  .getBytes(StandardCharsets.US_ASCII));
-      rejected =
-          HttpTester.parseResponse(
-              new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+    try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+      var parameter =
+          test.send(
+              request -> request.path("/segments/a").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, parameter.statusCode());
+      assertEquals("a", parameter.body());
+      var split =
+          test.send(
+              request -> request.path("/segments/a/b").timeout(Duration.ofSeconds(3)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, split.statusCode());
+      assertEquals("split", split.body());
+      assertEquals(2, calls.get());
+      HttpTester.Response rejected;
+
+      try (var socket = new Socket()) {
+        socket.connect(
+            new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+        socket.setSoTimeout(3000);
+        socket
+            .getOutputStream()
+            .write(
+                "GET /segments/a%2Fb HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        rejected =
+            HttpTester.parseResponse(
+                new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+      }
+
+      assertNotNull(rejected);
+      assertEquals(400, rejected.getStatus());
+      assertEquals(2, calls.get());
     }
-
-    assertNotNull(rejected);
-    assertEquals(400, rejected.getStatus());
-    assertEquals(2, calls.get());
   }
 
   @ParameterizedTest
@@ -972,10 +1052,5 @@ class RequestMetadataTest {
       assertEquals("close", result.get("Connection"));
       assertEquals(-1, socket.getInputStream().read());
     }
-  }
-
-  private HttpRequest.Builder request(String path) {
-    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-        .timeout(Duration.ofSeconds(3));
   }
 }

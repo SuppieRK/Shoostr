@@ -350,8 +350,8 @@ public final class TestServer implements Closeable {
   }
 
   /**
-   * Returns the loopback base URI while the fixture is running. Resolve a relative route path
-   * against this URI to issue a test request.
+   * Returns the actual loopback origin for browser debugging or independently owned native clients.
+   * Ordinary requests use {@link #send(Consumer)} instead of assembling URLs.
    *
    * @return base HTTP or HTTPS URI with a trailing slash
    * @throws IllegalStateException if the server is closed
@@ -366,14 +366,12 @@ public final class TestServer implements Closeable {
   }
 
   /**
-   * Borrows the owned JDK client for async requests, WebSockets or advanced body publishers. Do not
-   * close it separately. Requests made directly through it need their own URI and timeout; callers
-   * must consume/cancel their streams, subscriptions and WebSockets.
+   * Makes owned-client termination independently observable by the harness's lifetime tests.
    *
    * @return fixture-owned client while running
    * @throws IllegalStateException if the fixture is closed
    */
-  public HttpClient httpClient() {
+  HttpClient httpClient() {
     baseUri();
     return client;
   }

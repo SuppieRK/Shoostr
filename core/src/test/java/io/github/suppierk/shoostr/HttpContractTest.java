@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
@@ -20,6 +21,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -41,8 +43,7 @@ class HttpContractTest {
   private final CountDownLatch releaseFinite;
   private final CountDownLatch releaseStream;
   private Shoostr app;
-  private HttpClient client;
-  private String base;
+  private TestServer test;
 
   HttpContractTest() {
     retainedResponse = new AtomicReference<>();
@@ -55,11 +56,7 @@ class HttpContractTest {
   @BeforeEach
   void startServer() throws Exception {
     app = new Shoostr(new Options("127.0.0.1", 0, 16, 1024, 8, 5000));
-    client =
-        HttpClient.newBuilder()
-            .version(HttpClient.Version.HTTP_1_1)
-            .connectTimeout(Duration.ofSeconds(3))
-            .build();
+
     app.routes().get("/plain", (_, res) -> res.text("hello"));
     app.routes()
         .get(
@@ -148,8 +145,7 @@ class HttpContractTest {
     app.routes().get("/invalid-framing", (_, res) -> res.setHeader("content-length", "12"));
     app.routes()
         .get("/custom-type", (_, res) -> res.body("application/vnd.example+json", new byte[0]));
-    app.start();
-    base = "http://127.0.0.1:" + app.port();
+    test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1));
   }
 
   @AfterEach
@@ -158,8 +154,8 @@ class HttpContractTest {
     releaseStream.countDown();
 
     try {
-      if (client != null) {
-        client.close();
+      if (test != null) {
+        test.close();
       }
     } finally {
       if (app != null) {
@@ -172,15 +168,19 @@ class HttpContractTest {
   void sendsFiniteBody() throws Exception {
     assertEquals(
         "hello",
-        client.send(request(base + "/plain").build(), HttpResponse.BodyHandlers.ofString()).body());
+        test.send(
+                request -> request.path("/plain").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
   }
 
   @Test
   void dispatchesOnVirtualThread() throws Exception {
     assertEquals(
         "true",
-        client
-            .send(request(base + "/virtual").build(), HttpResponse.BodyHandlers.ofString())
+        test.send(
+                request -> request.path("/virtual").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString())
             .body());
   }
 
@@ -188,16 +188,17 @@ class HttpContractTest {
   void returnsNotFoundForUnknownRoute() throws Exception {
     assertEquals(
         404,
-        client
-            .send(request(base + "/missing").build(), HttpResponse.BodyHandlers.ofString())
+        test.send(
+                request -> request.path("/missing").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString())
             .statusCode());
   }
 
   @Test
   void reportsAllowedMethods() throws Exception {
     var result =
-        client.send(
-            request(base + "/plain").POST(HttpRequest.BodyPublishers.noBody()).build(),
+        test.send(
+            request -> request.path("/plain").timeout(Duration.ofSeconds(5)).method("POST"),
             HttpResponse.BodyHandlers.ofString());
     assertEquals(405, result.statusCode());
     assertEquals("GET", result.headers().firstValue("Allow").orElseThrow());
@@ -206,7 +207,9 @@ class HttpContractTest {
   @Test
   void discardsStagedSuccessOnHandlerFailure() throws Exception {
     var result =
-        client.send(request(base + "/failure").build(), HttpResponse.BodyHandlers.ofString());
+        test.send(
+            request -> request.path("/failure").timeout(Duration.ofSeconds(5)),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(500, result.statusCode());
     assertEquals("Internal Server Error", result.body());
     assertTrue(result.headers().firstValue("X-Leak").isEmpty());
@@ -214,41 +217,54 @@ class HttpContractTest {
 
   @Test
   void stagesFiniteBodyUntilHandlerReturnsAndClosesApplicationAccess() throws Exception {
-    var finite =
-        client.sendAsync(
-            request(base + "/finite").build(), HttpResponse.BodyHandlers.ofInputStream());
-    assertTrue(staged.await(3, TimeUnit.SECONDS), "finite handler entered");
-    assertFalse(finite.isDone(), "finite response remains staged");
-    releaseFinite.countDown();
+    try (var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
+      var finite =
+          testRequests.submit(
+              () ->
+                  test.send(
+                      request -> request.path("/finite").timeout(Duration.ofSeconds(5)),
+                      HttpResponse.BodyHandlers.ofInputStream()));
+      assertTrue(staged.await(3, TimeUnit.SECONDS), "finite handler entered");
+      assertFalse(finite.isDone(), "finite response remains staged");
+      releaseFinite.countDown();
 
-    try (var input = finite.get(3, TimeUnit.SECONDS).body()) {
-      assertEquals("finished", new String(input.readAllBytes(), StandardCharsets.UTF_8));
+      try (var input = finite.get(3, TimeUnit.SECONDS).body()) {
+        assertEquals("finished", new String(input.readAllBytes(), StandardCharsets.UTF_8));
+      }
+
+      var closedResponse = retainedResponse.get();
+      var closedRequest = retainedRequest.get();
+      assertThrows(IllegalStateException.class, () -> closedResponse.text("too late"));
+      assertThrows(IllegalStateException.class, closedRequest::path);
     }
-
-    var closedResponse = retainedResponse.get();
-    var closedRequest = retainedRequest.get();
-    assertThrows(IllegalStateException.class, () -> closedResponse.text("too late"));
-    assertThrows(IllegalStateException.class, closedRequest::path);
   }
 
   @Test
   void streamsBeforeHandlerReturnsAndFlushesRemainderOnReturn() throws Exception {
-    var result =
-        client
-            .sendAsync(request(base + "/stream").build(), HttpResponse.BodyHandlers.ofInputStream())
-            .get(3, TimeUnit.SECONDS);
+    try (var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
+      var result =
+          testRequests
+              .submit(
+                  () ->
+                      test.send(
+                          request -> request.path("/stream").timeout(Duration.ofSeconds(5)),
+                          HttpResponse.BodyHandlers.ofInputStream()))
+              .get(3, TimeUnit.SECONDS);
 
-    try (var input = result.body()) {
-      assertEquals("first\n", new String(input.readNBytes(6), StandardCharsets.UTF_8));
-      releaseStream.countDown();
-      assertEquals("last\n", new String(input.readAllBytes(), StandardCharsets.UTF_8));
+      try (var input = result.body()) {
+        assertEquals("first\n", new String(input.readNBytes(6), StandardCharsets.UTF_8));
+        releaseStream.countDown();
+        assertEquals("last\n", new String(input.readAllBytes(), StandardCharsets.UTF_8));
+      }
     }
   }
 
   @Test
   void chainsStreamWritesAndFlushesOnTheSameWriter() throws Exception {
     var result =
-        client.send(request(base + "/fluent-stream").build(), HttpResponse.BodyHandlers.ofString());
+        test.send(
+            request -> request.path("/fluent-stream").timeout(Duration.ofSeconds(5)),
+            HttpResponse.BodyHandlers.ofString());
 
     assertEquals(200, result.statusCode());
     assertEquals("café!012345678tail", result.body());
@@ -259,16 +275,18 @@ class HttpContractTest {
     assertThrows(
         IOException.class,
         () ->
-            client.send(
-                request(base + "/broken-stream").build(), HttpResponse.BodyHandlers.ofString()));
+            test.send(
+                request -> request.path("/broken-stream").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString()));
   }
 
   @Test
   void rejectsApplicationClosingResponse() throws Exception {
     assertEquals(
         500,
-        client
-            .send(request(base + "/close").build(), HttpResponse.BodyHandlers.ofString())
+        test.send(
+                request -> request.path("/close").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString())
             .statusCode());
   }
 
@@ -276,8 +294,9 @@ class HttpContractTest {
   void rejectsResponseAccessFromAnotherThread() throws Exception {
     assertEquals(
         "true",
-        client
-            .send(request(base + "/cross-thread").build(), HttpResponse.BodyHandlers.ofString())
+        test.send(
+                request -> request.path("/cross-thread").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString())
             .body());
   }
 
@@ -285,8 +304,9 @@ class HttpContractTest {
   void sendsBodylessStatus() throws Exception {
     assertEquals(
         204,
-        client
-            .send(request(base + "/empty").build(), HttpResponse.BodyHandlers.ofString())
+        test.send(
+                request -> request.path("/empty").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString())
             .statusCode());
   }
 
@@ -294,8 +314,9 @@ class HttpContractTest {
   void rejectsBodyForBodylessStatusBeforeCommit() throws Exception {
     assertEquals(
         500,
-        client
-            .send(request(base + "/invalid-empty").build(), HttpResponse.BodyHandlers.ofString())
+        test.send(
+                request -> request.path("/invalid-empty").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString())
             .statusCode());
   }
 
@@ -303,7 +324,10 @@ class HttpContractTest {
   @ValueSource(
       strings = {"/invalid-type", "/invalid-stream-type", "/invalid-header", "/invalid-framing"})
   void rejectsInvalidHeadersBeforeCommit(String path) throws Exception {
-    var result = client.send(request(base + path).build(), HttpResponse.BodyHandlers.ofString());
+    var result =
+        test.send(
+            request -> request.path(path).timeout(Duration.ofSeconds(5)),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(500, result.statusCode());
     assertTrue(result.headers().firstValue("X-Leak").isEmpty());
   }
@@ -312,8 +336,9 @@ class HttpContractTest {
   void preservesCustomContentType() throws Exception {
     assertEquals(
         "application/vnd.example+json",
-        client
-            .send(request(base + "/custom-type").build(), HttpResponse.BodyHandlers.ofString())
+        test.send(
+                request -> request.path("/custom-type").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString())
             .headers()
             .firstValue("Content-Type")
             .orElseThrow());
@@ -322,8 +347,13 @@ class HttpContractTest {
   @Test
   void readsRequestBody() throws Exception {
     var result =
-        client.send(
-            request(base + "/echo").POST(HttpRequest.BodyPublishers.ofString("hello")).build(),
+        test.send(
+            request ->
+                request
+                    .path("/echo")
+                    .timeout(Duration.ofSeconds(5))
+                    .method("POST")
+                    .body("hello".getBytes(StandardCharsets.UTF_8)),
             HttpResponse.BodyHandlers.ofString());
     assertEquals("hello", result.body());
   }
@@ -331,8 +361,8 @@ class HttpContractTest {
   @Test
   void readsEmptyKnownLengthRequestBody() throws Exception {
     var result =
-        client.send(
-            request(base + "/echo").POST(HttpRequest.BodyPublishers.noBody()).build(),
+        test.send(
+            request -> request.path("/echo").timeout(Duration.ofSeconds(5)).method("POST"),
             HttpResponse.BodyHandlers.ofString());
 
     assertEquals(200, result.statusCode());
@@ -342,16 +372,21 @@ class HttpContractTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void capsRequestBodyWithKnownOrUnknownLength(boolean chunked) throws Exception {
-    var body =
-        chunked
-            ? HttpRequest.BodyPublishers.ofInputStream(
-                () -> new ByteArrayInputStream("x".repeat(17).getBytes(StandardCharsets.UTF_8)))
-            : HttpRequest.BodyPublishers.ofString("x".repeat(17));
-    var result =
-        client.send(
-            request(base + "/echo").POST(body).build(), HttpResponse.BodyHandlers.ofString());
-    assertEquals(413, result.statusCode());
-    assertEquals("Content Too Large", result.body());
+    // The unknown-length variant requires a native chunked body publisher.
+    try (var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+
+      var body =
+          chunked
+              ? HttpRequest.BodyPublishers.ofInputStream(
+                  () -> new ByteArrayInputStream("x".repeat(17).getBytes(StandardCharsets.UTF_8)))
+              : HttpRequest.BodyPublishers.ofString("x".repeat(17));
+      var result =
+          client.send(
+              request(test.baseUri().resolve("/echo").toString()).POST(body).build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(413, result.statusCode());
+      assertEquals("Content Too Large", result.body());
+    }
   }
 
   @Test
