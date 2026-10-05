@@ -87,11 +87,34 @@ class BufferedRequestLifecycleTest {
           client.send(
               HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
                   .timeout(Duration.ofSeconds(3))
+                  // Await header-based rejection instead of racing it with the upload.
+                  .expectContinue(knownLength)
                   .POST(publisher)
                   .build(),
               HttpResponse.BodyHandlers.ofString());
       assertEquals(413, result.statusCode());
       assertEquals("Content Too Large", result.body());
+    }
+  }
+
+  @Test
+  void rejectsAnOversizedContentLengthWithoutWaitingForTheBody() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
+      app.start();
+
+      try (var socket = new Socket()) {
+        connect(socket, app.port());
+        socket
+            .getOutputStream()
+            .write(
+                "POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1048577\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var rejected = receive(HttpTester.from(socket.getInputStream()));
+        assertEquals(413, rejected.getStatus());
+        assertEquals("Content Too Large", rejected.getContent());
+      }
     }
   }
 
