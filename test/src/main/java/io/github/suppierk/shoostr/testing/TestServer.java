@@ -49,9 +49,27 @@ public final class TestServer implements Closeable {
    * @throws Exception if configuration or startup fails
    * @throws NullPointerException if app is null
    */
-  @SuppressWarnings("java:S1181") // Startup failure must close the acquired server even for Error.
   public static TestServer start(Shoostr app) throws Exception {
+    return start(app, _ -> {});
+  }
+
+  /**
+   * Starts the supplied app with optional customization of its owned JDK client. Defaults are
+   * applied first: isolated cookies, redirects off, no proxy, normal protocol/TLS negotiation and a
+   * three-second connect timeout. A supplied executor remains caller-owned. Rejected apps do not
+   * invoke the callback; failure after ownership transfers closes acquired resources.
+   *
+   * @param app existing unstarted application
+   * @param configureClient callback configuring only the fixture-owned client
+   * @return started fixture
+   * @throws Exception if client configuration or application startup fails
+   * @throws NullPointerException if an argument is null
+   */
+  @SuppressWarnings("java:S1181") // Cleanup must run even when startup or cleanup throws Error.
+  public static TestServer start(Shoostr app, Consumer<HttpClient.Builder> configureClient)
+      throws Exception {
     Objects.requireNonNull(app);
+    Objects.requireNonNull(configureClient);
     var connectors = new ArrayList<ServerConnector>();
     synchronized (app) {
       // Registration rejects ineligible apps before this fixture acquires ownership.
@@ -73,7 +91,17 @@ public final class TestServer implements Closeable {
             }
           });
 
+      HttpClient client = null;
+
       try {
+        var builder =
+            HttpClient.newBuilder()
+                .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER))
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .proxy(HttpClient.Builder.NO_PROXY)
+                .connectTimeout(Duration.ofSeconds(3));
+        configureClient.accept(builder);
+        client = builder.build();
         app.start();
         var port = app.port();
         var secure =
@@ -84,18 +112,13 @@ public final class TestServer implements Closeable {
                             && listener.getConnectionFactories().stream()
                                 .anyMatch(SslConnectionFactory.class::isInstance));
         return new TestServer(
-            app,
-            URI.create((secure ? "https" : "http") + "://127.0.0.1:" + port + "/"),
-            HttpClient.newBuilder()
-                .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_ORIGINAL_SERVER))
-                .followRedirects(HttpClient.Redirect.NEVER)
-                .proxy(HttpClient.Builder.NO_PROXY)
-                .connectTimeout(Duration.ofSeconds(3))
-                .build());
+            app, URI.create((secure ? "https" : "http") + "://127.0.0.1:" + port + "/"), client);
       } catch (Exception | Error failure) {
-        try {
-          app.close();
-        } catch (IOException cleanup) {
+        try (app) {
+          if (client != null) {
+            closeClient(client);
+          }
+        } catch (Exception | Error cleanup) {
           failure.addSuppressed(cleanup);
         }
 
@@ -164,6 +187,19 @@ public final class TestServer implements Closeable {
   }
 
   /**
+   * Borrows the owned JDK client for async requests, WebSockets or advanced body publishers. Do not
+   * close it separately. Requests made directly through it need their own URI and timeout; callers
+   * must consume/cancel their streams, subscriptions and WebSockets.
+   *
+   * @return fixture-owned client while running
+   * @throws IllegalStateException if the fixture is closed
+   */
+  public HttpClient httpClient() {
+    baseUri();
+    return client;
+  }
+
+  /**
    * Cancels owned client work, then stops the application and releases its listener. Safe to call
    * repeatedly. Waits at most three seconds for client termination, not indefinitely for a body.
    *
@@ -176,34 +212,30 @@ public final class TestServer implements Closeable {
     }
 
     closed = true;
-    IOException failure = null;
+
+    try (app) {
+      closeClient(client);
+    }
+  }
+
+  /**
+   * Cancels active exchanges before bounded shutdown so an unread body cannot stall cleanup.
+   *
+   * @param client owned JDK client
+   * @throws IOException if bounded termination fails or the calling thread is interrupted
+   */
+  private static void closeClient(HttpClient client) throws IOException {
+    client.shutdownNow();
 
     try {
-      client.shutdownNow();
       if (!client.awaitTermination(Duration.ofSeconds(3))) {
-        failure = new IOException("HTTP test client did not terminate within three seconds");
-      } else {
-        client.close();
+        throw new IOException("HTTP test client did not terminate within three seconds");
       }
+
+      client.close();
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
-      failure = new IOException("Interrupted while closing HTTP test client", interrupted);
-    } catch (RuntimeException cleanup) {
-      failure = new IOException("Could not close HTTP test client", cleanup);
-    }
-
-    try {
-      app.close();
-    } catch (IOException cleanup) {
-      if (failure == null) {
-        failure = cleanup;
-      } else {
-        failure.addSuppressed(cleanup);
-      }
-    }
-
-    if (failure != null) {
-      throw failure;
+      throw new IOException("Interrupted while closing HTTP test client", interrupted);
     }
   }
 }

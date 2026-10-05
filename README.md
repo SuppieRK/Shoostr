@@ -65,6 +65,23 @@ and close it in your testing framework's teardown. It does not reset mocks or de
 Callers own returned streams/subscriptions; close or consume them. Fixture cleanup cancels
 outstanding client work before stopping the app instead of waiting indefinitely for a body.
 
+The owned client defaults to isolated cookies, redirects disabled, no system proxy and a
+three-second connect timeout, with normal JDK protocol negotiation and TLS verification.
+Customize it only when needed; the callback runs after these defaults:
+
+```java
+try (var server = TestServer.start(app,
+        client -> client.followRedirects(java.net.http.HttpClient.Redirect.ALWAYS))) {
+    var reply = server.send(request -> request.path("/redirect"));
+}
+```
+
+`server.httpClient()` borrows that same client for advanced JDK async, WebSocket or body
+publisher use. Do not close it separately. Direct requests need their own URI (resolve against
+`server.baseUri()`) and timeout. The harness does not close caller-supplied executors or manage
+returned streams, subscriptions or WebSockets; callers must consume, close or cancel these.
+A request timeout is not an independent deadline for reading a returned streaming body.
+
 Configure Jetty directly before startup, using ordered callbacks similar to Javalin:
 
 ```java

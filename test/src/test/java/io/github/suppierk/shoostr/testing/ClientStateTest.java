@@ -21,11 +21,14 @@ class ClientStateTest {
 
   @Test
   void doesNotShareCookiesWithAnotherFixtureOnTheSameHost() throws Exception {
-    try (var first = TestServer.start(cookieApp()); var second = TestServer.start(cookieApp())) {
+    try (var first = TestServer.start(cookieApp());
+        var second = TestServer.start(cookieApp())) {
       first.send(request -> request.path("/set"));
       assertEquals(
           "absent",
-          second.send(request -> request.path("/read"), HttpResponse.BodyHandlers.ofString()).body());
+          second
+              .send(request -> request.path("/read"), HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
