@@ -27,11 +27,12 @@ public API:
 ```java
 var app = new Shoostr();
 app.routes().get("/hello", (request, response) -> response.text("hello"));
-try (var server = TestServer.start(app);
-     var client = java.net.http.HttpClient.newHttpClient()) {
-    var request = java.net.http.HttpRequest.newBuilder(server.baseUri().resolve("hello")).build();
-    var reply = client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString());
-    // Assert reply.statusCode() == 200 and reply.body().equals("hello") in the test.
+try (var server = TestServer.start(app)) {
+    var reply = server.send(request -> request.path("/hello"));
+    // Assert reply.statusCode() and reply.body() (byte[]) with your test framework.
+    var text = server.send(request -> request.path("/hello"),
+        java.net.http.HttpResponse.BodyHandlers.ofString());
+    // Or consume text.body() as a String through an explicit JDK BodyHandler.
 }
 ```
 
@@ -51,6 +52,18 @@ notifications and error propagation. The example is also the `:consumer-smoke`
 Gradle module: `./gradlew :consumer-smoke:test` and the root `build` run its
 tests against project dependencies, while `consumerSmoke` verifies published
 artifacts from the independent build.
+
+Configure outgoing requests through the single `send(request -> ...)` interface:
+`path`, `method`, repeated `header`, raw `body(byte[])` and `timeout(Duration)`.
+`method` and `header` also accept existing `HttpMethods` and `HttpHeaders` values.
+GET/no body and a ten-second request timeout are defaults. Paths are explicitly required,
+relative to the fixture's origin, and may include encoded queries; schemes, authorities
+and fragments are rejected. Each request has fresh configuration and copies body bytes.
+No JSON conversion, response wrapper or assertion DSL is involved. The fixture owns its
+JDK client and cookie state; retain it across test methods if shared app/cookies are desired,
+and close it in your testing framework's teardown. It does not reset mocks or dependencies.
+Callers own returned streams/subscriptions; close or consume them. Fixture cleanup cancels
+outstanding client work before stopping the app instead of waiting indefinitely for a body.
 
 Configure Jetty directly before startup, using ordered callbacks similar to Javalin:
 
