@@ -461,9 +461,9 @@ class RouteCompositionTest {
                 res.text("checked");
               });
 
-      try (var test = TestServer.start(candidate)) {
+      try (var candidateTest = TestServer.start(candidate)) {
         var result =
-            test.send(
+            candidateTest.send(
                 request -> request.path("/42").timeout(Duration.ofSeconds(5)),
                 HttpResponse.BodyHandlers.ofString());
         assertEquals("checked", result.body());
