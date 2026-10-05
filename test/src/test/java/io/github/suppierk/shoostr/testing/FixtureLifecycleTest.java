@@ -121,18 +121,18 @@ class FixtureLifecycleTest {
 
   @Test
   void closesAppAndClientWhenAnAssertionFailsInsideTheFixtureScope() throws Exception {
-    var client = new AtomicReference<HttpClient>();
-
-    try (var app = new Shoostr()) {
+    try (var app = new Shoostr();
+        var test = TestServer.start(app)) {
+      var client = test.httpClient();
+      var status = test.send(request -> request.path("/missing")).statusCode();
       assertThrows(
           AssertionError.class,
           () -> {
-            try (var test = TestServer.start(app)) {
-              client.set(test.httpClient());
-              assertEquals(200, test.send(request -> request.path("/missing")).statusCode());
+            try (test) {
+              assertEquals(200, status);
             }
           });
-      assertTrue(client.get().isTerminated());
+      assertTrue(client.isTerminated());
       assertThrows(IllegalStateException.class, app::port);
     }
   }

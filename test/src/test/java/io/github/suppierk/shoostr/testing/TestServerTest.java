@@ -26,8 +26,20 @@ class TestServerTest {
         var client = HttpClient.newHttpClient()) {
       first = running;
       assertNotEquals(running.baseUri().getPort(), second.baseUri().getPort());
-      assertEquals("one", body(client, running));
-      assertEquals("two", body(client, second));
+      assertEquals(
+          "one",
+          client
+              .send(
+                  HttpRequest.newBuilder(running.baseUri().resolve("id")).build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "two",
+          client
+              .send(
+                  HttpRequest.newBuilder(second.baseUri().resolve("id")).build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
 
     assertThrows(IllegalStateException.class, first::baseUri);
@@ -64,13 +76,5 @@ class TestServerTest {
     var failure = assertThrows(IOException.class, server::close);
     assertEquals("Could not stop HTTP server", failure.getMessage());
     assertThrows(IllegalStateException.class, server::baseUri);
-  }
-
-  private static String body(HttpClient client, TestServer server) throws Exception {
-    return client
-        .send(
-            HttpRequest.newBuilder(server.baseUri().resolve("id")).build(),
-            HttpResponse.BodyHandlers.ofString())
-        .body();
   }
 }

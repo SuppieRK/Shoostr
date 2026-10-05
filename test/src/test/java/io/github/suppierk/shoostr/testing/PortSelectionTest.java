@@ -183,9 +183,7 @@ class PortSelectionTest {
       assertThrows(
           BindException.class,
           () -> {
-            try (var _ = bind(port)) {
-              fail("The fixture must reserve its listener until close");
-            }
+            try (var _ = bind(port)) {}
           });
     }
 
@@ -248,9 +246,7 @@ class PortSelectionTest {
                       assertThrows(
                           BindException.class,
                           () -> {
-                            try (var _ = bind(port)) {
-                              fail("The selected port must remain reserved during startup");
-                            }
+                            try (var _ = bind(port)) {}
                           });
                       throw expected;
                     }

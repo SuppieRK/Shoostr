@@ -215,7 +215,8 @@ class TestClientTest {
                         throw expected;
                       }));
       assertSame(expected, failure);
-      assertThrows(IllegalStateException.class, () -> retained.get().path("/late"));
+      var configuration = retained.get();
+      assertThrows(IllegalStateException.class, () -> configuration.path("/late"));
     }
   }
 
@@ -284,7 +285,8 @@ class TestClientTest {
             retained.set(request);
             request.path("/value");
           });
-      assertThrows(IllegalStateException.class, () -> retained.get().header("X-Late", "no"));
+      var configuration = retained.get();
+      assertThrows(IllegalStateException.class, () -> configuration.header("X-Late", "no"));
     }
   }
 }

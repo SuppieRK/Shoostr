@@ -14,7 +14,6 @@ import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
-import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -37,7 +36,12 @@ class SessionTest {
               (request, response) ->
                   response.text(request.session(true).isEmpty() ? "disabled" : "created"));
       app.start();
-      var result = send(client, app, "/peek", Optional.empty());
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/peek"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals("disabled", result.body());
       assertFalse(result.headers().firstValue("Set-Cookie").isPresent());
     }
@@ -65,12 +69,22 @@ class SessionTest {
               });
       app.start();
 
-      var absent = send(client, app, "/peek", Optional.empty());
+      var absent =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/peek"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, absent.statusCode());
       assertEquals("absent", absent.body());
       assertFalse(absent.headers().firstValue("Set-Cookie").isPresent());
 
-      var created = send(client, app, "/create", Optional.empty());
+      var created =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/create"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, created.statusCode());
       var setCookie = created.headers().firstValue("Set-Cookie").orElseThrow();
       var cookie = setCookie.split(";", 2)[0];
@@ -81,7 +95,13 @@ class SessionTest {
       assertFalse(setCookie.contains("Domain="));
       assertFalse(created.body().isBlank());
 
-      var reused = send(client, app, "/peek", Optional.of(cookie));
+      var reused =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/peek"))
+                  .header("Cookie", cookie)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, reused.statusCode());
       assertEquals("alice", reused.body());
       assertFalse(reused.headers().firstValue("Set-Cookie").isPresent());
@@ -111,17 +131,46 @@ class SessionTest {
       app.start();
 
       var oldCookie =
-          send(client, app, "/create", Optional.empty())
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/create"))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .headers()
               .firstValue("Set-Cookie")
               .orElseThrow()
               .split(";", 2)[0];
-      var renewed = send(client, app, "/renew", Optional.of(oldCookie));
+      var renewed =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/renew"))
+                  .header("Cookie", oldCookie)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, renewed.statusCode());
       var newCookie = renewed.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
       assertNotEquals(oldCookie, newCookie);
-      assertEquals("absent", send(client, app, "/peek", Optional.of(oldCookie)).body());
-      assertEquals("alice", send(client, app, "/peek", Optional.of(newCookie)).body());
+      assertEquals(
+          "absent",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/peek"))
+                      .header("Cookie", oldCookie)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "alice",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/peek"))
+                      .header("Cookie", newCookie)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -148,13 +197,53 @@ class SessionTest {
 
       assertEquals(
           "absent",
-          send(client, app, "/peek", Optional.of("JSESSIONID=chosen-by-attacker")).body());
-      var created = send(client, app, "/create", Optional.of("JSESSIONID=chosen-by-attacker"));
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/peek"))
+                      .header("Cookie", "JSESSIONID=chosen-by-attacker")
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      var created =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/create"))
+                  .header("Cookie", "JSESSIONID=chosen-by-attacker")
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       var cookie = created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
       assertFalse(cookie.contains("chosen-by-attacker"));
-      assertEquals("present", send(client, app, "/peek", Optional.of(cookie)).body());
-      assertEquals("logged out", send(client, app, "/logout", Optional.of(cookie)).body());
-      assertEquals("absent", send(client, app, "/peek", Optional.of(cookie)).body());
+      assertEquals(
+          "present",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/peek"))
+                      .header("Cookie", cookie)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "logged out",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/logout"))
+                      .header("Cookie", cookie)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "absent",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/peek"))
+                      .header("Cookie", cookie)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -175,7 +264,12 @@ class SessionTest {
       app.start();
 
       var cookie =
-          send(client, app, "/create", Optional.empty())
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/create"))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .headers()
               .firstValue("Set-Cookie")
               .orElseThrow();
@@ -205,18 +299,43 @@ class SessionTest {
                   response.text(request.session(false).isEmpty() ? "absent" : "present"));
       app.start();
       cookie =
-          send(client, app, "/create", Optional.empty())
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/create"))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .headers()
               .firstValue("Set-Cookie")
               .orElseThrow()
               .split(";", 2)[0];
-      assertEquals("present", send(client, app, "/peek", Optional.of(cookie)).body());
+      assertEquals(
+          "present",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/peek"))
+                      .header("Cookie", cookie)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       await()
           .pollDelay(Duration.ofMillis(1200))
           .pollInterval(Duration.ofMillis(1200))
           .atMost(Duration.ofSeconds(5))
           .untilAsserted(
-              () -> assertEquals("absent", send(client, app, "/peek", Optional.of(cookie)).body()));
+              () ->
+                  assertEquals(
+                      "absent",
+                      client
+                          .send(
+                              HttpRequest.newBuilder(
+                                      URI.create("http://localhost:" + app.port() + "/peek"))
+                                  .header("Cookie", cookie)
+                                  .GET()
+                                  .build(),
+                              HttpResponse.BodyHandlers.ofString())
+                          .body()));
     }
 
     try (var restarted = new Shoostr(Options.defaults().withPort(0));
@@ -229,7 +348,17 @@ class SessionTest {
               (request, response) ->
                   response.text(request.session(false).isEmpty() ? "absent" : "present"));
       restarted.start();
-      assertEquals("absent", send(client, restarted, "/peek", Optional.of(cookie)).body());
+      assertEquals(
+          "absent",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://localhost:" + restarted.port() + "/peek"))
+                      .header("Cookie", cookie)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -248,7 +377,12 @@ class SessionTest {
               (request, response) -> response.text(request.session(true).orElseThrow().getId()));
       app.start();
       cookie =
-          send(client, app, "/create", Optional.empty())
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/create"))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .headers()
               .firstValue("Set-Cookie")
               .orElseThrow()
@@ -273,7 +407,17 @@ class SessionTest {
               (request, response) ->
                   response.text(request.session(false).isEmpty() ? "absent" : "present"));
       restarted.start();
-      assertEquals("absent", send(client, restarted, "/peek", Optional.of(cookie)).body());
+      assertEquals(
+          "absent",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://localhost:" + restarted.port() + "/peek"))
+                      .header("Cookie", cookie)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -301,11 +445,25 @@ class SessionTest {
               });
       app.start();
 
-      var failed = send(client, app, "/start", Optional.empty());
+      var failed =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/start"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(409, failed.statusCode());
       var cookie = failed.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
       assertEquals(1, failed.headers().allValues("Set-Cookie").size());
-      assertEquals("alice", send(client, app, "/peek", Optional.of(cookie)).body());
+      assertEquals(
+          "alice",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/peek"))
+                      .header("Cookie", cookie)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -326,7 +484,12 @@ class SessionTest {
               });
       app.start();
       cookie =
-          send(client, app, "/create", Optional.empty())
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/create"))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .headers()
               .firstValue("Set-Cookie")
               .orElseThrow()
@@ -346,7 +509,17 @@ class SessionTest {
                     session.map(value -> (String) value.getAttribute("name")).orElse("absent"));
               });
       restarted.start();
-      assertEquals("alice", send(client, restarted, "/peek", Optional.of(cookie)).body());
+      assertEquals(
+          "alice",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://localhost:" + restarted.port() + "/peek"))
+                      .header("Cookie", cookie)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -362,7 +535,12 @@ class SessionTest {
       app.sessions(handler -> fileStore(handler, directory));
       app.routes().get("/form", (request, response) -> response.text(csrf.token(request)));
       app.start();
-      var result = send(client, app, "/form", Optional.empty());
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/form"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, result.statusCode());
       cookie = result.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
       token = result.body();
@@ -427,7 +605,12 @@ class SessionTest {
                           request.session(false).orElseThrow().getAttributeNameSet().size())));
       app.start();
       var cookie =
-          send(client, app, "/create", Optional.empty())
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/create"))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .headers()
               .firstValue("Set-Cookie")
               .orElseThrow()
@@ -435,7 +618,15 @@ class SessionTest {
       var futures = new ArrayList<Future<HttpResponse<String>>>();
       for (int index = 0; index < 8; index++) {
         var path = "/write/" + index;
-        futures.add(workers.submit(() -> send(client, app, path, Optional.of(cookie))));
+        futures.add(
+            workers.submit(
+                () ->
+                    client.send(
+                        HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + path))
+                            .header("Cookie", cookie)
+                            .GET()
+                            .build(),
+                        HttpResponse.BodyHandlers.ofString())));
       }
 
       try {
@@ -448,7 +639,16 @@ class SessionTest {
         assertEquals(200, future.get(5, TimeUnit.SECONDS).statusCode());
       }
 
-      assertEquals("8", send(client, app, "/count", Optional.of(cookie)).body());
+      assertEquals(
+          "8",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/count"))
+                      .header("Cookie", cookie)
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -464,19 +664,35 @@ class SessionTest {
           .get("/peek", (_, response) -> response.text("handled"));
       app.start();
       var first =
-          send(client, app, "/create", Optional.empty())
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/create"))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .headers()
               .firstValue("Set-Cookie")
               .orElseThrow()
               .split(";", 2)[0];
       var second =
-          send(client, app, "/create", Optional.empty())
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/create"))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .headers()
               .firstValue("Set-Cookie")
               .orElseThrow()
               .split(";", 2)[0];
       assertNotEquals(first, second);
-      var ambiguous = send(client, app, "/peek", Optional.of(first + "; " + second));
+      var ambiguous =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/peek"))
+                  .header("Cookie", first + "; " + second)
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(400, ambiguous.statusCode());
       assertNotEquals("handled", ambiguous.body());
     }
@@ -496,7 +712,12 @@ class SessionTest {
                 stream.write("ok");
               });
       app.start();
-      var result = send(client, app, "/stream", Optional.empty());
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + "/stream"))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, result.statusCode());
       assertEquals("ok", result.body());
       assertFalse(result.headers().firstValue("Set-Cookie").isPresent());
@@ -509,13 +730,5 @@ class SessionTest {
     var cache = new DefaultSessionCache(handler);
     cache.setSessionDataStore(store);
     handler.setSessionCache(cache);
-  }
-
-  private static HttpResponse<String> send(
-      HttpClient client, Shoostr app, String path, Optional<String> cookie) throws Exception {
-    var builder = HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + path));
-    cookie.ifPresent(value -> builder.header("Cookie", value));
-
-    return client.send(builder.GET().build(), HttpResponse.BodyHandlers.ofString());
   }
 }

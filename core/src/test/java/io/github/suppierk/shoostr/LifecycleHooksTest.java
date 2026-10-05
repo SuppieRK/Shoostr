@@ -87,7 +87,12 @@ class LifecycleHooksTest {
                       throw new NotFoundException();
                     }));
     app.start();
-    var result = send("GET", "/accounts/a/orders/42");
+    var result =
+        client.send(
+            request("/accounts/a/orders/42")
+                .method("GET", HttpRequest.BodyPublishers.noBody())
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(404, result.statusCode());
     assertEquals("/accounts/{accountId}/orders/{id}", result.body());
     assertThrows(IllegalStateException.class, retained.get()::routePattern);
@@ -104,7 +109,12 @@ class LifecycleHooksTest {
                 response.text(request.attribute("matched-id").orElseThrow().toString()));
     app.start();
 
-    var result = send("GET", "/users/caf%C3%A9+team");
+    var result =
+        client.send(
+            request("/users/caf%C3%A9+team")
+                .method("GET", HttpRequest.BodyPublishers.noBody())
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
 
     assertEquals(200, result.statusCode());
     assertEquals("café+team", result.body());
@@ -140,7 +150,10 @@ class LifecycleHooksTest {
               response.text("accepted");
             });
     app.start();
-    var denied = send("GET", "/orders/42");
+    var denied =
+        client.send(
+            request("/orders/42").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(401, denied.statusCode());
     assertEquals("Bearer", denied.headers().firstValue("WWW-Authenticate").orElseThrow());
     assertTrue(denied.headers().firstValue("X-Staged").isEmpty());
@@ -173,7 +186,10 @@ class LifecycleHooksTest {
             response.startStream(MediaType.TEXT_PLAIN).write("rejected before commit"));
     app.routes().get("/gate", (_, _) -> entered.set(true));
     app.start();
-    var result = send("GET", "/gate");
+    var result =
+        client.send(
+            request("/gate").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(500, result.statusCode());
     assertEquals("rejected before commit", result.body());
     assertFalse(entered.get());
@@ -196,7 +212,13 @@ class LifecycleHooksTest {
               response.status(201).text("created");
             });
     app.start();
-    assertEquals(201, send("GET", "/orders/42").statusCode());
+    assertEquals(
+        201,
+        client
+            .send(
+                request("/orders/42").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString())
+            .statusCode());
     var outcome = outcomes.poll(3, TimeUnit.SECONDS);
     assertNotNull(outcome);
     assertEquals("GET", outcome.method());
@@ -231,7 +253,10 @@ class LifecycleHooksTest {
               throw original;
             });
     app.start();
-    var result = send("GET", "/failure");
+    var result =
+        client.send(
+            request("/failure").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(mapperFails ? 500 : 409, result.statusCode());
     var outcome = outcomes.poll(3, TimeUnit.SECONDS);
     assertNotNull(outcome);
@@ -261,7 +286,13 @@ class LifecycleHooksTest {
         });
     app.routes().get("/ok", (_, response) -> response.text("ok"));
     app.start();
-    assertEquals("ok", send("GET", "/ok").body());
+    assertEquals(
+        "ok",
+        client
+            .send(
+                request("/ok").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
     assertNotNull(outcomes.poll(3, TimeUnit.SECONDS));
     assertEquals(List.of("first", "second"), calls);
   }
@@ -280,7 +311,12 @@ class LifecycleHooksTest {
     app.start();
 
     try (var socket = socket()) {
-      writeRequest(socket, "/large");
+      socket
+          .getOutputStream()
+          .write(
+              ("GET " + "/large" + " HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                  .getBytes(StandardCharsets.US_ASCII));
+      socket.getOutputStream().flush();
       readHeaders(socket);
       assertNull(
           outcomes.poll(100, TimeUnit.MILLISECONDS), "pending bytes are not completed output");
@@ -345,7 +381,12 @@ class LifecycleHooksTest {
     app.beforeRouteHandler((_, _) -> gates.incrementAndGet());
     app.routes().get("/known", (_, response) -> response.text("ok"));
     app.start();
-    var result = send("POST", wrongMethod ? "/known" : "/missing");
+    var result =
+        client.send(
+            request(wrongMethod ? "/known" : "/missing")
+                .method("POST", HttpRequest.BodyPublishers.noBody())
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(wrongMethod ? 405 : 404, result.statusCode());
     var outcome = outcomes.poll(3, TimeUnit.SECONDS);
     assertNotNull(outcome);
@@ -375,7 +416,12 @@ class LifecycleHooksTest {
               throw (Error) failure;
             });
     app.start();
-    assertThrows(IOException.class, () -> send("POST", "/abort"));
+    assertThrows(
+        IOException.class,
+        () ->
+            client.send(
+                request("/abort").method("POST", HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString()));
     var outcome = outcomes.poll(3, TimeUnit.SECONDS);
     assertNotNull(outcome);
     assertSame(failure, outcome.applicationFailure());
@@ -407,7 +453,12 @@ class LifecycleHooksTest {
 
     try {
       try (var socket = socket()) {
-        writeRequest(socket, "/waiting");
+        socket
+            .getOutputStream()
+            .write(
+                ("GET " + "/waiting" + " HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
         readHeaders(socket);
         assertTrue(entered.await(3, TimeUnit.SECONDS));
         socket.setSoLinger(true, 0);
@@ -476,7 +527,13 @@ class LifecycleHooksTest {
       start.countDown();
       startup.get(5, TimeUnit.SECONDS);
       boolean accepted = registration.get(5, TimeUnit.SECONDS);
-      assertEquals("ok", send("GET", "/ok").body());
+      assertEquals(
+          "ok",
+          client
+              .send(
+                  request("/ok").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       if (accepted) {
         assertTrue(called.await(3, TimeUnit.SECONDS));
       } else {
@@ -497,7 +554,10 @@ class LifecycleHooksTest {
             });
     app.start();
     for (String method : List.of("HEAD", "OPTIONS")) {
-      var result = send(method, "/method");
+      var result =
+          client.send(
+              request("/method").method(method, HttpRequest.BodyPublishers.noBody()).build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(405, result.statusCode());
       assertEquals("GET", result.headers().firstValue("Allow").orElseThrow());
     }
@@ -586,7 +646,14 @@ class LifecycleHooksTest {
               throw original;
             });
     app.start();
-    assertThrows(IOException.class, () -> send("POST", "/fatal-mapper"));
+    assertThrows(
+        IOException.class,
+        () ->
+            client.send(
+                request("/fatal-mapper")
+                    .method("POST", HttpRequest.BodyPublishers.noBody())
+                    .build(),
+                HttpResponse.BodyHandlers.ofString()));
     var outcome = outcomes.poll(3, TimeUnit.SECONDS);
     assertNotNull(outcome);
     assertEquals(0, outcome.statusCode());
@@ -611,7 +678,10 @@ class LifecycleHooksTest {
     app.exception(IOException.class, (_, _, response) -> response.status(403).text("denied"));
     app.routes().get("/twice", (_, response) -> response.text("unexpected"));
     app.start();
-    var result = send("GET", "/twice");
+    var result =
+        client.send(
+            request("/twice").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(403, result.statusCode());
     assertEquals("denied", result.body());
     assertEquals(2, calls.get());
@@ -640,7 +710,13 @@ class LifecycleHooksTest {
     app.afterRouteHandler((_, _) -> calls.add("after"));
     app.start();
 
-    assertEquals("ok", send("GET", "/stages").body());
+    assertEquals(
+        "ok",
+        client
+            .send(
+                request("/stages").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
     assertEquals(List.of("headers", "matched:/stages", "before", "handler", "after"), calls);
   }
 
@@ -652,7 +728,10 @@ class LifecycleHooksTest {
     app.status(404, (_, response) -> response.setHeader("X-Status", "custom").text("missing"));
     app.start();
 
-    var result = send("GET", "/missing");
+    var result =
+        client.send(
+            request("/missing").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString());
 
     assertEquals(404, result.statusCode());
     assertEquals("custom", result.headers().firstValue("X-Status").orElseThrow());
@@ -672,7 +751,10 @@ class LifecycleHooksTest {
     app.routes().get("/known", (_, response) -> response.text("ok"));
     app.start();
 
-    var result = send("POST", "/known");
+    var result =
+        client.send(
+            request("/known").method("POST", HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString());
 
     assertEquals(405, result.statusCode());
     assertEquals("GET", result.headers().firstValue("Allow").orElseThrow());
@@ -699,7 +781,13 @@ class LifecycleHooksTest {
             });
     app.start();
 
-    assertEquals("ok", send("GET", "/finite").body());
+    assertEquals(
+        "ok",
+        client
+            .send(
+                request("/finite").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
     assertTrue(flushed.await(3, TimeUnit.SECONDS));
     assertEquals(List.of("handler", "before-flush", "after-flush:200"), calls);
   }
@@ -717,7 +805,10 @@ class LifecycleHooksTest {
     app.routes().get("/flush-rejection", (_, response) -> response.text("unreachable"));
     app.start();
 
-    var result = send("GET", "/flush-rejection");
+    var result =
+        client.send(
+            request("/flush-rejection").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString());
 
     assertEquals(401, result.statusCode());
     assertEquals("rejected", result.body());
@@ -743,7 +834,10 @@ class LifecycleHooksTest {
     app.routes().get("/checked-flush", (_, response) -> response.text("original"));
     app.start();
 
-    var result = send("GET", "/checked-flush");
+    var result =
+        client.send(
+            request("/checked-flush").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString());
 
     assertEquals(409, result.statusCode());
     assertEquals("mapped", result.body());
@@ -761,7 +855,10 @@ class LifecycleHooksTest {
     app.routes().get("/after-failure", (_, response) -> response.text("submitted"));
     app.start();
 
-    var result = send("GET", "/after-failure");
+    var result =
+        client.send(
+            request("/after-failure").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString());
     var outcome = outcomes.poll(3, TimeUnit.SECONDS);
 
     assertEquals(200, result.statusCode());
@@ -790,7 +887,12 @@ class LifecycleHooksTest {
             });
     app.start();
 
-    var result = send("GET", "/mapped-after-failure");
+    var result =
+        client.send(
+            request("/mapped-after-failure")
+                .method("GET", HttpRequest.BodyPublishers.noBody())
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     var outcome = outcomes.poll(3, TimeUnit.SECONDS);
 
     assertEquals(409, result.statusCode());
@@ -816,7 +918,10 @@ class LifecycleHooksTest {
             });
     app.start();
 
-    var result = send("GET", "/mapper-flush");
+    var result =
+        client.send(
+            request("/mapper-flush").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString());
 
     assertEquals(500, result.statusCode());
     assertEquals(1, flushes.get());
@@ -846,7 +951,13 @@ class LifecycleHooksTest {
             });
     app.start();
 
-    assertEquals("ok", send("GET", "/reentry").body());
+    assertEquals(
+        "ok",
+        client
+            .send(
+                request("/reentry").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
     assertTrue(rejected.get());
   }
 
@@ -863,7 +974,10 @@ class LifecycleHooksTest {
     app.routes().get("/immutable", (_, response) -> response.text("ok"));
     app.start();
 
-    var result = send("GET", "/immutable");
+    var result =
+        client.send(
+            request("/immutable").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+            HttpResponse.BodyHandlers.ofString());
 
     assertEquals("ok", result.body());
     assertTrue(flushed.await(3, TimeUnit.SECONDS));
@@ -892,7 +1006,13 @@ class LifecycleHooksTest {
             });
     app.start();
 
-    assertEquals("firstsecond", send("GET", "/stream-flush").body());
+    assertEquals(
+        "firstsecond",
+        client
+            .send(
+                request("/stream-flush").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
     assertTrue(afterFlushes.await(3, TimeUnit.SECONDS));
     assertEquals(List.of("before", "after", "before", "after", "before", "after"), calls);
   }
@@ -934,9 +1054,21 @@ class LifecycleHooksTest {
     app.start();
 
     for (String stage : List.of("header", "matched", "after")) {
-      assertEquals(stage, send("GET", "/" + stage).body());
+      assertEquals(
+          stage,
+          client
+              .send(
+                  request("/" + stage).method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
-    assertEquals("status", send("GET", "/missing/path").body());
+    assertEquals(
+        "status",
+        client
+            .send(
+                request("/missing/path").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
     assertEquals(
         List.of(
             "headers:/header",
@@ -956,7 +1088,13 @@ class LifecycleHooksTest {
     app.routes().get("/selected", (_, response) -> response.status(404).text("application"));
     app.start();
 
-    assertEquals("application", send("GET", "/selected").body());
+    assertEquals(
+        "application",
+        client
+            .send(
+                request("/selected").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
     assertFalse(rendered.get());
   }
 
@@ -968,7 +1106,13 @@ class LifecycleHooksTest {
     app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
     app.start();
 
-    assertEquals("file", send("GET", "/file").body());
+    assertEquals(
+        "file",
+        client
+            .send(
+                request("/file").method("GET", HttpRequest.BodyPublishers.noBody()).build(),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
     assertTrue(flushed.await(3, TimeUnit.SECONDS));
   }
 
@@ -979,15 +1123,6 @@ class LifecycleHooksTest {
     socket.connect(
         new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
     return socket;
-  }
-
-  private static void writeRequest(Socket socket, String path) throws IOException {
-    socket
-        .getOutputStream()
-        .write(
-            ("GET " + path + " HTTP/1.1\r\nHost: localhost\r\n\r\n")
-                .getBytes(StandardCharsets.US_ASCII));
-    socket.getOutputStream().flush();
   }
 
   private static void readHeaders(Socket socket) throws IOException {
@@ -1004,12 +1139,6 @@ class LifecycleHooksTest {
       }
     }
     throw new IOException("Header limit exceeded");
-  }
-
-  private HttpResponse<String> send(String method, String path) throws Exception {
-    return client.send(
-        request(path).method(method, HttpRequest.BodyPublishers.noBody()).build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 
   private HttpRequest.Builder request(String path) {

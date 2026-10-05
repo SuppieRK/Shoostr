@@ -99,7 +99,15 @@ class ExtensionLifecycleTest {
           IllegalStateException.class, () -> configuration.afterRouteHandler((_, _) -> {}));
       app.start();
       assertThrows(IllegalStateException.class, () -> app.extensions(missing));
-      assertEquals("ok", send(client, app, "GET", "/route").body());
+      assertEquals(
+          "ok",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/route"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -172,7 +180,15 @@ class ExtensionLifecycleTest {
               (_, response) -> response.text("ok"),
               e -> e.onRouteMatched((_, _) -> events.add("local")));
       app.start();
-      assertEquals("ok", send(client, app, "GET", "/ordered").body());
+      assertEquals(
+          "ok",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/ordered"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       assertEquals(List.of("local", "app"), List.copyOf(events));
     }
   }
@@ -190,7 +206,15 @@ class ExtensionLifecycleTest {
               (_, response) -> response.text("ok"),
               e -> e.beforeRouteHandler((_, _) -> events.add("local")));
       app.start();
-      assertEquals("ok", send(client, app, "GET", "/ordered").body());
+      assertEquals(
+          "ok",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/ordered"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       assertEquals(List.of("local", "app"), List.copyOf(events));
     }
   }
@@ -208,7 +232,15 @@ class ExtensionLifecycleTest {
               (_, response) -> response.text("ok"),
               e -> e.afterRouteHandler((_, _) -> events.add("local")));
       app.start();
-      assertEquals("ok", send(client, app, "GET", "/ordered").body());
+      assertEquals(
+          "ok",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/ordered"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       assertEquals(List.of("local", "app"), List.copyOf(events));
     }
   }
@@ -230,7 +262,15 @@ class ExtensionLifecycleTest {
                 e.get(admission);
               });
       app.start();
-      assertEquals("ok", send(client, app, "GET", "/ordered").body());
+      assertEquals(
+          "ok",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/ordered"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       assertEquals(List.of("extension", "local"), List.copyOf(events));
     }
   }
@@ -257,7 +297,15 @@ class ExtensionLifecycleTest {
                 e.get(auth).required();
               });
       app.start();
-      assertEquals("alice", send(client, app, "GET", "/identity").body());
+      assertEquals(
+          "alice",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/identity"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -279,7 +327,15 @@ class ExtensionLifecycleTest {
                       e -> e.get(auth).required().required()),
               e -> e.get(auth).required());
       app.start();
-      assertEquals("ok", send(client, app, "GET", "/identity").body());
+      assertEquals(
+          "ok",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/identity"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       assertEquals(1, calls.get());
     }
   }
@@ -305,7 +361,15 @@ class ExtensionLifecycleTest {
                         response.text("ok");
                       }));
       app.start();
-      assertEquals("ok", send(client, app, "GET", "/ordered").body());
+      assertEquals(
+          "ok",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/ordered"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       assertEquals(List.of("app", "availability", "endpoint"), List.copyOf(events));
     }
   }
@@ -326,7 +390,15 @@ class ExtensionLifecycleTest {
                       (_, response) -> response.text("ok"),
                       e -> e.get(auth).required()));
       app.start();
-      assertEquals("ok", send(client, app, "GET", "/identity").body());
+      assertEquals(
+          "ok",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/identity"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -358,12 +430,25 @@ class ExtensionLifecycleTest {
               });
       app.routes().get("/users/{id}", (_, response) -> response.text("fallback"));
       app.start();
-      var denied = send(client, app, "GET", "/users/fixed");
+      var denied =
+          client.send(
+              HttpRequest.newBuilder(uri(app, "/users/fixed"))
+                  .method("GET", HttpRequest.BodyPublishers.noBody())
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(404, denied.statusCode());
       assertEquals("locally disabled", denied.body());
       assertEquals("no-store", denied.headers().firstValue("Cache-Control").orElseThrow());
       assertEquals(0, innerCalls.get());
-      assertEquals(405, send(client, app, "POST", "/users/fixed").statusCode());
+      assertEquals(
+          405,
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/users/fixed"))
+                      .method("POST", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
       enabled.set(true);
       var admitted =
           client.send(
@@ -375,7 +460,15 @@ class ExtensionLifecycleTest {
       assertTrue(admitted.headers().firstValue("Cache-Control").isEmpty());
       assertEquals(1, groupCalls.get());
       assertEquals(1, innerCalls.get());
-      assertEquals("app missing", send(client, app, "GET", "/missing").body());
+      assertEquals(
+          "app missing",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/missing"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -407,9 +500,25 @@ class ExtensionLifecycleTest {
                 throw new IllegalArgumentException();
               });
       app.start();
-      assertEquals("local error", send(client, app, "GET", "/fail").body());
+      assertEquals(
+          "local error",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/fail"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       assertTrue(events.isEmpty());
-      assertEquals("app error", send(client, app, "GET", "/fallback").body());
+      assertEquals(
+          "app error",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/fallback"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -431,7 +540,15 @@ class ExtensionLifecycleTest {
                 e.afterRequest(outcomes::add);
               });
       app.start();
-      assertEquals(200, send(client, app, "GET", "/observed").statusCode());
+      assertEquals(
+          200,
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/observed"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
       var outcome = outcomes.poll(5, TimeUnit.SECONDS);
       assertNotNull(outcome);
       assertEquals("/observed", outcome.routePattern());
@@ -464,7 +581,15 @@ class ExtensionLifecycleTest {
                 e.afterRequest(_ -> events.add("local-terminal"));
               });
       app.start();
-      assertEquals("data: a\n\ndata: b\n\n", send(client, app, "GET", "/events").body());
+      assertEquals(
+          "data: a\n\ndata: b\n\n",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/events"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       assertNotNull(completed.poll(5, TimeUnit.SECONDS));
       var order = List.copyOf(events);
       assertTrue(order.size() >= 10);
@@ -500,7 +625,12 @@ class ExtensionLifecycleTest {
                         e.afterRequest(outcomes::add);
                       }));
       app.start();
-      var result = send(client, app, "GET", "/flag");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(uri(app, "/flag"))
+                  .method("GET", HttpRequest.BodyPublishers.noBody())
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(500, result.statusCode());
       assertEquals("flag failed", result.body());
       var outcome = outcomes.poll(5, TimeUnit.SECONDS);
@@ -534,7 +664,15 @@ class ExtensionLifecycleTest {
           () -> routes.get("/nested", (_, _) -> {}, e -> e.get(nested)));
       app.routes().get("/nested", (_, response) -> response.text("retry"));
       app.start();
-      assertEquals("retry", send(client, app, "GET", "/nested").body());
+      assertEquals(
+          "retry",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/nested"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       assertEquals(0, calls.get());
     }
   }
@@ -574,7 +712,15 @@ class ExtensionLifecycleTest {
                 assertSame(e.get(first), e.get(first));
               });
       app.start();
-      assertEquals("ok", send(client, app, "GET", "/outer/inner/endpoint").body());
+      assertEquals(
+          "ok",
+          client
+              .send(
+                  HttpRequest.newBuilder(uri(app, "/outer/inner/endpoint"))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       assertEquals(
           List.of("second", "first", "outer", "inner", "endpoint", "app", "handler"),
           List.copyOf(events));
@@ -604,15 +750,6 @@ class ExtensionLifecycleTest {
 
   private static URI uri(Shoostr app, String path) {
     return URI.create("http://127.0.0.1:" + app.port() + path);
-  }
-
-  private static HttpResponse<String> send(
-      HttpClient client, Shoostr app, String method, String path) throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(uri(app, path))
-            .method(method, HttpRequest.BodyPublishers.noBody())
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 
   private record Capability(String name, List<String> events) implements Extension<Object> {

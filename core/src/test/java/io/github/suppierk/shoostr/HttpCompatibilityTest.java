@@ -61,10 +61,11 @@ class HttpCompatibilityTest {
                 response.setHeader("X-Handled-Method", request.method()).text(request.method()));
     app.start();
     var response =
-        send(
+        client.send(
             request("/dispatch")
                 .method(method.value(), HttpRequest.BodyPublishers.noBody())
-                .build());
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, response.statusCode());
     assertEquals(method.value(), response.headers().firstValue("X-Handled-Method").orElseThrow());
     assertEquals(method == HttpMethods.HEAD ? "" : method.value(), response.body());
@@ -75,10 +76,16 @@ class HttpCompatibilityTest {
   void matchesLiteralPunctuationWithoutInterpretingItAsPatternSyntax(String path) throws Exception {
     app.routes().get(path, (request, response) -> response.text(request.path()));
     app.start();
-    var response = send(request(path + "?ignored=/another/path").build());
+    var response =
+        client.send(
+            request(path + "?ignored=/another/path").build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(200, response.statusCode());
     assertEquals(path, response.body());
-    assertEquals(404, send(request(path + "-extra").build()).statusCode());
+    assertEquals(
+        404,
+        client
+            .send(request(path + "-extra").build(), HttpResponse.BodyHandlers.ofString())
+            .statusCode());
   }
 
   @ParameterizedTest
@@ -94,10 +101,15 @@ class HttpCompatibilityTest {
           case "M%C3%BCnchen" -> "München";
           default -> raw;
         };
-    var response = send(request("/values/" + raw).build());
+    var response =
+        client.send(request("/values/" + raw).build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(200, response.statusCode());
     assertEquals(expected, response.body());
-    assertEquals(404, send(request("/VALUES/" + raw).build()).statusCode());
+    assertEquals(
+        404,
+        client
+            .send(request("/VALUES/" + raw).build(), HttpResponse.BodyHandlers.ofString())
+            .statusCode());
   }
 
   @Test
@@ -111,7 +123,11 @@ class HttpCompatibilityTest {
               response.text(request.pathParam("item").orElseThrow());
             });
     app.start();
-    assertEquals(400, send(request("/values/rate%25done").build()).statusCode());
+    assertEquals(
+        400,
+        client
+            .send(request("/values/rate%25done").build(), HttpResponse.BodyHandlers.ofString())
+            .statusCode());
     assertFalse(invoked.get());
   }
 
@@ -182,7 +198,10 @@ class HttpCompatibilityTest {
                   .text("café");
             });
     app.start();
-    var response = send(request("/headers").header(spelling, "current").build());
+    var response =
+        client.send(
+            request("/headers").header(spelling, "current").build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(201, response.statusCode());
     assertEquals(List.of("current"), response.headers().allValues("X-Result"));
     assertEquals("café", response.body());
@@ -202,7 +221,10 @@ class HttpCompatibilityTest {
                     .text("ok"));
     app.start();
 
-    var response = send(request("/tenant").header("x-tenant", "revolut").build());
+    var response =
+        client.send(
+            request("/tenant").header("x-tenant", "revolut").build(),
+            HttpResponse.BodyHandlers.ofString());
 
     assertEquals("revolut", response.headers().firstValue(tenant.value()).orElseThrow());
     assertEquals("ok", response.body());
@@ -211,9 +233,5 @@ class HttpCompatibilityTest {
   private HttpRequest.Builder request(String path) {
     return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
         .timeout(Duration.ofSeconds(3));
-  }
-
-  private HttpResponse<String> send(HttpRequest request) throws Exception {
-    return client.send(request, HttpResponse.BodyHandlers.ofString());
   }
 }

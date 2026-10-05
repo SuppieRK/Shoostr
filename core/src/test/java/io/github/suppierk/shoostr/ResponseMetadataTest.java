@@ -62,7 +62,12 @@ class ResponseMetadataTest {
               response.text("ok");
             });
     app.start();
-    var result = send("/metadata");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/metadata"))
+                .timeout(Duration.ofSeconds(3))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(202, result.statusCode());
     assertEquals("first", result.headers().firstValue("X-Value").orElseThrow());
     assertEquals("ok", result.body());
@@ -81,7 +86,12 @@ class ResponseMetadataTest {
               assertThrows(NullPointerException.class, () -> response.text(null));
             });
     app.start();
-    var result = send("/null-text");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/null-text"))
+                .timeout(Duration.ofSeconds(3))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(202, result.statusCode());
     assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
     assertEquals("\"kept\"", result.body());
@@ -112,7 +122,12 @@ class ResponseMetadataTest {
               response.text("ok");
             });
     app.start();
-    var result = send("/headers");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/headers"))
+                .timeout(Duration.ofSeconds(3))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals(
         List.of("first=1; Path=/", "second=2; Path=/"), result.headers().allValues("Set-Cookie"));
@@ -138,7 +153,12 @@ class ResponseMetadataTest {
               response.text("ok");
             });
     app.start();
-    var result = send("/remove");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/remove"))
+                .timeout(Duration.ofSeconds(3))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals(List.of(), result.headers().allValues("X-Value"));
     assertEquals("kept", result.headers().firstValue("X-Keep").orElseThrow());
@@ -162,7 +182,12 @@ class ResponseMetadataTest {
               response.text("ok");
             });
     app.start();
-    var result = send("/invalid");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/invalid"))
+                .timeout(Duration.ofSeconds(3))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals(List.of("kept"), result.headers().allValues("X-Value"));
   }
@@ -195,7 +220,12 @@ class ResponseMetadataTest {
               assertEquals("a\tb", response.setHeader("X-Tab"));
             });
     app.start();
-    var result = send("/framing");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/framing"))
+                .timeout(Duration.ofSeconds(3))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("2", result.headers().firstValue("Content-Length").orElseThrow());
     assertEquals("a b", result.headers().firstValue("X-Tab").orElseThrow());
@@ -244,7 +274,13 @@ class ResponseMetadataTest {
               stream.write("streamed");
             });
     app.start();
-    var result = send("/stream-metadata");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://127.0.0.1:" + app.port() + "/stream-metadata"))
+                .timeout(Duration.ofSeconds(3))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(202, result.statusCode());
     assertEquals("streamed", result.body());
     var closedResponse = retained.get();
@@ -301,7 +337,12 @@ class ResponseMetadataTest {
         .get("/report", (_, response) -> response.file(file, "text/plain").redirect("/next"));
     app.start();
 
-    var result = send("/report");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/report"))
+                .timeout(Duration.ofSeconds(3))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
 
     assertEquals(302, result.statusCode());
     assertEquals("/next", result.headers().firstValue("Location").orElseThrow());
@@ -328,7 +369,13 @@ class ResponseMetadataTest {
     }
     app.start();
     for (var code : codes) {
-      var result = send("/redirect-" + code.value());
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/redirect-" + code.value()))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(code.value(), result.statusCode());
       assertEquals("../next", result.headers().firstValue("Location").orElseThrow());
       assertEquals("", result.body());
@@ -370,7 +417,13 @@ class ResponseMetadataTest {
               assertThrows(NullPointerException.class, () -> response.redirect("/valid", null));
             });
     app.start();
-    var result = send("/invalid-redirect");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://127.0.0.1:" + app.port() + "/invalid-redirect"))
+                .timeout(Duration.ofSeconds(3))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(202, result.statusCode());
     assertEquals("/original", result.headers().firstValue("Location").orElseThrow());
     assertEquals(
@@ -396,7 +449,13 @@ class ResponseMetadataTest {
     }
     app.start();
     for (int index = 0; index < destinations.length; index++) {
-      var result = send("/destination-" + index);
+      var result =
+          client.send(
+              HttpRequest.newBuilder(
+                      URI.create("http://127.0.0.1:" + app.port() + "/destination-" + index))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(302, result.statusCode());
       assertEquals(destinations[index][1], result.headers().firstValue("Location").orElseThrow());
     }
@@ -422,11 +481,23 @@ class ResponseMetadataTest {
             });
     app.routes().head("/head-redirect", (_, response) -> response.redirect("/next"));
     app.start();
-    var streamed = send("/stream-redirect");
+    var streamed =
+        client.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://127.0.0.1:" + app.port() + "/stream-redirect"))
+                .timeout(Duration.ofSeconds(3))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, streamed.statusCode());
     assertEquals("original", streamed.body());
     assertEquals(List.of(), streamed.headers().allValues("Location"));
-    var failed = send("/failed-redirect");
+    var failed =
+        client.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://127.0.0.1:" + app.port() + "/failed-redirect"))
+                .timeout(Duration.ofSeconds(3))
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(500, failed.statusCode());
     assertEquals("Internal Server Error", failed.body());
     assertEquals(List.of(), failed.headers().allValues("Location"));
@@ -439,13 +510,5 @@ class ResponseMetadataTest {
     assertEquals(302, head.statusCode());
     assertEquals("/next", head.headers().firstValue("Location").orElseThrow());
     assertEquals("", head.body());
-  }
-
-  private HttpResponse<String> send(String path) throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-            .timeout(Duration.ofSeconds(3))
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 }

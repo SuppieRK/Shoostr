@@ -55,10 +55,46 @@ class RoutePolicyTest {
       plain.start();
       guarded.start();
 
-      assertEquals(200, send(client, plain, "/api/").statusCode());
-      assertEquals(404, send(client, plain, "/api").statusCode());
-      assertEquals(200, send(client, guarded, "/api/").statusCode());
-      assertEquals(404, send(client, guarded, "/api").statusCode());
+      assertEquals(
+          200,
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + plain.port() + "/api/"))
+                      .timeout(Duration.ofSeconds(5))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + plain.port() + "/api"))
+                      .timeout(Duration.ofSeconds(5))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          200,
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + guarded.port() + "/api/"))
+                      .timeout(Duration.ofSeconds(5))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + guarded.port() + "/api"))
+                      .timeout(Duration.ofSeconds(5))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
   }
 
@@ -84,7 +120,17 @@ class RoutePolicyTest {
                       e -> e.get(inner)),
               e -> e.get(outer));
       app.start();
-      assertEquals("outer,inner,handler", send(client, app, "/api/order").body());
+      assertEquals(
+          "outer,inner,handler",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/api/order"))
+                      .timeout(Duration.ofSeconds(5))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -102,7 +148,16 @@ class RoutePolicyTest {
           .routes()
           .get("/stream", (_, response) -> response.text("finite"), e -> e.get(admission));
       app.start();
-      assertEquals("finite", send(client, app, "/stream").body());
+      assertEquals(
+          "finite",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/stream"))
+                      .timeout(Duration.ofSeconds(5))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -125,7 +180,13 @@ class RoutePolicyTest {
           .get("/private", (_, response) -> response.text("secret"), e -> e.get(auth).required());
       app.start();
 
-      var result = send(client, app, "/private");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/private"))
+                  .timeout(Duration.ofSeconds(5))
+                  .GET()
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(401, result.statusCode());
       assertEquals("login required", result.body());
       assertEquals(
@@ -155,7 +216,17 @@ class RoutePolicyTest {
           .path("/", secured -> secured.staticFiles("/files", directory), e -> e.get(admission));
       app.start();
 
-      assertEquals(403, send(client, app, "/files/secret.txt").statusCode());
+      assertEquals(
+          403,
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/files/secret.txt"))
+                      .timeout(Duration.ofSeconds(5))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
   }
 
@@ -179,18 +250,28 @@ class RoutePolicyTest {
               });
       app.start();
 
-      assertEquals(403, send(client, app, "/api/private").statusCode());
-      assertEquals("public", send(client, app, "/api/public").body());
+      assertEquals(
+          403,
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/api/private"))
+                      .timeout(Duration.ofSeconds(5))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          "public",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/api/public"))
+                      .timeout(Duration.ofSeconds(5))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
-  }
-
-  private static HttpResponse<String> send(HttpClient client, Shoostr app, String path)
-      throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-            .timeout(Duration.ofSeconds(5))
-            .GET()
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 }

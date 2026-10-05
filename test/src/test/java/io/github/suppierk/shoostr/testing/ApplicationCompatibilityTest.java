@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Timeout;
 class ApplicationCompatibilityTest {
   @Test
   void preservesInstalledExtensionAndInheritedAuthenticationBehavior() throws Exception {
+    @SuppressWarnings("java:S9357") // Extension has no abstract method: it cannot be a lambda.
     var extension =
         new Extension<>() {
           @Override

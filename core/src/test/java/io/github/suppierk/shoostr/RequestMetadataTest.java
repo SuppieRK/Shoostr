@@ -89,7 +89,8 @@ class RequestMetadataTest {
               response.text("rejected");
             });
     app.start();
-    var result = send(request("/null-name/one"));
+    var result =
+        client.send(request("/null-name/one").build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("rejected", result.body());
   }
@@ -137,7 +138,8 @@ class RequestMetadataTest {
               response.text("empty");
             });
     app.start();
-    var result = send(request("/missing-native"));
+    var result =
+        client.send(request("/missing-native").build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("empty", result.body());
   }
@@ -199,9 +201,11 @@ class RequestMetadataTest {
             });
     app.start();
     var result =
-        send(
+        client.send(
             request("/missing-addresses")
-                .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https"));
+                .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("empty", result.body());
   }
@@ -234,13 +238,17 @@ class RequestMetadataTest {
             });
     app.start();
     var result =
-        send(
+        client.send(
             request("/metadata?q=a+b%2F&q=second&empty=")
                 .header("X-Values", "a,b")
-                .header("x-values", "c"));
+                .header("x-values", "c")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("ok", result.body());
-    assertEquals("absent", send(request("/absent")).body());
+    assertEquals(
+        "absent",
+        client.send(request("/absent").build(), HttpResponse.BodyHandlers.ofString()).body());
   }
 
   @Test
@@ -279,7 +287,12 @@ class RequestMetadataTest {
                         Objects.toString(request.cookieMap().get("token")))));
     app.start();
     var result =
-        send(request("/snapshot").header("X-Snapshot", "original").header("Cookie", "token=first"));
+        client.send(
+            request("/snapshot")
+                .header("X-Snapshot", "original")
+                .header("Cookie", "token=first")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("original;[original];[original];first;[first];[first]", result.body());
   }
@@ -300,7 +313,18 @@ class RequestMetadataTest {
                         request.cookie("missing").map(Object::toString).orElse("null"),
                         request.cookies("missing").toString())));
     app.start();
-    var result = exchange("GET /empty HTTP/1.0\r\n\r\n");
+    String result;
+
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      socket
+          .getOutputStream()
+          .write("GET /empty HTTP/1.0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+      result = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    }
+
     assertEquals("200", result.split(" ", 3)[1]);
     assertTrue(result.endsWith("{};{};null;[];null;[]"), result);
   }
@@ -330,10 +354,15 @@ class RequestMetadataTest {
               response.text("literal");
             });
     app.start();
-    var result = send(request("/groups/caf%C3%A9/items/a+b%20c"));
+    var result =
+        client.send(
+            request("/groups/caf%C3%A9/items/a+b%20c").build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("/groups/{group}/items/{id}", result.body());
-    assertEquals("literal", send(request("/literal")).body());
+    assertEquals(
+        "literal",
+        client.send(request("/literal").build(), HttpResponse.BodyHandlers.ofString()).body());
     assertEquals(Map.of("group", "café", "id", "a+b c"), retained.get());
   }
 
@@ -453,9 +482,13 @@ class RequestMetadataTest {
               response.text("ok");
             });
     app.start();
-    assertEquals("ok", send(request("/attributes")).body());
+    assertEquals(
+        "ok",
+        client.send(request("/attributes").build(), HttpResponse.BodyHandlers.ofString()).body());
     assertSame(value, retained.get().get("value"));
-    assertEquals("ok", send(request("/attributes")).body());
+    assertEquals(
+        "ok",
+        client.send(request("/attributes").build(), HttpResponse.BodyHandlers.ofString()).body());
   }
 
   @Test
@@ -500,11 +533,13 @@ class RequestMetadataTest {
               response.text("anonymous");
             });
     app.start();
-    var result = send(request("/users/alice"));
+    var result = client.send(request("/users/alice").build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(409, result.statusCode());
     assertEquals("alice", result.body());
     assertEquals("alice", retained.get().getName());
-    assertEquals("anonymous", send(request("/anonymous")).body());
+    assertEquals(
+        "anonymous",
+        client.send(request("/anonymous").build(), HttpResponse.BodyHandlers.ofString()).body());
   }
 
   @Test
@@ -548,7 +583,11 @@ class RequestMetadataTest {
       assertEquals(200, result.statusCode());
       assertEquals(Integer.toString(index), result.body());
     }
-    assertEquals("fresh", send(request("/concurrent/fresh")).body());
+    assertEquals(
+        "fresh",
+        client
+            .send(request("/concurrent/fresh").build(), HttpResponse.BodyHandlers.ofString())
+            .body());
   }
 
   @Test
@@ -634,11 +673,34 @@ class RequestMetadataTest {
               response.text("legacy");
             });
     app.start();
-    var ipv6 =
-        exchange("GET /ipv6? HTTP/1.1\r\nHost: [2001:db8::1]:80\r\nConnection: close\r\n\r\n");
+    String ipv6;
+
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      socket
+          .getOutputStream()
+          .write(
+              "GET /ipv6? HTTP/1.1\r\nHost: [2001:db8::1]:80\r\nConnection: close\r\n\r\n"
+                  .getBytes(StandardCharsets.US_ASCII));
+      ipv6 = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    }
+
     assertTrue(ipv6.startsWith("HTTP/1.1 200"), ipv6);
     assertTrue(ipv6.endsWith("ipv6"), ipv6);
-    var legacy = exchange("GET /legacy HTTP/1.0\r\n\r\n");
+    String legacy;
+
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      socket
+          .getOutputStream()
+          .write("GET /legacy HTTP/1.0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+      legacy = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    }
+
     assertTrue(legacy.contains(" 200 "), legacy);
     assertTrue(legacy.endsWith("legacy"), legacy);
   }
@@ -665,14 +727,31 @@ class RequestMetadataTest {
               response.text(request.pathParamMap().toString());
             });
     app.start();
-    var raw =
-        exchange("GET /raw?bad=%GG HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n");
+    String raw;
+
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      socket
+          .getOutputStream()
+          .write(
+              "GET /raw?bad=%GG HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+                  .getBytes(StandardCharsets.US_ASCII));
+      raw = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    }
+
     assertTrue(raw.startsWith("HTTP/1.1 200"), raw);
     assertTrue(raw.endsWith("raw"), raw);
-    var rejected = send(request("/path/%252e"));
+    var rejected =
+        client.send(request("/path/%252e").build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(400, rejected.statusCode());
     assertEquals(0, pathCalls.get());
-    assertEquals(404, send(request("/missing")).statusCode());
+    assertEquals(
+        404,
+        client
+            .send(request("/missing").build(), HttpResponse.BodyHandlers.ofString())
+            .statusCode());
   }
 
   @Test
@@ -736,14 +815,26 @@ class RequestMetadataTest {
             });
     app.routes().get("/other", (_, response) -> response.text("other"));
     app.start();
-    assertEquals("streamed", send(request("/lifetime/one").header("X-Value", "kept")).body());
+    assertEquals(
+        "streamed",
+        client
+            .send(
+                request("/lifetime/one").header("X-Value", "kept").build(),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
     var closedRequest = retained.get();
     for (var reader : readers) {
       assertThrows(IllegalStateException.class, () -> reader.apply(closedRequest));
     }
     assertThrows(IllegalStateException.class, () -> closedRequest.attribute("state", null));
     assertThrows(IllegalStateException.class, () -> closedRequest.principal(null));
-    assertEquals("other", send(request("/other").header("X-Value", "different")).body());
+    assertEquals(
+        "other",
+        client
+            .send(
+                request("/other").header("X-Value", "different").build(),
+                HttpResponse.BodyHandlers.ofString())
+            .body());
     assertEquals(List.of("kept"), snapshot.get().get("X-VALUE"));
   }
 
@@ -752,7 +843,7 @@ class RequestMetadataTest {
     app.routes().get("/tést", (_, response) -> response.text("unicode-literal"));
     app.routes().get("/{value}", (_, response) -> response.text("parameter"));
     app.start();
-    var result = send(request("/t%C3%A9st"));
+    var result = client.send(request("/t%C3%A9st").build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("unicode-literal", result.body());
   }
@@ -775,17 +866,30 @@ class RequestMetadataTest {
               response.text("split");
             });
     app.start();
-    var parameter = send(request("/segments/a"));
+    var parameter =
+        client.send(request("/segments/a").build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(200, parameter.statusCode());
     assertEquals("a", parameter.body());
-    var split = send(request("/segments/a/b"));
+    var split = client.send(request("/segments/a/b").build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(200, split.statusCode());
     assertEquals("split", split.body());
     assertEquals(2, calls.get());
-    var rejected =
-        HttpTester.parseResponse(
-            exchange(
-                "GET /segments/a%2Fb HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"));
+    HttpTester.Response rejected;
+
+    try (var socket = new Socket()) {
+      socket.connect(
+          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
+      socket.setSoTimeout(3000);
+      socket
+          .getOutputStream()
+          .write(
+              "GET /segments/a%2Fb HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n"
+                  .getBytes(StandardCharsets.US_ASCII));
+      rejected =
+          HttpTester.parseResponse(
+              new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
+    }
+
     assertNotNull(rejected);
     assertEquals(400, rejected.getStatus());
     assertEquals(2, calls.get());
@@ -870,22 +974,8 @@ class RequestMetadataTest {
     }
   }
 
-  private String exchange(String message) throws Exception {
-    try (var socket = new Socket()) {
-      socket.connect(
-          new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
-      socket.setSoTimeout(3000);
-      socket.getOutputStream().write(message.getBytes(StandardCharsets.US_ASCII));
-      return new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-    }
-  }
-
   private HttpRequest.Builder request(String path) {
     return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
         .timeout(Duration.ofSeconds(3));
-  }
-
-  private HttpResponse<String> send(HttpRequest.Builder request) throws Exception {
-    return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
   }
 }

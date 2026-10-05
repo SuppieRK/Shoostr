@@ -66,7 +66,14 @@ class TrustedProxyTest {
               response.text("direct");
             });
     app.start();
-    var result = send("/default?raw=a%2Bb", "not=a=valid;for=spoofed");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://127.0.0.1:" + app.port() + "/default?raw=a%2Bb"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", "not=a=valid;for=spoofed")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("direct", result.body());
   }
@@ -98,7 +105,13 @@ class TrustedProxyTest {
             });
     app.start();
     var result =
-        send("/forwarded/a+b?raw=%2B", "for=\"203.0.113.7:4123\";host=public.example;proto=https");
+        client.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://127.0.0.1:" + app.port() + "/forwarded/a+b?raw=%2B"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", "for=\"203.0.113.7:4123\";host=public.example;proto=https")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("forwarded", result.body());
   }
@@ -130,7 +143,14 @@ class TrustedProxyTest {
             });
     app.start();
     var result =
-        send("/ipv6?raw=%2B", "for=\"[2001:db8::7]:4123\";host=\"[2001:db8::8]:8443\";proto=https");
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/ipv6?raw=%2B"))
+                .timeout(Duration.ofSeconds(3))
+                .header(
+                    "Forwarded",
+                    "for=\"[2001:db8::7]:4123\";host=\"[2001:db8::8]:8443\";proto=https")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("ipv6", result.body());
   }
@@ -163,8 +183,24 @@ class TrustedProxyTest {
     String attacker = "for=198.51.100.99;host=evil.example;proto=http";
     String boundary = "for=\"203.0.113.7:4123\";host=public.example;proto=https";
     String ingress = "for=192.0.2.10;host=internal.example;proto=http";
-    var combined = send("/repeated?raw=%2B", attacker + ", " + boundary + ", " + ingress);
-    var repeated = send("/repeated?raw=%2B", attacker, boundary, ingress);
+    var combined =
+        client.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://127.0.0.1:" + app.port() + "/repeated?raw=%2B"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", attacker + ", " + boundary + ", " + ingress)
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    var repeated =
+        client.send(
+            HttpRequest.newBuilder(
+                    URI.create("http://127.0.0.1:" + app.port() + "/repeated?raw=%2B"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", attacker)
+                .header("Forwarded", boundary)
+                .header("Forwarded", ingress)
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, combined.statusCode());
     assertEquals("boundary", combined.body());
     assertEquals(200, repeated.statusCode());
@@ -197,7 +233,13 @@ class TrustedProxyTest {
               throw new IllegalStateException();
             });
     app.start();
-    var result = send("/gated", "for=203.0.113.7;host=public.example;proto=https");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/gated"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(500, result.statusCode());
     assertEquals("203.0.113.7|https://public.example/gated", result.body());
     assertTrue(gateInvoked.get());
@@ -208,7 +250,13 @@ class TrustedProxyTest {
     app.trustedProxies(_ -> false);
     app.routes().get("/untrusted", (request, response) -> response.text(request.effectiveUrl()));
     app.start();
-    var result = send("/untrusted", "for=localhost;host=bad.example;proto=javascript");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/untrusted"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", "for=localhost;host=bad.example;proto=javascript")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("http://127.0.0.1:" + app.port() + "/untrusted", result.body());
   }
@@ -389,13 +437,25 @@ class TrustedProxyTest {
                         + request.effectiveUrl()));
     app.start();
     var result =
-        send(
-            "/chain",
-            "for=198.51.100.99;host=evil.example;proto=http, "
-                + "for=203.0.113.7;host=public.example;proto=https, for=192.0.2.10");
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/chain"))
+                .timeout(Duration.ofSeconds(3))
+                .header(
+                    "Forwarded",
+                    "for=198.51.100.99;host=evil.example;proto=http, "
+                        + "for=203.0.113.7;host=public.example;proto=https, for=192.0.2.10")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("203.0.113.7|0|https://public.example/chain", result.body());
-    var stopped = send("/chain", "for=198.51.100.99;host=evil.example;proto=https, for=192.0.2.11");
+    var stopped =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/chain"))
+                .timeout(Duration.ofSeconds(3))
+                .header(
+                    "Forwarded", "for=198.51.100.99;host=evil.example;proto=https, for=192.0.2.11")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, stopped.statusCode());
     assertEquals("192.0.2.11|0|http://127.0.0.1:" + app.port() + "/chain", stopped.body());
   }
@@ -436,7 +496,13 @@ class TrustedProxyTest {
     app.beforeRouteHandler((_, _) -> calls.incrementAndGet());
     app.routes().get("/invalid", (_, _) -> calls.incrementAndGet());
     app.start();
-    var result = send("/invalid", value);
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/invalid"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", value)
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(400, result.statusCode(), value);
     assertEquals(0, calls.get());
   }
@@ -457,9 +523,16 @@ class TrustedProxyTest {
             });
     app.start();
     var result =
-        send(
-            "/unknown",
-            "for=198.51.100.1;host=evil.example, " + node + "host=boundary.example;proto=https");
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/unknown"))
+                .timeout(Duration.ofSeconds(3))
+                .header(
+                    "Forwarded",
+                    "for=198.51.100.1;host=evil.example, "
+                        + node
+                        + "host=boundary.example;proto=https")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("unknown", result.body());
   }
@@ -472,7 +545,13 @@ class TrustedProxyTest {
     app.beforeRouteHandler((_, _) -> calls.incrementAndGet());
     app.routes().get("/empty", (_, _) -> calls.incrementAndGet());
     app.start();
-    var result = send("/empty", value);
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/empty"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", value)
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(400, result.statusCode(), value);
     assertEquals(0, calls.get());
   }
@@ -485,7 +564,13 @@ class TrustedProxyTest {
     app.routes().get("/bounded", (_, _) -> calls.incrementAndGet());
     app.start();
     var value = String.join(",", Collections.nCopies(65, "for=203.0.113.7"));
-    var result = send("/bounded", value);
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/bounded"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", value)
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(400, result.statusCode());
     assertEquals(0, calls.get());
   }
@@ -496,7 +581,13 @@ class TrustedProxyTest {
     app.routes().get("/bounded", (_, response) -> response.text("accepted"));
     app.start();
     var value = String.join(",", Collections.nCopies(64, "for=203.0.113.7"));
-    var result = send("/bounded", value);
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/bounded"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", value)
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("accepted", result.body());
   }
@@ -509,7 +600,14 @@ class TrustedProxyTest {
     app.routes().get("/bounded", (_, _) -> calls.incrementAndGet());
     app.start();
     var accepted = String.join(",", Collections.nCopies(64, "for=203.0.113.7"));
-    var result = send("/bounded", accepted, "for=203.0.113.8");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/bounded"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", accepted)
+                .header("Forwarded", "for=203.0.113.8")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(400, result.statusCode());
     assertEquals(0, calls.get());
   }
@@ -520,7 +618,13 @@ class TrustedProxyTest {
     app.routes().get("/quoted", (_, response) -> response.text("accepted"));
     app.start();
 
-    var result = send("/quoted", "for=203.0.113.7;extension=\"" + "x".repeat(4000) + "\"");
+    var result =
+        client.send(
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/quoted"))
+                .timeout(Duration.ofSeconds(3))
+                .header("Forwarded", "for=203.0.113.7;extension=\"" + "x".repeat(4000) + "\"")
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
     assertEquals(200, result.statusCode());
     assertEquals("accepted", result.body());
   }
@@ -533,7 +637,16 @@ class TrustedProxyTest {
     app.routes().get("/quoted", (_, response) -> response.text("accepted"));
     app.start();
 
-    assertEquals(200, send("/quoted", value).statusCode());
+    assertEquals(
+        200,
+        client
+            .send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/quoted"))
+                    .timeout(Duration.ofSeconds(3))
+                    .header("Forwarded", value)
+                    .build(),
+                HttpResponse.BodyHandlers.ofString())
+            .statusCode());
   }
 
   @Test
@@ -542,17 +655,15 @@ class TrustedProxyTest {
     app.routes().get("/quoted", (_, response) -> response.text("unexpected"));
     app.start();
 
-    assertEquals(400, send("/quoted", "for=203.0.113.7;extension=\"abc\\\"").statusCode());
-  }
-
-  private HttpResponse<String> send(String path, String... forwarded) throws Exception {
-    var request =
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-            .timeout(Duration.ofSeconds(3));
-    for (var value : forwarded) {
-      request.header("Forwarded", value);
-    }
-
-    return client.send(request.build(), HttpResponse.BodyHandlers.ofString());
+    assertEquals(
+        400,
+        client
+            .send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/quoted"))
+                    .timeout(Duration.ofSeconds(3))
+                    .header("Forwarded", "for=203.0.113.7;extension=\"abc\\\"")
+                    .build(),
+                HttpResponse.BodyHandlers.ofString())
+            .statusCode());
   }
 }

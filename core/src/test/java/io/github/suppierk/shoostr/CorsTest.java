@@ -130,7 +130,14 @@ class CorsTest {
           .get(
               "/data", (_, response) -> response.setHeader("Vary", "Accept-Encoding").text("data"));
       app.start();
-      var result = send(client, app, "GET", "Origin", "https://client.example");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("GET", HttpRequest.BodyPublishers.noBody())
+                  .headers("Origin", "https://client.example")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, result.statusCode());
       assertEquals("data", result.body());
       assertEquals(
@@ -179,21 +186,28 @@ class CorsTest {
               e -> e.get(admission).required());
       app.start();
       var preflight =
-          send(
-              client,
-              app,
-              "OPTIONS",
-              "Origin",
-              "https://client.example",
-              "Access-Control-Request-Method",
-              "GET");
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                  .headers(
+                      "Origin", "https://client.example", "Access-Control-Request-Method", "GET")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(204, preflight.statusCode());
       assertEquals("", preflight.body());
       assertEquals(1, admissions.get());
       assertEquals(0, authentications.get());
       assertEquals(0, gates.get());
       assertEquals(0, executions.get());
-      var actual = send(client, app, "GET", "Origin", "https://client.example");
+      var actual =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("GET", HttpRequest.BodyPublishers.noBody())
+                  .headers("Origin", "https://client.example")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(401, actual.statusCode());
       assertEquals("Bearer", actual.headers().firstValue("WWW-Authenticate").orElseThrow());
       assertEquals(
@@ -231,18 +245,21 @@ class CorsTest {
       app.routes().put("/data", (_, response) -> response.text("updated"));
       app.start();
       var result =
-          send(
-              client,
-              app,
-              "OPTIONS",
-              "Origin",
-              "https://client.example",
-              "Access-Control-Request-Method",
-              "PUT",
-              "Access-Control-Request-Headers",
-              "authorization,, Content-Type",
-              "Access-Control-Request-Headers",
-              "AUTHORIZATION");
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                  .headers(
+                      "Origin",
+                      "https://client.example",
+                      "Access-Control-Request-Method",
+                      "PUT",
+                      "Access-Control-Request-Headers",
+                      "authorization,, Content-Type",
+                      "Access-Control-Request-Headers",
+                      "AUTHORIZATION")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(204, result.statusCode());
       assertEquals(
           "true", result.headers().firstValue("Access-Control-Allow-Credentials").orElseThrow());
@@ -252,7 +269,14 @@ class CorsTest {
           "authorization, content-type",
           result.headers().firstValue("Access-Control-Allow-Headers").orElseThrow());
       assertEquals("600", result.headers().firstValue("Access-Control-Max-Age").orElseThrow());
-      var actual = send(client, app, "PUT", "Origin", "https://client.example");
+      var actual =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("PUT", HttpRequest.BodyPublishers.noBody())
+                  .headers("Origin", "https://client.example")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, actual.statusCode());
       assertEquals(
           "ETag", actual.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
@@ -351,7 +375,14 @@ class CorsTest {
         }
       };
       for (var fields : invalidFields) {
-        var result = send(client, app, "OPTIONS", fields);
+        var result =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                    .timeout(Duration.ofSeconds(5))
+                    .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                    .headers(fields)
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
         assertEquals(400, result.statusCode(), Arrays.toString(fields));
         assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
       }
@@ -370,7 +401,14 @@ class CorsTest {
         }
       };
       for (var fields : deniedFields) {
-        var result = send(client, app, "OPTIONS", fields);
+        var result =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                    .timeout(Duration.ofSeconds(5))
+                    .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                    .headers(fields)
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
         assertEquals(403, result.statusCode(), Arrays.toString(fields));
         assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
       }
@@ -386,11 +424,27 @@ class CorsTest {
       app.cors(new CorsPolicy(Set.of()));
       app.routes().post("/data", (_, response) -> response.text("local"));
       app.start();
-      var sameOrigin = send(client, app, "POST", "Origin", "http://127.0.0.1:" + app.port());
+      var sameOrigin =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("POST", HttpRequest.BodyPublishers.noBody())
+                  .headers("Origin", "http://127.0.0.1:" + app.port())
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, sameOrigin.statusCode());
       assertEquals("local", sameOrigin.body());
       assertTrue(sameOrigin.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
-      assertEquals(200, send(client, app, "POST").statusCode());
+      assertEquals(
+          200,
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("POST", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
   }
 
@@ -403,7 +457,14 @@ class CorsTest {
       app.cors(new CorsPolicy(Set.of(allowed)));
       app.routes().get("/data", (_, response) -> response.text("shared"));
       app.start();
-      var result = send(client, app, "GET", "Origin", "null");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("GET", HttpRequest.BodyPublishers.noBody())
+                  .headers("Origin", "null")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, result.statusCode());
       assertEquals(
           allowed, result.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
@@ -471,24 +532,39 @@ class CorsTest {
         var mode = scenario.getKey();
         var result =
             "preflight".equals(mode)
-                ? send(
-                    client,
-                    app,
-                    "OPTIONS",
-                    "Origin",
-                    "https://client.example",
-                    "Access-Control-Request-Method",
-                    "GET")
+                ? client.send(
+                    HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                        .timeout(Duration.ofSeconds(5))
+                        .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                        .headers(
+                            "Origin",
+                            "https://client.example",
+                            "Access-Control-Request-Method",
+                            "GET")
+                        .build(),
+                    HttpResponse.BodyHandlers.ofString())
                 : "absent".equals(mode)
-                    ? send(client, app, "GET")
-                    : send(
-                        client,
-                        app,
-                        "GET",
-                        "Origin",
-                        "denied".equals(mode) ? "https://other.example" : "https://client.example",
-                        "X-Test-Mode",
-                        mode);
+                    ? client.send(
+                        HttpRequest.newBuilder(
+                                URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                            .timeout(Duration.ofSeconds(5))
+                            .method("GET", HttpRequest.BodyPublishers.noBody())
+                            .build(),
+                        HttpResponse.BodyHandlers.ofString())
+                    : client.send(
+                        HttpRequest.newBuilder(
+                                URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                            .timeout(Duration.ofSeconds(5))
+                            .method("GET", HttpRequest.BodyPublishers.noBody())
+                            .headers(
+                                "Origin",
+                                "denied".equals(mode)
+                                    ? "https://other.example"
+                                    : "https://client.example",
+                                "X-Test-Mode",
+                                mode)
+                            .build(),
+                        HttpResponse.BodyHandlers.ofString());
         assertEquals(scenario.getValue(), result.statusCode(), mode);
         assertEquals(
             Set.of("absent", "denied").contains(mode)
@@ -543,37 +619,41 @@ class CorsTest {
           });
       app.start();
       var allowed =
-          send(
-              client,
-              app,
-              "OPTIONS",
-              "Origin",
-              "https://client.example",
-              "Access-Control-Request-Method",
-              "GET");
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                  .headers(
+                      "Origin", "https://client.example", "Access-Control-Request-Method", "GET")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(204, allowed.statusCode());
       var denied =
-          send(
-              client,
-              app,
-              "OPTIONS",
-              "Origin",
-              "https://client.example",
-              "Access-Control-Request-Method",
-              "GET",
-              "X-Deny",
-              "yes");
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                  .headers(
+                      "Origin",
+                      "https://client.example",
+                      "Access-Control-Request-Method",
+                      "GET",
+                      "X-Deny",
+                      "yes")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(403, denied.statusCode());
       assertEquals(
           403,
-          send(
-                  client,
-                  app,
-                  "OPTIONS",
-                  "Origin",
-                  "https://other.example",
-                  "Access-Control-Request-Method",
-                  "GET")
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                      .headers(
+                          "Origin", "https://other.example", "Access-Control-Request-Method", "GET")
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .statusCode());
     }
   }
@@ -587,14 +667,14 @@ class CorsTest {
           (_, response) -> response.setHeader("X-Admission", "checked").text("staged"));
       app.start();
       var result =
-          send(
-              client,
-              app,
-              "OPTIONS",
-              "Origin",
-              "https://client.example",
-              "Access-Control-Request-Method",
-              "GET");
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                  .headers(
+                      "Origin", "https://client.example", "Access-Control-Request-Method", "GET")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(204, result.statusCode());
       assertEquals("", result.body());
       assertEquals("checked", result.headers().firstValue("X-Admission").orElseThrow());
@@ -626,22 +706,40 @@ class CorsTest {
       app.start();
       var result =
           enabled
-              ? send(client, app, "OPTIONS", "Origin", "https://client.example")
-              : send(
-                  client,
-                  app,
-                  "OPTIONS",
-                  "Origin",
-                  "https://client.example",
-                  "Access-Control-Request-Method",
-                  "GET");
+              ? client.send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                      .headers("Origin", "https://client.example")
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              : client.send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                      .headers(
+                          "Origin",
+                          "https://client.example",
+                          "Access-Control-Request-Method",
+                          "GET")
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString());
       assertEquals(200, result.statusCode());
       assertEquals("explicit", result.body());
       assertEquals(
           enabled ? "https://client.example" : "manual",
           result.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
       assertTrue(result.headers().firstValue("Access-Control-Allow-Methods").isEmpty());
-      assertEquals("explicit", send(client, app, "OPTIONS").body());
+      assertEquals(
+          "explicit",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -676,7 +774,18 @@ class CorsTest {
       for (int index = 0; index < 12; index++) {
         var origin = index % 2 == 0 ? "https://one.example" : "https://two.example";
         futures.add(
-            executor.submit(() -> Map.entry(origin, send(client, app, "GET", "Origin", origin))));
+            executor.submit(
+                () ->
+                    Map.entry(
+                        origin,
+                        client.send(
+                            HttpRequest.newBuilder(
+                                    URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                                .timeout(Duration.ofSeconds(5))
+                                .method("GET", HttpRequest.BodyPublishers.noBody())
+                                .headers("Origin", origin)
+                                .build(),
+                            HttpResponse.BodyHandlers.ofString()))));
       }
       for (var future : futures) {
         var result = future.get(10, TimeUnit.SECONDS);
@@ -696,16 +805,19 @@ class CorsTest {
             result.getValue().headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
       }
       var preflight =
-          send(
-              client,
-              app,
-              "OPTIONS",
-              "Origin",
-              "https://one.example",
-              "Access-Control-Request-Method",
-              "GET",
-              "Access-Control-Request-Headers",
-              "Authorization");
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                  .headers(
+                      "Origin",
+                      "https://one.example",
+                      "Access-Control-Request-Method",
+                      "GET",
+                      "Access-Control-Request-Headers",
+                      "Authorization")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(204, preflight.statusCode());
       assertEquals("0", preflight.headers().firstValue("Access-Control-Max-Age").orElseThrow());
     }
@@ -719,50 +831,76 @@ class CorsTest {
       app.cors(new CorsPolicy(Set.of()));
       app.routes().post("/data", (_, response) -> response.text("local"));
       app.start();
-      assertEquals(403, send(client, app, "POST", "Origin", "https://api.example").statusCode());
       assertEquals(
-          200,
-          send(
-                  client,
-                  app,
-                  "POST",
-                  "Origin",
-                  "https://api.example",
-                  "Forwarded",
-                  "for=192.0.2.1;proto=https;host=api.example")
+          403,
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("POST", HttpRequest.BodyPublishers.noBody())
+                      .headers("Origin", "https://api.example")
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .statusCode());
       assertEquals(
           200,
-          send(
-                  client,
-                  app,
-                  "POST",
-                  "Origin",
-                  "https://api.example:443",
-                  "Forwarded",
-                  "for=192.0.2.1;proto=https;host=api.example")
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("POST", HttpRequest.BodyPublishers.noBody())
+                      .headers(
+                          "Origin",
+                          "https://api.example",
+                          "Forwarded",
+                          "for=192.0.2.1;proto=https;host=api.example")
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          200,
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("POST", HttpRequest.BodyPublishers.noBody())
+                      .headers(
+                          "Origin",
+                          "https://api.example:443",
+                          "Forwarded",
+                          "for=192.0.2.1;proto=https;host=api.example")
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .statusCode());
       assertEquals(
           403,
-          send(
-                  client,
-                  app,
-                  "POST",
-                  "Origin",
-                  "https://api.example:8443",
-                  "Forwarded",
-                  "for=192.0.2.1;proto=https;host=api.example")
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("POST", HttpRequest.BodyPublishers.noBody())
+                      .headers(
+                          "Origin",
+                          "https://api.example:8443",
+                          "Forwarded",
+                          "for=192.0.2.1;proto=https;host=api.example")
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .statusCode());
       assertEquals(
           403,
-          send(
-                  client,
-                  app,
-                  "POST",
-                  "Origin",
-                  "https://api.example:0",
-                  "Forwarded",
-                  "for=192.0.2.1;proto=https;host=api.example")
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("POST", HttpRequest.BodyPublishers.noBody())
+                      .headers(
+                          "Origin",
+                          "https://api.example:0",
+                          "Forwarded",
+                          "for=192.0.2.1;proto=https;host=api.example")
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
               .statusCode());
     }
   }
@@ -783,12 +921,26 @@ class CorsTest {
       app.routes().get("/data", (_, response) -> response.text("shared"));
       app.start();
       for (var origin : origins) {
-        var result = send(client, app, "GET", "Origin", origin);
+        var result =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                    .timeout(Duration.ofSeconds(5))
+                    .method("GET", HttpRequest.BodyPublishers.noBody())
+                    .headers("Origin", origin)
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
         assertEquals(200, result.statusCode(), origin);
         assertEquals(
             origin, result.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
       }
-      var result = send(client, app, "GET", "Referer", "https://client.example:8443/page");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("GET", HttpRequest.BodyPublishers.noBody())
+                  .headers("Referer", "https://client.example:8443/page")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, result.statusCode());
       assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
     }
@@ -813,7 +965,14 @@ class CorsTest {
       }
 
       app.start();
-      var result = send(client, app, "GET", "Origin", "https://client.example");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("GET", HttpRequest.BodyPublishers.noBody())
+                  .headers("Origin", "https://client.example")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(expected, result.statusCode());
       assertEquals(
           "https://client.example",
@@ -858,7 +1017,14 @@ class CorsTest {
           });
       app.start();
 
-      var result = send(client, app, "GET", "Origin", "https://client.example");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("GET", HttpRequest.BodyPublishers.noBody())
+                  .headers("Origin", "https://client.example")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(403, result.statusCode());
       assertEquals(
           "https://client.example",
@@ -889,7 +1055,14 @@ class CorsTest {
               });
       app.start();
 
-      var result = send(client, app, "GET", "Origin", "https://client.example");
+      var result =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
+                  .timeout(Duration.ofSeconds(5))
+                  .method("GET", HttpRequest.BodyPublishers.noBody())
+                  .headers("Origin", "https://client.example")
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, result.statusCode());
       assertEquals("firstsecond", result.body());
       assertEquals(
@@ -916,16 +1089,51 @@ class CorsTest {
               });
       app.start();
 
-      var withoutOrigin = rawRequest(app, "");
+      String withoutOrigin;
+
+      try (var socket = new Socket()) {
+        socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), app.port()), 3000);
+        socket.setSoTimeout(5000);
+        var outgoing =
+            "GET /raw?bad=%GG HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n";
+        socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
+        withoutOrigin =
+            new String(socket.getInputStream().readAllBytes(), StandardCharsets.US_ASCII);
+      }
+
       assertTrue(withoutOrigin.startsWith("HTTP/1.1 200"), withoutOrigin);
       assertTrue(withoutOrigin.endsWith("bad=%GG"), withoutOrigin);
 
-      var sameOrigin = rawRequest(app, "http://example.test");
+      String sameOrigin;
+
+      try (var socket = new Socket()) {
+        socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), app.port()), 3000);
+        socket.setSoTimeout(5000);
+        var outgoing =
+            "GET /raw?bad=%GG HTTP/1.1\r\nHost: example.test\r\n"
+                + "Origin: http://example.test\r\n"
+                + "Connection: close\r\n\r\n";
+        socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
+        sameOrigin = new String(socket.getInputStream().readAllBytes(), StandardCharsets.US_ASCII);
+      }
+
       assertTrue(sameOrigin.startsWith("HTTP/1.1 200"), sameOrigin);
       assertFalse(sameOrigin.toLowerCase(Locale.ROOT).contains("access-control-allow-origin:"));
       assertTrue(sameOrigin.endsWith("bad=%GG"), sameOrigin);
 
-      var crossOrigin = rawRequest(app, "https://client.example");
+      String crossOrigin;
+
+      try (var socket = new Socket()) {
+        socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), app.port()), 3000);
+        socket.setSoTimeout(5000);
+        var outgoing =
+            "GET /raw?bad=%GG HTTP/1.1\r\nHost: example.test\r\n"
+                + "Origin: https://client.example\r\n"
+                + "Connection: close\r\n\r\n";
+        socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
+        crossOrigin = new String(socket.getInputStream().readAllBytes(), StandardCharsets.US_ASCII);
+      }
+
       assertTrue(crossOrigin.startsWith("HTTP/1.1 200"), crossOrigin);
       assertTrue(
           crossOrigin
@@ -936,32 +1144,5 @@ class CorsTest {
       assertEquals(3, admissions.get());
       assertEquals(3, executions.get());
     }
-  }
-
-  private static String rawRequest(Shoostr app, String origin) throws Exception {
-    try (var socket = new Socket()) {
-      socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), app.port()), 3000);
-      socket.setSoTimeout(5000);
-      var originField = origin.isEmpty() ? "" : "Origin: " + origin + "\r\n";
-      var request =
-          "GET /raw?bad=%GG HTTP/1.1\r\nHost: example.test\r\n"
-              + originField
-              + "Connection: close\r\n\r\n";
-      socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-      return new String(socket.getInputStream().readAllBytes(), StandardCharsets.US_ASCII);
-    }
-  }
-
-  private static HttpResponse<String> send(
-      HttpClient client, Shoostr app, String method, String... headers) throws Exception {
-    var builder =
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/data"))
-            .timeout(Duration.ofSeconds(5))
-            .method(method, HttpRequest.BodyPublishers.noBody());
-    if (headers.length != 0) {
-      builder.headers(headers);
-    }
-
-    return client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
   }
 }

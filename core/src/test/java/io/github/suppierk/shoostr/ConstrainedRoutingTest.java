@@ -25,9 +25,39 @@ class ConstrainedRoutingTest {
               (request, response) -> response.text(request.pathParam("id").orElseThrow()));
       app.start();
 
-      assertEquals("123", send(client, app, "/users/123").body());
-      assertEquals(404, send(client, app, "/users/abc").statusCode());
-      assertEquals(404, send(client, app, "/users/123/extra").statusCode());
+      assertEquals(
+          "123",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/123"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/abc"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/123/extra"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
   }
 
@@ -38,9 +68,39 @@ class ConstrainedRoutingTest {
       app.routes().get("/letters/{id:[a-c-e]}", (_, response) -> response.text("matched"));
       app.start();
 
-      assertEquals("matched", send(client, app, "/letters/-").body());
-      assertEquals("matched", send(client, app, "/letters/e").body());
-      assertEquals(404, send(client, app, "/letters/d").statusCode());
+      assertEquals(
+          "matched",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/letters/-"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "matched",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/letters/e"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/letters/d"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
   }
 
@@ -64,15 +124,85 @@ class ConstrainedRoutingTest {
       app.routes().post("/users/{id:[0-9]+}", (_, response) -> response.text("post"));
       app.start();
 
-      assertEquals("literal", send(client, app, "/users/123").body());
-      assertEquals("constrained", send(client, app, "/users/456").body());
-      assertEquals("plain", send(client, app, "/users/abc").body());
-      assertEquals("tail", send(client, app, "/users/456/more").body());
-      assertEquals("post", send(client, app, "/users/456", "POST").body());
-      assertEquals(405, send(client, app, "/users/456", "DELETE").statusCode());
+      assertEquals(
+          "literal",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/123"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "constrained",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/456"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "plain",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/abc"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "tail",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/456/more"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "post",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/456"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("POST", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          405,
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/456"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("DELETE", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
       assertEquals(
           "GET, POST",
-          send(client, app, "/users/456", "DELETE").headers().firstValue("Allow").orElseThrow());
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/456"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("DELETE", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .headers()
+              .firstValue("Allow")
+              .orElseThrow());
     }
   }
 
@@ -85,9 +215,36 @@ class ConstrainedRoutingTest {
       app.routes().get("/items/{id:[0-9]+}", (_, response) -> response.text("later-get"));
       app.start();
 
-      assertEquals("first-get", send(client, app, "/items/1").body());
-      assertEquals("later-get", send(client, app, "/items/12").body());
-      assertEquals("first-post", send(client, app, "/items/1", "POST").body());
+      assertEquals(
+          "first-get",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/items/1"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "later-get",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/items/12"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "first-post",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/items/1"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("POST", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -106,10 +263,49 @@ class ConstrainedRoutingTest {
               (request, response) -> response.text(request.pathParam("value").orElseThrow()));
       app.start();
 
-      assertEquals("digits", send(client, app, "/users/1").body());
-      assertEquals("digits", send(client, app, "/users/%31").body());
-      assertEquals("1", send(client, app, "/digits/%31").body());
-      assertEquals("a b", send(client, app, "/users/a%20b").body());
+      assertEquals(
+          "digits",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/users/1"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "digits",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/%31"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "1",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/digits/%31"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "a b",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/users/a%20b"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -149,8 +345,28 @@ class ConstrainedRoutingTest {
           () -> routes.get("/api/users/{other:[0-9]{1,3}}", (_, _) -> {}));
       app.start();
 
-      assertEquals("ok", send(client, app, "/api/users/123").body());
-      assertEquals(404, send(client, app, "/api/users/1234").statusCode());
+      assertEquals(
+          "ok",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/api/users/123"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/api/users/1234"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
   }
 
@@ -165,8 +381,28 @@ class ConstrainedRoutingTest {
                   response.startEventStream().send(request.pathParam("id").orElseThrow()));
       app.start();
 
-      assertEquals("data: 42\n\n", send(client, app, "/events/42").body());
-      assertEquals(404, send(client, app, "/events/topic").statusCode());
+      assertEquals(
+          "data: 42\n\n",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/events/42"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/events/topic"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
   }
 
@@ -191,9 +427,37 @@ class ConstrainedRoutingTest {
 
       assertEquals(
           "42:Ab:/orders/{orderId:[0-9]+}/items/{itemCode:[A-Za-z]+}",
-          send(client, app, "/orders/42/items/Ab").body());
-      assertEquals(404, send(client, app, "/orders/abc/items/Ab").statusCode());
-      assertEquals(404, send(client, app, "/orders/42/items/12").statusCode());
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/orders/42/items/Ab"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/orders/abc/items/Ab"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/orders/42/items/12"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
   }
 
@@ -211,26 +475,57 @@ class ConstrainedRoutingTest {
               (request, response) -> response.text(request.pathParam("slug").orElseThrow()));
       app.start();
 
-      assertEquals("A", send(client, app, "/flags/A").body());
-      assertEquals(404, send(client, app, "/flags/AB").statusCode());
-      assertEquals(404, send(client, app, "/flags/").statusCode());
-      assertEquals("a-B_9", send(client, app, "/slugs/a-B_9").body());
-      assertEquals(404, send(client, app, "/slugs/").statusCode());
+      assertEquals(
+          "A",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/flags/A"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/flags/AB"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/flags/"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          "a-B_9",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/slugs/a-B_9"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          404,
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/slugs/"))
+                      .timeout(Duration.ofSeconds(5))
+                      .method("GET", HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
-  }
-
-  private static HttpResponse<String> send(HttpClient client, Shoostr app, String path)
-      throws Exception {
-    return send(client, app, path, "GET");
-  }
-
-  private static HttpResponse<String> send(
-      HttpClient client, Shoostr app, String path, String method) throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-            .timeout(Duration.ofSeconds(5))
-            .method(method, HttpRequest.BodyPublishers.noBody())
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 }

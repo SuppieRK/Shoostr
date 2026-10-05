@@ -227,11 +227,26 @@ class CsrfTest {
       var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
       assertFalse(form.body().isBlank());
 
-      var missing = post(client, app, cookie, null);
+      var missing =
+          client.send(
+              request(app, "/submit")
+                  .header("Cookie", cookie)
+                  .header("Origin", "http://localhost:" + app.port())
+                  .POST(HttpRequest.BodyPublishers.noBody())
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(403, missing.statusCode());
       assertEquals(0, executions.get());
 
-      var accepted = post(client, app, cookie, form.body());
+      var accepted =
+          client.send(
+              request(app, "/submit")
+                  .header("Cookie", cookie)
+                  .header("Origin", "http://localhost:" + app.port())
+                  .header("X-CSRF-Token", form.body())
+                  .POST(HttpRequest.BodyPublishers.noBody())
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(200, accepted.statusCode());
       assertEquals("accepted", accepted.body());
       assertEquals(1, executions.get());
@@ -546,8 +561,30 @@ class CsrfTest {
       var newCookie = renewed.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
       assertNotEquals(form.body(), renewed.body());
       assertNotEquals(oldCookie, newCookie);
-      assertEquals(403, post(client, app, newCookie, form.body()).statusCode());
-      assertEquals(200, post(client, app, newCookie, renewed.body()).statusCode());
+      assertEquals(
+          403,
+          client
+              .send(
+                  request(app, "/submit")
+                      .header("Cookie", newCookie)
+                      .header("Origin", "http://localhost:" + app.port())
+                      .header("X-CSRF-Token", form.body())
+                      .POST(HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
+      assertEquals(
+          200,
+          client
+              .send(
+                  request(app, "/submit")
+                      .header("Cookie", newCookie)
+                      .header("Origin", "http://localhost:" + app.port())
+                      .header("X-CSRF-Token", renewed.body())
+                      .POST(HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
 
       var logout =
           client.send(
@@ -560,7 +597,18 @@ class CsrfTest {
               HttpResponse.BodyHandlers.ofString());
       assertEquals(200, logout.statusCode());
       assertEquals("logged out", logout.body());
-      assertEquals(403, post(client, app, newCookie, renewed.body()).statusCode());
+      assertEquals(
+          403,
+          client
+              .send(
+                  request(app, "/submit")
+                      .header("Cookie", newCookie)
+                      .header("Origin", "http://localhost:" + app.port())
+                      .header("X-CSRF-Token", renewed.body())
+                      .POST(HttpRequest.BodyPublishers.noBody())
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
     }
   }
 
@@ -640,21 +688,6 @@ class CsrfTest {
           accepted.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
       assertEquals(1, executions.get());
     }
-  }
-
-  private static HttpResponse<String> post(
-      HttpClient client, Shoostr app, String cookie, String token) throws Exception {
-    var builder =
-        request(app, "/submit")
-            .header("Cookie", cookie)
-            .header("Origin", "http://localhost:" + app.port());
-    if (token != null) {
-      builder.header("X-CSRF-Token", token);
-    }
-
-    return client.send(
-        builder.POST(HttpRequest.BodyPublishers.noBody()).build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 
   private static HttpRequest.Builder request(Shoostr app, String path) {

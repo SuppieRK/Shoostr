@@ -170,17 +170,27 @@ class HttpContractTest {
 
   @Test
   void sendsFiniteBody() throws Exception {
-    assertEquals("hello", send("/plain").body());
+    assertEquals(
+        "hello",
+        client.send(request(base + "/plain").build(), HttpResponse.BodyHandlers.ofString()).body());
   }
 
   @Test
   void dispatchesOnVirtualThread() throws Exception {
-    assertEquals("true", send("/virtual").body());
+    assertEquals(
+        "true",
+        client
+            .send(request(base + "/virtual").build(), HttpResponse.BodyHandlers.ofString())
+            .body());
   }
 
   @Test
   void returnsNotFoundForUnknownRoute() throws Exception {
-    assertEquals(404, send("/missing").statusCode());
+    assertEquals(
+        404,
+        client
+            .send(request(base + "/missing").build(), HttpResponse.BodyHandlers.ofString())
+            .statusCode());
   }
 
   @Test
@@ -195,7 +205,8 @@ class HttpContractTest {
 
   @Test
   void discardsStagedSuccessOnHandlerFailure() throws Exception {
-    var result = send("/failure");
+    var result =
+        client.send(request(base + "/failure").build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(500, result.statusCode());
     assertEquals("Internal Server Error", result.body());
     assertTrue(result.headers().firstValue("X-Leak").isEmpty());
@@ -236,7 +247,8 @@ class HttpContractTest {
 
   @Test
   void chainsStreamWritesAndFlushesOnTheSameWriter() throws Exception {
-    var result = send("/fluent-stream");
+    var result =
+        client.send(request(base + "/fluent-stream").build(), HttpResponse.BodyHandlers.ofString());
 
     assertEquals(200, result.statusCode());
     assertEquals("café!012345678tail", result.body());
@@ -244,34 +256,54 @@ class HttpContractTest {
 
   @Test
   void abortsCommittedStreamOnFailure() {
-    assertThrows(IOException.class, () -> send("/broken-stream"));
+    assertThrows(
+        IOException.class,
+        () ->
+            client.send(
+                request(base + "/broken-stream").build(), HttpResponse.BodyHandlers.ofString()));
   }
 
   @Test
   void rejectsApplicationClosingResponse() throws Exception {
-    assertEquals(500, send("/close").statusCode());
+    assertEquals(
+        500,
+        client
+            .send(request(base + "/close").build(), HttpResponse.BodyHandlers.ofString())
+            .statusCode());
   }
 
   @Test
   void rejectsResponseAccessFromAnotherThread() throws Exception {
-    assertEquals("true", send("/cross-thread").body());
+    assertEquals(
+        "true",
+        client
+            .send(request(base + "/cross-thread").build(), HttpResponse.BodyHandlers.ofString())
+            .body());
   }
 
   @Test
   void sendsBodylessStatus() throws Exception {
-    assertEquals(204, send("/empty").statusCode());
+    assertEquals(
+        204,
+        client
+            .send(request(base + "/empty").build(), HttpResponse.BodyHandlers.ofString())
+            .statusCode());
   }
 
   @Test
   void rejectsBodyForBodylessStatusBeforeCommit() throws Exception {
-    assertEquals(500, send("/invalid-empty").statusCode());
+    assertEquals(
+        500,
+        client
+            .send(request(base + "/invalid-empty").build(), HttpResponse.BodyHandlers.ofString())
+            .statusCode());
   }
 
   @ParameterizedTest
   @ValueSource(
       strings = {"/invalid-type", "/invalid-stream-type", "/invalid-header", "/invalid-framing"})
   void rejectsInvalidHeadersBeforeCommit(String path) throws Exception {
-    var result = send(path);
+    var result = client.send(request(base + path).build(), HttpResponse.BodyHandlers.ofString());
     assertEquals(500, result.statusCode());
     assertTrue(result.headers().firstValue("X-Leak").isEmpty());
   }
@@ -280,7 +312,11 @@ class HttpContractTest {
   void preservesCustomContentType() throws Exception {
     assertEquals(
         "application/vnd.example+json",
-        send("/custom-type").headers().firstValue("Content-Type").orElseThrow());
+        client
+            .send(request(base + "/custom-type").build(), HttpResponse.BodyHandlers.ofString())
+            .headers()
+            .firstValue("Content-Type")
+            .orElseThrow());
   }
 
   @Test
@@ -474,10 +510,6 @@ class HttpContractTest {
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
     return Request.create(nativeRequest, sink, Options.defaults(), completion).response();
-  }
-
-  private HttpResponse<String> send(String path) throws Exception {
-    return client.send(request(base + path).build(), HttpResponse.BodyHandlers.ofString());
   }
 
   private static HttpRequest.Builder request(String uri) {

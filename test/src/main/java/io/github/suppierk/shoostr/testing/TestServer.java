@@ -9,13 +9,16 @@ import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.channels.ServerSocketChannel;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.SslConnectionFactory;
 import org.jspecify.annotations.Nullable;
@@ -166,7 +169,8 @@ public final class TestServer implements Closeable {
    * @return started fixture
    * @throws Exception if configuration or startup fails
    */
-  @SuppressWarnings("java:S1181") // Cleanup must run even when startup or cleanup throws Error.
+  // S2445: use Shoostr's own monitor to keep eligibility, registration and start atomic.
+  @SuppressWarnings({"java:S1181", "java:S2445"}) // Cleanup must also run after Error.
   private static TestServer start(
       Shoostr app, int minimum, int maximum, Consumer<HttpClient.Builder> configureClient)
       throws Exception {
@@ -178,44 +182,8 @@ public final class TestServer implements Closeable {
     synchronized (app) {
       // Registration rejects ineligible apps before this fixture acquires ownership.
       app.modifyServer(
-          server -> {
-            if (minimum > 0 && server.getConnectors().length != 1) {
-              throw new IllegalArgumentException(
-                  "Fixed/range test ports require exactly one listener");
-            }
-
-            for (var connector : server.getConnectors()) {
-              if (!(connector instanceof ServerConnector listener) || listener.getLocalPort() > 0) {
-                throw new IllegalArgumentException(
-                    "TestServer requires unbound ServerConnector listeners");
-              }
-
-              connectors.add(listener);
-            }
-
-            for (var listener : connectors) {
-              listener.setHost("127.0.0.1");
-              listener.setPort(minimum);
-              listener.setInheritChannel(false);
-            }
-
-            if (minimum > 0) {
-              var listener = connectors.getFirst();
-
-              try {
-                bind(listener, minimum, maximum);
-              } catch (IOException failure) {
-                var bridge =
-                    new UncheckedIOException("Could not bind requested test ports", failure);
-                bindingBridge.set(bridge);
-                throw bridge;
-              } finally {
-                if (listener.getTransport() instanceof ServerSocketChannel channel) {
-                  reservation.set(channel);
-                }
-              }
-            }
-          });
+          server ->
+              configureListeners(server, minimum, maximum, connectors, reservation, bindingBridge));
 
       HttpClient client = null;
 
@@ -267,6 +235,75 @@ public final class TestServer implements Closeable {
   }
 
   /**
+   * Validates every listener before changing addresses, then reserves a requested named port.
+   *
+   * @param server application server during native configuration
+   * @param minimum automatic zero or validated range minimum
+   * @param maximum automatic zero or validated range maximum
+   * @param connectors listener identities retained for default-origin discovery
+   * @param reservation channel retained for startup-failure cleanup
+   * @param bindingBridge exact wrapper retained to restore checked binding failures
+   * @throws IllegalArgumentException if the app has unsupported or already bound listeners
+   */
+  private static void configureListeners(
+      Server server,
+      int minimum,
+      int maximum,
+      List<ServerConnector> connectors,
+      AtomicReference<@Nullable ServerSocketChannel> reservation,
+      AtomicReference<@Nullable UncheckedIOException> bindingBridge) {
+    if (minimum > 0 && server.getConnectors().length != 1) {
+      throw new IllegalArgumentException("Fixed/range test ports require exactly one listener");
+    }
+
+    for (var connector : server.getConnectors()) {
+      if (!(connector instanceof ServerConnector listener) || listener.getLocalPort() > 0) {
+        throw new IllegalArgumentException("TestServer requires unbound ServerConnector listeners");
+      }
+
+      connectors.add(listener);
+    }
+
+    for (var listener : connectors) {
+      listener.setHost("127.0.0.1");
+      listener.setPort(minimum);
+      listener.setInheritChannel(false);
+    }
+
+    if (minimum > 0) {
+      reservePort(connectors.getFirst(), minimum, maximum, reservation, bindingBridge);
+    }
+  }
+
+  /**
+   * Retains Jetty's actual binding and bridges checked bind errors through its consumer callback.
+   *
+   * @param listener validated single listener
+   * @param minimum inclusive first candidate
+   * @param maximum inclusive last candidate
+   * @param reservation channel retained even when later startup fails
+   * @param bindingBridge exact wrapper identity retained for exception restoration
+   */
+  private static void reservePort(
+      ServerConnector listener,
+      int minimum,
+      int maximum,
+      AtomicReference<@Nullable ServerSocketChannel> reservation,
+      AtomicReference<@Nullable UncheckedIOException> bindingBridge) {
+    try {
+      bind(listener, minimum, maximum);
+    } catch (IOException failure) {
+      var bridge = new UncheckedIOException("Could not bind requested test ports", failure);
+      bindingBridge.set(bridge);
+      throw bridge;
+    } finally {
+      if (listener.getTransport() instanceof ServerSocketChannel channel) {
+        reservation.set(channel);
+      }
+    }
+  }
+
+  /**
    * Sends one configured request and consumes its response as exact bytes, including error bodies.
    *
    * @param configure synchronous request configuration callback
@@ -300,13 +337,16 @@ public final class TestServer implements Closeable {
     Objects.requireNonNull(configure);
     Objects.requireNonNull(bodyHandler);
     var request = new TestRequest(baseUri());
+    HttpRequest outgoing;
 
     try {
       configure.accept(request);
-      return client.send(request.build(), bodyHandler);
+      outgoing = request.build();
     } finally {
       request.finish();
     }
+
+    return client.send(outgoing, bodyHandler);
   }
 
   /**

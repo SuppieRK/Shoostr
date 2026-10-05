@@ -70,25 +70,43 @@ class ExtensionCompositionTest {
       app.start();
 
       assertEquals(1, groupCalls.get());
-      assertEquals("alice", send(client, app, "/users/123").body());
-      assertEquals("alice", send(client, app, "/users/search").body());
+      assertEquals(
+          "alice",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://localhost:" + app.port() + "/users/123"))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          "alice",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://localhost:" + app.port() + "/users/search"))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       retained.get().summary("Changed after startup");
       assertEquals(
           "GET /users/{id} users One user\nGET /users/search users Users\nGET /openapi.json  API description",
-          send(client, app, "/openapi.json").body());
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://localhost:" + app.port() + "/openapi.json"))
+                      .GET()
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
       assertEquals(3, calls.get());
       assertEquals(
           List.of(
               "GET /users/{id} public Other document", "GET /users/search public Other document"),
           otherDocs.operations);
     }
-  }
-
-  private static HttpResponse<String> send(HttpClient client, Shoostr app, String path)
-      throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://localhost:" + app.port() + path)).GET().build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 
   private static final class Documentation implements Extension<Description> {

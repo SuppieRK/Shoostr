@@ -82,15 +82,13 @@ class TransportConfigurationTest {
             server.addConnector(extra);
             listeners.set(List.of(primary, extra));
           });
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> {
-            if (range) {
-              TestServer.startOnPortRange(app, 19003, 19004);
-            } else {
-              TestServer.startOnPort(app, 19003);
-            }
-          });
+      if (range) {
+        assertThrows(
+            IllegalArgumentException.class, () -> TestServer.startOnPortRange(app, 19003, 19004));
+      } else {
+        assertThrows(IllegalArgumentException.class, () -> TestServer.startOnPort(app, 19003));
+      }
+
       assertEquals(19001, listeners.get().getFirst().getPort());
       assertEquals(19002, listeners.get().getLast().getPort());
       for (var listener : listeners.get()) {

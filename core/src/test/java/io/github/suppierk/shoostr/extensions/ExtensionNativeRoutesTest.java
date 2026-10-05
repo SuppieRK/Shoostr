@@ -69,7 +69,10 @@ class ExtensionNativeRoutesTest {
       app.start();
       assertEquals(List.of("GET /api/events"), facts);
       for (var path : List.of("/api/events", "/api/files/static-resource.txt")) {
-        var result = get(client, app, path);
+        var result =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path)).build(),
+                HttpResponse.BodyHandlers.ofString());
         assertEquals(404, result.statusCode());
         assertEquals("alice", result.headers().firstValue("X-Principal").orElseThrow());
       }
@@ -87,8 +90,25 @@ class ExtensionNativeRoutesTest {
       assertEquals(
           404, ((WebSocketHandshakeException) failure.getCause()).getResponse().statusCode());
       enabled.set(true);
-      assertEquals("data: hello\n\n", get(client, app, "/api/events").body());
-      assertEquals(200, get(client, app, "/api/files/static-resource.txt").statusCode());
+      assertEquals(
+          "data: hello\n\n",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/api/events"))
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
+      assertEquals(
+          200,
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create(
+                              "http://127.0.0.1:" + app.port() + "/api/files/static-resource.txt"))
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .statusCode());
       var socket =
           client
               .newWebSocketBuilder()
@@ -99,12 +119,5 @@ class ExtensionNativeRoutesTest {
       socket.sendClose(WebSocket.NORMAL_CLOSURE, "done").get(5, TimeUnit.SECONDS);
       assertEquals(6, calls.get());
     }
-  }
-
-  private static HttpResponse<String> get(HttpClient client, Shoostr app, String path)
-      throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path)).build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 }

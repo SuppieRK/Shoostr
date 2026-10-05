@@ -51,7 +51,16 @@ class RoutesConcurrencyTest {
       for (int worker = 0; worker < 8; worker++) {
         for (int route = 0; route < 8; route++) {
           String path = worker + "/" + route;
-          assertEquals(path, send(client, app, "/api/" + path).body());
+          assertEquals(
+              path,
+              client
+                  .send(
+                      HttpRequest.newBuilder(
+                              URI.create("http://127.0.0.1:" + app.port() + "/api/" + path))
+                          .timeout(Duration.ofSeconds(3))
+                          .build(),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
         }
       }
     }
@@ -95,7 +104,15 @@ class RoutesConcurrencyTest {
       }
       assertEquals(1, winners);
       app.start();
-      assertEquals(Integer.toString(winner), send(client, app, "/api/42").body());
+      assertEquals(
+          Integer.toString(winner),
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/api/42"))
+                      .timeout(Duration.ofSeconds(3))
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -119,7 +136,16 @@ class RoutesConcurrencyTest {
                 assertDoesNotThrow(() -> startup.get(3, TimeUnit.SECONDS));
               });
       app.start();
-      assertEquals("ready", send(client, app, "/api/nested").body());
+      assertEquals(
+          "ready",
+          client
+              .send(
+                  HttpRequest.newBuilder(
+                          URI.create("http://127.0.0.1:" + app.port() + "/api/nested"))
+                      .timeout(Duration.ofSeconds(3))
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -150,7 +176,15 @@ class RoutesConcurrencyTest {
 
       assertEquals(app, callback.get(3, TimeUnit.SECONDS));
       app.start();
-      assertEquals("ready", send(client, app, "/ready").body());
+      assertEquals(
+          "ready",
+          client
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/ready"))
+                      .timeout(Duration.ofSeconds(3))
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString())
+              .body());
     }
   }
 
@@ -279,7 +313,16 @@ class RoutesConcurrencyTest {
       startup.get(5, TimeUnit.SECONDS);
       for (int index = 0; index < tasks.size(); index++) {
         boolean registered = tasks.get(index).get(3, TimeUnit.SECONDS);
-        assertEquals(registered ? 200 : 404, send(client, app, "/api/" + index).statusCode());
+        assertEquals(
+            registered ? 200 : 404,
+            client
+                .send(
+                    HttpRequest.newBuilder(
+                            URI.create("http://127.0.0.1:" + app.port() + "/api/" + index))
+                        .timeout(Duration.ofSeconds(3))
+                        .build(),
+                    HttpResponse.BodyHandlers.ofString())
+                .statusCode());
       }
     }
   }
@@ -294,15 +337,6 @@ class RoutesConcurrencyTest {
 
   private static String prefix(int index) {
     return index % 3 == 0 ? "/api/" : "/";
-  }
-
-  private static HttpResponse<String> send(HttpClient client, Shoostr app, String path)
-      throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-            .timeout(Duration.ofSeconds(3))
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 
   private static void await(CountDownLatch latch) {
