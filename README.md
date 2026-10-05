@@ -36,6 +36,16 @@ try (var server = TestServer.start(app)) {
 }
 ```
 
+Inside the fixture scope, fetch a response once, then use your testing framework's assertions.
+For example, JUnit's ordinary multiple-assertion style needs no harness-specific DSL:
+
+```java
+var reply = server.send(request -> request.path("/hello"));
+assertAll("hello response",
+    () -> assertEquals(200, reply.statusCode()),
+    () -> assertArrayEquals("hello".getBytes(java.nio.charset.StandardCharsets.UTF_8), reply.body()));
+```
+
 Each fixture owns its supplied app and listener lifetime, not user dependencies or mocks.
 Startup failures propagate
 after cleanup; `close()` reports Jetty stop failures as `IOException`. For lifecycle
@@ -67,6 +77,17 @@ outstanding client work before stopping the app instead of waiting indefinitely 
 Client termination waits at most three seconds; application shutdown still uses its configured
 native drain timeout and reports stop failures. The fixture does not finish caller-owned work,
 reset dependencies or replace native shutdown settings to hide a blocked handler.
+
+For a shared fixture, assign `TestServer.start(app)` in your framework's before-all setup
+and call `close()` in after-all teardown. The same application, dependency and cookie state
+remains available across test methods; resets are your responsibility. See the executable
+JUnit 5 [shared fixture example](test/src/test/java/io/github/suppierk/shoostr/testing/SharedFixtureTest.java).
+If additional setup fails after startup, close the fixture before propagating the failure.
+
+Shoostr's own ordinary routing tests use this same harness through a core test-only
+dependency. The build order is core production → harness production → core tests;
+core production and the published `shoostr-core` artifact do not depend on `shoostr-test`.
+Native transport, lifecycle and malformed-wire tests retain direct facilities where needed.
 
 The owned client defaults to isolated cookies, redirects disabled, no system proxy and a
 three-second connect timeout, with normal JDK protocol negotiation and TLS verification.

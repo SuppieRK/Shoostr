@@ -16,8 +16,6 @@ import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -49,22 +47,16 @@ class PublishedIntegrationsTest {
             (request, response) -> response.text(request.principal().orElseThrow().getName()),
             e -> e.get(auth).required());
 
-    try (var server = TestServer.start(app);
-        var client = HttpClient.newHttpClient()) {
-      var target = server.baseUri().resolve("secure");
-      var missing =
-          client.send(
-              HttpRequest.newBuilder(target).build(), HttpResponse.BodyHandlers.discarding());
+    try (var server = TestServer.start(app)) {
+      var missing = server.send(request -> request.path("/secure"));
       assertEquals(401, missing.statusCode());
       assertEquals("Basic", missing.headers().firstValue("WWW-Authenticate").orElseThrow());
 
       var credentials =
           Base64.getEncoder().encodeToString("consumer:secret".getBytes(StandardCharsets.UTF_8));
       var authenticated =
-          client.send(
-              HttpRequest.newBuilder(target)
-                  .header("Authorization", "Basic " + credentials)
-                  .build(),
+          server.send(
+              request -> request.path("/secure").header("Authorization", "Basic " + credentials),
               HttpResponse.BodyHandlers.ofString());
       assertEquals(200, authenticated.statusCode());
       assertEquals("consumer", authenticated.body());
@@ -80,12 +72,9 @@ class PublishedIntegrationsTest {
     app.afterRequest(_ -> completed.countDown());
     app.routes().get("/metered", (_, response) -> response.text("ok"));
 
-    try (var server = TestServer.start(app);
-        var client = HttpClient.newHttpClient()) {
+    try (var server = TestServer.start(app)) {
       var response =
-          client.send(
-              HttpRequest.newBuilder(server.baseUri().resolve("metered")).build(),
-              HttpResponse.BodyHandlers.ofString());
+          server.send(request -> request.path("/metered"), HttpResponse.BodyHandlers.ofString());
       assertEquals(200, response.statusCode());
       assertEquals("ok", response.body());
       assertTrue(completed.await(5, TimeUnit.SECONDS));
@@ -112,12 +101,9 @@ class PublishedIntegrationsTest {
       app.afterRequest(_ -> completed.countDown());
       app.routes().get("/traced", (_, response) -> response.text("ok"));
 
-      try (var server = TestServer.start(app);
-          var client = HttpClient.newHttpClient()) {
+      try (var server = TestServer.start(app)) {
         var response =
-            client.send(
-                HttpRequest.newBuilder(server.baseUri().resolve("traced")).build(),
-                HttpResponse.BodyHandlers.ofString());
+            server.send(request -> request.path("/traced"), HttpResponse.BodyHandlers.ofString());
         assertEquals(200, response.statusCode());
         assertEquals("ok", response.body());
         assertTrue(completed.await(5, TimeUnit.SECONDS));

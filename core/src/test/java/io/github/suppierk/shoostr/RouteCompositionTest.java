@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpMethods;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -29,8 +30,7 @@ class RouteCompositionTest {
   private final AtomicReference<Routes> retainedScope;
   private final AtomicReference<Request> retainedRequest;
   private Shoostr app;
-  private HttpClient client;
-  private String base;
+  private TestServer test;
 
   RouteCompositionTest() {
     retainedScope = new AtomicReference<>();
@@ -45,7 +45,6 @@ class RouteCompositionTest {
           assertTrue(request.pathParam("id").isEmpty());
           assertTrue(request.routePattern().isEmpty());
         });
-    client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
     app.routes()
         .path(
             "/api",
@@ -116,20 +115,15 @@ class RouteCompositionTest {
               assertEquals(Optional.empty(), req.pathParam("missing"));
               res.text("checked");
             });
-    app.start();
-    base = "http://127.0.0.1:" + app.port();
+    test = TestServer.start(app);
   }
 
   @AfterEach
   void close() throws Exception {
-    try {
-      if (client != null) {
-        client.close();
-      }
-    } finally {
-      if (app != null) {
-        app.close();
-      }
+    if (test != null) {
+      test.close();
+    } else if (app != null) {
+      app.close();
     }
   }
 
@@ -170,8 +164,16 @@ class RouteCompositionTest {
 
   @Test
   void retainsTransportRejectionOfAmbiguousPaths() throws Exception {
-    assertEquals(400, send("/flat/%252F", HttpMethods.GET).statusCode());
-    assertEquals(400, send("/api/accounts//orders/42", HttpMethods.GET).statusCode());
+    for (var path : new String[] {"/flat/%252F", "/api/accounts//orders/42"}) {
+      var reply =
+          test.httpClient()
+              .send(
+                  HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
+                      .timeout(Duration.ofSeconds(5))
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString());
+      assertEquals(400, reply.statusCode());
+    }
   }
 
   @Test
@@ -189,10 +191,8 @@ class RouteCompositionTest {
     assertEquals(405, result.statusCode());
     assertEquals("GET, POST", result.headers().firstValue("Allow").orElseThrow());
     var unknown =
-        client.send(
-            HttpRequest.newBuilder(URI.create(base + "/order/latest"))
-                .method("CUSTOM", HttpRequest.BodyPublishers.noBody())
-                .build(),
+        test.send(
+            request -> request.path("/order/latest").method("CUSTOM"),
             HttpResponse.BodyHandlers.ofString());
     assertEquals(405, unknown.statusCode());
     assertEquals("GET, POST", unknown.headers().firstValue("Allow").orElseThrow());
@@ -224,8 +224,7 @@ class RouteCompositionTest {
 
   @Test
   void rootCallbackRegistersFlatAndComposedRoutesAndReturnsApplication() throws Exception {
-    try (var candidate = new Shoostr(Options.defaults().withPort(0));
-        var candidateClient = HttpClient.newHttpClient()) {
+    try (var candidate = new Shoostr()) {
       assertSame(
           candidate,
           candidate.routes(
@@ -242,18 +241,18 @@ class RouteCompositionTest {
                       orders.get("/latest", (_, response) -> response.text("latest"));
                     });
               }));
-      candidate.start();
 
-      assertEquals("ok", send(candidateClient, candidate, "/health").body());
-      assertEquals("latest", send(candidateClient, candidate, "/orders/latest").body());
-      assertEquals("order:42", send(candidateClient, candidate, "/orders/42").body());
+      try (var fixture = TestServer.start(candidate)) {
+        assertEquals("ok", send(fixture, "/health").body());
+        assertEquals("latest", send(fixture, "/orders/latest").body());
+        assertEquals("order:42", send(fixture, "/orders/42").body());
+      }
     }
   }
 
   @Test
   void rootCallbackPropagatesFailureAndKeepsEarlierRegistrations() throws Exception {
-    try (var candidate = new Shoostr(Options.defaults().withPort(0));
-        var candidateClient = HttpClient.newHttpClient()) {
+    try (var candidate = new Shoostr()) {
       var failure = new IllegalArgumentException("registration failed");
       assertSame(
           failure,
@@ -270,11 +269,12 @@ class RouteCompositionTest {
           candidate,
           candidate.routes(
               routes -> routes.get("/after", (_, response) -> response.text("after"))));
-      candidate.start();
 
-      assertEquals("before", send(candidateClient, candidate, "/before").body());
-      assertEquals("after", send(candidateClient, candidate, "/after").body());
-      assertThrows(IllegalStateException.class, () -> candidate.routes(_ -> {}));
+      try (var fixture = TestServer.start(candidate)) {
+        assertEquals("before", send(fixture, "/before").body());
+        assertEquals("after", send(fixture, "/after").body());
+        assertThrows(IllegalStateException.class, () -> candidate.routes(_ -> {}));
+      }
     }
   }
 
@@ -368,20 +368,14 @@ class RouteCompositionTest {
   }
 
   private HttpResponse<String> send(String path, HttpMethods method) throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create(base + path))
-            .timeout(Duration.ofSeconds(5))
-            .method(method.value(), HttpRequest.BodyPublishers.noBody())
-            .build(),
+    return test.send(
+        request -> request.path(path).method(method).timeout(Duration.ofSeconds(5)),
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private static HttpResponse<String> send(HttpClient client, Shoostr app, String path)
-      throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
-            .timeout(Duration.ofSeconds(5))
-            .build(),
+  private static HttpResponse<String> send(TestServer fixture, String path) throws Exception {
+    return fixture.send(
+        request -> request.path(path).timeout(Duration.ofSeconds(5)),
         HttpResponse.BodyHandlers.ofString());
   }
 
