@@ -4,6 +4,9 @@ plugins {
 
 dependencies {
 	implementation project(':core')
+	implementation project(':micrometer')
+	implementation project(':opentelemetry')
+	implementation 'io.opentelemetry:opentelemetry-sdk:1.66.0'
 	implementation 'org.openjdk.jmh:jmh-core:1.37'
 	annotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess:1.37'
 	implementation 'org.openjdk.jol:jol-core:0.17'

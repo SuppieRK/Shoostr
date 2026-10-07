@@ -59,8 +59,8 @@ import org.eclipse.jetty.server.handler.ContextHandler;
 import org.eclipse.jetty.server.handler.GracefulHandler;
 import org.eclipse.jetty.session.DefaultSessionCache;
 import org.eclipse.jetty.session.SessionHandler;
+import org.eclipse.jetty.util.VirtualThreads;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
-import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -535,8 +535,7 @@ class TransportTest {
         assertTrue(tlsContext.get().isStopped());
         assertTrue(
             ((ExecutorService)
-                    ((QueuedThreadPool) nativeServer.get().getThreadPool())
-                        .getVirtualThreadsExecutor())
+                    VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()))
                 .isShutdown());
       } finally {
         release.countDown();
@@ -643,8 +642,7 @@ class TransportTest {
             0, ((DefaultSessionCache) sessionHandler.get().getSessionCache()).getSessionsCurrent());
         assertTrue(
             ((ExecutorService)
-                    ((QueuedThreadPool) nativeServer.get().getThreadPool())
-                        .getVirtualThreadsExecutor())
+                    VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()))
                 .isShutdown());
       } finally {
         release.countDown();
@@ -1055,8 +1053,7 @@ class TransportTest {
       assertTrue(((ServerConnector) nativeServer.get().getConnectors()[0]).isStopped());
       assertTrue(
           ((ExecutorService)
-                  ((QueuedThreadPool) nativeServer.get().getThreadPool())
-                      .getVirtualThreadsExecutor())
+                  VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()))
               .isShutdown());
     }
   }

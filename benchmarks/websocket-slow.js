@@ -2,9 +2,12 @@ import { check, sleep } from 'k6';
 import { WebSocket } from 'k6/websockets';
 
 const base = __ENV.BASE_URL || 'ws://127.0.0.1:8080';
-const payload = new Uint8Array(65536);
-payload.fill(17);
-payload[65535] = 23;
+const payloads = Array.from({ length: 16 }, (_, sequence) => {
+  const bytes = new Uint8Array(65536);
+  for (let offset = 0; offset < bytes.length; offset++) bytes[offset] = (offset * 31 + sequence) % 256;
+  new DataView(bytes.buffer).setUint32(0, sequence);
+  return bytes;
+});
 
 export const options = {
   scenarios: {
@@ -35,12 +38,16 @@ export default function () {
   }, 5000);
 
   socket.addEventListener('open', () => {
-    for (let index = 0; index < 16; index++) socket.send(payload.buffer);
+    for (const payload of payloads) socket.send(payload.buffer);
   });
   socket.addEventListener('message', event => {
     const bytes = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : null;
-    check(bytes !== null && bytes.length === 65536 && bytes[0] === 17 && bytes[65535] === 23,
-      { 'large echo payload matches': valid => valid });
+    const expected = payloads[received];
+    let valid = expected !== undefined && bytes !== null && bytes.length === expected.length;
+    for (let offset = 0; valid && offset < bytes.length; offset++) {
+      valid = bytes[offset] === expected[offset];
+    }
+    check(valid, { 'complete ordered large echo payload matches': value => value });
     received++;
     sleep(0.05);
     if (received === 16) {

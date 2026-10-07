@@ -11,7 +11,6 @@ import org.eclipse.jetty.util.Callback;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
-import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
@@ -22,7 +21,7 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.annotations.Warmup;
 
-/** Measures candidate SSE framing through the public event-stream API. */
+/** Measures peer construction and SSE framing through the public event-stream API. */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
@@ -44,16 +43,18 @@ public class SseFramingBenchmark {
 
   private String payload;
   private SseEvent metadataEvent;
+  private Options options;
+  private HttpFields.Mutable headers;
   private Request nativeRequest;
   private org.eclipse.jetty.server.Response delegate;
-  private Response response;
   private int bytesWritten;
   private int checksum;
   private int writes;
 
   /** Prepares payloads and a callback-completing transport outside timed work. */
-  @Setup(Level.Trial)
+  @Setup
   public void setupTrial() {
+    options = Options.defaults();
     payload =
         "multiline".equals(lineShape)
             ? "x".repeat(payloadBytes / 2) + "\n" + "x".repeat(payloadBytes - payloadBytes / 2 - 1)
@@ -76,7 +77,7 @@ public class SseFramingBenchmark {
                       case "addHttpStreamWrapper" -> null;
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
-    var headers = HttpFields.build();
+    headers = HttpFields.build();
     delegate =
         (org.eclipse.jetty.server.Response)
             Proxy.newProxyInstance(
@@ -103,18 +104,6 @@ public class SseFramingBenchmark {
                     });
   }
 
-  /** Creates a fresh response wrapper before each measured event lifetime. */
-  @Setup(Level.Invocation)
-  public void setupInvocation() {
-    bytesWritten = 0;
-    checksum = 0;
-    writes = 0;
-    response =
-        io.github.suppierk.shoostr.Request.create(
-                nativeRequest, delegate, Options.defaults(), Callback.NOOP)
-            .response();
-  }
-
   /**
    * Frames, flushes and completes one data-only or metadata SSE event.
    *
@@ -123,6 +112,7 @@ public class SseFramingBenchmark {
    */
   @Benchmark
   public int send() throws IOException {
+    var response = freshResponse();
     var stream = response.startEventStream();
     if ("data".equals(eventShape)) {
       stream.send(payload);
@@ -132,5 +122,29 @@ public class SseFramingBenchmark {
 
     response.complete();
     return bytesWritten + checksum;
+  }
+
+  /**
+   * Resets the fixed transport and constructs the pair included in this measured event lifetime.
+   *
+   * @return fresh response, with no per-invocation JMH setup outside the measured method
+   */
+  private Response freshResponse() {
+    bytesWritten = 0;
+    checksum = 0;
+    writes = 0;
+    headers.clear();
+    return io.github.suppierk.shoostr.Request.create(
+            nativeRequest, delegate, options, Callback.NOOP)
+        .response();
+  }
+
+  /**
+   * Reports the exact encoded byte count accepted during the last fixture operation.
+   *
+   * @return data and framing bytes, excluding the fixture's checksum
+   */
+  int bytesWritten() {
+    return bytesWritten;
   }
 }
