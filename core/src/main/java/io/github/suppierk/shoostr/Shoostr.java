@@ -1743,23 +1743,7 @@ public final class Shoostr implements Closeable {
         throws Exception {
       request.route(endpoint);
       var local = endpoint.behavior();
-      if (local != null) {
-        if (!local.beforeFlush().isEmpty() || !local.afterFlush().isEmpty()) {
-          configureFlushHooks(request, response, local);
-        }
-
-        if (observation != null) {
-          observation.localObservers = local.observers();
-        }
-
-        for (var hook : local.matched()) {
-          hook.handle(request, response);
-        }
-      }
-
-      for (var hook : matchedHooks) {
-        hook.handle(request, response);
-      }
+      runMatchedHooks(local, request, response, observation);
 
       if (rawRequest.getLength() > request.maxBodyBytes()) {
         throw new ContentTooLargeException();
@@ -1809,6 +1793,41 @@ public final class Shoostr implements Closeable {
           request,
           response);
       return false;
+    }
+
+    /**
+     * Configures matched lifecycle state and runs local callbacks before application callbacks.
+     *
+     * @param local selected endpoint phases, or null
+     * @param request matched request
+     * @param response live response
+     * @param observation optional terminal observation
+     * @throws Exception if a matched callback fails
+     */
+    @SuppressWarnings("java:S112") // Matched callbacks may throw checked application failures.
+    private void runMatchedHooks(
+        @Nullable EndpointBehavior local,
+        Request request,
+        Response response,
+        @Nullable Completion observation)
+        throws Exception {
+      if (local != null) {
+        if (!local.beforeFlush().isEmpty() || !local.afterFlush().isEmpty()) {
+          configureFlushHooks(request, response, local);
+        }
+
+        if (observation != null) {
+          observation.localObservers = local.observers();
+        }
+
+        for (var hook : local.matched()) {
+          hook.handle(request, response);
+        }
+      }
+
+      for (var hook : matchedHooks) {
+        hook.handle(request, response);
+      }
     }
 
     /**

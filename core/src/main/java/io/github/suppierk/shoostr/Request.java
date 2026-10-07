@@ -67,7 +67,10 @@ public final class Request {
   private final Thread owner;
   private final HttpFields nativeHeaders;
   private final Map<String, List<String>> cookies;
+
+  @SuppressWarnings("java:S3077") // Publishes a deeply immutable map; its values are immutable too.
   private volatile @Nullable Map<String, List<String>> headers;
+
   private boolean finished;
   private byte @Nullable [] body;
   private @Nullable InputStream input;
