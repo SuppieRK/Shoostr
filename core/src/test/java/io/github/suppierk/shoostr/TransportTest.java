@@ -41,6 +41,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.GZIPInputStream;
@@ -61,6 +62,7 @@ import org.eclipse.jetty.session.DefaultSessionCache;
 import org.eclipse.jetty.session.SessionHandler;
 import org.eclipse.jetty.util.VirtualThreads;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
+import org.eclipse.jetty.util.thread.VirtualThreadPool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -651,6 +653,80 @@ class TransportTest {
       assertTrue(observed.await(3, TimeUnit.SECONDS));
       assertEquals("/blocked", outcome.get().routePattern());
       assertNotNull(outcome.get().transportFailure());
+    }
+  }
+
+  @Test
+  void forcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown() throws Exception {
+    var entered = new CountDownLatch(1);
+    var releaseHandler = new CompletableFuture<Void>();
+    var releaseCleanup = new CompletableFuture<Void>();
+    var cleanupHeld = new CountDownLatch(1);
+    var observed = new CountDownLatch(1);
+    var holdCleanup = new AtomicBoolean();
+    var outcome = new AtomicReference<RequestOutcome>();
+    var ownedExecutor = new AtomicReference<ExecutorService>();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var client = secureClient(HttpClient.Version.HTTP_2)) {
+      enableTls(app);
+      app.http2()
+          .afterRequest(
+              result -> {
+                outcome.set(result);
+                observed.countDown();
+              })
+          .modifyServer(
+              server -> {
+                server.setStopTimeout(100);
+                ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
+                var pool = (VirtualThreadPool) server.getThreadPool();
+                var executor = (ExecutorService) pool.getVirtualThreadsExecutor();
+                ownedExecutor.set(executor);
+                pool.setVirtualThreadsExecutor(
+                    task ->
+                        executor.execute(
+                            () -> {
+                              if (holdCleanup.get()) {
+                                cleanupHeld.countDown();
+                                releaseCleanup.join();
+                              }
+
+                              task.run();
+                            }));
+              });
+      app.routes()
+          .get(
+              "/blocked",
+              (_, response) -> {
+                entered.countDown();
+                releaseHandler.join();
+                response.text("late");
+              });
+      app.start();
+      var pending =
+          client.sendAsync(
+              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/blocked"))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+
+      try {
+        assertTrue(entered.await(3, TimeUnit.SECONDS));
+        holdCleanup.set(true);
+        assertThrows(IOException.class, app::close);
+        assertTrue(cleanupHeld.await(3, TimeUnit.SECONDS));
+        assertTrue(ownedExecutor.get().isShutdown());
+        releaseCleanup.complete(null);
+        releaseHandler.complete(null);
+
+        assertTrue(observed.await(3, TimeUnit.SECONDS));
+        assertEquals("/blocked", outcome.get().routePattern());
+        assertNotNull(outcome.get().transportFailure());
+        assertThrows(ExecutionException.class, () -> pending.get(3, TimeUnit.SECONDS));
+      } finally {
+        releaseCleanup.complete(null);
+        releaseHandler.complete(null);
+      }
     }
   }
 

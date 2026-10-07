@@ -18,7 +18,9 @@ final class ProducerThreadPool extends VirtualThreadPool {
   /**
    * Shares an already scheduled producer wake-up, without coalescing application work. Jetty's
    * current producer can continue consuming immediately ready work while its replacement is still
-   * pending. Only one replacement is needed until it actually starts producing.
+   * pending. Only one replacement is needed until it actually starts producing. Ordinary immediate
+   * cleanup may still run on a one-off virtual thread after shutdown; normal execution and producer
+   * submissions retain their shutdown rejection.
    *
    * @param task producer wake-up or ordinary transport task
    * @return whether this task has an available execution
@@ -26,11 +28,21 @@ final class ProducerThreadPool extends VirtualThreadPool {
   @Override
   public boolean tryExecute(Runnable task) {
     if (!(task instanceof AdaptiveExecutionStrategy producer)) {
-      return super.tryExecute(task);
+      if (super.tryExecute(task)) {
+        return true;
+      }
+
+      if (isStopping() || isStopped()) {
+        // Jetty's immediate HTTP/2 cleanup otherwise falls back to our closed owned executor.
+        Thread.startVirtualThread(task);
+        return true;
+      }
+
+      return false;
     }
 
     if (!pending.add(producer)) {
-      return true;
+      return isRunning();
     }
 
     boolean submitted = false;

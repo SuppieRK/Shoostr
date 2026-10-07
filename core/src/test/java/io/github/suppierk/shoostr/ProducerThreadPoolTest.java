@@ -15,12 +15,86 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.eclipse.jetty.util.thread.ThreadPool;
 import org.eclipse.jetty.util.thread.strategy.AdaptiveExecutionStrategy;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 @Timeout(10)
 class ProducerThreadPoolTest {
+  @Test
+  void lateImmediateCleanupRunsAfterTheOwnedExecutorStops() throws Exception {
+    var completed = new CountDownLatch(1);
+    var executions = new AtomicInteger();
+    var virtual = new AtomicBoolean();
+    var pool = new ProducerThreadPool();
+
+    try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+      pool.setVirtualThreadsExecutor(executor);
+      pool.start();
+      pool.stop();
+      executor.shutdownNow();
+
+      ThreadPool.executeImmediately(
+          pool,
+          () -> {
+            virtual.set(Thread.currentThread().isVirtual());
+            executions.incrementAndGet();
+            completed.countDown();
+          });
+
+      assertTrue(completed.await(3, TimeUnit.SECONDS));
+      assertEquals(1, executions.get());
+      assertTrue(virtual.get());
+    } finally {
+      pool.stop();
+    }
+  }
+
+  @Test
+  void normalExecutionStillRejectsAfterShutdown() throws Exception {
+    var pool = new ProducerThreadPool();
+    pool.start();
+    pool.stop();
+
+    assertThrows(RejectedExecutionException.class, () -> pool.execute(() -> {}));
+  }
+
+  @Test
+  void stoppedProducersRejectEvenWithAWakeupAlreadyPending() throws Exception {
+    var pending = new ArrayDeque<Runnable>();
+    var pool = new ProducerThreadPool();
+    pool.setVirtualThreadsExecutor(pending::add);
+    var producer = new AdaptiveExecutionStrategy(() -> null, pool);
+    pool.start();
+
+    try {
+      assertTrue(pool.tryExecute(producer));
+      pool.stop();
+      assertFalse(pool.tryExecute(producer));
+      assertFalse(pool.tryExecute(new AdaptiveExecutionStrategy(() -> null, pool)));
+      assertEquals(1, pending.size());
+    } finally {
+      pool.stop();
+    }
+  }
+
+  @Test
+  void ordinaryRejectionWhileRunningDoesNotStartFallbackWork() throws Exception {
+    var pool = new ProducerThreadPool();
+    pool.setVirtualThreadsExecutor(
+        _ -> {
+          throw new RejectedExecutionException("rejected test submission");
+        });
+    pool.start();
+
+    try {
+      assertFalse(pool.tryExecute(() -> {}));
+    } finally {
+      pool.stop();
+    }
+  }
+
   @Test
   void sustainedReadyWorkDoesNotAccumulateRedundantProducerWakeups() throws Exception {
     var pending = new ArrayDeque<Runnable>();
