@@ -10,7 +10,7 @@ Steady mode runs eight HTTP workloads (plaintext, pre-encoded JSON, 1 KiB echo,
 workloads (burst, paced and callback-delayed large events), and three WebSocket
 workloads (text, binary and callback-delayed large frames). Each workload has its
 own Linux runner. Its three trials use fresh JVMs, a 10-second warmup, and a
-180-second measured recording. Up to fourteen workload jobs run concurrently;
+180-second offered-load phase. Up to fourteen workload jobs run concurrently;
 GitHub may queue jobs when account capacity is unavailable.
 
 Overload mode runs only the eight HTTP workloads. Each trial offers 1,000, 2,000,
@@ -41,7 +41,9 @@ request count by its duration; native tagged rates use the whole run duration.
 
 Artifacts retain complete JFR recordings, native k6 HTML dashboards, compressed
 raw time series, summary JSON, logs, process monitoring and full JFR CLI views.
-JFR starts after warmup and is explicitly stopped before shutdown. Cancellation
+JFR starts after warmup and spans the full measured k6 invocation, including
+client initialization/setup, drain and output finalization. Recordings can therefore
+last longer than the offered-load phase. JFR is explicitly stopped before JVM shutdown. Cancellation
 recovery is best-effort; incomplete evidence stays visibly marked. Artifact sizes
 and expiry are shown in summaries. Upload or storage-quota failures block
 successful publication; the workflow does not change billing settings.
