@@ -10,10 +10,13 @@ if (!['text', 'binary'].includes(workload) || !Number.isInteger(count) || count 
 }
 
 const roundTrip = new Trend('message_round_trip', true);
-const binaryPayload = new Uint8Array(128);
-binaryPayload.fill(17);
-binaryPayload[127] = 23;
-const payload = workload === 'text' ? 'x'.repeat(128) : binaryPayload.buffer;
+const payloads = Array.from({ length: count }, (_, sequence) => {
+  if (workload === 'text') return `${String(sequence).padStart(8, '0')}:${'x'.repeat(119)}`;
+  const bytes = new Uint8Array(128);
+  for (let offset = 0; offset < bytes.length; offset++) bytes[offset] = (offset * 31 + sequence) % 256;
+  new DataView(bytes.buffer).setUint32(0, sequence);
+  return bytes;
+});
 
 export const options = {
   scenarios: {
@@ -46,11 +49,18 @@ export default function () {
 
   socket.addEventListener('open', () => send());
   socket.addEventListener('message', event => {
-    const valid = workload === 'text'
-      ? event.data === payload
-      : event.data instanceof ArrayBuffer && event.data.byteLength === 128
-        && new Uint8Array(event.data)[0] === 17 && new Uint8Array(event.data)[127] === 23;
-    check(valid, { 'echo payload matches': value => value });
+    const expected = payloads[received];
+    let valid = expected !== undefined;
+    if (workload === 'text') {
+      valid = valid && event.data === expected;
+    } else {
+      const bytes = event.data instanceof ArrayBuffer ? new Uint8Array(event.data) : null;
+      valid = valid && bytes !== null && bytes.length === expected.length;
+      for (let offset = 0; valid && offset < bytes.length; offset++) {
+        valid = bytes[offset] === expected[offset];
+      }
+    }
+    check(valid, { 'complete ordered echo payload matches': value => value });
     roundTrip.add(Date.now() - sentAt);
     received++;
     if (received === count) {
@@ -70,6 +80,6 @@ export default function () {
 
   function send() {
     sentAt = Date.now();
-    socket.send(payload);
+    socket.send(workload === 'text' ? payloads[received] : payloads[received].buffer);
   }
 }

@@ -6,6 +6,8 @@ const base = __ENV.BASE_URL || 'http://127.0.0.1:8080';
 const workload = __ENV.WORKLOAD || 'plaintext';
 const routeGroups = Number(__ENV.ROUTE_GROUPS || 0);
 const candidateRouting = __ENV.CANDIDATE_ROUTING === '1';
+const failureDetails = __ENV.FAILURE_DETAILS === '1';
+let failureReported = false;
 if (!Number.isInteger(routeGroups) || routeGroups < 0) throw new Error('Invalid ROUTE_GROUPS');
 const chunk = 'x'.repeat(1023) + '\n';
 const fixtures = {
@@ -56,6 +58,15 @@ export const options = {
 
 export default function () {
   const response = send(workload, exec.scenario.iterationInTest);
+  if (failureDetails && !failureReported && response.error_code
+      && (response.error_code < 1400 || response.error_code >= 1600)) {
+    failureReported = true;
+    console.error(JSON.stringify({
+      event: 'http-failure', scenario: exec.scenario.name, vu: exec.vu.idInTest,
+      timestamp: Date.now(), error: response.error, error_code: response.error_code,
+      status: response.status, timings: response.timings,
+    }));
+  }
   check(response, {
     'status matches': r => r.status === (fixtures[workload][2] || 200),
     'body matches': r => r.body === fixtures[workload][0],

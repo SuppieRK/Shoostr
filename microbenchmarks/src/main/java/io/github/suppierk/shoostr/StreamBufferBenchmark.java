@@ -10,7 +10,6 @@ import org.eclipse.jetty.util.Callback;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
-import org.openjdk.jmh.annotations.Level;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
@@ -20,7 +19,9 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Threads;
 import org.openjdk.jmh.annotations.Warmup;
 
-/** Measures one candidate response stream's construction and bounded write lifetimes. */
+/**
+ * Measures paired response-stream construction and bounded write lifetimes on a fixed transport.
+ */
 @State(Scope.Thread)
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
@@ -38,11 +39,11 @@ public class StreamBufferBenchmark {
   private byte[] kilobyte;
   private byte[] large;
   private byte[] singleByte;
+  private Options options;
   private Options growthOptions;
+  private HttpFields.Mutable headers;
   private org.eclipse.jetty.server.Response delegate;
   private Request nativeRequest;
-  private Response response;
-  private Response growthResponse;
   private ByteBuffer submitted;
   private int bytesWritten;
   private int writes;
@@ -53,13 +54,14 @@ public class StreamBufferBenchmark {
   }
 
   /** Prepares immutable payloads and a callback-completing transport outside measured work. */
-  @Setup(Level.Trial)
+  @Setup
   public void setupTrial() {
     small = new byte[128];
     kilobyte = new byte[1024];
     large = new byte[65536];
     singleByte = new byte[1];
     var defaults = Options.defaults();
+    options = defaults;
     growthOptions =
         new Options(
             defaults.host(),
@@ -81,7 +83,7 @@ public class StreamBufferBenchmark {
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
     nativeRequest = inbound;
-    var headers = HttpFields.build();
+    headers = HttpFields.build();
     delegate =
         (org.eclipse.jetty.server.Response)
             Proxy.newProxyInstance(
@@ -103,21 +105,6 @@ public class StreamBufferBenchmark {
                     });
   }
 
-  /** Creates fresh bound pairs before each measured stream lifetime. */
-  @Setup(Level.Invocation)
-  public void setupInvocation() {
-    bytesWritten = 0;
-    writes = 0;
-    response =
-        io.github.suppierk.shoostr.Request.create(
-                nativeRequest, delegate, Options.defaults(), Callback.NOOP)
-            .response();
-    growthResponse =
-        io.github.suppierk.shoostr.Request.create(
-                nativeRequest, delegate, growthOptions, Callback.NOOP)
-            .response();
-  }
-
   /**
    * Starts a stream without body bytes.
    *
@@ -126,7 +113,7 @@ public class StreamBufferBenchmark {
    */
   @Benchmark
   public Response.Stream construct() throws IOException {
-    return response.startStream(CONTENT_TYPE);
+    return freshResponse(options).startStream(CONTENT_TYPE);
   }
 
   /**
@@ -137,6 +124,7 @@ public class StreamBufferBenchmark {
    */
   @Benchmark
   public int smallExplicitFlush() throws IOException {
+    var response = freshResponse(options);
     var stream = response.startStream(CONTENT_TYPE);
     stream.write(small);
     stream.flush();
@@ -152,6 +140,7 @@ public class StreamBufferBenchmark {
    */
   @Benchmark
   public int repeatedExplicitFlush() throws IOException {
+    var response = freshResponse(options);
     var stream = response.startStream(CONTENT_TYPE);
     for (int index = 0; index < CHUNKS; index++) {
       stream.write(kilobyte);
@@ -170,6 +159,7 @@ public class StreamBufferBenchmark {
    */
   @Benchmark
   public int largeWrite() throws IOException {
+    var response = freshResponse(options);
     var stream = response.startStream(CONTENT_TYPE);
     stream.write(large);
     response.complete();
@@ -184,13 +174,29 @@ public class StreamBufferBenchmark {
    */
   @Benchmark
   public int incrementalGrowth() throws IOException {
-    var stream = growthResponse.startStream(CONTENT_TYPE);
+    var response = freshResponse(growthOptions);
+    var stream = response.startStream(CONTENT_TYPE);
     for (int index = 0; index < GROWTH_BYTES; index++) {
       stream.write(singleByte);
     }
 
-    growthResponse.complete();
+    response.complete();
     return bytesWritten;
+  }
+
+  /**
+   * Resets the fixed transport and constructs exactly the peer pair used by this operation.
+   *
+   * @param selected configured application limits for this operation
+   * @return fresh response whose construction is included in both timing and allocation
+   */
+  private Response freshResponse(Options selected) {
+    bytesWritten = 0;
+    writes = 0;
+    headers.clear();
+    return io.github.suppierk.shoostr.Request.create(
+            nativeRequest, delegate, selected, Callback.NOOP)
+        .response();
   }
 
   /**

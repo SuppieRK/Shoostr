@@ -396,10 +396,17 @@ class HttpContractTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"false, false", "true, false", "false, true", "true, true"})
+  @CsvSource({
+    "false, false, false",
+    "true, false, false",
+    "false, true, false",
+    "true, true, false",
+    "false, true, true",
+    "true, true, true"
+  })
   @SuppressWarnings("java:S2093") // The response must outlive the producer until its callback.
-  void completesFiniteResponsesAsynchronously(boolean transportFails, boolean afterFlushFails)
-      throws Exception {
+  void completesFiniteResponsesAsynchronously(
+      boolean transportFails, boolean hasAfterFlush, boolean afterFlushFails) throws Exception {
     var pending = new AtomicReference<Callback>();
     var bytes = new AtomicReference<ByteBuffer>();
     var failure = new AtomicReference<Throwable>();
@@ -434,14 +441,17 @@ class HttpContractTest {
             () -> {
               try {
                 var response = response(sink, completion);
-                response.flushHooks(
-                    () -> {},
-                    () -> {
-                      afterFlushes.incrementAndGet();
-                      if (afterFlushFails) {
-                        throw new IllegalStateException("after flush");
-                      }
-                    });
+                if (hasAfterFlush) {
+                  response.flushHooks(
+                      () -> {},
+                      () -> {
+                        afterFlushes.incrementAndGet();
+                        if (afterFlushFails) {
+                          throw new IllegalStateException("after flush");
+                        }
+                      });
+                }
+
                 var original = "finished".getBytes(StandardCharsets.UTF_8);
                 response.body("text/plain;charset=utf-8", original);
                 original[0] = '!';
@@ -463,7 +473,10 @@ class HttpContractTest {
       assertTrue(
           successes.get() == 0 && failures.get() == 0,
           "request remains pending until transport completion");
-      assertEquals(1, afterFlushes.get(), "post-flush observation runs after submission");
+      assertEquals(
+          hasAfterFlush ? 1 : 0,
+          afterFlushes.get(),
+          "configured post-flush observation runs after submission");
       assertEquals(
           "finished",
           StandardCharsets.UTF_8.decode(bytes.get()).toString(),

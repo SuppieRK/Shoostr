@@ -28,7 +28,8 @@ class ExtensionRequestBenchmarkTest {
   }
 
   private static Stream<Arguments> cases() {
-    return Stream.of("plain", "inactive", "callbacks", "authentication")
+    return Stream.of(
+            "plain", "inactive", "callbacks", "authentication", "localObserver", "appObserver")
         .flatMap(
             configuration ->
                 Stream.of(1, 1000)

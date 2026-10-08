@@ -27,7 +27,7 @@ import org.openjdk.jmh.annotations.Warmup;
     jvmArgsAppend = {"-Xms512m", "-Xmx512m", "-XX:+UseG1GC"})
 @Threads(1)
 public class ExtensionRequestBenchmark {
-  @Param({"plain", "inactive", "callbacks", "authentication"})
+  @Param({"plain", "inactive", "callbacks", "authentication", "localObserver", "appObserver"})
   public String configuration;
 
   @Param({"1", "1000"})
@@ -132,6 +132,12 @@ public class ExtensionRequestBenchmark {
         return;
       }
 
+      if ("appObserver".equals(benchmark.configuration)) {
+        benchmark.app.afterRequest(_ -> {});
+        benchmark.registerPlain();
+        return;
+      }
+
       var authentication = new Identity();
       if ("authentication".equals(benchmark.configuration)) {
         benchmark.app.authentication(authentication);
@@ -162,6 +168,8 @@ public class ExtensionRequestBenchmark {
         Extensions endpoint, Identity authentication, String configuration) {
       if ("authentication".equals(configuration)) {
         endpoint.get(authentication).required();
+      } else if ("localObserver".equals(configuration)) {
+        endpoint.afterRequest(_ -> {});
       } else {
         endpoint.beforeRouteHandler((request, _) -> request.attribute("admitted", Boolean.TRUE));
         endpoint.afterRouteHandler((request, _) -> request.attribute("admitted", null));

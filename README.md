@@ -120,6 +120,11 @@ within one app startup attempt, and reserved sockets are released on failure and
 
 Configure Jetty directly before startup, using ordered callbacks similar to Javalin:
 
+The native pool is Jetty's `VirtualThreadPool`, using Shoostr's owned virtual-thread executor
+without a concurrent-task cap. Both request production and handlers can run on virtual threads;
+handlers retain their existing virtual-thread contract. Native customizers must not cast the pool
+to `QueuedThreadPool` or depend on its platform-thread sizing methods.
+
 ```java
 app.modifyHttpConfiguration(http -> http.setRequestHeaderSize(16 * 1024));
 app.modifyServer(server -> {

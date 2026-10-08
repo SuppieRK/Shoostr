@@ -495,6 +495,79 @@ class ExtensionLifecycleTest {
   }
 
   @Test
+  void usesAppFlushHooksBeforeMatchingAndAddsLocalHooksAfterMatching() throws Exception {
+    var events = new LinkedBlockingQueue<String>();
+    var completed = new LinkedBlockingQueue<RequestOutcome>();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.onRequestHeaders((_, response) -> response.startStream("text/plain").write("early"));
+      app.beforeResponseFlush((_, _) -> events.add("app-before"));
+      app.afterResponseFlush((_, _) -> events.add("app-after"));
+      app.afterRequest(completed::add);
+      app.routes()
+          .get(
+              "/early",
+              (_, _) -> {},
+              e -> {
+                e.onRouteMatched((_, _) -> events.add("matched"));
+                e.beforeResponseFlush((_, _) -> events.add("local-before"));
+                e.afterResponseFlush((_, _) -> events.add("local-after"));
+              });
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(request -> request.path("/early"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("early", result.body());
+        assertNotNull(completed.poll(5, TimeUnit.SECONDS));
+        assertEquals(
+            List.of(
+                "app-before",
+                "app-after",
+                "matched",
+                "local-before",
+                "app-before",
+                "local-after",
+                "app-after"),
+            List.copyOf(events));
+      }
+    }
+  }
+
+  @Test
+  void installsLocalFlushHooksBeforeRouteMatchedCallbacksCanWrite() throws Exception {
+    var events = new LinkedBlockingQueue<String>();
+    var completed = new LinkedBlockingQueue<RequestOutcome>();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.beforeResponseFlush((_, _) -> events.add("app-before"));
+      app.afterResponseFlush((_, _) -> events.add("app-after"));
+      app.afterRequest(completed::add);
+      app.routes()
+          .get(
+              "/events",
+              (_, _) -> events.add("endpoint"),
+              e -> {
+                e.onRouteMatched((_, response) -> response.startEventStream().send("early"));
+                e.beforeResponseFlush((_, _) -> events.add("local-before"));
+                e.afterResponseFlush((_, _) -> events.add("local-after"));
+              });
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("data: early\n\n", result.body());
+        assertNotNull(completed.poll(5, TimeUnit.SECONDS));
+        var order = List.copyOf(events);
+        assertTrue(order.indexOf("endpoint") >= 4);
+        assertEquals(
+            List.of("local-before", "app-before", "local-after", "app-after"), order.subList(0, 4));
+      }
+    }
+  }
+
+  @Test
   void localAndAppFlushHooksRepeatInOrderAcrossEventStreamWrites() throws Exception {
     var events = new LinkedBlockingQueue<String>();
     var completed = new LinkedBlockingQueue<RequestOutcome>();
