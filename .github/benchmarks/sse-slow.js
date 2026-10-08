@@ -1,8 +1,10 @@
 import { check, sleep } from 'k6';
 import sse from 'k6/x/sse';
+import { Trend } from 'k6/metrics';
 
 const base = __ENV.BASE_URL || 'http://127.0.0.1:8080';
 const payload = 'x'.repeat(65536);
+const streamDuration = new Trend('sse_stream_duration', true);
 
 export const options = {
   scenarios: {
@@ -24,6 +26,7 @@ export const options = {
 
 export default function () {
   let received = 0;
+  const start = Date.now();
   const response = sse.open(`${base}/sse-slow`, { method: 'GET' }, client => {
     client.on('event', event => {
       check(event.data === `${received}:${payload}`, { 'large event payload matches': valid => valid });
@@ -35,6 +38,7 @@ export default function () {
       check(false, { 'SSE stream has no error': valid => valid });
     });
   });
+  streamDuration.add(Date.now() - start);
   check(response, { 'SSE response is 200': value => value && value.status === 200 });
   check(received === 16, { 'all large events arrive': value => value });
 }

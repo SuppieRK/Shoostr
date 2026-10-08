@@ -1,5 +1,6 @@
 rootProject.name = 'Shoostr'
 include 'http', 'core', 'test', 'pac4j', 'benchmarks', 'microbenchmarks'
+project(':benchmarks').projectDir = file('.github/benchmarks')
 
 include 'micrometer', 'opentelemetry'
 

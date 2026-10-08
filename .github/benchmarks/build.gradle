@@ -1,0 +1,17 @@
+plugins {
+	id 'application'
+}
+
+dependencies {
+	implementation project(':core')
+	runtimeOnly 'org.slf4j:slf4j-simple:2.0.20'
+}
+
+application {
+	mainClass = 'io.github.suppierk.shoostr.bench.ServerMain'
+	applicationDefaultJvmArgs = [
+		'-Xms256m',
+		'-Xmx256m',
+		'-XX:+UseG1GC'
+	]
+}

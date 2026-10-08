@@ -1,0 +1,16 @@
+{
+  "plaintext": {"script":"http.js", "selected":"plaintext", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
+  "json-bytes": {"script":"http.js", "selected":"json-bytes", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
+  "echo": {"script":"http.js", "selected":"echo", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
+  "stream": {"script":"http.js", "selected":"stream", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
+  "route-literal": {"script":"http.js", "selected":"route-literal", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
+  "route-parameter": {"script":"http.js", "selected":"route-parameter", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
+  "not-found": {"script":"http.js", "selected":"not-found", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
+  "wrong-method": {"script":"http.js", "selected":"wrong-method", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
+  "sse-burst": {"script":"sse.js", "selected":"burst", "rate":50, "vus":128, "kind":"sse", "metric":"sse_stream_duration", "latency":"SSE stream"},
+  "sse-paced": {"script":"sse.js", "selected":"paced", "rate":50, "vus":128, "kind":"sse", "metric":"sse_stream_duration", "latency":"SSE stream"},
+  "sse-slow": {"script":"sse-slow.js", "selected":"slow", "rate":10, "vus":64, "kind":"sse", "metric":"sse_stream_duration", "latency":"SSE stream"},
+  "ws-text": {"script":"websocket.js", "selected":"text", "rate":50, "vus":128, "kind":"ws", "metric":"message_round_trip", "latency":"WS message round-trip"},
+  "ws-binary": {"script":"websocket.js", "selected":"binary", "rate":50, "vus":128, "kind":"ws", "metric":"message_round_trip", "latency":"WS message round-trip"},
+  "ws-slow": {"script":"websocket-slow.js", "selected":"slow", "rate":10, "vus":64, "kind":"ws", "metric":"ws_session_duration", "latency":"WS session"}
+}

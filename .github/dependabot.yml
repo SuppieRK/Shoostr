@@ -10,7 +10,7 @@ updates:
       - /pac4j
       - /micrometer
       - /opentelemetry
-      - /benchmarks
+      - /.github/benchmarks
       - /microbenchmarks
       - /examples/consumer-smoke
     schedule:
