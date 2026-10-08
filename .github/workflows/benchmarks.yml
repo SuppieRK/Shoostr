@@ -59,7 +59,7 @@ jobs:
           ./gradlew :benchmarks:installDist --no-daemon --console=plain
           mkdir -p "$GOBIN/lib"
           cp .github/benchmarks/build/install/benchmarks/lib/*.jar "$GOBIN/lib/"
-          go install github.com/grafana/xk6/cmd/xk6@v1.4.14
+          go install go.k6.io/xk6/cmd/xk6@v1.4.14
           "$GOBIN/xk6" build v2.2.0 --with github.com/phymbert/xk6-sse@v0.2.0 --output "$GOBIN/k6"
           "$GOBIN/k6" version
           while IFS=$'\t' read -r script selected; do
