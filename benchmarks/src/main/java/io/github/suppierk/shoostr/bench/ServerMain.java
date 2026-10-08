@@ -204,7 +204,17 @@ public final class ServerMain {
                     config.routes.ws(
                         "/ws-text", ws -> ws.onMessage(ctx -> ctx.send(ctx.message())));
                     config.routes.ws(
-                        "/ws-binary", ws -> ws.onBinaryMessage(ctx -> ctx.send(ctx.data())));
+                        "/ws-binary",
+                        ws ->
+                            ws.onBinaryMessage(
+                                ctx -> {
+                                  // The inbound buffer is borrowed; the asynchronous send needs
+                                  // ownership.
+                                  var inbound = ctx.data().asReadOnlyBuffer();
+                                  var owned = new byte[inbound.remaining()];
+                                  inbound.get(owned);
+                                  ctx.send(ByteBuffer.wrap(owned));
+                                }));
                     registerJavalinRouteGroups(config.routes, routeGroups);
                   })
               .start();

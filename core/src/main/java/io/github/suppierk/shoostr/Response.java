@@ -107,8 +107,8 @@ public final class Response implements AutoCloseable {
   private final Thread owner;
   private final boolean head;
   private final Request request;
-  private Runnable beforeFlush;
-  private Runnable afterFlush;
+  private @Nullable Runnable beforeFlush;
+  private @Nullable Runnable afterFlush;
   private State state;
   private byte[] body;
   private @Nullable Stream stream;
@@ -158,8 +158,6 @@ public final class Response implements AutoCloseable {
     this.owner = Thread.currentThread();
     this.head = head;
     this.request = Objects.requireNonNull(request);
-    this.beforeFlush = () -> {};
-    this.afterFlush = () -> {};
     this.flushCallback = false;
     this.beforeFlushFailed = false;
     this.headContentLength = -1;
@@ -168,14 +166,14 @@ public final class Response implements AutoCloseable {
   }
 
   /**
-   * Installs framework-owned callbacks around synchronous streaming writes.
+   * Installs framework-owned callbacks around response submission and streaming writes.
    *
-   * @param before callback before bytes are committed
-   * @param after callback after bytes are committed
+   * @param before callback before bytes are committed, or null when absent
+   * @param after callback after submission, or null when absent
    */
-  void flushHooks(Runnable before, Runnable after) {
-    beforeFlush = Objects.requireNonNull(before);
-    afterFlush = Objects.requireNonNull(after);
+  void flushHooks(@Nullable Runnable before, @Nullable Runnable after) {
+    beforeFlush = before;
+    afterFlush = after;
   }
 
   /**
@@ -287,8 +285,8 @@ public final class Response implements AutoCloseable {
     }
 
     beforeFlushFailed = false;
-    beforeFlush = () -> {};
-    afterFlush = () -> {};
+    beforeFlush = null;
+    afterFlush = null;
   }
 
   /**
@@ -1119,13 +1117,17 @@ public final class Response implements AutoCloseable {
     protectRequiredHeaders();
     var bytes = ByteBuffer.wrap(body);
     body = EMPTY;
-    var flushing = new FlushCompletion();
     if (head && compressionEnabled && permitsBody()) {
       Content.Sink.write(delegate, false, ByteBuffer.wrap(EMPTY));
     }
 
-    delegate.write(true, bytes, flushing);
-    flushing.afterFlush();
+    if (afterFlush == null) {
+      delegate.write(true, bytes, completion);
+    } else {
+      var flushing = new FlushCompletion();
+      delegate.write(true, bytes, flushing);
+      flushing.afterFlush();
+    }
   }
 
   /** Sets the finite representation length when the selected status permits one. */
@@ -1848,15 +1850,17 @@ public final class Response implements AutoCloseable {
    * @throws NotAcceptableException if no acceptable content coding is available before commitment
    */
   private void notifyBeforeFlush(boolean last, long length) {
-    flushCallback = true;
+    if (beforeFlush != null) {
+      flushCallback = true;
 
-    try {
-      beforeFlush.run();
-    } catch (RuntimeException failure) {
-      beforeFlushFailed = true;
-      throw failure;
-    } finally {
-      flushCallback = false;
+      try {
+        beforeFlush.run();
+      } catch (RuntimeException failure) {
+        beforeFlushFailed = true;
+        throw failure;
+      } finally {
+        flushCallback = false;
+      }
     }
 
     if (compressionEnabled
@@ -2044,6 +2048,10 @@ public final class Response implements AutoCloseable {
 
   /** Runs the post-flush callback while prohibiting all response mutation. */
   private void notifyAfterFlush() {
+    if (afterFlush == null) {
+      return;
+    }
+
     flushCallback = true;
 
     try {

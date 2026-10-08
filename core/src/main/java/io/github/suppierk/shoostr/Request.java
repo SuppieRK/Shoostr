@@ -34,6 +34,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
 import org.eclipse.jetty.http.HttpField;
+import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.http.MultiPart;
 import org.eclipse.jetty.http.MultiPartConfig;
@@ -47,9 +48,10 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Inbound data scoped to the route handler and its application-wide error handler on the same
- * thread. Headers and cookies are immutable construction-time snapshots. Body reads are lazy,
- * bounded, and cached; access ends after framework finalization. Potentially absent values are
- * returned as non-null JDK Optionals; a present empty string is distinct from absence.
+ * thread. Headers retain immutable construction-time fields; their map is materialized on demand.
+ * Cookies are eagerly validated snapshots. Body reads are lazy, bounded, and cached; access ends
+ * after framework finalization. Potentially absent values are returned as non-null JDK Optionals; a
+ * present empty string is distinct from absence.
  */
 public final class Request {
   // Java 25 readNBytes(int) starts with this much temporary storage.
@@ -63,8 +65,12 @@ public final class Request {
   private final MultipartOptions multipartOptions;
   private final List<Upload> uploads;
   private final Thread owner;
-  private final Map<String, List<String>> headers;
+  private final HttpFields nativeHeaders;
   private final Map<String, List<String>> cookies;
+
+  @SuppressWarnings("java:S3077") // Publishes a deeply immutable map; its values are immutable too.
+  private volatile @Nullable Map<String, List<String>> headers;
+
   private boolean finished;
   private byte @Nullable [] body;
   private @Nullable InputStream input;
@@ -108,9 +114,9 @@ public final class Request {
     this.webSocketProtocols = List.of();
     this.owner = Thread.currentThread();
     this.representation = BodyRepresentation.UNREAD;
-    this.headers = parseHeaders(delegate);
+    this.nativeHeaders = delegate.getHeaders().asImmutable();
     this.cookies =
-        headers.containsKey(HttpHeaders.COOKIE.value()) ? parseCookies(delegate) : Map.of();
+        nativeHeaders.contains(HttpHeaders.COOKIE.value()) ? parseCookies(delegate) : Map.of();
     this.response =
         new Response(
             nativeResponse,
@@ -118,7 +124,9 @@ public final class Request {
             completion,
             HttpMethods.HEAD.value().equals(delegate.getMethod()),
             this);
-    org.eclipse.jetty.server.Request.addCompletionListener(delegate, _ -> closeMultipart());
+    if (isMultipart()) {
+      org.eclipse.jetty.server.Request.addCompletionListener(delegate, _ -> closeMultipart());
+    }
   }
 
   /**
@@ -524,8 +532,8 @@ public final class Request {
    * @return the field value, or empty when absent
    */
   public Optional<String> header(String name) {
-    var values = headers(name);
-    return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
+    check();
+    return Optional.ofNullable(nativeHeaders.get(Objects.requireNonNull(name)));
   }
 
   /**
@@ -536,7 +544,11 @@ public final class Request {
    */
   public List<String> headers(String name) {
     check();
-    return headers.getOrDefault(Objects.requireNonNull(name), List.of());
+    Objects.requireNonNull(name);
+    var snapshot = headers;
+    return snapshot == null
+        ? List.copyOf(nativeHeaders.getValuesList(name))
+        : snapshot.getOrDefault(name, List.of());
   }
 
   /**
@@ -551,14 +563,16 @@ public final class Request {
   }
 
   /**
-   * Returns the deeply immutable, case-insensitive snapshot captured at construction, after native
-   * customization. Repeated field lines retain their order and are not split at commas.
+   * Returns a deeply immutable, case-insensitive map of construction-time header values, after
+   * native customization. The map is materialized once on first access. Repeated field lines retain
+   * their order and are not split at commas.
    *
    * @return immutable names and raw value lists
    */
   public Map<String, List<String>> headerMap() {
     check();
-    return headers;
+    var snapshot = headers;
+    return snapshot == null ? captureHeaderMap() : snapshot;
   }
 
   /**
@@ -1290,13 +1304,27 @@ public final class Request {
   }
 
   /**
+   * Publishes the grouped immutable header map after it has been fully initialized.
+   *
+   * @return the single cached header map
+   */
+  private synchronized Map<String, List<String>> captureHeaderMap() {
+    var snapshot = headers;
+    if (snapshot == null) {
+      snapshot = parseHeaders(nativeHeaders);
+      headers = snapshot;
+    }
+
+    return snapshot;
+  }
+
+  /**
    * Groups effective header fields once while retaining case-insensitive lookup and arrival order.
    *
-   * @param delegate transport request after native customization
+   * @param nativeHeaders immutable transport fields captured after native customization
    * @return deeply immutable header snapshot
    */
-  private static Map<String, List<String>> parseHeaders(org.eclipse.jetty.server.Request delegate) {
-    var nativeHeaders = delegate.getHeaders();
+  private static Map<String, List<String>> parseHeaders(HttpFields nativeHeaders) {
     if (nativeHeaders.size() == 0) {
       return Map.of();
     }

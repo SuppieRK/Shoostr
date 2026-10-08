@@ -42,6 +42,9 @@ public class BufferedRequestBenchmark {
   @Param({"known", "unknown"})
   public String length;
 
+  @Param({"0", "4", "12"})
+  public int headers;
+
   private byte[] payload;
   private Request delegate;
   private Response sink;
@@ -61,7 +64,11 @@ public class BufferedRequestBenchmark {
         .bodyBytes();
   }
 
-  /** Builds reusable payload and transport proxies outside the measured operation. */
+  /**
+   * Builds reusable payload and transport proxies outside the measured operation.
+   *
+   * @throws IllegalStateException if the fixture does not expose the configured header count
+   */
   @Setup
   public void setup() {
     payload = new byte[bytes];
@@ -75,6 +82,12 @@ public class BufferedRequestBenchmark {
             defaults.maxResponseBytes(),
             defaults.streamBufferBytes(),
             defaults.idleTimeoutMillis());
+    var fields = HttpFields.build();
+    for (int index = 0; index < headers; index++) {
+      fields.add("X-Benchmark-" + index, "value-" + index);
+    }
+
+    var inboundHeaders = fields.asImmutable();
     delegate =
         (Request)
             Proxy.newProxyInstance(
@@ -82,7 +95,7 @@ public class BufferedRequestBenchmark {
                 new Class<?>[] {Request.class},
                 (_, method, arguments) ->
                     switch (method.getName()) {
-                      case "getHeaders" -> HttpFields.EMPTY;
+                      case "getHeaders" -> inboundHeaders;
                       case "getMethod" -> "GET";
                       case "getLength" -> "known".equals(length) ? (long) bytes : -1L;
                       case "read" -> source.read();
@@ -101,5 +114,12 @@ public class BufferedRequestBenchmark {
                 (_, method, _) -> {
                   throw new UnsupportedOperationException(method.getName());
                 });
+
+    if (io.github.suppierk.shoostr.Request.create(delegate, sink, options, Callback.NOOP)
+            .headerMap()
+            .size()
+        != headers) {
+      throw new IllegalStateException("Unexpected header fixture size");
+    }
   }
 }

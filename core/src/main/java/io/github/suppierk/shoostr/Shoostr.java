@@ -40,7 +40,6 @@ import org.eclipse.jetty.server.handler.GracefulHandler;
 import org.eclipse.jetty.session.SessionHandler;
 import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
-import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.websocket.core.WebSocketConstants;
 import org.eclipse.jetty.websocket.server.ServerWebSocketContainer;
 import org.jspecify.annotations.Nullable;
@@ -792,8 +791,7 @@ public final class Shoostr implements Closeable {
    */
   private void startServer(DispatchConfiguration dispatch) throws Exception {
     virtualThreads = Executors.newVirtualThreadPerTaskExecutor();
-    var pool = new QueuedThreadPool();
-    pool.setReservedThreads(0);
+    var pool = new ProducerThreadPool();
     pool.setVirtualThreadsExecutor(virtualThreads);
     server = new Server(pool);
     server.setStopTimeout(DEFAULT_STOP_TIMEOUT_MILLIS);
@@ -1417,23 +1415,7 @@ public final class Shoostr implements Closeable {
         configureEncoding(response, rawRequest);
       }
 
-      response.flushHooks(
-          () -> {
-            var local = request.behavior();
-            if (local != null) {
-              flush(local.beforeFlush(), request, response);
-            }
-
-            flush(preFlushHooks, request, response);
-          },
-          () -> {
-            var local = request.behavior();
-            if (local != null) {
-              flush(local.afterFlush(), request, response);
-            }
-
-            flush(postFlushHooks, request, response);
-          });
+      configureFlushHooks(request, response, null);
       Throwable terminalFailure = null;
       Throwable applicationFailure = null;
 
@@ -1451,6 +1433,43 @@ public final class Shoostr implements Closeable {
       }
 
       return true;
+    }
+
+    /**
+     * Captures only configured flush work, including app hooks before route selection.
+     *
+     * @param request live request
+     * @param response paired response
+     * @param local matched endpoint behavior, or null before matching
+     */
+    private void configureFlushHooks(
+        Request request, Response response, @Nullable EndpointBehavior local) {
+      response.flushHooks(
+          flushHook(
+              local == null ? List.of() : local.beforeFlush(), preFlushHooks, request, response),
+          flushHook(
+              local == null ? List.of() : local.afterFlush(), postFlushHooks, request, response));
+    }
+
+    /**
+     * Combines local and application flush work without allocating for an empty phase.
+     *
+     * @param local endpoint callbacks
+     * @param application application callbacks
+     * @param request live request
+     * @param response paired response
+     * @return ordered callback, or null when neither scope has work
+     */
+    private @Nullable Runnable flushHook(
+        List<Handler> local, List<Handler> application, Request request, Response response) {
+      if (local.isEmpty() && application.isEmpty()) {
+        return null;
+      }
+
+      return () -> {
+        flush(local, request, response);
+        flush(application, request, response);
+      };
     }
 
     /**
@@ -1724,19 +1743,7 @@ public final class Shoostr implements Closeable {
         throws Exception {
       request.route(endpoint);
       var local = endpoint.behavior();
-      if (local != null) {
-        if (observation != null) {
-          observation.localObservers = local.observers();
-        }
-
-        for (var hook : local.matched()) {
-          hook.handle(request, response);
-        }
-      }
-
-      for (var hook : matchedHooks) {
-        hook.handle(request, response);
-      }
+      runMatchedHooks(local, request, response, observation);
 
       if (rawRequest.getLength() > request.maxBodyBytes()) {
         throw new ContentTooLargeException();
@@ -1786,6 +1793,41 @@ public final class Shoostr implements Closeable {
           request,
           response);
       return false;
+    }
+
+    /**
+     * Configures matched lifecycle state and runs local callbacks before application callbacks.
+     *
+     * @param local selected endpoint phases, or null
+     * @param request matched request
+     * @param response live response
+     * @param observation optional terminal observation
+     * @throws Exception if a matched callback fails
+     */
+    @SuppressWarnings("java:S112") // Matched callbacks may throw checked application failures.
+    private void runMatchedHooks(
+        @Nullable EndpointBehavior local,
+        Request request,
+        Response response,
+        @Nullable Completion observation)
+        throws Exception {
+      if (local != null) {
+        if (!local.beforeFlush().isEmpty() || !local.afterFlush().isEmpty()) {
+          configureFlushHooks(request, response, local);
+        }
+
+        if (observation != null) {
+          observation.localObservers = local.observers();
+        }
+
+        for (var hook : local.matched()) {
+          hook.handle(request, response);
+        }
+      }
+
+      for (var hook : matchedHooks) {
+        hook.handle(request, response);
+      }
     }
 
     /**

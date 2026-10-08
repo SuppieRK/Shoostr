@@ -39,8 +39,9 @@ import org.eclipse.jetty.server.HttpConnectionFactory;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.handler.GracefulHandler;
+import org.eclipse.jetty.util.VirtualThreads;
 import org.eclipse.jetty.util.component.LifeCycle;
-import org.eclipse.jetty.util.thread.QueuedThreadPool;
+import org.eclipse.jetty.util.thread.VirtualThreadPool;
 import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -52,6 +53,72 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(20)
 class ShoostrLifecycleTest {
   @TempDir private Path temporary;
+
+  @Test
+  void usesAnUnlimitedVirtualPoolForNativeRequestProduction() throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.modifyServer(
+          server -> {
+            var pool = assertInstanceOf(VirtualThreadPool.class, server.getThreadPool());
+            assertEquals(0, pool.getMaxConcurrentTasks());
+            assertFalse(pool.isTracking());
+            assertNotNull(pool.getVirtualThreadsExecutor());
+          });
+      app.start();
+    }
+  }
+
+  @Test
+  void servesAnotherConnectionWhileAVirtualHandlerIsBlocked() throws Exception {
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.routes()
+          .get(
+              "/blocked",
+              (_, response) -> {
+                entered.countDown();
+                if (!release.await(5, TimeUnit.SECONDS)) {
+                  throw new IOException("test timeout");
+                }
+
+                response.text(Boolean.toString(Thread.currentThread().isVirtual()));
+              });
+      app.routes()
+          .get(
+              "/ready",
+              (_, response) -> response.text(Boolean.toString(Thread.currentThread().isVirtual())));
+
+      try (var test =
+          TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
+        var blocked =
+            CompletableFuture.supplyAsync(
+                () -> {
+                  try {
+                    return test.send(
+                        request -> request.path("/blocked").timeout(Duration.ofSeconds(6)),
+                        HttpResponse.BodyHandlers.ofString());
+                  } catch (IOException | InterruptedException failure) {
+                    throw new CompletionException(failure);
+                  }
+                });
+
+        try {
+          assertTrue(entered.await(2, TimeUnit.SECONDS));
+          var ready =
+              test.send(
+                  request -> request.path("/ready").timeout(Duration.ofSeconds(2)),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, ready.statusCode());
+          assertEquals("true", ready.body());
+        } finally {
+          release.countDown();
+          assertEquals("true", blocked.get(3, TimeUnit.SECONDS).body());
+        }
+      }
+    }
+  }
 
   @Test
   void omitsTheServerHeaderOnTheDefaultListenerWithoutNativeOverrides() throws Exception {
@@ -386,8 +453,10 @@ class ShoostrLifecycleTest {
         assertNotNull(nativeServer.get());
         assertTrue(nativeServer.get().isStopped());
         assertTrue(nativeServer.get().getConnectors()[0].isStopped());
-        var pool = (QueuedThreadPool) nativeServer.get().getThreadPool();
-        assertTrue(((ExecutorService) pool.getVirtualThreadsExecutor()).isShutdown());
+        assertTrue(
+            ((ExecutorService)
+                    VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()))
+                .isShutdown());
         assertThrows(IllegalStateException.class, app::port);
       } finally {
         if (nativeServer.get() != null) {
@@ -492,8 +561,10 @@ class ShoostrLifecycleTest {
       assertThrows(IllegalStateException.class, () -> routes.get("/", (_, _) -> {}));
       if (!http) {
         assertTrue(nativeServer.get().isStopped());
-        var pool = (QueuedThreadPool) nativeServer.get().getThreadPool();
-        assertTrue(((ExecutorService) pool.getVirtualThreadsExecutor()).isShutdown());
+        assertTrue(
+            ((ExecutorService)
+                    VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()))
+                .isShutdown());
       }
     }
   }

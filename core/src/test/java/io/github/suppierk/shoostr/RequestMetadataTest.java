@@ -214,6 +214,66 @@ class RequestMetadataTest {
   }
 
   @Test
+  void readsIndividualHeadersWithoutEnumeratingTheHeaderSnapshot() throws Exception {
+    var enumerations = new AtomicInteger();
+    app.modifyHttpConfiguration(
+        configuration ->
+            configuration.addCustomizer(
+                (nativeRequest, _) -> {
+                  var original = nativeRequest.getHeaders().asImmutable();
+                  var fields =
+                      (HttpFields)
+                          Proxy.newProxyInstance(
+                              HttpFields.class.getClassLoader(),
+                              new Class<?>[] {HttpFields.class},
+                              (proxy, method, arguments) -> {
+                                if ("asImmutable".equals(method.getName())) {
+                                  // Jetty verifies fields before Shoostr captures its immutable
+                                  // view.
+                                  enumerations.set(0);
+                                  return proxy;
+                                }
+
+                                if ("iterator".equals(method.getName())) {
+                                  enumerations.incrementAndGet();
+                                }
+
+                                return method.invoke(original, arguments);
+                              });
+                  return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
+                    @Override
+                    public HttpFields getHeaders() {
+                      return fields;
+                    }
+                  };
+                }));
+    app.routes()
+        .get(
+            "/individual",
+            (request, response) -> {
+              assertEquals("first", request.header("X-Values").orElseThrow());
+              var values = request.headers("x-values");
+              assertEquals(List.of("first", "second"), values);
+              assertThrows(UnsupportedOperationException.class, values::clear);
+              assertEquals(0, enumerations.get());
+              response.text("individual");
+            });
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/individual")
+                      .header("X-Values", "first")
+                      .header("x-values", "second"),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals("individual", result.body());
+    }
+  }
+
+  @Test
   void exposesRawQueryAndRepeatedHeaderSnapshots() throws Exception {
     app.routes()
         .get(
