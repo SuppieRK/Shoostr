@@ -1,9 +1,6 @@
 name: Shoostr benchmarks
 
 on:
-  # Temporary registration only; removed before manual campaign validation.
-  push:
-    branches: [ci/observable-benchmarks]
   workflow_dispatch:
     inputs:
       mode:
@@ -24,13 +21,6 @@ env:
   JAVA_VERSION: '25.0.4'
 
 jobs:
-  register:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 2
-    steps:
-      - run: echo 'Workflow registered; benchmark execution requires manual dispatch.'
-
   prepare:
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
