@@ -20,6 +20,10 @@ tooling, profiling and publication failures fail the workflow. Steady-mode
 correctness failures also fail the workflow. The load generator can saturate
 before the service; inspect both processes before interpreting a boundary.
 
+Slow-WebSocket steady traffic uses one session/second: the initial hosted trial
+at ten sessions/second saturated the two-CPU k6 client and failed during warmup.
+Payload validation, callback delay, timeouts and correctness checks are unchanged.
+
 The build job prepares one fixture distribution and one pinned k6 binary with
 the SSE extension. Workload jobs reuse those binaries and a 256 MiB fixed G1
 heap. Available CPUs are divided evenly between the JVM and k6; actual affinity,

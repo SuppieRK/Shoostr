@@ -59,7 +59,7 @@ jobs:
           ./gradlew :benchmarks:installDist --no-daemon --console=plain
           mkdir -p "$GOBIN/lib"
           cp .github/benchmarks/build/install/benchmarks/lib/*.jar "$GOBIN/lib/"
-          go install -mod=readonly go.k6.io/xk6/cmd/xk6@v1.4.14
+          (cd .github/benchmarks && go build -mod=readonly -o "$GOBIN/xk6" go.k6.io/xk6/cmd/xk6)
           "$GOBIN/xk6" build v2.2.0 --with github.com/phymbert/xk6-sse@v0.2.0 --output "$GOBIN/k6"
           "$GOBIN/k6" version
           while IFS=$'\t' read -r script selected; do
@@ -135,7 +135,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [[ -n "$ARTIFACT_ID" ]]; then
-            ARTIFACT_BYTES=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" --jq .size_in_bytes)
+            ARTIFACT_BYTES=''
+            for ((attempt=0; attempt<3; attempt++)); do
+              if ARTIFACT_BYTES=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" --jq .size_in_bytes); then
+                break
+              fi
+              sleep 2
+            done
+            if [[ -z "$ARTIFACT_BYTES" ]]; then
+              echo '::warning::Artifact size metadata unavailable; uploaded artifact and measurement evidence are retained.'
+            fi
             export ARTIFACT_BYTES
           fi
           node .github/benchmarks/report.mjs workload "$RESULT_DIR" "$WORKLOAD" "$MODE" >> "$GITHUB_STEP_SUMMARY"

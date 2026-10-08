@@ -86,7 +86,7 @@ jq -n --arg workload "$workload" --arg mode "$mode" --argjson fixture "$configur
   df -h "$destination"
 } > "$destination/host.txt"
 sha256sum "$tools/k6" "$tools"/lib/*.jar "$support"/*.js "$support/workloads.json" \
-  "$support/run.sh" "$support/report.mjs" \
+  "$support/run.sh" "$support/report.mjs" "$support/go.mod" "$support/go.sum" \
   > "$destination/sha256.txt"
 mapfile -t cpus < <(lscpu -p=CPU | sed '/^#/d')
 [[ ${#cpus[@]} -ge 2 ]] || { echo 'At least two CPUs required' >&2; exit 2; }
