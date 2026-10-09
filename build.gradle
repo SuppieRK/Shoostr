@@ -171,6 +171,8 @@ sonar {
 		property 'sonar.host.url', 'https://sonarcloud.io'
 		property 'sonar.gradle.skipCompile', 'true'
 		property 'sonar.qualitygate.wait', 'true'
+		// The relocated, skipped fixture module must not be indexed again by the root scan.
+		property 'sonar.exclusions', '.github/benchmarks/**'
 		property 'sonar.coverage.jacoco.xmlReportPaths', frameworkModules.collect {
 			"${it}/build/reports/jacoco/test/jacocoTestReport.xml"
 		}.join(',')

@@ -143,7 +143,7 @@ The same Shoostr-owned shutdown applies to TLS and HTTP/2, including clear-text 
 
 The configuration pattern follows [Javalin 7.2.3's native callbacks](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/main/java/io/javalin/config/JettyConfig.kt). [Jooby 4.5.4's optional GracefulShutdown](https://github.com/jooby-project/jooby/blob/v4.5.4/jooby/src/main/java/io/jooby/GracefulShutdown.java) instead implements an application filter and stop callback, with an indefinite no-argument wait. This framework uses [Jetty 12.1.11's GracefulHandler](https://github.com/jetty/jetty.project/blob/jetty-12.1.11/jetty-core/jetty-server/src/main/java/org/eclipse/jetty/server/handler/GracefulHandler.java) and native stop settings directly.
 
-Java 25 is required; the Gradle wrapper supplies the build tool. Run `cmdshape ./gradlew clean spotlessApply build` to apply formatting, compile, and execute the JUnit 5 test suites and quality checks. Add `:benchmarks:installDist` when runnable benchmark distributions are needed. Use `gradlew.bat` on Windows. See [benchmark commands](benchmarks/README.md) for runnable candidate and Jooby servers.
+Java 25 is required; the Gradle wrapper supplies the build tool. Run `cmdshape ./gradlew clean spotlessApply build` to apply formatting, compile, and execute the JUnit 5 test suites and quality checks. Use `gradlew.bat` on Windows. Run end-to-end diagnostics through the manual [benchmark workflow](.github/benchmarks/README.md); each workload publishes k6 and JFR artifacts and an Actions summary.
 
 Run `cmdshape ./gradlew mutationTest` for diagnostic PiTest analysis of `core`, `http`,
 `micrometer`, `opentelemetry`, `pac4j` and `test`. It produces native HTML/XML
@@ -366,8 +366,8 @@ The existing local JOL fixture estimated identical plain/inactive frozen-router 
 Across 2,000 bindings, its callback configuration added 208,048 retained bytes and authentication
 added 112,016 bytes. These are complete graph differences for those fixtures, not record sizes or
 universal overheads. Paired JMH detected no material plain/inactive regression, but noisy timings
-cannot rule out small costs. See the [JMH/JFR/JOL report](benchmark-results/issue78/REPORT.md) for
-scope and limitations; its artifacts are local and ignored by Git. Renaming this internal type
+cannot rule out small costs. These figures are historical local measurements;
+their raw recordings are retired during the Actions migration. Renaming this internal type
 changes terminology only, not execution logic or object layout.
 
 `install(ApplicationCallbacks)` runs eagerly and preserves written app callback order within

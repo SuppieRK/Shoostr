@@ -13,7 +13,7 @@ export const options = {
   scenarios: {
     slow_sessions: {
       executor: 'constant-arrival-rate',
-      rate: Number(__ENV.RATE || 10),
+      rate: Number(__ENV.RATE || 1),
       timeUnit: '1s',
       duration: __ENV.DURATION || '180s',
       preAllocatedVUs: Number(__ENV.VUS || 64),

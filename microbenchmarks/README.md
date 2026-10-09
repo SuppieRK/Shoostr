@@ -1,6 +1,9 @@
 # JVM microbenchmarks
 
-Local results: [latest lazy-allocation and child-search experiments with JFR](../benchmark-results/radix-fastpaths-20260918-01/REPORT.md), [constants-cleanup validation](../benchmark-results/radix-constants-20260918-01/REPORT.md), and [earlier routing optimizations with JFR and retained memory](../benchmark-results/radix-patterns-20260918-01/REPORT.md). The results directories are ignored by Git; retain or copy them when sharing evidence.
+Targeted JMH experiments remain available locally. Historical recordings are
+retired during the migration of end-to-end diagnostics to
+[GitHub Actions](../.github/benchmarks/README.md). New JMH results are ignored by
+Git; retain or copy them when sharing evidence.
 
 ## Extension dispatch
 
@@ -39,8 +42,8 @@ cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks Buffe
 Compare `gc.alloc.rate.norm` in bytes per operation and average time separately.
 Run before and after measurements with the same JVM and JMH settings; a sampled
 JFR allocation share is not a substitute for the JMH allocation result. The
-issue 50 candidate-only comparison is saved locally under
-`benchmark-results/issue50-20260925/`.
+historical issue 50 comparison used the same complete-path distinction; its
+local recordings are retired during the Actions migration.
 
 ## Composed pattern workloads
 
@@ -97,7 +100,7 @@ The JMH JFR profiler records measurement iterations using the JDK `profile` conf
 
 ## Literal dictionary baseline
 
-This module uses JMH 1.37 on Java 25 to compare the historical literal-route `HashMap<path, HashMap<HttpMethods, Handler>>` baseline with the package-private `RadixRoutes` implementation in `core`. It does not start an HTTP server. JMH and JOL are benchmark dependencies only; JMH annotation processing is enabled only for this module. Existing HTTP fixtures remain in `benchmarks`.
+This module uses JMH 1.37 on Java 25 to compare the historical literal-route `HashMap<path, HashMap<HttpMethods, Handler>>` baseline with the package-private `RadixRoutes` implementation in `core`. It does not start an HTTP server. JMH and JOL are benchmark dependencies only; JMH annotation processing is enabled only for this module. End-to-end fixtures are maintained under `.github/benchmarks`.
 
 The current router is a compressed character-edge radix tree built from sorted, precompiled registrations. It supports named segments and literal-first precedence; these existing fixtures still exercise literal paths only. It has sorted child arrays, direct single-child selection with binary search for larger arrays, immutable endpoint maps, and offset-based exact lookup. Allowed-method sets are allocated only after matching a registered endpoint; path misses return the JDK empty set. Construction finishes before any measured read. Neither implementation is mutated during lookup; no concurrent map, update protocol, locks, or runtime resizing are needed. The benchmark uses the same package as `core` to access the internal implementation without adding a public routing API.
 
