@@ -108,6 +108,82 @@ It rebuilds unchanged core `f34092d149badbd8b371a1527ee9c3d1c918a8b9` with the s
 an additional original-default control; this is not a replacement for A/B/C/D. JFR forks are
 separate and each recording has a unique path. HTTP verdicts wait for the entire matrix.
 
+### Completed threading campaign
+
+[Campaign 37884898672](https://github.com/SuppieRK/Shoostr/actions/runs/37884898672)
+completed all 48 HTTP timing trials, 16 separate HTTP profiles, 15 candidate JMH cases,
+three original-core controls and 12 separate JMH profiles. Measured source is
+`a28e9a8a665bf80fc3a5ca03a927ecbb0c775dcf`; later documentation checkpoints do not change it.
+All HTTP trials used actual Temurin `25.0.4.1+1-LTS`, Jetty 12.1.14, the same fixture/client
+binaries, fixed 256 MiB G1 heap and two JVM-visible processors. JVM affinity was `0,1`,
+client affinity `2,3`. Logical affinity is not exclusive physical-core reservation.
+
+The following are native per-repetition `http_req_duration` p99 values in milliseconds,
+not pooled percentiles. This covers sending/waiting/receiving, not connection acquisition
+or establishment; native blocked/connect metrics remain separate (A's highest mixed tiny
+window has blocked p99 around 2–3 seconds and connecting p99 around 2 seconds).
+Mixed tiny describes the highest CPU-load
+window; other cells cover their whole measured workload. Every ordinary timing trial had
+zero failures and drops.
+
+| Model | Tiny 5,000/s | I/O 80/s | CPU 200/s | Mixed tiny 1,000/s |
+| --- | --- | --- | --- | --- |
+| A | 2.400 / 2.335 / 2.237 | 21.048 / 21.126 / 21.035 | 3.292 / 3.451 / 3.297 | 2,958.300 / 3,827.534 / 2,931.803 |
+| B | 2.353 / 2.399 / 2.299 | 21.034 / 21.208 / 21.089 | 3.500 / 3.447 / 3.358 | 1,575.453 / 1,595.735 / 1,595.563 |
+| C | 2.356 / 2.197 / 2.266 | 21.227 / 21.269 / 21.303 | 3.341 / 3.584 / 3.630 | 1,619.274 / 1,623.468 / 1,632.753 |
+| D | 2.182 / 2.411 / 2.206 | 21.224 / 21.359 / 21.255 | 3.447 / 3.368 / 3.683 | 2.276 / 2.221 / 2.795 |
+
+At the highest mixed window, CPU offered load is 1,000/s alongside tiny 1,000/s.
+All twelve mixed trials reported **OVERLOAD**, even D. Completed successful requests/s
+below exclude HTTP failures; drop counts cover the whole mixed trial, not only this window.
+Each trial schedules 281,600 iterations (180,000 tiny + 101,600 CPU).
+
+| Model | Successful tiny/s, repetitions 1/2/3 | Successful CPU/s, repetitions 1/2/3 | Whole-trial drops / 281,600 (%), repetitions 1/2/3 |
+| --- | --- | --- | --- |
+| A | 693.933 / 693.883 / 695.683 | 698.433 / 695.433 / 700.017 | 33,321 (11.8327%) / 29,625 (10.5202%) / 33,269 (11.8143%) |
+| B | 691.617 / 695.417 / 691.133 | 687.633 / 691.200 / 687.200 | 36,994 (13.1371%) / 36,553 (12.9805%) / 37,049 (13.1566%) |
+| C | 716.283 / 713.283 / 716.150 | 705.017 / 702.100 / 705.733 | 34,469 (12.2404%) / 34,826 (12.3672%) / 34,435 (12.2283%) |
+| D | 1,000.033 / 1,000.017 / 1,000.033 | 676.083 / 677.583 / 676.117 | 19,184 (6.8125%) / 19,086 (6.7777%) / 19,179 (6.8107%) |
+
+D had zero tiny drops and zero HTTP/check failures; all its drops were CPU iterations.
+Its highest-window tiny max was 14.086 / 13.706 / 51.761 ms, versus A's approximately
+five-second timeout. B/C had no HTTP/check failures either; A had timeouts. All native
+p50/p95/p99/max, counts, checks and per-step rows remain in the Actions summaries/artifacts.
+
+**Verdict after reexamination:** no consistent ordinary-workload tail-latency or CPU
+throughput winner. D adds roughly 10–13 microseconds versus B to ordinary tiny median latency,
+but convincingly isolates tiny requests from CPU overload in this two-processor setup.
+Its highest-window CPU throughput is about 1.6–2.2% below B: isolation, not faster hashing.
+The controlled I/O workload is healthy but too lightly concurrent to establish a general
+I/O execution winner. Preserve the virtual default pending user review; no public option
+or production transport change follows automatically from these results.
+
+Separate profiles corroborate CPU contention and queue relocation: during the highest
+mixed plateau the server consumes approximately its full two-CPU budget; k6 does not.
+Sampled queue peaks are A virtual-scheduler 160, B virtual-scheduler 2,046, C transport
+2,034; D virtual-scheduler 2 and selected-worker queue 1,022 with both workers active.
+These are one-second samples, not exact queue maxima. SHA/digest stacks dominate native
+samples, but high CPU-sampling bias prevents assigning precise method CPU shares.
+Adaptive execution remains active in every candidate; it does not classify handler work.
+
+Mixed profile GC pauses total 170 / 191 / 186 / 128 ms for A/B/C/D over approximately
+183 seconds, with maximum pauses 45.1 / 47.0 / 45.9 / 43.5 ms. That is not the primary
+explanation for seconds-long request queueing. One profile per model is not repeatable
+GC-optimization proof; RSS ranges overlap, and post-run heap snapshots are GC-phase
+dependent, not retained-object measurements. Allocation sampling is not exact bytes/request.
+Profile runs with JFR/raw/dashboard diagnostics show ordinary tiny p99 around 19–21 ms:
+do not substitute profile timings for the separate timing trials. JFR compiler counters
+continue increasing after warmup; thirty seconds did not establish complete JIT stability.
+
+The [contained JMH results](../../microbenchmarks/README.md) measure LocalConnector
+completion/allocation, not network adaptive dispatch: local B/C both run on platform
+threads. Live HTTP setup separately verifies A/B virtual and C/D-selected platform handler
+kinds; D's unselected mixed tiny endpoint stays virtual.
+Other CPU/worker budgets, high-concurrency I/O, active integration performance, exact
+unprofiled allocation and retained heap graphs remain unmeasured. Before choosing a
+production transport, a fresh paired A versus selective-on-A experiment is needed:
+the useful isolation measured here uses B's transport, not an untested combination of winners.
+
 ```sh
 cmdshape gh workflow run benchmarks.yml --ref issue80-threading-benchmarks -f mode=threading -f retention_days=7
 ```
