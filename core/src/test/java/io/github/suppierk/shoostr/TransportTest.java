@@ -39,9 +39,9 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.GZIPInputStream;
@@ -54,6 +54,9 @@ import javax.net.ssl.X509KeyManager;
 import org.eclipse.jetty.compression.gzip.GzipCompression;
 import org.eclipse.jetty.compression.server.CompressionConfig;
 import org.eclipse.jetty.compression.server.CompressionHandler;
+import org.eclipse.jetty.io.Connection;
+import org.eclipse.jetty.io.SelectorManager;
+import org.eclipse.jetty.server.ConnectionFactory;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.server.handler.ContextHandler;
@@ -62,6 +65,7 @@ import org.eclipse.jetty.session.DefaultSessionCache;
 import org.eclipse.jetty.session.SessionHandler;
 import org.eclipse.jetty.util.VirtualThreads;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
+import org.eclipse.jetty.util.thread.Scheduler;
 import org.eclipse.jetty.util.thread.VirtualThreadPool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -663,9 +667,9 @@ class TransportTest {
     var releaseCleanup = new CompletableFuture<Void>();
     var cleanupHeld = new CountDownLatch(1);
     var observed = new CountDownLatch(1);
-    var holdCleanup = new AtomicBoolean();
     var outcome = new AtomicReference<RequestOutcome>();
     var ownedExecutor = new AtomicReference<ExecutorService>();
+    var cleanupConnector = new AtomicReference<ServerConnector>();
 
     try (var app = new Shoostr(Options.defaults().withPort(0));
         var client = secureClient(HttpClient.Version.HTTP_2)) {
@@ -681,19 +685,32 @@ class TransportTest {
                 server.setStopTimeout(100);
                 ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
                 var pool = (VirtualThreadPool) server.getThreadPool();
-                var executor = (ExecutorService) pool.getVirtualThreadsExecutor();
-                ownedExecutor.set(executor);
-                pool.setVirtualThreadsExecutor(
-                    task ->
-                        executor.execute(
-                            () -> {
-                              if (holdCleanup.get()) {
-                                cleanupHeld.countDown();
-                                releaseCleanup.join();
-                              }
-
-                              task.run();
-                            }));
+                ownedExecutor.set((ExecutorService) pool.getVirtualThreadsExecutor());
+                var connectionFactories =
+                    server
+                        .getConnectors()[0]
+                        .getConnectionFactories()
+                        .toArray(ConnectionFactory[]::new);
+                var delayed =
+                    new ServerConnector(server, connectionFactories) {
+                      @Override
+                      protected SelectorManager newSelectorManager(
+                          Executor executor, Scheduler scheduler, int selectors) {
+                        return new ServerConnectorManager(executor, scheduler, selectors) {
+                          @Override
+                          public void connectionClosed(Connection connection, Throwable cause) {
+                            cleanupHeld.countDown();
+                            releaseCleanup.join();
+                            super.connectionClosed(connection, cause);
+                          }
+                        };
+                      }
+                    };
+                delayed.setHost("127.0.0.1");
+                delayed.setPort(0);
+                delayed.setShutdownIdleTimeout(0);
+                server.addConnector(delayed);
+                cleanupConnector.set(delayed);
               });
       app.routes()
           .get(
@@ -706,14 +723,30 @@ class TransportTest {
       app.start();
       var pending =
           client.sendAsync(
-              HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/blocked"))
+              HttpRequest.newBuilder(
+                      URI.create(
+                          "https://localhost:"
+                              + cleanupConnector.get().getLocalPort()
+                              + "/blocked"))
                   .build(),
               HttpResponse.BodyHandlers.ofString());
 
       try {
         assertTrue(entered.await(3, TimeUnit.SECONDS));
-        holdCleanup.set(true);
-        assertThrows(IOException.class, app::close);
+        var closing =
+            CompletableFuture.runAsync(
+                () -> {
+                  try {
+                    app.close();
+                  } catch (IOException failure) {
+                    throw new CompletionException(failure);
+                  }
+                });
+        var stopFailure =
+            assertInstanceOf(
+                CompletionException.class,
+                closing.handle((_, failure) -> failure).get(3, TimeUnit.SECONDS));
+        assertInstanceOf(IOException.class, stopFailure.getCause());
         assertTrue(cleanupHeld.await(3, TimeUnit.SECONDS));
         assertTrue(ownedExecutor.get().isShutdown());
         releaseCleanup.complete(null);
