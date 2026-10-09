@@ -64,7 +64,10 @@ public final class Request {
   private final int maxParameters;
   private final MultipartOptions multipartOptions;
   private final List<Upload> uploads;
+
+  @SuppressWarnings("java:S3077") // Identity token only; the referenced Thread state is never used.
   private volatile @Nullable Thread owner;
+
   private final HttpFields nativeHeaders;
   private final Map<String, List<String>> cookies;
 

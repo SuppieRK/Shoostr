@@ -750,21 +750,7 @@ public final class Shoostr implements Closeable {
         }
       }
 
-      if (execution != null && execution.platformWorkers() != null) {
-        try {
-          execution.platformWorkers().shutdownNow();
-          List<ApplicationHandler.MatchedTask> pending;
-          synchronized (pendingMatches) {
-            pending = List.copyOf(pendingMatches);
-          }
-          for (var task : pending) {
-            task.cancel();
-          }
-        } catch (RuntimeException executorFailure) {
-          failure =
-              appendCloseFailure(failure, "Could not close platform executor", executorFailure);
-        }
-      }
+      failure = closePlatformExecutor(failure);
 
       removeShutdownHook();
       for (int index = extensions.size() - 1; index >= 0; index--) {
@@ -779,6 +765,32 @@ public final class Shoostr implements Closeable {
 
     if (failure != null) {
       throw failure;
+    }
+  }
+
+  /**
+   * Interrupts accepted workers and cancels pending exchanges independently of queue wrappers.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException closePlatformExecutor(@Nullable IOException failure) {
+    if (execution == null || execution.platformWorkers() == null) {
+      return failure;
+    }
+
+    try {
+      execution.platformWorkers().shutdownNow();
+      List<ApplicationHandler.MatchedTask> pending;
+      synchronized (pendingMatches) {
+        pending = List.copyOf(pendingMatches);
+      }
+      for (var task : pending) {
+        task.cancel();
+      }
+      return failure;
+    } catch (RuntimeException executorFailure) {
+      return appendCloseFailure(failure, "Could not close platform executor", executorFailure);
     }
   }
 
@@ -824,13 +836,7 @@ public final class Shoostr implements Closeable {
    */
   private void startServer(DispatchConfiguration dispatch) throws Exception {
     virtualThreads = Executors.newVirtualThreadPerTaskExecutor();
-    var pool = execution == null ? new ProducerThreadPool() : execution.transport();
-    if (execution == null || execution.virtualConsumers()) {
-      ((org.eclipse.jetty.util.VirtualThreads.Configurable) pool)
-          .setVirtualThreadsExecutor(virtualThreads);
-    }
-
-    server = new Server(pool);
+    server = ExecutionSettings.createServer(execution, virtualThreads);
     server.setStopTimeout(DEFAULT_STOP_TIMEOUT_MILLIS);
     var proxy = trustedProxy;
     var cors = corsPolicy;
@@ -1645,38 +1651,7 @@ public final class Shoostr implements Closeable {
       if (endpoint == null) {
         handleUnmatched(request, response);
       } else if (execution != null && execution.platformPaths().contains(endpoint.routePattern())) {
-        request.route(endpoint);
-        if (observation != null && endpoint.behavior() != null) {
-          observation.localObservers = endpoint.behavior().observers();
-        }
-
-        if (observation != null) {
-          observation.closeScopes();
-        }
-
-        request.releaseOwnership();
-        var task = new MatchedTask(endpoint, request, response, responseCallback, observation);
-        synchronized (pendingMatches) {
-          pendingMatches.add(task);
-        }
-
-        try {
-          Objects.requireNonNull(execution.platformWorkers()).execute(task);
-        } catch (RuntimeException failure) {
-          if (!task.claim()) {
-            return true;
-          }
-
-          request.acquireOwnership();
-          configureFlushHooks(request, response, endpoint.behavior());
-          if (observation != null) {
-            observation.attachScopes();
-          }
-
-          throw failure;
-        }
-
-        return true;
+        return submitMatched(endpoint, responseCallback, request, response, observation);
       } else if (handleMatched(
           endpoint, rawRequest, rawResponse, responseCallback, request, response, observation)) {
         return false;
@@ -1684,6 +1659,57 @@ public final class Shoostr implements Closeable {
 
       response.complete();
       return false;
+    }
+
+    /**
+     * Transfers matched ownership to a worker, reclaiming it for rejected-submission recovery.
+     *
+     * @param endpoint selected endpoint
+     * @param responseCallback native completion
+     * @param request live input
+     * @param response live output
+     * @param observation optional terminal observation
+     * @return whether a worker owns processing and finalization
+     * @throws RuntimeException if submission is rejected before another owner claims the request
+     */
+    private boolean submitMatched(
+        RadixRoutes.Endpoint endpoint,
+        Callback responseCallback,
+        Request request,
+        Response response,
+        @Nullable Completion observation) {
+      request.route(endpoint);
+      if (observation != null && endpoint.behavior() != null) {
+        observation.localObservers = endpoint.behavior().observers();
+      }
+
+      if (observation != null) {
+        observation.closeScopes();
+      }
+
+      request.releaseOwnership();
+      var task = new MatchedTask(endpoint, request, response, responseCallback, observation);
+      synchronized (pendingMatches) {
+        pendingMatches.add(task);
+      }
+
+      try {
+        Objects.requireNonNull(Objects.requireNonNull(execution).platformWorkers()).execute(task);
+      } catch (RuntimeException failure) {
+        if (!task.claim()) {
+          return true;
+        }
+
+        request.acquireOwnership();
+        configureFlushHooks(request, response, endpoint.behavior());
+        if (observation != null) {
+          observation.attachScopes();
+        }
+
+        throw failure;
+      }
+
+      return true;
     }
 
     /** One selected exchange with exclusive processing/cancellation and exactly-once cleanup. */

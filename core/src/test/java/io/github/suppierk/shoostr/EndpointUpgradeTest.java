@@ -2,7 +2,6 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
-import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
@@ -32,8 +31,9 @@ class EndpointUpgradeTest {
                 return new Session.Listener.AutoDemanding() {};
               });
 
-      try (var test = TestServer.start(app);
-          var client = HttpClient.newHttpClient()) {
+      app.start();
+
+      try (var client = HttpClient.newHttpClient()) {
         var socket =
             client
                 .newWebSocketBuilder()

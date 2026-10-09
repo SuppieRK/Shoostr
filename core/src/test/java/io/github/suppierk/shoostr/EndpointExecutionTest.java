@@ -53,7 +53,7 @@ class EndpointExecutionTest {
 
           try {
             release.await();
-          } catch (InterruptedException failure) {
+          } catch (InterruptedException _) {
             Thread.currentThread().interrupt();
           }
         });
@@ -122,7 +122,7 @@ class EndpointExecutionTest {
 
           try {
             release.await();
-          } catch (InterruptedException failure) {
+          } catch (InterruptedException _) {
             Thread.currentThread().interrupt();
           }
         });
@@ -241,12 +241,9 @@ class EndpointExecutionTest {
     var execution = new ExecutionSettings(new QueuedThreadPool(16, 8), true, workers, Set.of());
 
     try (var app = new Shoostr(Options.defaults().withPort(0), execution)) {
-      app.extensions(
-          new Extension<Void>() {
-            @Override
-            public void beforeStart() {
-              throw new IllegalStateException("startup failed");
-            }
+      app.modifyServer(
+          _ -> {
+            throw new IllegalStateException("startup failed");
           });
       assertThrows(IllegalStateException.class, app::start);
       assertTrue(workers.isShutdown());
@@ -263,11 +260,11 @@ class EndpointExecutionTest {
             TimeUnit.SECONDS,
             new LinkedBlockingQueue<>(),
             new ThreadPoolExecutor.CallerRunsPolicy())) {
+      var transport = new QueuedThreadPool(16, 8);
+      var paths = Set.of("/selected");
       assertThrows(
           IllegalArgumentException.class,
-          () ->
-              new ExecutionSettings(
-                  new QueuedThreadPool(16, 8), true, workers, Set.of("/selected")));
+          () -> new ExecutionSettings(transport, true, workers, paths));
       assertFalse(workers.isShutdown());
     }
   }

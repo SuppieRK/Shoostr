@@ -4,6 +4,8 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
+import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.util.VirtualThreads;
 import org.eclipse.jetty.util.component.LifeCycle;
 import org.eclipse.jetty.util.thread.ThreadPool;
 import org.jspecify.annotations.Nullable;
@@ -52,5 +54,21 @@ record ExecutionSettings(
       throw new IllegalArgumentException(
           "Platform executor must reject without fallback or discard");
     }
+  }
+
+  /**
+   * Creates the native transport with the experiment's consumer wiring or the existing defaults.
+   *
+   * @param settings experiment settings, or null for the default producer pool
+   * @param virtualThreads application-owned virtual executor
+   * @return unstarted native server
+   */
+  static Server createServer(@Nullable ExecutionSettings settings, ExecutorService virtualThreads) {
+    var pool = settings == null ? new ProducerThreadPool() : settings.transport();
+    if (settings == null || settings.virtualConsumers()) {
+      ((VirtualThreads.Configurable) pool).setVirtualThreadsExecutor(virtualThreads);
+    }
+
+    return new Server(pool);
   }
 }
