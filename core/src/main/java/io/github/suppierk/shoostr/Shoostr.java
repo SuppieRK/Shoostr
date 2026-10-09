@@ -633,32 +633,7 @@ public final class Shoostr implements Closeable {
       for (var extension : extensions) {
         extension.beforeStart();
       }
-      var dispatch =
-          new DispatchConfiguration(
-              Objects.requireNonNull(router),
-              exceptionHandlers,
-              statusHandlers,
-              beforeHandlers,
-              requestHeaderHandlers,
-              routeMatchedHandlers,
-              afterRouteHandlers,
-              beforeFlushHandlers,
-              afterFlushHandlers,
-              afterHandlers,
-              observationFactories,
-              routes.localObservers());
-      observationFactories.clear();
-      afterHandlers.clear();
-      beforeHandlers.clear();
-      requestHeaderHandlers.clear();
-      routeMatchedHandlers.clear();
-      afterRouteHandlers.clear();
-      beforeFlushHandlers.clear();
-      afterFlushHandlers.clear();
-      exceptionHandlers.clear();
-      statusHandlers.clear();
-
-      startServer(dispatch);
+      startServer();
       var boundConnector = Objects.requireNonNull(connector);
       shutdownHook = new Thread(this::shutdown, "web-shutdown-" + boundConnector.getLocalPort());
       Runtime.getRuntime().addShutdownHook(shutdownHook);
@@ -830,11 +805,11 @@ public final class Shoostr implements Closeable {
    * Creates the configured transport and virtual-thread executor, installs dispatch, and binds the
    * listener. Fields retain each acquired resource so start's failure path can clean it up.
    *
-   * @param dispatch immutable registration snapshot used by all request handlers
    * @throws Exception if transport initialization or listener binding fails
    * @throws IllegalStateException if configuration closes Shoostr or changes its owned wiring
    */
-  private void startServer(DispatchConfiguration dispatch) throws Exception {
+  private void startServer() throws Exception {
+    var dispatch = DispatchConfiguration.capture(this);
     virtualThreads = Executors.newVirtualThreadPerTaskExecutor();
     server = ExecutionSettings.createServer(execution, virtualThreads);
     server.setStopTimeout(DEFAULT_STOP_TIMEOUT_MILLIS);
@@ -1651,7 +1626,8 @@ public final class Shoostr implements Closeable {
       if (endpoint == null) {
         handleUnmatched(request, response);
       } else if (execution != null && execution.platformPaths().contains(endpoint.routePattern())) {
-        return submitMatched(endpoint, responseCallback, request, response, observation);
+        submitMatched(endpoint, responseCallback, request, response, observation);
+        return true;
       } else if (handleMatched(
           endpoint, rawRequest, rawResponse, responseCallback, request, response, observation)) {
         return false;
@@ -1669,10 +1645,9 @@ public final class Shoostr implements Closeable {
      * @param request live input
      * @param response live output
      * @param observation optional terminal observation
-     * @return whether a worker owns processing and finalization
      * @throws RuntimeException if submission is rejected before another owner claims the request
      */
-    private boolean submitMatched(
+    private void submitMatched(
         RadixRoutes.Endpoint endpoint,
         Callback responseCallback,
         Request request,
@@ -1697,7 +1672,7 @@ public final class Shoostr implements Closeable {
         Objects.requireNonNull(Objects.requireNonNull(execution).platformWorkers()).execute(task);
       } catch (RuntimeException failure) {
         if (!task.claim()) {
-          return true;
+          return;
         }
 
         request.acquireOwnership();
@@ -1708,8 +1683,6 @@ public final class Shoostr implements Closeable {
 
         throw failure;
       }
-
-      return true;
     }
 
     /** One selected exchange with exclusive processing/cancellation and exactly-once cleanup. */
@@ -2146,6 +2119,40 @@ public final class Shoostr implements Closeable {
       afterFlushHooks = List.copyOf(afterFlushHooks);
       observers = List.copyOf(observers);
       instrumentation = List.copyOf(instrumentation);
+    }
+
+    /**
+     * Freezes registrations before native startup and releases their mutable construction state.
+     *
+     * @param app application whose registrations have finished
+     * @return immutable request-dispatch configuration
+     */
+    private static DispatchConfiguration capture(Shoostr app) {
+      var dispatch =
+          new DispatchConfiguration(
+              Objects.requireNonNull(app.router),
+              app.exceptionHandlers,
+              app.statusHandlers,
+              app.beforeHandlers,
+              app.requestHeaderHandlers,
+              app.routeMatchedHandlers,
+              app.afterRouteHandlers,
+              app.beforeFlushHandlers,
+              app.afterFlushHandlers,
+              app.afterHandlers,
+              app.observationFactories,
+              app.routes.localObservers());
+      app.observationFactories.clear();
+      app.afterHandlers.clear();
+      app.beforeHandlers.clear();
+      app.requestHeaderHandlers.clear();
+      app.routeMatchedHandlers.clear();
+      app.afterRouteHandlers.clear();
+      app.beforeFlushHandlers.clear();
+      app.afterFlushHandlers.clear();
+      app.exceptionHandlers.clear();
+      app.statusHandlers.clear();
+      return dispatch;
     }
   }
 
