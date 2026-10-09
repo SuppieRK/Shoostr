@@ -31,6 +31,14 @@ CPU model, runner image, JVM/client versions, source revision and hashes accompa
 the recordings. This separates the campaign from the developer's machine, but
 hosted runner hardware and images can still vary.
 
+Each fresh JVM prints and retains native `jcmd` version, command line, effective
+non-default flags and `VM.info` diagnostics before warmup. The complete effective
+flag list (`VM.flags -all`) and OS process limits are also retained. Summaries show
+actual JVM/client CPU affinity and JVM-visible CPU/RAM/container limits. Affinity
+does not reserve exclusive cores; the 256 MiB Java heap cap does not cap native
+memory or process RSS. Older artifacts lacking these diagnostics are visibly
+incomplete under the expanded evidence requirements, not assigned invented limits.
+
 Each workload summary contains all three trial rows and excerpts from native
 JFR reports. The final job provides a campaign overview and links to downloadable
 outputs. HTTP timings cover complete response bodies; SSE timings cover streams;
@@ -38,6 +46,13 @@ WebSocket timings distinguish message round-trip from complete session duration.
 Slow-client callbacks pause in user code; they do not throttle the network socket.
 Percentiles remain per trial. Overload throughput divides each plateau's completed
 request count by its duration; native tagged rates use the whole run duration.
+Native k6 `max` latency appears next to `p99`, without pooling trials or plateaus.
+Drops include the configured scheduled total (offered rate × load duration,
+excluding warmup/drains) and its dropped percentage, displayed to four decimal
+places. A dropped iteration never started and is not a failed request. Each HTTP
+iteration is one request; each SSE/WebSocket iteration is one session, not an
+event or message. For partial runs the total remains the configured full-run
+schedule, not a claim that all iterations were accounted for.
 
 Artifacts retain complete JFR recordings, native k6 HTML dashboards, compressed
 raw time series, summary JSON, logs, process monitoring and full JFR CLI views.
@@ -59,4 +74,6 @@ JMH diagnostics remain in the separate `microbenchmarks` module.
 
 References: [manual workflow execution](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow),
 [k6 native dashboard](https://grafana.com/docs/k6/latest/results-output/web-dashboard/),
+[k6 metric definitions](https://grafana.com/docs/k6/latest/using-k6/metrics/reference/),
+[JDK 25 diagnostic commands](https://docs.oracle.com/en/java/javase/25/docs/specs/man/jcmd.html),
 [JDK 25 JFR CLI](https://docs.oracle.com/en/java/javase/25/docs/specs/man/jfr.html).

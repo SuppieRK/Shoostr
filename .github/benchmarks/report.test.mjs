@@ -12,7 +12,9 @@ function fixture(t, metrics, outcome = 'PASS') {
   t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
   const files = ['server.jfr', 'jfr-summary.txt', 'measured-metrics.json.gz', 'report.html',
     'process-monitor.txt', 'monitor-pids.txt', 'server-resource.txt', 'measured-client-resource.txt',
-    'allocation-by-site.txt', 'allocation-by-class.txt', 'hot-methods.txt', 'gc-pauses.txt', 'gc-cpu-time.txt'];
+    'allocation-by-site.txt', 'allocation-by-class.txt', 'hot-methods.txt', 'gc-pauses.txt', 'gc-cpu-time.txt',
+    'VM.version.txt', 'VM.command_line.txt', 'VM.flags.txt', 'VM.flags-all.txt', 'VM.info.txt',
+    'server-limits.txt', 'server-affinity.txt', 'client-affinity.txt'];
   for (const file of files) fs.writeFileSync(path.join(directory, file), 'test evidence');
   fs.writeFileSync(path.join(directory, 'outcome.txt'), outcome);
   fs.writeFileSync(path.join(directory, 'measured-summary.json'), JSON.stringify({metrics}));
@@ -22,7 +24,7 @@ function fixture(t, metrics, outcome = 'PASS') {
 function httpMetrics() {
   return {
     checks: {passes: 4, fails: 0},
-    'http_req_duration{scenario:requests}': {avg: 1, med: 0.9, 'p(95)': 2, 'p(99)': 3},
+    'http_req_duration{scenario:requests}': {avg: 1, med: 0.9, 'p(95)': 2, 'p(99)': 3, max: 41},
     'http_reqs{scenario:requests}': {count: 180000, rate: 999},
     http_reqs: {count: 180006, rate: 999.1},
     http_req_failed: {value: 0}, dropped_iterations: {count: 0}
@@ -55,6 +57,8 @@ test('missing measurement metrics remain unknown rather than zero', t => {
   assert.equal(result.rows[0].count, null);
   assert.equal(result.rows[0].p95, null);
   assert.equal(result.rows[0].drops, null);
+  assert.equal(result.rows[0].maximum, null);
+  assert.equal(result.rows[0].drop_percentage, null);
 });
 
 test('overload uses plateau duration instead of native whole-run rates', t => {
@@ -133,3 +137,123 @@ for (const warmupSeconds of [10, 30]) {
     assert.ok(!markdown.includes('A 10-second warmup does not guarantee JIT stabilization.'));
   });
 }
+
+test('HTTP rows preserve the native maximum independently of p99', t => {
+  const result = trial(fixture(t, httpMetrics()), 'plaintext', 'steady', 1);
+  assert.equal(result.rows[0].maximum, 41);
+});
+
+for (const [workload, metric, scheduled] of [
+  ['plaintext', 'http_req_duration{scenario:requests}', 180000],
+  ['sse-burst', 'sse_stream_duration', 9000],
+  ['ws-slow', 'ws_session_duration', 180]
+]) {
+  test(`${workload} drops use scheduled iterations rather than completed iterations`, t => {
+    const metrics = {
+      checks: {passes: 4, fails: 0}, dropped_iterations: {count: 9},
+      'http_reqs{scenario:requests}': {count: 100, rate: 1}, iterations: {count: 100, rate: 1},
+      [metric]: {values: {'p(95)': 2, 'p(99)': 3, max: 41}}
+    };
+    const row = trial(fixture(t, metrics), workload, 'steady', 1).rows[0];
+    assert.equal(row.scheduled_total, scheduled);
+    assert.equal(row.drop_percentage, 9 / scheduled * 100);
+  });
+}
+
+test('scheduled totals use the recorded workload rate and duration', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-recorded-load-'));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  const recorded = {...JSON.parse(fs.readFileSync(new URL('./workloads.json', import.meta.url), 'utf8')).plaintext,
+    rate: 77};
+  fs.writeFileSync(path.join(directory, 'configuration.json'), JSON.stringify({
+    fixture: recorded, measurement_seconds: 60
+  }));
+  const child = path.join(directory, 'trial-1');
+  fs.cpSync(fixture(t, httpMetrics()), child, {recursive: true});
+  assert.equal(trial(child, 'plaintext', 'steady', 1).rows[0].scheduled_total, 4620);
+});
+
+test('overload drops use each plateau scheduled total', t => {
+  const metrics = {checks: {passes: 4, fails: 0}};
+  for (const rate of [1000, 2000, 5000, 10000, 20000, 50000, 100000]) {
+    const suffix = `{scenario:step_${rate}}`;
+    metrics[`http_reqs${suffix}`] = {count: 100, rate: 1};
+    metrics[`http_req_duration${suffix}`] = {'p(95)': 2, 'p(99)': 3, max: 41};
+    metrics[`dropped_iterations${suffix}`] = {count: 50};
+  }
+  const rows = trial(fixture(t, metrics, 'OVERLOAD'), 'plaintext', 'overload', 1).rows;
+  assert.equal(rows[0].scheduled_total, 15000);
+  assert.equal(rows[0].drop_percentage, 50 / 15000 * 100);
+  assert.equal(rows.at(-1).scheduled_total, 1500000);
+  assert.equal(rows.at(-1).drop_percentage, 50 / 1500000 * 100);
+});
+
+test('missing JVM limit diagnostics make trial evidence incomplete', t => {
+  const directory = fixture(t, httpMetrics());
+  fs.unlinkSync(path.join(directory, 'VM.info.txt'));
+  const result = trial(directory, 'plaintext', 'steady', 1);
+  assert.equal(result.outcome, 'INCOMPLETE');
+  assert.ok(result.missing.includes('VM.info.txt'));
+});
+
+for (const [name, verify] of [
+  ['workload Markdown places native maximum next to p99', markdown => {
+    assert.ok(markdown.includes('| p99 ms | Max ms |'));
+  }],
+  ['workload Markdown places scheduled total and percentage next to drops', markdown => {
+    assert.ok(markdown.includes('| Drops | Scheduled total | Dropped % |'));
+  }],
+  ['workload Markdown prints actual JVM characteristics and CPU/RAM limits', markdown => {
+    for (const expected of ['JDK 25.0.4', 'ServerMain 18080 1000', '-XX:+UseG1GC',
+      'initial active 2', 'memory_limit: 1 GiB', 'JVM affinity: 0,1', 'k6 affinity: 2,3']) {
+      assert.ok(markdown.includes(expected), expected);
+    }
+    assert.ok(markdown.includes('256 MiB'));
+    assert.ok(markdown.includes('not a cap on native memory or process RSS'));
+  }]
+]) {
+  test(name, t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-jvm-report-'));
+    t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+    fs.writeFileSync(path.join(directory, 'configuration.json'), JSON.stringify({
+      revision: 'test', warmup_seconds: 30, heap: '256 MiB', collector: 'G1'
+    }));
+    for (const index of [1, 2, 3]) {
+      const child = path.join(directory, `trial-${index}`);
+      fs.cpSync(fixture(t, httpMetrics()), child, {recursive: true});
+      fs.writeFileSync(path.join(child, 'VM.version.txt'), 'JDK 25.0.4');
+      fs.writeFileSync(path.join(child, 'VM.command_line.txt'), 'java_command: ServerMain 18080 1000');
+      fs.writeFileSync(path.join(child, 'VM.flags.txt'), '-XX:+UseG1GC -XX:MaxHeapSize=268435456');
+      fs.writeFileSync(path.join(child, 'VM.info.txt'), 'CPU: total 4 (initial active 2)\ncontainer memory_limit: 1 GiB');
+      fs.writeFileSync(path.join(child, 'server-limits.txt'), 'Max resident set unlimited');
+      fs.writeFileSync(path.join(child, 'server-affinity.txt'), 'JVM affinity: 0,1');
+      fs.writeFileSync(path.join(child, 'client-affinity.txt'), 'k6 affinity: 2,3');
+    }
+    const markdown = execFileSync(process.execPath, [
+      fileURLToPath(new URL('./report.mjs', import.meta.url)), 'workload', directory, 'plaintext', 'steady'
+    ], {encoding: 'utf8', env: {...process.env, ARTIFACT_URL: 'https://example.test/native', MEASUREMENT_OUTCOME: 'success'}});
+    verify(markdown);
+  });
+}
+
+test('campaign summary preserves each trial maximum instead of pooling them', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-campaign-report-'));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  const workloads = JSON.parse(fs.readFileSync(new URL('./workloads.json', import.meta.url), 'utf8'));
+  for (const workload of Object.keys(workloads)) {
+    const child = path.join(directory, workload);
+    fs.mkdirSync(child);
+    fs.writeFileSync(path.join(child, 'workload-summary.json'), JSON.stringify({
+      workload, complete: true, artifact: 'https://example.test/native', artifact_bytes: 1024,
+      trials: [1, 2, 3].map(index => ({outcome: 'PASS', rows: [{
+        p95: index, p99: index + 10, maximum: index + 90, drops: 0,
+        scheduled_total: workloads[workload].rate * 180, drop_percentage: 0
+      }]}))
+    }));
+  }
+  const markdown = execFileSync(process.execPath, [
+    fileURLToPath(new URL('./report.mjs', import.meta.url)), 'campaign', directory, 'steady'
+  ], {encoding: 'utf8'});
+  assert.ok(markdown.includes('| p99 ms (per trial) | Max ms (per trial) |'));
+  assert.ok(markdown.includes('| 11.00 / 12.00 / 13.00 | 91.00 / 92.00 / 93.00 |'));
+});

@@ -26,6 +26,10 @@ function number(value, decimals = 2) {
   return Number.isFinite(value) ? value.toFixed(decimals) : '—';
 }
 
+function percentage(value, decimals = 2) {
+  return Number.isFinite(value) ? `${value.toFixed(decimals)}%` : '—';
+}
+
 function rss(file) {
   const match = text(file).match(/Maximum resident set size \(kbytes\): (\d+)/);
   return match ? Number(match[1]) / 1024 : null;
@@ -36,18 +40,24 @@ function cpu(file) {
 }
 
 export function trial(directory, workload, mode, index) {
-  const fixture = workloads[workload];
+  const configuration = json(path.join(path.dirname(directory), 'configuration.json'));
+  const fixture = configuration?.fixture ?? workloads[workload];
+  const seconds = mode === 'overload' ? configuration?.smoke_step_seconds ?? 15
+    : configuration?.measurement_seconds ?? 180;
   const metrics = json(path.join(directory, 'measured-summary.json'))?.metrics;
   const nativeOutcome = text(path.join(directory, 'outcome.txt')) || 'INCOMPLETE';
   const required = ['server.jfr', 'jfr-summary.txt', 'measured-summary.json',
     'measured-metrics.json.gz', 'report.html', 'process-monitor.txt', 'monitor-pids.txt',
     'server-resource.txt', 'measured-client-resource.txt', 'allocation-by-site.txt',
-    'allocation-by-class.txt', 'hot-methods.txt', 'gc-pauses.txt', 'gc-cpu-time.txt'];
+    'allocation-by-class.txt', 'hot-methods.txt', 'gc-pauses.txt', 'gc-cpu-time.txt',
+    'VM.version.txt', 'VM.command_line.txt', 'VM.flags.txt', 'VM.flags-all.txt', 'VM.info.txt',
+    'server-limits.txt', 'server-affinity.txt', 'client-affinity.txt'];
   const missing = required.filter(file => !exists(path.join(directory, file)));
   const checks = value(metrics?.checks);
   const rows = [];
   const scenarios = mode === 'overload'
-    ? [1000, 2000, 5000, 10000, 20000, 50000, 100000].map(rate => ({rate, suffix: `{scenario:step_${rate}}`}))
+    ? (configuration?.smoke_rates ?? [1000, 2000, 5000, 10000, 20000, 50000, 100000])
+      .map(rate => ({rate, suffix: `{scenario:step_${rate}}`}))
     : [{rate: fixture.rate, suffix: fixture.kind === 'http' ? '{scenario:requests}' : ''}];
   for (const scenario of scenarios) {
     const latency = value(metrics?.[mode === 'overload' ? `http_req_duration${scenario.suffix}` : fixture.metric]);
@@ -56,13 +66,16 @@ export function trial(directory, workload, mode, index) {
     const failures = value(metrics?.[mode === 'overload' ? `http_req_failed${scenario.suffix}` : 'http_req_failed']);
     const drops = value(metrics?.[mode === 'overload' ? `dropped_iterations${scenario.suffix}` : 'dropped_iterations']);
     const scopedChecks = mode === 'overload' ? value(metrics?.[`checks${scenario.suffix}`]) : checks;
+    const scheduled = scenario.rate * seconds;
+    const total = Number.isFinite(scheduled) && scheduled > 0 ? scheduled : null;
     rows.push({trial: index, offered: scenario.rate, count: throughput.count ?? null,
-      rate: mode === 'overload' && Number.isFinite(throughput.count) ? throughput.count / 15 : throughput.rate ?? null,
+      rate: mode === 'overload' && Number.isFinite(throughput.count) ? throughput.count / seconds : throughput.rate ?? null,
       latency: fixture.latency, average: latency.avg ?? null, median: latency.med ?? null,
-      p95: latency['p(95)'] ?? null, p99: latency['p(99)'] ?? null,
+      p95: latency['p(95)'] ?? null, p99: latency['p(99)'] ?? null, maximum: latency.max ?? null,
       check_failures: scopedChecks.fails ?? null,
       http_failure_rate: failures.value ?? failures.rate ?? null,
-      drops: drops.count ?? null});
+      drops: drops.count ?? null, scheduled_total: total,
+      drop_percentage: Number.isFinite(drops.count) && total !== null ? drops.count / total * 100 : null});
   }
   if (!metrics || !Number.isFinite(checks.passes) || !Number.isFinite(checks.fails)) missing.push('usable k6 checks');
   for (const row of rows) {
@@ -89,30 +102,39 @@ export function workloadSummary(directory, workload, mode) {
 }
 
 function table(summary) {
-  const lines = ['| Trial | Outcome | Offered/s | k6 completed/s | Avg ms | p50 ms | p95 ms | p99 ms | Failed checks | HTTP failures | Drops |',
-    '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|'];
+  const lines = ['| Trial | Outcome | Offered/s | k6 completed/s | Avg ms | p50 ms | p95 ms | p99 ms | Max ms | Failed checks | HTTP failures | Drops | Scheduled total | Dropped % |',
+    '|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|'];
   for (const result of summary.trials) {
     for (const row of result.rows) {
-      lines.push(`| ${row.trial} | ${result.outcome} | ${row.offered} | ${number(row.rate)} | ${number(row.average)} | ${number(row.median)} | ${number(row.p95)} | ${number(row.p99)} | ${row.check_failures ?? '—'} | ${Number.isFinite(row.http_failure_rate) ? number(row.http_failure_rate * 100) + '%' : '—'} | ${row.drops ?? '—'} |`);
+      lines.push(`| ${row.trial} | ${result.outcome} | ${row.offered} | ${number(row.rate)} | ${number(row.average)} | ${number(row.median)} | ${number(row.p95)} | ${number(row.p99)} | ${number(row.maximum)} | ${row.check_failures ?? '—'} | ${percentage(row.http_failure_rate === null ? null : row.http_failure_rate * 100)} | ${row.drops ?? '—'} | ${row.scheduled_total ?? '—'} | ${percentage(row.drop_percentage, 4)} |`);
     }
   }
   return lines.join('\n');
 }
 
 function workloadMarkdown(summary, directory) {
-  const fixture = workloads[summary.workload];
+  const fixture = summary.configuration?.fixture ?? workloads[summary.workload];
   const lines = [`## ${summary.workload} (${summary.mode})`, '',
     `Evidence: **${summary.complete ? 'COMPLETE' : 'INCOMPLETE / FAILED'}**; measurement step: ${summary.execution}.`, '', disclaimer, '',
-    `Latency: **${fixture.latency}**. Completed rate uses native k6 elapsed-time rates; overload rates use each 15-second plateau's completed count.`, '',
+    `Latency: **${fixture.latency}**. Completed rate uses native k6 elapsed-time rates; overload rates use each ${summary.configuration?.smoke_step_seconds ?? 15}-second plateau's completed count.`, '',
+    'Drops are k6 iterations that never started, not failed HTTP requests. Scheduled total = offered rate × load duration (excluding warmup and drains); dropped percentage uses that total. One iteration is one HTTP request or one SSE/WebSocket session, not an event or message. Partial runs still show the configured full-run total.', '',
     table(summary), '', `Artifact: ${summary.artifact ? `[native outputs](${summary.artifact})` : '**UPLOAD MISSING**'}; size: ${number(summary.artifact_bytes === null ? null : summary.artifact_bytes / 1024 / 1024)} MiB; retention: ${process.env.RETENTION_DAYS || '?'} days.`, '',
     `Revision: \`${summary.configuration?.revision || 'unknown'}\`; image: \`${summary.configuration?.image || 'unknown'}\`.`, '',
     `Warmup: ${summary.configuration?.warmup_seconds ?? 'unknown'} seconds per fresh JVM.`, '',
+    `Configured Java heap: ${summary.configuration?.heap || 'unknown'}; collector: ${summary.configuration?.collector || 'unknown'}. This is not a cap on native memory or process RSS. CPU affinity restricts eligible logical CPUs, not exclusive CPU ownership. Native VM.info and OS limits below describe JVM-visible CPU/RAM and any detected container/process limits; unavailable limits are not inferred.`, '',
     'Server peak RSS covers its whole lifetime, including startup/warmup. Client peak RSS covers the measured invocation.'];
   for (const result of summary.trials) {
     lines.push('', `### Trial ${result.index}: ${result.outcome}`, '',
       `Peak RSS: server ${number(result.server_peak_rss_mib)} MiB; client ${number(result.client_peak_rss_mib)} MiB.`, '',
       `Native time CPU: whole JVM lifetime ${result.server_lifetime_cpu_percent ?? '—'}%; measured client ${result.client_measured_cpu_percent ?? '—'}%.`);
     if (result.missing.length) lines.push('', `Missing evidence: ${result.missing.join(', ')}.`);
+    const trialDirectory = path.join(directory, `trial-${result.index}`);
+    lines.push('', `CPU affinity: JVM \`${text(path.join(trialDirectory, 'server-affinity.txt')) || 'Unavailable'}\`; k6 \`${text(path.join(trialDirectory, 'client-affinity.txt')) || 'Unavailable'}\`.`, '',
+      '<details><summary>JVM version, flags, CPU/RAM and process limits</summary>', '');
+    for (const file of ['VM.version', 'VM.command_line', 'VM.flags', 'VM.info', 'server-limits']) {
+      lines.push(`**${file}**`, '', '```text', text(path.join(trialDirectory, `${file}.txt`)) || 'Unavailable', '```', '');
+    }
+    lines.push('The complete effective flag list is retained as `VM.flags-all.txt` in the native artifact.', '', '</details>');
     lines.push('', '<details><summary>Native JFR excerpts</summary>', '');
     for (const view of ['jfr-summary', 'allocation-by-site', 'hot-methods', 'gc-pauses', 'gc-cpu-time']) {
       const excerpt = text(path.join(directory, `trial-${result.index}`, `${view}.txt`)).split('\n').slice(0, 18).join('\n');
@@ -134,23 +156,28 @@ function campaign(directory, mode) {
   }
   const expected = Object.keys(workloads).filter(name => mode === 'steady' || workloads[name].kind === 'http');
   const lines = ['# Shoostr benchmark campaign', '', disclaimer, '',
-    '| Workload | Latency measure | Trials 1 / 2 / 3 | p95 ms (per trial) | Native outputs | Size MiB |',
-    '|---|---|---|---|---|---:|'];
+    '| Workload | Latency measure | Trials 1 / 2 / 3 | p95 ms (per trial) | p99 ms (per trial) | Max ms (per trial) | Drops / scheduled total (%) (per trial) | Native outputs | Size MiB |',
+    '|---|---|---|---|---|---|---|---|---:|'];
   let complete = true;
   for (const name of expected) {
     const summary = summaries.get(name);
     if (!summary) {
       complete = false;
-      lines.push(`| ${name} | ${workloads[name].latency} | **MISSING** | — | — | — |`);
+      lines.push(`| ${name} | ${workloads[name].latency} | **MISSING** | — | — | — | — | — | — |`);
       continue;
     }
     if (!summary.complete) complete = false;
     const outcomes = summary.trials.map(result => result.outcome).join(' / ');
-    const percentiles = mode === 'steady' ? summary.trials.map(result => number(result.rows[0]?.p95)).join(' / ') : 'See plateau rows in job summary';
-    lines.push(`| ${name} | ${workloads[name].latency} | ${outcomes} | ${percentiles} | ${summary.artifact ? `[download](${summary.artifact})` : '**UPLOAD MISSING**'} | ${number(summary.artifact_bytes === null ? null : summary.artifact_bytes / 1024 / 1024)} |`);
+    const latencies = ['p95', 'p99', 'maximum'].map(key => mode === 'steady'
+      ? summary.trials.map(result => number(result.rows[0]?.[key])).join(' / ') : 'See plateau rows');
+    const drops = mode === 'steady' ? summary.trials.map(result => {
+      const row = result.rows[0];
+      return `${row?.drops ?? '—'} / ${row?.scheduled_total ?? '—'} (${percentage(row?.drop_percentage, 4)})`;
+    }).join('<br>') : 'See plateau rows';
+    lines.push(`| ${name} | ${workloads[name].latency} | ${outcomes} | ${latencies.join(' | ')} | ${drops} | ${summary.artifact ? `[download](${summary.artifact})` : '**UPLOAD MISSING**'} | ${number(summary.artifact_bytes === null ? null : summary.artifact_bytes / 1024 / 1024)} |`);
   }
   lines.push('', `Campaign evidence: **${complete ? 'COMPLETE' : 'INCOMPLETE / FAILED'}**.`, '',
-    'Each workload uses its own runner; repeats share that runner. See individual job summaries for throughput, errors, drops, resource measurements, and JFR excerpts. Complete artifacts expire after the selected retention period.');
+    'Each workload uses its own runner; repeats share that runner. Drops are never-started iterations divided by configured scheduled iterations: HTTP requests or SSE/WebSocket sessions, not messages. See individual job summaries for per-plateau metrics, actual JVM version/flags, CPU/RAM limits, resource measurements and JFR excerpts. Complete artifacts expire after the selected retention period.');
   return {markdown: lines.join('\n') + '\n', complete};
 }
 
