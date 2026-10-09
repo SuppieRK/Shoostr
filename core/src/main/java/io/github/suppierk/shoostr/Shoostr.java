@@ -1641,6 +1641,7 @@ public final class Shoostr implements Closeable {
      * @param observation optional terminal observation
      * @throws RuntimeException if submission is rejected before another owner claims the request
      */
+    @SuppressWarnings("java:S1181") // Submission errors must reclaim and finalize the exchange too.
     private void submitMatched(
         RadixRoutes.Endpoint endpoint,
         Callback responseCallback,
@@ -1748,41 +1749,47 @@ public final class Shoostr implements Closeable {
           return;
         }
 
-        var owner = Objects.requireNonNull(this.owner);
-        var endpoint = Objects.requireNonNull(this.endpoint);
-        var request = Objects.requireNonNull(this.request);
-        var response = Objects.requireNonNull(this.response);
-        var callback = Objects.requireNonNull(this.callback);
-        var observation = this.observation;
-        request.acquireOwnership();
+        var activeOwner = Objects.requireNonNull(owner);
+        var selectedEndpoint = Objects.requireNonNull(endpoint);
+        var activeRequest = Objects.requireNonNull(request);
+        var activeResponse = Objects.requireNonNull(response);
+        var completionCallback = Objects.requireNonNull(callback);
+        var activeObservation = observation;
+        activeRequest.acquireOwnership();
         Throwable applicationFailure = null;
         Throwable terminalFailure = null;
 
         try {
-          if (observation != null) {
-            observation.attachScopes();
+          if (activeObservation != null) {
+            activeObservation.attachScopes();
           }
 
-          if (!owner.handleMatched(
-              endpoint,
-              request.nativeRequest(),
-              response.nativeResponse(),
-              callback,
-              request,
-              response,
-              observation)) {
-            response.complete();
+          if (!activeOwner.handleMatched(
+              selectedEndpoint,
+              activeRequest.nativeRequest(),
+              activeResponse.nativeResponse(),
+              completionCallback,
+              activeRequest,
+              activeResponse,
+              activeObservation)) {
+            activeResponse.complete();
           }
         } catch (Throwable failure) {
           applicationFailure = flushFailure(failure);
           terminalFailure =
-              owner.recoverFailure(applicationFailure, request, response, observation);
+              activeOwner.recoverFailure(
+                  applicationFailure, activeRequest, activeResponse, activeObservation);
         } finally {
           try {
-            owner.finishRequest(
-                request, response, observation, callback, applicationFailure, terminalFailure);
+            activeOwner.finishRequest(
+                activeRequest,
+                activeResponse,
+                activeObservation,
+                completionCallback,
+                applicationFailure,
+                terminalFailure);
           } finally {
-            discard(owner);
+            discard(activeOwner);
           }
         }
       }
@@ -1793,19 +1800,25 @@ public final class Shoostr implements Closeable {
           return;
         }
 
-        var owner = Objects.requireNonNull(this.owner);
-        var request = Objects.requireNonNull(this.request);
-        var response = Objects.requireNonNull(this.response);
-        var callback = Objects.requireNonNull(this.callback);
-        var observation = this.observation;
-        request.acquireOwnership();
+        var activeOwner = Objects.requireNonNull(owner);
+        var activeRequest = Objects.requireNonNull(request);
+        var activeResponse = Objects.requireNonNull(response);
+        var completionCallback = Objects.requireNonNull(callback);
+        var activeObservation = observation;
+        activeRequest.acquireOwnership();
         var failure = new RejectedExecutionException("Application stopped");
 
         try {
-          response.fail();
-          owner.finishRequest(request, response, observation, callback, failure, failure);
+          activeResponse.fail();
+          activeOwner.finishRequest(
+              activeRequest,
+              activeResponse,
+              activeObservation,
+              completionCallback,
+              failure,
+              failure);
         } finally {
-          discard(owner);
+          discard(activeOwner);
         }
       }
 

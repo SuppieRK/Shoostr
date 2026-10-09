@@ -207,15 +207,15 @@ class BorrowedExecutorTest {
 
     try (var workers = Executors.newSingleThreadExecutor();
         var app = new Shoostr()) {
+      var routes = app.routes();
       assertThrows(
           NullPointerException.class,
           () ->
-              app.routes()
-                  .get(
-                      "/selected",
-                      (ExecutorService) null,
-                      ENDPOINT,
-                      _ -> configured.incrementAndGet()));
+              routes.get(
+                  "/selected",
+                  (ExecutorService) null,
+                  ENDPOINT,
+                  _ -> configured.incrementAndGet()));
       assertEquals(0, configured.get());
       assertSame(app.routes(), app.routes().get("/selected", workers, ENDPOINT));
     }
@@ -228,10 +228,10 @@ class BorrowedExecutorTest {
     try (var workers = Executors.newSingleThreadExecutor();
         var app = new Shoostr()) {
       workers.shutdown();
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
-          () ->
-              app.routes().get("/selected", workers, ENDPOINT, _ -> configured.incrementAndGet()));
+          () -> routes.get("/selected", workers, ENDPOINT, _ -> configured.incrementAndGet()));
       assertEquals(0, configured.get());
       app.routes().get("/selected", ENDPOINT);
     }
@@ -244,8 +244,9 @@ class BorrowedExecutorTest {
     try (var workers =
             new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), policy);
         var app = new Shoostr()) {
+      var routes = app.routes();
       assertThrows(
-          IllegalArgumentException.class, () -> app.routes().get("/selected", workers, ENDPOINT));
+          IllegalArgumentException.class, () -> routes.get("/selected", workers, ENDPOINT));
       assertFalse(workers.isShutdown());
       app.routes().get("/selected", ENDPOINT);
     }

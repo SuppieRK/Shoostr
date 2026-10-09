@@ -38,6 +38,7 @@ import org.jspecify.annotations.Nullable;
  */
 public final class Routes implements Closeable {
   static final String EMPTY_PATH = "";
+  private static final String UNRECOGNIZED_HTTP_METHOD = "Unrecognized HTTP method: ";
   private final Routes root;
   private final Object lock;
   private final String prefix;
@@ -889,7 +890,7 @@ public final class Routes implements Closeable {
   public Routes route(String method, String path, ExecutorService executor, Handler handler) {
     return route(
         HttpMethods.httpMethod(Objects.requireNonNull(method))
-            .orElseThrow(() -> new IllegalArgumentException("Unrecognized HTTP method: " + method)),
+            .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method)),
         path,
         executor,
         handler);
@@ -913,7 +914,7 @@ public final class Routes implements Closeable {
       Consumer<Extensions> configuration) {
     return route(
         HttpMethods.httpMethod(Objects.requireNonNull(method))
-            .orElseThrow(() -> new IllegalArgumentException("Unrecognized HTTP method: " + method)),
+            .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method)),
         path,
         executor,
         handler,
@@ -931,7 +932,7 @@ public final class Routes implements Closeable {
   public Routes route(String method, ExecutorService executor, Handler handler) {
     return route(
         HttpMethods.httpMethod(Objects.requireNonNull(method))
-            .orElseThrow(() -> new IllegalArgumentException("Unrecognized HTTP method: " + method)),
+            .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method)),
         EMPTY_PATH,
         executor,
         handler);
@@ -953,7 +954,7 @@ public final class Routes implements Closeable {
       Consumer<Extensions> configuration) {
     return route(
         HttpMethods.httpMethod(Objects.requireNonNull(method))
-            .orElseThrow(() -> new IllegalArgumentException("Unrecognized HTTP method: " + method)),
+            .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method)),
         EMPTY_PATH,
         executor,
         handler,
@@ -1600,8 +1601,7 @@ public final class Routes implements Closeable {
       Objects.requireNonNull(method);
       parsed =
           HttpMethods.httpMethod(method)
-              .orElseThrow(
-                  () -> new IllegalArgumentException("Unrecognized HTTP method: " + method));
+              .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method));
     }
     return route(parsed, path, handler);
   }
@@ -1621,7 +1621,7 @@ public final class Routes implements Closeable {
     Objects.requireNonNull(method);
     return route(
         HttpMethods.httpMethod(method)
-            .orElseThrow(() -> new IllegalArgumentException("Unrecognized HTTP method: " + method)),
+            .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method)),
         path,
         handler,
         configuration);

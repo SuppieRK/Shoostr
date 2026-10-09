@@ -721,11 +721,20 @@ class TransportTest {
 
         assertTrue(observed.await(3, TimeUnit.SECONDS));
         assertEquals("/blocked", outcome.get().routePattern());
-        assertNotNull(outcome.get().transportFailure());
+        assertNotNull(
+            outcome.get().transportFailure(),
+            () ->
+                "Outcome: "
+                    + outcome.get()
+                    + "; client done: "
+                    + pending.isDone()
+                    + "; client exceptional: "
+                    + pending.isCompletedExceptionally());
         assertThrows(ExecutionException.class, () -> pending.get(3, TimeUnit.SECONDS));
       } finally {
         releaseCleanup.complete(null);
         releaseHandler.complete(null);
+        pending.cancel(true);
       }
     }
   }
