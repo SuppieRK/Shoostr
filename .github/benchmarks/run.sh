@@ -165,6 +165,13 @@ for repeat in 1 2 3; do
     continue
   fi
   taskset -pc "$server_pid" > "$run_dir/server-affinity.txt"
+  for command in VM.version VM.command_line VM.flags VM.info; do
+    "$JAVA_HOME/bin/jcmd" "$server_pid" "$command" > "$run_dir/$command.txt"
+    cat "$run_dir/$command.txt"
+  done
+  "$JAVA_HOME/bin/jcmd" "$server_pid" VM.flags -all > "$run_dir/VM.flags-all.txt"
+  cat "/proc/$server_pid/limits" > "$run_dir/server-limits.txt"
+  cat "$run_dir/server-affinity.txt" "$run_dir/server-limits.txt"
   if ! load warmup 30s; then
     echo WARMUP_FAILED > "$run_dir/outcome.txt"
     failed=1
