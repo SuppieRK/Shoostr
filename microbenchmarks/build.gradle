@@ -4,6 +4,7 @@ plugins {
 
 dependencies {
 	implementation project(':core')
+	implementation project(':benchmarks')
 	implementation project(':micrometer')
 	implementation project(':opentelemetry')
 	implementation 'io.opentelemetry:opentelemetry-sdk:1.66.0'

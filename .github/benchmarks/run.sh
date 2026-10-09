@@ -2,15 +2,25 @@
 set -euo pipefail
 
 workload=${1:?Supply a workload}
-mode=${2:?Supply steady or overload}
+mode=${2:?Supply steady, overload or threading}
 destination=${3:?Supply a new result directory}
 tools=${4:?Supply the prepared benchmark tools directory}
 : "${JAVA_HOME:?Set JAVA_HOME}"
 support=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-configuration=$(jq -ce --arg workload "$workload" '.[$workload] // error("Unknown workload")' "$support/workloads.json")
+if [[ "$mode" == threading ]]; then
+  [[ "${THREADING_MODEL:-}" =~ ^[ABCD]$ ]]
+  case "$workload" in tiny) selected_rate=5000;; io) selected_rate=80;; cpu|mixed) selected_rate=200;; *) exit 2;; esac
+  configuration=$(jq -n --arg workload "$workload" --argjson rate "$selected_rate" \
+    '{script:"threading.js",selected:$workload,rate:$rate,vus:256,kind:"http",metric:"http_req_duration",latency:"HTTP request"}')
+else
+  configuration=$(jq -ce --arg workload "$workload" '.[$workload] // error("Unknown workload")' "$support/workloads.json")
+fi
+profile=${PROFILE:-1}
+repeats=${REPEATS:-3}
+[[ "$profile" =~ ^[01]$ && "$repeats" =~ ^[1-3]$ ]]
 kind=$(jq -r .kind <<< "$configuration")
 case "$mode:$kind" in
-  steady:*|overload:http) ;;
+  steady:*|overload:http|threading:http) ;;
   *) echo 'Overload requires an HTTP workload; mode must be steady or overload' >&2; exit 2 ;;
 esac
 [[ ! -e "$destination" ]] || { echo 'Refusing to overwrite results' >&2; exit 2; }
@@ -25,6 +35,8 @@ server_pid=''
 client_group=''
 client_pid=''
 monitor_pid=''
+downstream_group=''
+downstream_pid=''
 run_dir=''
 recording=0
 failed=0
@@ -64,6 +76,9 @@ cleanup() {
   stop_group "$server_group" "$server_pid"
   server_group=''
   server_pid=''
+  stop_group "$downstream_group" "$downstream_pid"
+  downstream_group=''
+  downstream_pid=''
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -72,9 +87,10 @@ trap 'exit 143' TERM
 cp "$support/workloads.json" "$destination/workloads.json"
 jq -n --arg workload "$workload" --arg mode "$mode" --argjson fixture "$configuration" \
   --arg revision "$(git rev-parse HEAD)" --arg image "${ImageVersion:-unknown}" \
-  --arg image_os "${ImageOS:-unknown}" \
+  --arg image_os "${ImageOS:-unknown}" --arg model "${THREADING_MODEL:-}" \
+  --argjson profile "$profile" --argjson repeats "$repeats" \
   '{workload:$workload,mode:$mode,fixture:$fixture,revision:$revision,image:$image,image_os:$image_os,
-    repeats:3,warmup_seconds:30,measurement_seconds:180,heap:"256 MiB",collector:"G1",
+    model:$model,profile:($profile==1),repeats:$repeats,warmup_seconds:30,measurement_seconds:180,heap:"256 MiB",collector:"G1",
     smoke_rates:[1000,2000,5000,10000,20000,50000,100000],smoke_step_seconds:15}' \
   > "$destination/configuration.json"
 "$JAVA_HOME/bin/java" -version > "$destination/java.txt" 2>&1
@@ -101,7 +117,9 @@ load() {
     load_script=overload.js
   fi
   local dashboard=false
-  if [[ "$phase" == measured ]]; then dashboard=true; fi
+  if [[ "$phase" == measured && "$profile" == 1 ]]; then dashboard=true; fi
+  local outputs=()
+  if [[ "$profile" == 1 ]]; then outputs=(--out "json=$run_dir/$phase-metrics.json.gz"); fi
   setsid /usr/bin/time -v -o "$run_dir/$phase-client-resource.txt" \
     env K6_WEB_DASHBOARD="$dashboard" K6_WEB_DASHBOARD_PORT=-1 K6_WEB_DASHBOARD_PERIOD=5s \
     K6_WEB_DASHBOARD_EXPORT="$run_dir/report.html" \
@@ -109,8 +127,9 @@ load() {
     -e BASE_URL="$base" -e WORKLOAD="$selected" -e ROUTE_GROUPS=1000 \
     -e RATE="$rate" -e VUS="$vus" -e DURATION="$length" \
     -e FAILURE_DETAILS=1 \
+    -e THREADING_MODEL="${THREADING_MODEL:-}" -e PHASE="$phase" \
     --summary-export "$run_dir/$phase-summary.json" \
-    --out "json=$run_dir/$phase-metrics.json.gz" "$support/$load_script" \
+    "${outputs[@]}" "$support/$load_script" \
     > "$run_dir/$phase-client.log" 2>&1 &
   client_group=$!
   if [[ "$phase" == measured ]]; then
@@ -121,7 +140,7 @@ load() {
     done
     if [[ "$client_pid" =~ ^[0-9]+$ ]]; then
       taskset -pc "$client_pid" > "$run_dir/client-affinity.txt"
-      top -b -d 1 -w 160 -p "$server_pid,$client_pid" > "$run_dir/process-monitor.txt" &
+      top -b -d 1 -w 160 -p "$server_pid,$client_pid${downstream_pid:+,$downstream_pid}" > "$run_dir/process-monitor.txt" &
       monitor_pid=$!
       printf 'SERVER_PID=%s\nCLIENT_PID=%s\n' "$server_pid" "$client_pid" > "$run_dir/monitor-pids.txt"
     else
@@ -141,14 +160,34 @@ load() {
   return "$status"
 }
 
-for repeat in 1 2 3; do
+for ((repeat=1; repeat<=repeats; repeat++)); do
   run_dir="$destination/trial-$repeat"
   mkdir "$run_dir"
   echo "::group::$workload trial $repeat ($mode)"
   date -u +%FT%TZ > "$run_dir/start.txt"
+  fixture=(io.github.suppierk.shoostr.bench.ServerMain 18080 1000)
+  vm_options=()
+  if [[ "$mode" == threading ]]; then
+    vm_options=("-XX:ActiveProcessorCount=$split" -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints)
+    fixture=(io.github.suppierk.shoostr.ThreadingFixture "$THREADING_MODEL" "$workload" 18080 "$split")
+    if [[ "$profile" == 1 ]]; then vm_options+=(-Dshoostr.benchmark.diagnostics=true); fi
+    if [[ "$workload" == io ]]; then
+      setsid /usr/bin/time -v -o "$run_dir/downstream-resource.txt" \
+        taskset -c "$client_cpus" "$JAVA_HOME/bin/java" -Xms64m -Xmx64m -XX:+UseG1GC \
+        "-XX:ActiveProcessorCount=$((${#cpus[@]} - split))" -cp "$tools/lib/*" \
+        io.github.suppierk.shoostr.ThreadingFixture downstream 18081 > "$run_dir/downstream.log" 2>&1 &
+      downstream_group=$!
+      for ((attempt=0; attempt<300; attempt++)); do
+        downstream_pid=$(pgrep -P "$downstream_group" -x java || true)
+        if [[ -n "$downstream_pid" ]] && grep -q 'READY 18081' "$run_dir/downstream.log"; then break; fi
+        sleep 0.1
+      done
+      [[ -n "$downstream_pid" ]] && grep -q 'READY 18081' "$run_dir/downstream.log"
+    fi
+  fi
   setsid /usr/bin/time -v -o "$run_dir/server-resource.txt" \
     taskset -c "$server_cpus" "$JAVA_HOME/bin/java" -Xms256m -Xmx256m -XX:+UseG1GC \
-    -cp "$tools/lib/*" io.github.suppierk.shoostr.bench.ServerMain 18080 1000 \
+    "${vm_options[@]}" -cp "$tools/lib/*" "${fixture[@]}" \
     > "$run_dir/server.log" 2>&1 &
   server_group=$!
   for ((attempt=0; attempt<300; attempt++)); do
@@ -169,21 +208,30 @@ for repeat in 1 2 3; do
     "$JAVA_HOME/bin/jcmd" "$server_pid" "$command" > "$run_dir/$command.txt"
     cat "$run_dir/$command.txt"
   done
+  if [[ -n "$downstream_pid" ]]; then
+    "$JAVA_HOME/bin/jcmd" "$downstream_pid" VM.info > "$run_dir/downstream-VM.info.txt"
+    taskset -pc "$downstream_pid" > "$run_dir/downstream-affinity.txt"
+    cat "/proc/$downstream_pid/limits" > "$run_dir/downstream-limits.txt"
+  fi
   "$JAVA_HOME/bin/jcmd" "$server_pid" VM.flags -all > "$run_dir/VM.flags-all.txt"
   cat "/proc/$server_pid/limits" > "$run_dir/server-limits.txt"
   cat "$run_dir/server-affinity.txt" "$run_dir/server-limits.txt"
-  if ! load warmup 30s; then
+  warmup_status=0
+  load warmup 30s || warmup_status=$?
+  if [[ "$warmup_status" != 0 && ! ( "$mode" == threading && "$warmup_status" == 99 ) ]]; then
     echo WARMUP_FAILED > "$run_dir/outcome.txt"
     failed=1
     cleanup
     echo '::endgroup::'
     continue
   fi
+  if [[ "$profile" == 1 ]]; then
   "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.configure stackdepth=128 > "$run_dir/jfr-configure.txt"
   "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.start name=benchmark settings=profile disk=true \
     dumponexit=true filename="$run_dir/server.jfr" \
     'jdk.CPUTimeSample#enabled=true' 'jdk.CPUTimeSample#throttle=10ms' > "$run_dir/jfr-start.txt"
   recording=1
+  fi
   "$JAVA_HOME/bin/jcmd" "$server_pid" GC.heap_info > "$run_dir/before-heap.txt"
   cat "/proc/$server_pid/stat" > "$run_dir/before-process-stat.txt"
   date -u +%FT%TZ > "$run_dir/measurement-start.txt"
@@ -192,7 +240,7 @@ for repeat in 1 2 3; do
   date -u +%FT%TZ > "$run_dir/measurement-end.txt"
   if [[ "$status" == 0 ]]; then
     echo PASS > "$run_dir/outcome.txt"
-  elif [[ "$mode" == overload && "$status" == 99 ]]; then
+  elif [[ ( "$mode" == overload || "$mode" == threading ) && "$status" == 99 ]]; then
     echo OVERLOAD > "$run_dir/outcome.txt"
   else
     echo FAILED > "$run_dir/outcome.txt"
@@ -207,14 +255,18 @@ for repeat in 1 2 3; do
   fi
   cat "/proc/$server_pid/stat" > "$run_dir/after-process-stat.txt"
   "$JAVA_HOME/bin/jcmd" "$server_pid" GC.heap_info > "$run_dir/after-heap.txt"
+  if [[ "$profile" == 1 ]]; then
   "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.stop name=benchmark > "$run_dir/jfr-stop.txt"
   recording=0
   "$JAVA_HOME/bin/jfr" summary "$run_dir/server.jfr" > "$run_dir/jfr-summary.txt"
-  for view in allocation-by-site allocation-by-class hot-methods gc-pauses gc-cpu-time; do
+  for view in allocation-by-site allocation-by-class hot-methods cpu-time-hot-methods cpu-time-statistics gc-pauses gc-cpu-time; do
     "$JAVA_HOME/bin/jfr" view --width 120 "$view" "$run_dir/server.jfr" > "$run_dir/$view.txt"
   done
   gzip -t "$run_dir/measured-metrics.json.gz"
   [[ -s "$run_dir/report.html" && -s "$run_dir/measured-summary.json" ]]
+  else
+    [[ -s "$run_dir/measured-summary.json" ]]
+  fi
   cleanup
   echo '::endgroup::'
 done

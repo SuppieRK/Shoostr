@@ -104,7 +104,6 @@ public final class Response implements AutoCloseable {
   private final org.eclipse.jetty.server.Response delegate;
   private final Options options;
   private final Callback completion;
-  private final Thread owner;
   private final boolean head;
   private final Request request;
   private @Nullable Runnable beforeFlush;
@@ -155,7 +154,6 @@ public final class Response implements AutoCloseable {
     this.delegate = Objects.requireNonNull(delegate);
     this.options = Objects.requireNonNull(options);
     this.completion = Objects.requireNonNull(completion);
-    this.owner = Thread.currentThread();
     this.head = head;
     this.request = Objects.requireNonNull(request);
     this.flushCallback = false;
@@ -174,6 +172,15 @@ public final class Response implements AutoCloseable {
   void flushHooks(@Nullable Runnable before, @Nullable Runnable after) {
     beforeFlush = before;
     afterFlush = after;
+  }
+
+  /**
+   * Returns the native output for framework-owned matched-lifecycle dispatch.
+   *
+   * @return transport-owned output
+   */
+  org.eclipse.jetty.server.Response nativeResponse() {
+    return delegate;
   }
 
   /**
@@ -1083,7 +1090,7 @@ public final class Response implements AutoCloseable {
    */
   @Override
   public void close() throws IOException {
-    if (!frameworkClosing || flushCallback || Thread.currentThread() != owner) {
+    if (!frameworkClosing || flushCallback || !request.ownedByCurrentThread()) {
       throw new IllegalStateException("The framework owns the response lifecycle");
     }
 
@@ -1801,7 +1808,7 @@ public final class Response implements AutoCloseable {
    * @throws IllegalStateException if the response is terminal or the thread does not own it
    */
   private void checkReadable() {
-    if (Thread.currentThread() != owner
+    if (!request.ownedByCurrentThread()
         || (!flushCallback && (state == State.CLOSED || state == State.FAILED))) {
       throw new IllegalStateException("Response is not readable in this phase/thread");
     }
@@ -1814,7 +1821,7 @@ public final class Response implements AutoCloseable {
    * @throws IllegalStateException if the current phase or thread does not permit access
    */
   private void require(State expected) {
-    if (Thread.currentThread() != owner || flushCallback || state != expected) {
+    if (!request.ownedByCurrentThread() || flushCallback || state != expected) {
       throw new IllegalStateException("Response is not writable in this phase/thread");
     }
   }

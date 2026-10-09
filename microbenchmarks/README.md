@@ -5,6 +5,28 @@ retired during the migration of end-to-end diagnostics to
 [GitHub Actions](../.github/benchmarks/README.md). New JMH results are ignored by
 Git; retain or copy them when sharing evidence.
 
+## Endpoint execution
+
+`EndpointExecutionBenchmark` uses identical fixtures from `:benchmarks` through the production
+dispatcher and Jetty `LocalConnector`. Tiny bytes, a small parameter route, and deterministic
+4 MiB SHA-256 work each consume complete response output. The measurements include native local
+HTTP parsing, scheduling, matched lifecycle, response serialization and request cleanup, but exclude
+sockets and k6. They are microseconds/exchange, not nanoseconds of isolated router lookup.
+
+Models A/B/C/D match the internal threading campaign; `inactive` is A with an installed but unused
+worker pool. It must not be described as selected-endpoint handoff cost. Three forks, native
+`-prof gc` bytes/op and timing are measured together; JFR runs are separate with unique fork files.
+The Actions threading campaign additionally rebuilds the pinned original core with the same JDK
+to measure default-path changes independently of the threading-model choice.
+
+```sh
+cmdshape ./gradlew :microbenchmarks:installDist
+cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks EndpointExecutionBenchmark -f 3 -wi 5 -i 5 -w 2s -r 2s -prof gc -foe true -rf json -rff benchmark-results/endpoint-execution.json
+```
+
+These fixtures expose no supported public execution configuration. Blocking I/O and mixed traffic
+are measured by k6 against complete HTTP responses, not substituted with task-submission timing.
+
 ## Extension dispatch
 
 `ExtensionRequestBenchmark` runs complete HTTP/1.1 exchanges through Jetty's `LocalConnector` and

@@ -1,7 +1,7 @@
 # Shoostr diagnostics in Actions
 
 Run **Shoostr benchmarks** manually from the Actions tab. Select the branch,
-`steady` or `overload`, and artifact retention (1–14 days, default 7).
+`steady`, `overload` or `threading`, and artifact retention (1–14 days, default 7).
 The workflow requires its support files on the selected branch. It does not run
 benchmarks on pushes or pull requests.
 
@@ -63,10 +63,54 @@ recovery is best-effort; incomplete evidence stays visibly marked. Artifact size
 and expiry are shown in summaries. Upload or storage-quota failures block
 successful publication; the workflow does not change billing settings.
 
-All measured runs include profiling and raw-output overhead. Thirty seconds is the
+Steady and overload measured runs include profiling and raw-output overhead. Thirty seconds is the
 chosen warmup duration, not a guarantee of steady JIT state. These measurements
 provide diagnostics rather than an automatic latency-regression gate. Inspect
 the native data before attributing a change to Shoostr.
+
+## Threading experiment
+
+Threading mode compares internal A/B/C/D candidates; it does not publish execution options or
+change the public default. A retains the current virtual producer pool; B uses native platform
+transport with virtual blocking consumers; C is a platform-only control; D uses B plus one shared
+platform pool for selected matched lifecycles. B/C/D use a `QueuedThreadPool(16, 8)` with zero
+reserved workers. Actual leased/available counts are diagnostic evidence, not inferred handler
+capacity. D has one worker per server-affinity logical CPU. All candidates receive the same
+CPU affinity, JVM-visible processor budget, fixed 256 MiB G1 heap, payloads and offered rates.
+
+Four workload jobs run in parallel; candidates run sequentially on the same workload runner.
+Each job rotates A/B/C/D, B/C/D/A and C/D/A/B across three fresh-JVM timing repetitions, then
+performs one separate profile per candidate. Each trial warms for 30 seconds and offers load for
+180 seconds. Timing trials omit JFR, raw JSON output and dashboards; profiles retain those
+diagnostics and must not be mixed into the timing comparison. OS process monitoring is retained
+in both. Profiles sample native scheduler/worker/pool/adaptive counters once per second; unavailable
+adaptive beans are identified as unavailable rather than assigned zero activity.
+
+The tiny workload offers 5,000 constant-response requests/s. I/O offers 80 requests/s against an
+independently monitored loopback downstream with a fixed 20 ms wait, plus a direct 2/s downstream
+probe. The downstream shares the client CPU partition, never the server partition. CPU offers
+200 requests/s, hashing exactly 4 MiB of ASCII x with SHA-256 and validating the digest. Mixed
+traffic keeps tiny at 1,000/s while CPU traffic holds 200, 500 and 1,000/s, with two 1-second
+transitions inside the three 60-second windows. Both endpoints have independent step-tagged
+native metrics. k6 allocates 256 VUs per scenario and can grow to 1,024; drops and client saturation
+remain evidence, not an invented service capacity boundary. In D, pure workloads select that
+endpoint; mixed selects only CPU. HTTP setup checks actual thread kind and response parity.
+
+Summaries keep every repetition's p50/p95/p99/max, failures and drops/scheduled total/percentage.
+Mean throughput is supplemental, never a pooled percentile. A threshold breach is reported as
+an overload diagnostic; startup, fixture-setup, tooling or missing evidence still fails publication.
+CPU/RAM, effective flags, process limits, affinity, resource reports and native outputs are retained.
+The timing/profiling distinction and hosted-runner limitations remain mandatory in conclusions.
+
+The companion JMH job measures complete `LocalConnector` exchanges (tiny, small parameter route,
+and CPU) with three forks and allocation reporting, including an installed-but-unused worker pool.
+It rebuilds unchanged core `f34092d149badbd8b371a1527ee9c3d1c918a8b9` with the same pinned JDK for
+an additional original-default control; this is not a replacement for A/B/C/D. JFR forks are
+separate and each recording has a unique path. HTTP verdicts wait for the entire matrix.
+
+```sh
+cmdshape gh workflow run benchmarks.yml --ref issue80-threading-benchmarks -f mode=threading -f retention_days=7
+```
 
 The fixture remains the `:benchmarks` Gradle module, now located in this directory.
 Normal builds compile and check it; they do not execute timed campaigns. Targeted
