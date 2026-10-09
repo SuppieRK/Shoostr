@@ -887,4 +887,24 @@ on a transport thread. Never retain live Request/Response objects. Factory failu
 resources they acquired before throwing. Runtime instrumentation failures are logged and do not
 change HTTP results or stop later observers. Borrowed registries, SDKs and authentication clients
 are never closed by Shoostr.
+
+Rejected worker submission reattaches observation context on the admission thread for error rendering;
+the recovered scope closes on that same thread. Successful handoff attaches on the worker.
+
+Threading experiments introduce a handoff between pre-routing and the matched lifecycle; public
+endpoint execution selection remains evidence-gated. Extension authors must not assume these
+phases share a thread. Before handing off, the framework closes the original observation scope on
+its admission thread. `RequestObservation.attach()` can explicitly attach retained context on the
+selected execution thread; the returned `AutoCloseable` restores that thread's prior context during
+cleanup. Neither scope closure completes the observation. OpenTelemetry reattaches the same server
+span, not a second span. Terminal observers retain their separate completion-thread contract.
+
+The default attachment copies no arbitrary thread-local state. MDC, custom security context,
+transactions, ORM sessions and thread-confined dependencies established before routing need an
+explicit compatible integration or must stay on the existing no-handoff path. Request attributes
+and principals keep their object references; that does not make their contents thread-safe.
+Instrumentation must not retain live Request/Response objects to implement attachment, and must
+not close a scope on a different thread. Preserve state needed for attachment and terminal recording
+after the original invocation scope closes.
+
 Requests rejected by Jetty before framework admission are outside this instrumentation's scope.

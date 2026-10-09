@@ -9,6 +9,13 @@ import org.jspecify.annotations.Nullable;
  * eager; route configuration and metadata finish before the listener starts. The application closes
  * installed extensions, but an extension must not close borrowed registries, SDKs or clients.
  *
+ * <p>Explicit endpoint execution experiments may hand off between pre-routing and matched
+ * callbacks. Do not rely on both phases sharing a thread or on arbitrary thread-local state being
+ * copied. Instrumentation must reattach retained context through {@link
+ * RequestObservation#attach()} and restore each scope on its owning thread. Request attributes and
+ * principals retain their references, not automatic thread safety. Terminal observers retain their
+ * separate completion-thread contract.
+ *
  * @param <C> provider's typed route configuration
  */
 public interface Extension<C> extends Closeable {
