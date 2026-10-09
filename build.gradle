@@ -5,7 +5,7 @@ plugins {
 	id 'checkstyle'
 	id 'com.diffplug.spotless' version '8.10.3'
 	id 'net.ltgt.errorprone' version '5.1.1' apply false
-	id 'net.ltgt.nullaway' version '3.2.0' apply false
+	id 'net.ltgt.nullaway' version '3.3.0' apply false
 	id 'org.sonarqube' version '7.5.0.8588'
 	id 'info.solidsoft.pitest' version '1.19.0' apply false
 }
