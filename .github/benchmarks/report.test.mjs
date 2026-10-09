@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { trial, workloadSummary } from './report.mjs';
 
 function fixture(t, metrics, outcome = 'PASS') {
@@ -110,3 +112,24 @@ test('missing upload or failed harness blocks complete campaign evidence', t => 
   process.env.MEASUREMENT_OUTCOME = 'failure';
   assert.equal(workloadSummary(directory, 'plaintext', 'steady').complete, false);
 });
+
+for (const warmupSeconds of [10, 30]) {
+  test(`workload summary reports the recorded ${warmupSeconds}-second warmup`, t => {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-warmup-report-'));
+    t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+    fs.writeFileSync(path.join(directory, 'configuration.json'), JSON.stringify({
+      revision: 'test', warmup_seconds: warmupSeconds
+    }));
+    for (const index of [1, 2, 3]) {
+      fs.cpSync(fixture(t, httpMetrics()), path.join(directory, `trial-${index}`), {recursive: true});
+    }
+    const markdown = execFileSync(process.execPath, [
+      fileURLToPath(new URL('./report.mjs', import.meta.url)), 'workload', directory, 'plaintext', 'steady'
+    ], {
+      encoding: 'utf8',
+      env: {...process.env, ARTIFACT_URL: 'https://example.test/native', MEASUREMENT_OUTCOME: 'success'}
+    });
+    assert.ok(markdown.includes(`Warmup: ${warmupSeconds} seconds per fresh JVM.`));
+    assert.ok(!markdown.includes('A 10-second warmup does not guarantee JIT stabilization.'));
+  });
+}

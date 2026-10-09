@@ -9,7 +9,7 @@ Steady mode runs eight HTTP workloads (plaintext, pre-encoded JSON, 1 KiB echo,
 16 KiB flushed stream, literal routing, parameter routing, 404 and 405), three SSE
 workloads (burst, paced and callback-delayed large events), and three WebSocket
 workloads (text, binary and callback-delayed large frames). Each workload has its
-own Linux runner. Its three trials use fresh JVMs, a 10-second warmup, and a
+own Linux runner. Its three trials use fresh JVMs, a 30-second warmup, and a
 180-second offered-load phase. Up to fourteen workload jobs run concurrently;
 GitHub may queue jobs when account capacity is unavailable.
 
@@ -48,7 +48,7 @@ recovery is best-effort; incomplete evidence stays visibly marked. Artifact size
 and expiry are shown in summaries. Upload or storage-quota failures block
 successful publication; the workflow does not change billing settings.
 
-All measured runs include profiling and raw-output overhead. Ten seconds is the
+All measured runs include profiling and raw-output overhead. Thirty seconds is the
 chosen warmup duration, not a guarantee of steady JIT state. These measurements
 provide diagnostics rather than an automatic latency-regression gate. Inspect
 the native data before attributing a change to Shoostr.

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const support = path.dirname(fileURLToPath(import.meta.url));
 const workloads = JSON.parse(fs.readFileSync(path.join(support, 'workloads.json'), 'utf8'));
-const disclaimer = 'Profiled diagnostics: JFR and raw-output overhead are included. A 10-second warmup does not guarantee JIT stabilization. Hosted hardware/images can vary. Percentiles are per trial, never pooled.';
+const disclaimer = 'Profiled diagnostics: JFR and raw-output overhead are included. Hosted hardware/images can vary. Percentiles are per trial, never pooled.';
 
 function text(file) {
   return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : '';
@@ -106,6 +106,7 @@ function workloadMarkdown(summary, directory) {
     `Latency: **${fixture.latency}**. Completed rate uses native k6 elapsed-time rates; overload rates use each 15-second plateau's completed count.`, '',
     table(summary), '', `Artifact: ${summary.artifact ? `[native outputs](${summary.artifact})` : '**UPLOAD MISSING**'}; size: ${number(summary.artifact_bytes === null ? null : summary.artifact_bytes / 1024 / 1024)} MiB; retention: ${process.env.RETENTION_DAYS || '?'} days.`, '',
     `Revision: \`${summary.configuration?.revision || 'unknown'}\`; image: \`${summary.configuration?.image || 'unknown'}\`.`, '',
+    `Warmup: ${summary.configuration?.warmup_seconds ?? 'unknown'} seconds per fresh JVM.`, '',
     'Server peak RSS covers its whole lifetime, including startup/warmup. Client peak RSS covers the measured invocation.'];
   for (const result of summary.trials) {
     lines.push('', `### Trial ${result.index}: ${result.outcome}`, '',

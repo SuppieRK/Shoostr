@@ -74,7 +74,7 @@ jq -n --arg workload "$workload" --arg mode "$mode" --argjson fixture "$configur
   --arg revision "$(git rev-parse HEAD)" --arg image "${ImageVersion:-unknown}" \
   --arg image_os "${ImageOS:-unknown}" \
   '{workload:$workload,mode:$mode,fixture:$fixture,revision:$revision,image:$image,image_os:$image_os,
-    repeats:3,warmup_seconds:10,measurement_seconds:180,heap:"256 MiB",collector:"G1",
+    repeats:3,warmup_seconds:30,measurement_seconds:180,heap:"256 MiB",collector:"G1",
     smoke_rates:[1000,2000,5000,10000,20000,50000,100000],smoke_step_seconds:15}' \
   > "$destination/configuration.json"
 "$JAVA_HOME/bin/java" -version > "$destination/java.txt" 2>&1
@@ -165,7 +165,7 @@ for repeat in 1 2 3; do
     continue
   fi
   taskset -pc "$server_pid" > "$run_dir/server-affinity.txt"
-  if ! load warmup 10s; then
+  if ! load warmup 30s; then
     echo WARMUP_FAILED > "$run_dir/outcome.txt"
     failed=1
     cleanup
