@@ -70,16 +70,27 @@ public final class OpenTelemetryTracing
             .setParent(parent)
             .setAttribute("http.request.method", method)
             .startSpan();
+    var spanContext = parent.with(span);
     Scope scope;
 
     try {
-      scope = parent.with(span).makeCurrent();
+      scope = spanContext.makeCurrent();
     } catch (RuntimeException failure) {
       span.end();
       throw failure;
     }
 
     return new RequestObservation() {
+      /**
+       * Attaches the same server span without opening another span or moving its original scope.
+       *
+       * @return scope restoring the selected execution thread's prior context
+       */
+      @Override
+      public AutoCloseable attach() {
+        return spanContext.makeCurrent();
+      }
+
       /** Restores the caller's thread context before any terminal observer notification. */
       @Override
       public void close() {

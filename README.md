@@ -121,8 +121,8 @@ within one app startup attempt, and reserved sockets are released on failure and
 Configure Jetty directly before startup, using ordered callbacks similar to Javalin:
 
 The native pool is Jetty's `VirtualThreadPool`, using Shoostr's owned virtual-thread executor
-without a concurrent-task cap. Both request production and handlers can run on virtual threads;
-handlers retain their existing virtual-thread contract. Native customizers must not cast the pool
+without a concurrent-task cap. Default handlers run on virtual threads; endpoint overloads can
+select a caller-owned executor without changing transport execution. Native customizers must not cast the pool
 to `QueuedThreadPool` or depend on its platform-thread sizing methods.
 
 ```java
@@ -887,4 +887,76 @@ on a transport thread. Never retain live Request/Response objects. Factory failu
 resources they acquired before throwing. Runtime instrumentation failures are logged and do not
 change HTTP results or stop later observers. Borrowed registries, SDKs and authentication clients
 are never closed by Shoostr.
+
+Rejected worker submission reattaches observation context on the admission thread for error rendering;
+the recovered scope closes on that same thread. Successful handoff attaches on the worker.
+
+Endpoint executor selection introduces a handoff between pre-routing and the matched lifecycle.
+Extension authors must not assume these
+phases share a thread. Before handing off, the framework closes the original observation scope on
+its admission thread. `RequestObservation.attach()` can explicitly attach retained context on the
+selected execution thread; the returned `AutoCloseable` restores that thread's prior context during
+cleanup. Neither scope closure completes the observation. OpenTelemetry reattaches the same server
+span, not a second span. Terminal observers retain their separate completion-thread contract.
+
+The default attachment copies no arbitrary thread-local state. MDC, custom security context,
+transactions, ORM sessions and thread-confined dependencies established before routing need an
+explicit compatible integration or must stay on the existing no-handoff path. Request attributes
+and principals keep their object references; that does not make their contents thread-safe.
+Instrumentation must not retain live Request/Response objects to implement attachment, and must
+not close a scope on a different thread. Preserve state needed for attachment and terminal recording
+after the original invocation scope closes.
+
+### Caller-owned endpoint executors
+
+Pass an `ExecutorService` immediately after the path, before the handler. Pathless forms accept
+the executor before the handler; generic `route` keeps its HTTP method first. All HTTP verbs,
+`route`, SSE and WebSocket registration support the same optional extension configuration:
+
+```java
+try (var workers = Executors.newFixedThreadPool(2);
+     var app = new Shoostr()) {
+    app.routes()
+        .get("/health", health)
+        .post("/reports", workers, buildReport)
+        .path("/exports", group -> group.get(workers, exportReport));
+    app.start();
+    // Keep the app and executor alive for the application's required lifetime.
+}
+```
+
+Only final endpoint registrations select execution. `path` and `when` do not inherit or override
+executors; there is no execution grouping or nesting rule. Selection is independent per HTTP
+method, even at the same path. Unmatched 404/405, CORS preflight and static mounts stay on the
+default path. The selected executor runs matched callbacks, authentication, availability checks,
+the handler, after/flush hooks, matched error rendering and request cleanup sequentially.
+SSE covers handler execution and its synchronous stream writes. WebSocket selection covers the
+handshake/listener factory, not later session callbacks. Terminal observers keep their separate
+completion-thread contract.
+
+Executors are **caller-owned** and may be shared across apps or with unrelated work. Shoostr never
+closes them or interrupts their running workers. `app.close()` uses Jetty's bounded graceful drain,
+then cancels unstarted selected requests. Running handlers may outlive close; request cleanup and
+observations finish when those handlers unwind. Native connection closure may fail their I/O,
+and app-owned extension resources may already be closed after the drain deadline. Coordinate
+running-handler completion before closing borrowed dependencies. Canceled queue entries later
+run as harmless no-ops without retaining live Shoostr references.
+
+Accepted tasks must run asynchronously, or submission must throw: caller-runs and silent discard
+are unsupported. Shoostr eagerly rejects shutdown executors and inspectable thread pools using
+the standard `CallerRunsPolicy`, `DiscardPolicy` or `DiscardOldestPolicy` classes; custom policies
+(including subclasses) and wrapped executors
+must honor that contract themselves. Rejection never falls
+back to another executor and uses existing local/app exception rendering (500 when unmapped).
+An application can explicitly map `RejectedExecutionException` to 503. If the caller shuts down
+an executor or removes accepted tasks, it must coordinate app shutdown; a void `execute` result
+cannot detect arbitrary silent task loss.
+
+Platform, virtual and fork/join executors are supported. ForkJoinPool support does not automatically
+propagate tracing to user-created child tasks or parallel streams. Explicitly wrap such work with
+the captured telemetry context. Unwrapped jobs run through fork/join helping can observe the outer
+request's context; Shoostr attaches/restores context for its own matched tasks only. Avoid the
+common pool when isolation is required; blocking I/O can occupy fork/join workers without guaranteed
+compensation. Executor selection is a scheduling choice, not a guarantee of better performance.
+
 Requests rejected by Jetty before framework admission are outside this instrumentation's scope.

@@ -1,6 +1,11 @@
 package io.github.suppierk.shoostr;
 
-/** Runs on a virtual thread. Request and response belong to this invocation only. */
+/**
+ * Runs on the registered endpoint's executor, or the default virtual execution when none is
+ * selected. Request and response belong to this invocation only; application-created child work
+ * must not retain them. Executor selection covers the matched lifecycle, not transport completion
+ * callbacks.
+ */
 @FunctionalInterface
 public interface Handler {
   /**

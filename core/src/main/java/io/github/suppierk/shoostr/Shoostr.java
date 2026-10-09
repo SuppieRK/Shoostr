@@ -12,11 +12,14 @@ import java.io.IOException;
 import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -51,6 +54,8 @@ public final class Shoostr implements Closeable {
   private static final String WEBSOCKET_PROTOCOL = "websocket";
 
   private final Options options;
+  private final Set<ApplicationHandler.MatchedTask> pendingMatches;
+  private boolean stoppingMatches;
   private final Routes routes;
   private final List<Extension<?>> extensions;
   private @Nullable AuthenticationExtension authentication;
@@ -94,6 +99,7 @@ public final class Shoostr implements Closeable {
    */
   public Shoostr(Options options) {
     this.options = Objects.requireNonNull(options);
+    pendingMatches = new HashSet<>();
     routes = new Routes();
     extensions = new ArrayList<>();
     exceptionHandlers = new HashMap<>();
@@ -616,32 +622,7 @@ public final class Shoostr implements Closeable {
       for (var extension : extensions) {
         extension.beforeStart();
       }
-      var dispatch =
-          new DispatchConfiguration(
-              Objects.requireNonNull(router),
-              exceptionHandlers,
-              statusHandlers,
-              beforeHandlers,
-              requestHeaderHandlers,
-              routeMatchedHandlers,
-              afterRouteHandlers,
-              beforeFlushHandlers,
-              afterFlushHandlers,
-              afterHandlers,
-              observationFactories,
-              routes.localObservers());
-      observationFactories.clear();
-      afterHandlers.clear();
-      beforeHandlers.clear();
-      requestHeaderHandlers.clear();
-      routeMatchedHandlers.clear();
-      afterRouteHandlers.clear();
-      beforeFlushHandlers.clear();
-      afterFlushHandlers.clear();
-      exceptionHandlers.clear();
-      statusHandlers.clear();
-
-      startServer(dispatch);
+      startServer();
       var boundConnector = Objects.requireNonNull(connector);
       shutdownHook = new Thread(this::shutdown, "web-shutdown-" + boundConnector.getLocalPort());
       Runtime.getRuntime().addShutdownHook(shutdownHook);
@@ -676,6 +657,10 @@ public final class Shoostr implements Closeable {
    * Drains and stops Jetty using its configured native timeouts, then interrupts remaining owned
    * virtual-thread tasks and removes the shutdown hook. Does not wait for application code that
    * ignores interruption. Repeated calls are harmless, including a call before startup.
+   * Caller-owned endpoint executors are never closed or interrupted. Unstarted selected requests
+   * are canceled after draining; running handlers may finish and release their resources after this
+   * method returns. The caller must coordinate their completion before closing supplied
+   * dependencies.
    *
    * @throws IOException if resources cannot be closed
    */
@@ -686,6 +671,9 @@ public final class Shoostr implements Closeable {
     }
 
     closed = true;
+    synchronized (pendingMatches) {
+      stoppingMatches = true;
+    }
     authentication = null;
     exceptionHandlers.clear();
     statusHandlers.clear();
@@ -733,6 +721,8 @@ public final class Shoostr implements Closeable {
         }
       }
 
+      failure = cancelPendingMatches(failure);
+
       removeShutdownHook();
       for (int index = extensions.size() - 1; index >= 0; index--) {
         try {
@@ -747,6 +737,28 @@ public final class Shoostr implements Closeable {
     if (failure != null) {
       throw failure;
     }
+  }
+
+  /**
+   * Cancels unstarted exchanges independently of executor queue wrappers, leaving workers alone.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException cancelPendingMatches(@Nullable IOException failure) {
+    List<ApplicationHandler.MatchedTask> pending;
+    synchronized (pendingMatches) {
+      pending = List.copyOf(pendingMatches);
+    }
+    for (var task : pending) {
+      try {
+        task.cancel();
+      } catch (RuntimeException cancellationFailure) {
+        failure =
+            appendCloseFailure(failure, "Could not cancel queued request", cancellationFailure);
+      }
+    }
+    return failure;
   }
 
   /**
@@ -785,11 +797,11 @@ public final class Shoostr implements Closeable {
    * Creates the configured transport and virtual-thread executor, installs dispatch, and binds the
    * listener. Fields retain each acquired resource so start's failure path can clean it up.
    *
-   * @param dispatch immutable registration snapshot used by all request handlers
    * @throws Exception if transport initialization or listener binding fails
    * @throws IllegalStateException if configuration closes Shoostr or changes its owned wiring
    */
-  private void startServer(DispatchConfiguration dispatch) throws Exception {
+  private void startServer() throws Exception {
+    var dispatch = DispatchConfiguration.capture(this);
     virtualThreads = Executors.newVirtualThreadPerTaskExecutor();
     var pool = new ProducerThreadPool();
     pool.setVirtualThreadsExecutor(virtualThreads);
@@ -1418,18 +1430,20 @@ public final class Shoostr implements Closeable {
       configureFlushHooks(request, response, null);
       Throwable terminalFailure = null;
       Throwable applicationFailure = null;
+      boolean delegated = false;
 
       try {
-        if (processRequest(
-            rawRequest, rawResponse, responseCallback, request, response, observation)) {
-          return true;
-        }
+        delegated =
+            processRequest(
+                rawRequest, rawResponse, responseCallback, request, response, observation);
       } catch (Throwable failure) {
         applicationFailure = flushFailure(failure);
         terminalFailure = recoverFailure(applicationFailure, request, response, observation);
       } finally {
-        finishRequest(
-            request, response, observation, callback, applicationFailure, terminalFailure);
+        if (!delegated) {
+          finishRequest(
+              request, response, observation, callback, applicationFailure, terminalFailure);
+        }
       }
 
       return true;
@@ -1584,7 +1598,7 @@ public final class Shoostr implements Closeable {
      * @param request live framework request
      * @param response live framework response
      * @param observation optional request observation
-     * @return whether preflight or WebSocket upgrade already completed the exchange
+     * @return whether a worker owns subsequent processing and finalization
      * @throws Exception if application callbacks or output fail
      */
     @SuppressWarnings("java:S112") // Handler callbacks may throw their own checked failures.
@@ -1599,19 +1613,251 @@ public final class Shoostr implements Closeable {
       if (prepareRequest(request, response, observation)) {
         response.preflight();
         response.complete();
-        return true;
+        return false;
       }
 
       var endpoint = matchEndpoint(rawRequest, request);
       if (endpoint == null) {
         handleUnmatched(request, response);
+      } else if (endpoint.executor() != null) {
+        submitMatched(endpoint, responseCallback, request, response, observation);
+        return true;
       } else if (handleMatched(
           endpoint, rawRequest, rawResponse, responseCallback, request, response, observation)) {
-        return true;
+        return false;
       }
 
       response.complete();
       return false;
+    }
+
+    /**
+     * Transfers matched ownership to a worker, reclaiming it for rejected-submission recovery.
+     *
+     * @param endpoint selected endpoint
+     * @param responseCallback native completion
+     * @param request live input
+     * @param response live output
+     * @param observation optional terminal observation
+     * @throws RuntimeException if submission is rejected before another owner claims the request
+     */
+    @SuppressWarnings("java:S1181") // Submission errors must reclaim and finalize the exchange too.
+    private void submitMatched(
+        RadixRoutes.Endpoint endpoint,
+        Callback responseCallback,
+        Request request,
+        Response response,
+        @Nullable Completion observation) {
+      request.route(endpoint);
+      if (observation != null && endpoint.behavior() != null) {
+        observation.localObservers = endpoint.behavior().observers();
+      }
+
+      if (observation != null) {
+        observation.closeScopes();
+      }
+
+      request.releaseOwnership();
+      var task = new MatchedTask(this, endpoint, request, response, responseCallback, observation);
+      boolean accepted;
+      synchronized (pendingMatches) {
+        accepted = !stoppingMatches;
+        if (accepted) {
+          pendingMatches.add(task);
+        }
+      }
+
+      try {
+        if (!accepted) {
+          throw new RejectedExecutionException("Application stopped");
+        }
+
+        Objects.requireNonNull(endpoint.executor()).execute(task);
+      } catch (RuntimeException | Error failure) {
+        if (!task.claim(false)) {
+          return;
+        }
+
+        task.discard(this);
+        request.acquireOwnership();
+        configureFlushHooks(request, response, endpoint.behavior());
+        if (observation != null) {
+          observation.attachScopes();
+        }
+
+        throw failure;
+      }
+    }
+
+    /**
+     * Removes a finalized task without acquiring the app monitor held during graceful shutdown.
+     *
+     * @param task finalized matched exchange
+     */
+    private void forgetTask(MatchedTask task) {
+      synchronized (pendingMatches) {
+        pendingMatches.remove(task);
+      }
+    }
+
+    /** One selected exchange; canceled queue tombstones retain no app or request references. */
+    private static final class MatchedTask implements Runnable {
+      private @Nullable ApplicationHandler owner;
+      private RadixRoutes.@Nullable Endpoint endpoint;
+      private @Nullable Request request;
+      private @Nullable Response response;
+      private @Nullable Callback callback;
+      private @Nullable Completion observation;
+      private @Nullable Thread admission;
+      private boolean claimed;
+
+      /**
+       * Retains the exchange only until worker processing or queued cancellation finishes.
+       *
+       * @param owner dispatch implementation for this exchange
+       * @param endpoint selected endpoint
+       * @param request ownership-released input
+       * @param response paired output
+       * @param callback native completion
+       * @param observation optional terminal observation
+       */
+      private MatchedTask(
+          ApplicationHandler owner,
+          RadixRoutes.Endpoint endpoint,
+          Request request,
+          Response response,
+          Callback callback,
+          @Nullable Completion observation) {
+        this.owner = owner;
+        this.endpoint = endpoint;
+        this.request = request;
+        this.response = response;
+        this.callback = callback;
+        this.observation = observation;
+        this.admission = Thread.currentThread();
+      }
+
+      /**
+       * Runs the entire matched lifecycle, including mapped failures and finalization.
+       *
+       * @throws RejectedExecutionException if the executor runs work on the submitting thread
+       */
+      @Override
+      @SuppressWarnings("java:S1181") // Every exchange must finalize fatal application failures.
+      public void run() {
+        if (!claim(true)) {
+          return;
+        }
+
+        var activeOwner = Objects.requireNonNull(owner);
+        var selectedEndpoint = Objects.requireNonNull(endpoint);
+        var activeRequest = Objects.requireNonNull(request);
+        var activeResponse = Objects.requireNonNull(response);
+        var completionCallback = Objects.requireNonNull(callback);
+        var activeObservation = observation;
+        activeRequest.acquireOwnership();
+        Throwable applicationFailure = null;
+        Throwable terminalFailure = null;
+
+        try {
+          if (activeObservation != null) {
+            activeObservation.attachScopes();
+          }
+
+          if (!activeOwner.handleMatched(
+              selectedEndpoint,
+              activeRequest.nativeRequest(),
+              activeResponse.nativeResponse(),
+              completionCallback,
+              activeRequest,
+              activeResponse,
+              activeObservation)) {
+            activeResponse.complete();
+          }
+        } catch (Throwable failure) {
+          applicationFailure = flushFailure(failure);
+          terminalFailure =
+              activeOwner.recoverFailure(
+                  applicationFailure, activeRequest, activeResponse, activeObservation);
+        } finally {
+          try {
+            activeOwner.finishRequest(
+                activeRequest,
+                activeResponse,
+                activeObservation,
+                completionCallback,
+                applicationFailure,
+                terminalFailure);
+          } finally {
+            discard(activeOwner);
+          }
+        }
+      }
+
+      /** Cancels only unstarted work, never interrupting a borrowed executor's running worker. */
+      private void cancel() {
+        if (!claim(false)) {
+          return;
+        }
+
+        var activeOwner = Objects.requireNonNull(owner);
+        var activeRequest = Objects.requireNonNull(request);
+        var activeResponse = Objects.requireNonNull(response);
+        var completionCallback = Objects.requireNonNull(callback);
+        var activeObservation = observation;
+        activeRequest.acquireOwnership();
+        var failure = new RejectedExecutionException("Application stopped");
+
+        try {
+          activeResponse.fail();
+          activeOwner.finishRequest(
+              activeRequest,
+              activeResponse,
+              activeObservation,
+              completionCallback,
+              failure,
+              failure);
+        } finally {
+          discard(activeOwner);
+        }
+      }
+
+      /**
+       * Selects one worker or cancellation owner without a second per-request atomic object.
+       *
+       * @param running whether this is an executor invocation rather than cancellation or recovery
+       * @return whether this invocation owns processing
+       * @throws RejectedExecutionException if work runs inline on the submitting thread
+       */
+      private synchronized boolean claim(boolean running) {
+        if (claimed) {
+          return false;
+        }
+
+        if (running && Thread.currentThread() == admission) {
+          throw new RejectedExecutionException(
+              "Endpoint executor must not run on the submitting thread");
+        }
+
+        claimed = true;
+        return true;
+      }
+
+      /**
+       * Releases all framework references even if an executor retains a canceled queue wrapper.
+       *
+       * @param owner dispatch implementation whose task registry must release this exchange
+       */
+      private synchronized void discard(ApplicationHandler owner) {
+        owner.forgetTask(this);
+        this.owner = null;
+        endpoint = null;
+        request = null;
+        response = null;
+        callback = null;
+        observation = null;
+        admission = null;
+      }
     }
 
     /**
@@ -1937,6 +2183,40 @@ public final class Shoostr implements Closeable {
       observers = List.copyOf(observers);
       instrumentation = List.copyOf(instrumentation);
     }
+
+    /**
+     * Freezes registrations before native startup and releases their mutable construction state.
+     *
+     * @param app application whose registrations have finished
+     * @return immutable request-dispatch configuration
+     */
+    private static DispatchConfiguration capture(Shoostr app) {
+      var dispatch =
+          new DispatchConfiguration(
+              Objects.requireNonNull(app.router),
+              app.exceptionHandlers,
+              app.statusHandlers,
+              app.beforeHandlers,
+              app.requestHeaderHandlers,
+              app.routeMatchedHandlers,
+              app.afterRouteHandlers,
+              app.beforeFlushHandlers,
+              app.afterFlushHandlers,
+              app.afterHandlers,
+              app.observationFactories,
+              app.routes.localObservers());
+      app.observationFactories.clear();
+      app.afterHandlers.clear();
+      app.beforeHandlers.clear();
+      app.requestHeaderHandlers.clear();
+      app.routeMatchedHandlers.clear();
+      app.afterRouteHandlers.clear();
+      app.beforeFlushHandlers.clear();
+      app.afterFlushHandlers.clear();
+      app.exceptionHandlers.clear();
+      app.statusHandlers.clear();
+      return dispatch;
+    }
   }
 
   /**
@@ -1948,6 +2228,8 @@ public final class Shoostr implements Closeable {
     private final List<Consumer<RequestOutcome>> observers;
     private List<Consumer<RequestOutcome>> localObservers;
     private final List<RequestObservation> scopes;
+    private @Nullable List<AutoCloseable> attachedScopes;
+    private boolean scopesClosed;
     private @Nullable String routePattern;
     private int status;
     private @Nullable Throwable transportFailure;
@@ -1989,10 +2271,49 @@ public final class Shoostr implements Closeable {
 
     /** Closes context scopes on the invocation thread in reverse nesting order. */
     private void closeScopes() {
-      for (int index = scopes.size() - 1; index >= 0; index--) {
+      if (attachedScopes != null) {
+        closeScopes(attachedScopes);
+        attachedScopes = null;
+      }
+
+      if (!scopesClosed) {
+        scopesClosed = true;
+        closeScopes(scopes);
+      }
+    }
+
+    /** Attaches explicitly retained context only after admission scope restoration. */
+    private void attachScopes() {
+      if (scopes.isEmpty()) {
+        return;
+      }
+
+      var attached = new ArrayList<AutoCloseable>(scopes.size());
+      attachedScopes = attached;
+      for (var scope : scopes) {
         try {
-          scopes.get(index).close();
+          attached.add(Objects.requireNonNull(scope.attach()));
         } catch (RuntimeException failure) {
+          System.getLogger(Shoostr.class.getName())
+              .log(System.Logger.Level.ERROR, "Request instrumentation attachment failed", failure);
+        }
+      }
+    }
+
+    /**
+     * Restores context in reverse nesting order without suppressing later normal cleanup.
+     *
+     * @param activeScopes scopes belonging to the calling thread
+     */
+    private void closeScopes(List<? extends AutoCloseable> activeScopes) {
+      for (int index = activeScopes.size() - 1; index >= 0; index--) {
+        try {
+          activeScopes.get(index).close();
+        } catch (Exception failure) {
+          if (failure instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+          }
+
           System.getLogger(Shoostr.class.getName())
               .log(
                   System.Logger.Level.ERROR,

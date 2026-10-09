@@ -64,7 +64,10 @@ public final class Request {
   private final int maxParameters;
   private final MultipartOptions multipartOptions;
   private final List<Upload> uploads;
-  private final Thread owner;
+
+  @SuppressWarnings("java:S3077") // Identity token only; the referenced Thread state is never used.
+  private volatile @Nullable Thread owner;
+
   private final HttpFields nativeHeaders;
   private final Map<String, List<String>> cookies;
 
@@ -155,6 +158,34 @@ public final class Request {
    */
   Response response() {
     return response;
+  }
+
+  /** Releases access before publishing the exchange to a worker. */
+  void releaseOwnership() {
+    check();
+    owner = null;
+  }
+
+  /**
+   * Acquires a released exchange after exclusive worker/cancellation selection.
+   *
+   * @throws IllegalStateException if ownership was not released or the request has finished
+   */
+  void acquireOwnership() {
+    if (owner != null || finished) {
+      throw new IllegalStateException("Request ownership was not released");
+    }
+
+    owner = Thread.currentThread();
+  }
+
+  /**
+   * Shares the request's single ownership reference with its paired response.
+   *
+   * @return whether the calling thread currently owns this exchange
+   */
+  boolean ownedByCurrentThread() {
+    return Thread.currentThread() == owner;
   }
 
   /**
