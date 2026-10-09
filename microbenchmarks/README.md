@@ -13,8 +13,13 @@ dispatcher and Jetty `LocalConnector`. Tiny bytes, a small parameter route, and 
 HTTP parsing, scheduling, matched lifecycle, response serialization and request cleanup, but exclude
 sockets and k6. They are microseconds/exchange, not nanoseconds of isolated router lookup.
 
-Models A/B/C/D match the internal threading campaign; `inactive` is A with an installed but unused
-worker pool. It must not be described as selected-endpoint handoff cost. Three forks, native
+Models A/B/C/D reuse the internal campaign configurations; `inactive` is A with an installed but unused
+worker pool. LocalConnector does not reproduce network adaptive dispatch: native recordings show
+A on virtual threads, B/C on transport platform threads, and D on selected platform workers.
+Inactive uses A's virtual fixture wiring; it has no separate retained profile.
+B's configured virtual consumer is not used on this local path. This cannot establish a B/C
+virtual-versus-platform consumer difference or the HTTP virtual-to-platform handoff cost.
+Inactive must not be described as selected-endpoint handoff cost. Three forks, native
 `-prof gc` bytes/op and timing are measured together; JFR runs are separate with unique fork files.
 The Actions threading campaign additionally rebuilds the pinned original core with the same JDK
 to measure default-path changes independently of the threading-model choice.
@@ -44,9 +49,10 @@ on one AMD EPYC 9V45 hosted runner; affinity is not exclusive CPU reservation.
 | Inactive | 21.603 ± 0.395 | 15,756 | 21.902 ± 0.546 | 2,097 ± 41 |
 | Original core A | 21.455 ± 0.268 | 15,767 | 22.007 ± 0.615 | 2,033 ± 64 |
 
-Errors are native JMH 99.9% confidence intervals, not HTTP percentiles. B adds about
+Errors are native JMH 99.9% confidence intervals, not HTTP percentiles. On the local path B adds about
 12.7 µs to the contained tiny exchange versus A; D adds another 13.9 µs versus B and
-about 1.7 KiB/exchange. CPU-work intervals overlap: no demonstrated CPU speedup.
+about 1.7 KiB/exchange. D's local transfer is platform-to-platform, not the virtual-to-platform
+transfer tested by live HTTP. CPU-work intervals overlap: no demonstrated CPU speedup.
 Inactive is about 0.9 µs above A, but near the original-core control; neither this
 sequential comparison nor allocation profiler noise establishes exactly zero inactive cost.
 
