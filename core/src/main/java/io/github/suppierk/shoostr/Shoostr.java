@@ -54,8 +54,8 @@ public final class Shoostr implements Closeable {
   private static final String WEBSOCKET_PROTOCOL = "websocket";
 
   private final Options options;
-  private final @Nullable ExecutionSettings execution;
   private final Set<ApplicationHandler.MatchedTask> pendingMatches;
+  private boolean stoppingMatches;
   private final Routes routes;
   private final List<Extension<?>> extensions;
   private @Nullable AuthenticationExtension authentication;
@@ -98,18 +98,7 @@ public final class Shoostr implements Closeable {
    * @param options server configuration
    */
   public Shoostr(Options options) {
-    this(options, null);
-  }
-
-  /**
-   * Accepts internal benchmark wiring without exposing an unproven public execution interface.
-   *
-   * @param options server configuration
-   * @param execution experiment settings, or null for the unchanged transport wiring
-   */
-  Shoostr(Options options, @Nullable ExecutionSettings execution) {
     this.options = Objects.requireNonNull(options);
-    this.execution = execution;
     pendingMatches = new HashSet<>();
     routes = new Routes();
     extensions = new ArrayList<>();
@@ -668,6 +657,10 @@ public final class Shoostr implements Closeable {
    * Drains and stops Jetty using its configured native timeouts, then interrupts remaining owned
    * virtual-thread tasks and removes the shutdown hook. Does not wait for application code that
    * ignores interruption. Repeated calls are harmless, including a call before startup.
+   * Caller-owned endpoint executors are never closed or interrupted. Unstarted selected requests
+   * are canceled after draining; running handlers may finish and release their resources after this
+   * method returns. The caller must coordinate their completion before closing supplied
+   * dependencies.
    *
    * @throws IOException if resources cannot be closed
    */
@@ -678,6 +671,9 @@ public final class Shoostr implements Closeable {
     }
 
     closed = true;
+    synchronized (pendingMatches) {
+      stoppingMatches = true;
+    }
     authentication = null;
     exceptionHandlers.clear();
     statusHandlers.clear();
@@ -725,7 +721,7 @@ public final class Shoostr implements Closeable {
         }
       }
 
-      failure = closePlatformExecutor(failure);
+      failure = cancelPendingMatches(failure);
 
       removeShutdownHook();
       for (int index = extensions.size() - 1; index >= 0; index--) {
@@ -744,29 +740,25 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Interrupts accepted workers and cancels pending exchanges independently of queue wrappers.
+   * Cancels unstarted exchanges independently of executor queue wrappers, leaving workers alone.
    *
    * @param failure earlier shutdown failure, or null
    * @return accumulated shutdown failure, or null
    */
-  private @Nullable IOException closePlatformExecutor(@Nullable IOException failure) {
-    if (execution == null || execution.platformWorkers() == null) {
-      return failure;
+  private @Nullable IOException cancelPendingMatches(@Nullable IOException failure) {
+    List<ApplicationHandler.MatchedTask> pending;
+    synchronized (pendingMatches) {
+      pending = List.copyOf(pendingMatches);
     }
-
-    try {
-      execution.platformWorkers().shutdownNow();
-      List<ApplicationHandler.MatchedTask> pending;
-      synchronized (pendingMatches) {
-        pending = List.copyOf(pendingMatches);
-      }
-      for (var task : pending) {
+    for (var task : pending) {
+      try {
         task.cancel();
+      } catch (RuntimeException cancellationFailure) {
+        failure =
+            appendCloseFailure(failure, "Could not cancel queued request", cancellationFailure);
       }
-      return failure;
-    } catch (RuntimeException executorFailure) {
-      return appendCloseFailure(failure, "Could not close platform executor", executorFailure);
     }
+    return failure;
   }
 
   /**
@@ -811,7 +803,9 @@ public final class Shoostr implements Closeable {
   private void startServer() throws Exception {
     var dispatch = DispatchConfiguration.capture(this);
     virtualThreads = Executors.newVirtualThreadPerTaskExecutor();
-    server = ExecutionSettings.createServer(execution, virtualThreads);
+    var pool = new ProducerThreadPool();
+    pool.setVirtualThreadsExecutor(virtualThreads);
+    server = new Server(pool);
     server.setStopTimeout(DEFAULT_STOP_TIMEOUT_MILLIS);
     var proxy = trustedProxy;
     var cors = corsPolicy;
@@ -1625,7 +1619,7 @@ public final class Shoostr implements Closeable {
       var endpoint = matchEndpoint(rawRequest, request);
       if (endpoint == null) {
         handleUnmatched(request, response);
-      } else if (execution != null && execution.platformPaths().contains(endpoint.routePattern())) {
+      } else if (endpoint.executor() != null) {
         submitMatched(endpoint, responseCallback, request, response, observation);
         return true;
       } else if (handleMatched(
@@ -1663,18 +1657,27 @@ public final class Shoostr implements Closeable {
       }
 
       request.releaseOwnership();
-      var task = new MatchedTask(endpoint, request, response, responseCallback, observation);
+      var task = new MatchedTask(this, endpoint, request, response, responseCallback, observation);
+      boolean accepted;
       synchronized (pendingMatches) {
-        pendingMatches.add(task);
+        accepted = !stoppingMatches;
+        if (accepted) {
+          pendingMatches.add(task);
+        }
       }
 
       try {
-        Objects.requireNonNull(Objects.requireNonNull(execution).platformWorkers()).execute(task);
-      } catch (RuntimeException failure) {
-        if (!task.claim()) {
+        if (!accepted) {
+          throw new RejectedExecutionException("Application stopped");
+        }
+
+        Objects.requireNonNull(endpoint.executor()).execute(task);
+      } catch (RuntimeException | Error failure) {
+        if (!task.claim(false)) {
           return;
         }
 
+        task.discard(this);
         request.acquireOwnership();
         configureFlushHooks(request, response, endpoint.behavior());
         if (observation != null) {
@@ -1685,19 +1688,32 @@ public final class Shoostr implements Closeable {
       }
     }
 
-    /** One selected exchange with exclusive processing/cancellation and exactly-once cleanup. */
-    private final class MatchedTask implements Runnable {
-      private final RadixRoutes.Endpoint endpoint;
-      private final Request request;
-      private final Response response;
-      private final Callback callback;
-      private final @Nullable Completion observation;
-      private final Thread admission;
+    /**
+     * Removes a finalized task without acquiring the app monitor held during graceful shutdown.
+     *
+     * @param task finalized matched exchange
+     */
+    private void forgetTask(MatchedTask task) {
+      synchronized (pendingMatches) {
+        pendingMatches.remove(task);
+      }
+    }
+
+    /** One selected exchange; canceled queue tombstones retain no app or request references. */
+    private static final class MatchedTask implements Runnable {
+      private @Nullable ApplicationHandler owner;
+      private RadixRoutes.@Nullable Endpoint endpoint;
+      private @Nullable Request request;
+      private @Nullable Response response;
+      private @Nullable Callback callback;
+      private @Nullable Completion observation;
+      private @Nullable Thread admission;
       private boolean claimed;
 
       /**
        * Retains the exchange only until worker processing or queued cancellation finishes.
        *
+       * @param owner dispatch implementation for this exchange
        * @param endpoint selected endpoint
        * @param request ownership-released input
        * @param response paired output
@@ -1705,11 +1721,13 @@ public final class Shoostr implements Closeable {
        * @param observation optional terminal observation
        */
       private MatchedTask(
+          ApplicationHandler owner,
           RadixRoutes.Endpoint endpoint,
           Request request,
           Response response,
           Callback callback,
           @Nullable Completion observation) {
+        this.owner = owner;
         this.endpoint = endpoint;
         this.request = request;
         this.response = response;
@@ -1726,29 +1744,26 @@ public final class Shoostr implements Closeable {
       @Override
       @SuppressWarnings("java:S1181") // Every exchange must finalize fatal application failures.
       public void run() {
-        if (Thread.currentThread() == admission) {
-          throw new RejectedExecutionException(
-              "Platform executor must not run on the submitting thread");
-        }
-
-        if (!claim()) {
+        if (!claim(true)) {
           return;
         }
 
+        var owner = Objects.requireNonNull(this.owner);
+        var endpoint = Objects.requireNonNull(this.endpoint);
+        var request = Objects.requireNonNull(this.request);
+        var response = Objects.requireNonNull(this.response);
+        var callback = Objects.requireNonNull(this.callback);
+        var observation = this.observation;
         request.acquireOwnership();
         Throwable applicationFailure = null;
         Throwable terminalFailure = null;
 
         try {
-          if (Thread.currentThread().isVirtual()) {
-            throw new IllegalStateException("Platform executor must use platform workers");
-          }
-
           if (observation != null) {
             observation.attachScopes();
           }
 
-          if (!handleMatched(
+          if (!owner.handleMatched(
               endpoint,
               request.nativeRequest(),
               response.nativeResponse(),
@@ -1760,40 +1775,75 @@ public final class Shoostr implements Closeable {
           }
         } catch (Throwable failure) {
           applicationFailure = flushFailure(failure);
-          terminalFailure = recoverFailure(applicationFailure, request, response, observation);
+          terminalFailure =
+              owner.recoverFailure(applicationFailure, request, response, observation);
         } finally {
-          finishRequest(
-              request, response, observation, callback, applicationFailure, terminalFailure);
+          try {
+            owner.finishRequest(
+                request, response, observation, callback, applicationFailure, terminalFailure);
+          } finally {
+            discard(owner);
+          }
         }
       }
 
-      /** Cancels queued work returned by owned-executor shutdown without invoking an endpoint. */
+      /** Cancels only unstarted work, never interrupting a borrowed executor's running worker. */
       private void cancel() {
-        if (!claim()) {
+        if (!claim(false)) {
           return;
         }
 
+        var owner = Objects.requireNonNull(this.owner);
+        var request = Objects.requireNonNull(this.request);
+        var response = Objects.requireNonNull(this.response);
+        var callback = Objects.requireNonNull(this.callback);
+        var observation = this.observation;
         request.acquireOwnership();
         var failure = new RejectedExecutionException("Application stopped");
-        response.fail();
-        finishRequest(request, response, observation, callback, failure, failure);
+
+        try {
+          response.fail();
+          owner.finishRequest(request, response, observation, callback, failure, failure);
+        } finally {
+          discard(owner);
+        }
       }
 
       /**
        * Selects one worker or cancellation owner without a second per-request atomic object.
        *
+       * @param running whether this is an executor invocation rather than cancellation or recovery
        * @return whether this invocation owns processing
+       * @throws RejectedExecutionException if work runs inline on the submitting thread
        */
-      private synchronized boolean claim() {
+      private synchronized boolean claim(boolean running) {
         if (claimed) {
           return false;
         }
 
-        claimed = true;
-        synchronized (pendingMatches) {
-          pendingMatches.remove(this);
+        if (running && Thread.currentThread() == admission) {
+          throw new RejectedExecutionException(
+              "Endpoint executor must not run on the submitting thread");
         }
+
+        claimed = true;
         return true;
+      }
+
+      /**
+       * Releases all framework references even if an executor retains a canceled queue wrapper.
+       *
+       * @param owner dispatch implementation whose task registry must release this exchange
+       */
+      private synchronized void discard(ApplicationHandler owner) {
+        owner.forgetTask(this);
+        this.owner = null;
+        endpoint = null;
+        request = null;
+        response = null;
+        callback = null;
+        observation = null;
+        admission = null;
       }
     }
 

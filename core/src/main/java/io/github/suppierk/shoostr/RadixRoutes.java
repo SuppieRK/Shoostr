@@ -14,6 +14,8 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.TreeMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.function.BiFunction;
 import java.util.regex.Pattern;
 import org.eclipse.jetty.websocket.api.Session;
@@ -1356,7 +1358,8 @@ class RadixRoutes {
       int firstParameterOffset,
       int firstParameterSegment,
       @Nullable BiFunction<Request, ServerUpgradeResponse, Session.Listener> websocketFactory,
-      @Nullable EndpointBehavior behavior) {
+      @Nullable EndpointBehavior behavior,
+      @Nullable ExecutorService executor) {
     /**
      * Creates an ordinary endpoint without local runtime behavior.
      *
@@ -1387,6 +1390,7 @@ class RadixRoutes {
           firstParameterOffset,
           firstParameterSegment,
           websocketFactory,
+          null,
           null);
     }
 
@@ -1402,6 +1406,7 @@ class RadixRoutes {
      * @param firstParameterSegment segment index of the first parameter, or zero for literal routes
      * @param websocketFactory per-upgrade listener factory, or null for ordinary HTTP routes
      * @param behavior immutable local runtime behavior, or null
+     * @param executor borrowed matched-lifecycle executor, or null for default execution
      * @throws IllegalArgumentException if the first parameter position is invalid
      */
     Endpoint {
@@ -1409,6 +1414,20 @@ class RadixRoutes {
       Objects.requireNonNull(pattern);
       Objects.requireNonNull(routePattern);
       Objects.requireNonNull(handler);
+      if (executor != null && executor.isShutdown()) {
+        throw new IllegalArgumentException("Endpoint executor must be usable");
+      }
+
+      if (executor instanceof ThreadPoolExecutor pool) {
+        var rejection = pool.getRejectedExecutionHandler().getClass();
+        if (rejection == ThreadPoolExecutor.CallerRunsPolicy.class
+            || rejection == ThreadPoolExecutor.DiscardPolicy.class
+            || rejection == ThreadPoolExecutor.DiscardOldestPolicy.class) {
+          throw new IllegalArgumentException(
+              "Endpoint executor must reject without fallback or discard");
+        }
+      }
+
       parameters = Map.copyOf(parameters);
       boolean literal = parameters.isEmpty();
       if (firstParameterOffset < -1
@@ -1437,7 +1456,30 @@ class RadixRoutes {
               firstParameterOffset,
               firstParameterSegment,
               websocketFactory,
-              behavior);
+              behavior,
+              executor);
+    }
+
+    /**
+     * Selects a borrowed executor while preserving the endpoint's route and behavior.
+     *
+     * @param executor selected executor, or null for default execution
+     * @return this endpoint when no executor is selected, otherwise its enriched copy
+     */
+    Endpoint withExecutor(@Nullable ExecutorService executor) {
+      return executor == null
+          ? this
+          : new Endpoint(
+              method,
+              pattern,
+              routePattern,
+              handler,
+              parameters,
+              firstParameterOffset,
+              firstParameterSegment,
+              websocketFactory,
+              behavior,
+              executor);
     }
 
     /**

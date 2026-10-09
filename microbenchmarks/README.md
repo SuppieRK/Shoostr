@@ -5,65 +5,6 @@ retired during the migration of end-to-end diagnostics to
 [GitHub Actions](../.github/benchmarks/README.md). New JMH results are ignored by
 Git; retain or copy them when sharing evidence.
 
-## Endpoint execution
-
-`EndpointExecutionBenchmark` uses identical fixtures from `:benchmarks` through the production
-dispatcher and Jetty `LocalConnector`. Tiny bytes, a small parameter route, and deterministic
-4 MiB SHA-256 work each consume complete response output. The measurements include native local
-HTTP parsing, scheduling, matched lifecycle, response serialization and request cleanup, but exclude
-sockets and k6. They are microseconds/exchange, not nanoseconds of isolated router lookup.
-
-Models A/B/C/D reuse the internal campaign configurations; `inactive` is A with an installed but unused
-worker pool. LocalConnector does not reproduce network adaptive dispatch: native recordings show
-A on virtual threads, B/C on transport platform threads, and D on selected platform workers.
-Inactive uses A's virtual fixture wiring; it has no separate retained profile.
-B's configured virtual consumer is not used on this local path. This cannot establish a B/C
-virtual-versus-platform consumer difference or the HTTP virtual-to-platform handoff cost.
-Inactive must not be described as selected-endpoint handoff cost. Three forks, native
-`-prof gc` bytes/op and timing are measured together; JFR runs are separate with unique fork files.
-The Actions threading campaign additionally rebuilds the pinned original core with the same JDK
-to measure default-path changes independently of the threading-model choice.
-
-```sh
-cmdshape ./gradlew :microbenchmarks:installDist
-cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks EndpointExecutionBenchmark -f 3 -wi 5 -i 5 -w 2s -r 2s -prof gc -foe true -rf json -rff benchmark-results/endpoint-execution.json
-```
-
-These fixtures expose no supported public execution configuration. Blocking I/O and mixed traffic
-are measured by k6 against complete HTTP responses, not substituted with task-submission timing.
-
-### Contained result checkpoint
-
-[Campaign 37884898672](https://github.com/SuppieRK/Shoostr/actions/runs/37884898672),
-source `a28e9a8`, completed all 15 candidate cases, three original-core controls and 12
-separate JFR forks. Native JSON retains three forks with five measured iterations each.
-Temurin 25.0.4.1+1, Jetty 12.1.14, G1, 256 MiB fixed heap and two JVM-visible logical CPUs
-on one AMD EPYC 9V45 hosted runner; affinity is not exclusive CPU reservation.
-
-| Model | Tiny µs/exchange | Tiny bytes/exchange | Parameter route µs/exchange | CPU µs/exchange |
-|---|---:|---:|---:|---:|
-| A | 20.670 ± 0.440 | 15,737 | 21.167 ± 0.893 | 2,078 ± 40 |
-| B | 33.402 ± 0.471 | 15,316 | 32.982 ± 0.353 | 2,121 ± 45 |
-| C | 33.131 ± 0.298 | 15,281 | 33.296 ± 0.305 | 2,086 ± 41 |
-| D | 47.302 ± 0.495 | 16,995 | 46.849 ± 0.872 | 2,117 ± 38 |
-| Inactive | 21.603 ± 0.395 | 15,756 | 21.902 ± 0.546 | 2,097 ± 41 |
-| Original core A | 21.455 ± 0.268 | 15,767 | 22.007 ± 0.615 | 2,033 ± 64 |
-
-Errors are native JMH 99.9% confidence intervals, not HTTP percentiles. On the local path B adds about
-12.7 µs to the contained tiny exchange versus A; D adds another 13.9 µs versus B and
-about 1.7 KiB/exchange. D's local transfer is platform-to-platform, not the virtual-to-platform
-transfer tested by live HTTP. CPU-work intervals overlap: no demonstrated CPU speedup.
-Inactive is about 0.9 µs above A, but near the original-core control; neither this
-sequential comparison nor allocation profiler noise establishes exactly zero inactive cost.
-
-Profiles include startup and warmup, unlike HTTP profiles. Their sampled allocation
-shares include LocalConnector buffer/response accumulation, not just Shoostr objects.
-CPU-time samples have substantial bias/loss (A CPU: 1,896 biased of 2,014 successful;
-D tiny: 1,777 lost versus 567 successful). Preserve these native statistics; do not
-claim precise CPU percentages or compare profile-run timing with unprofiled timing.
-GC bytes/op is allocation, not retained heap. These contained results alone do not
-select a production transport, endpoint option or default; complete HTTP evidence is required.
-
 ## Extension dispatch
 
 `ExtensionRequestBenchmark` runs complete HTTP/1.1 exchanges through Jetty's `LocalConnector` and

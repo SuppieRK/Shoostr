@@ -12,6 +12,7 @@ import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
 import java.util.function.BiFunction;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -25,6 +26,15 @@ import org.jspecify.annotations.Nullable;
  * Thread-safe route registration with shared path scopes closed when the app starts. Concurrent
  * registrations are serialized by the shared lock; literal segments take matching precedence.
  * Closing any scope ends registration for the entire app; it does not stop the running server.
+ * Endpoint overloads accept caller-owned executors for the matched lifecycle. Executors must run
+ * accepted tasks asynchronously or throw on rejection, never silently discard or run on the caller.
+ * Registration rejects shutdown executors and inspectable thread pools using the standard
+ * caller-runs, discard or discard-oldest policy classes. Custom policies (including subclasses) and
+ * executor wrappers must honor the same contract. Shoostr never shuts these executors down or
+ * interrupts their running workers. The caller must keep them usable until the app has closed and
+ * its running handlers have finished. Default registrations retain virtual-thread execution.
+ * Request observation context is explicitly attached; arbitrary thread-local state and
+ * application-created child tasks are not propagated.
  */
 public final class Routes implements Closeable {
   static final String EMPTY_PATH = "";
@@ -242,6 +252,712 @@ public final class Routes implements Closeable {
     } else {
       activeGroupDepth.set(previousDepth);
     }
+  }
+
+  /**
+   * Registers GET on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes get(String path, ExecutorService executor, Handler handler) {
+    return registerRoute(HttpMethods.GET, path, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers GET on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes get(
+      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.GET,
+        path,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers GET on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes get(ExecutorService executor, Handler handler) {
+    return registerRoute(
+        HttpMethods.GET, EMPTY_PATH, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers GET on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes get(ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.GET,
+        EMPTY_PATH,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers POST on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes post(String path, ExecutorService executor, Handler handler) {
+    return registerRoute(HttpMethods.POST, path, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers POST on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes post(
+      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.POST,
+        path,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers POST on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes post(ExecutorService executor, Handler handler) {
+    return registerRoute(
+        HttpMethods.POST, EMPTY_PATH, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers POST on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes post(
+      ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.POST,
+        EMPTY_PATH,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers PUT on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes put(String path, ExecutorService executor, Handler handler) {
+    return registerRoute(HttpMethods.PUT, path, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers PUT on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes put(
+      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.PUT,
+        path,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers PUT on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes put(ExecutorService executor, Handler handler) {
+    return registerRoute(
+        HttpMethods.PUT, EMPTY_PATH, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers PUT on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes put(ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.PUT,
+        EMPTY_PATH,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers PATCH on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes patch(String path, ExecutorService executor, Handler handler) {
+    return registerRoute(HttpMethods.PATCH, path, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers PATCH on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes patch(
+      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.PATCH,
+        path,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers PATCH on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes patch(ExecutorService executor, Handler handler) {
+    return registerRoute(
+        HttpMethods.PATCH, EMPTY_PATH, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers PATCH on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes patch(
+      ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.PATCH,
+        EMPTY_PATH,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers DELETE on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes delete(String path, ExecutorService executor, Handler handler) {
+    return registerRoute(HttpMethods.DELETE, path, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers DELETE on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes delete(
+      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.DELETE,
+        path,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers DELETE on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes delete(ExecutorService executor, Handler handler) {
+    return registerRoute(
+        HttpMethods.DELETE, EMPTY_PATH, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers DELETE on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes delete(
+      ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.DELETE,
+        EMPTY_PATH,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers HEAD on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes head(String path, ExecutorService executor, Handler handler) {
+    return registerRoute(HttpMethods.HEAD, path, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers HEAD on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes head(
+      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.HEAD,
+        path,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers HEAD on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes head(ExecutorService executor, Handler handler) {
+    return registerRoute(
+        HttpMethods.HEAD, EMPTY_PATH, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers HEAD on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes head(
+      ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.HEAD,
+        EMPTY_PATH,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers OPTIONS on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes options(String path, ExecutorService executor, Handler handler) {
+    return registerRoute(
+        HttpMethods.OPTIONS, path, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers OPTIONS on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes options(
+      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.OPTIONS,
+        path,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers OPTIONS on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes options(ExecutorService executor, Handler handler) {
+    return registerRoute(
+        HttpMethods.OPTIONS, EMPTY_PATH, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers OPTIONS on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes options(
+      ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerRoute(
+        HttpMethods.OPTIONS,
+        EMPTY_PATH,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers an event stream on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes sse(String path, ExecutorService executor, Handler handler) {
+    return registerSse(path, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers an event stream on a caller-owned executor beneath this scope.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes sse(
+      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerSse(
+        path, Objects.requireNonNull(executor), handler, Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers an event stream on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes sse(ExecutorService executor, Handler handler) {
+    return registerSse(EMPTY_PATH, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers an event stream on a caller-owned executor at this scope's endpoint.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes sse(ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+    return registerSse(
+        EMPTY_PATH,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers a WebSocket handshake on a caller-owned executor beneath this scope. Later listener
+   * callbacks retain their native execution contract.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param listenerFactory per-connection listener factory
+   * @return this scope
+   */
+  public Routes websocket(
+      String path,
+      ExecutorService executor,
+      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory) {
+    return registerWebsocket(path, Objects.requireNonNull(executor), listenerFactory, null);
+  }
+
+  /**
+   * Registers a WebSocket handshake on a caller-owned executor beneath this scope. Later listener
+   * callbacks retain their native execution contract.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param listenerFactory per-connection listener factory
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      String path,
+      ExecutorService executor,
+      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
+      Consumer<Extensions> configuration) {
+    return registerWebsocket(
+        path,
+        Objects.requireNonNull(executor),
+        listenerFactory,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers a WebSocket handshake on a caller-owned executor at this scope's endpoint. Later
+   * listener callbacks retain their native execution contract.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param listenerFactory per-connection listener factory
+   * @return this scope
+   */
+  public Routes websocket(
+      ExecutorService executor,
+      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory) {
+    return registerWebsocket(EMPTY_PATH, Objects.requireNonNull(executor), listenerFactory, null);
+  }
+
+  /**
+   * Registers a WebSocket handshake on a caller-owned executor at this scope's endpoint. Later
+   * listener callbacks retain their native execution contract.
+   *
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param listenerFactory per-connection listener factory
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      ExecutorService executor,
+      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
+      Consumer<Extensions> configuration) {
+    return registerWebsocket(
+        EMPTY_PATH,
+        Objects.requireNonNull(executor),
+        listenerFactory,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers an HTTP endpoint on a caller-owned executor beneath this scope.
+   *
+   * @param method HTTP method
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes route(HttpMethods method, String path, ExecutorService executor, Handler handler) {
+    return registerRoute(method, path, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers an HTTP endpoint on a caller-owned executor beneath this scope.
+   *
+   * @param method HTTP method
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes route(
+      HttpMethods method,
+      String path,
+      ExecutorService executor,
+      Handler handler,
+      Consumer<Extensions> configuration) {
+    return registerRoute(
+        method,
+        path,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers an HTTP endpoint on a caller-owned executor at this scope's endpoint.
+   *
+   * @param method HTTP method
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes route(HttpMethods method, ExecutorService executor, Handler handler) {
+    return registerRoute(method, EMPTY_PATH, Objects.requireNonNull(executor), handler, null);
+  }
+
+  /**
+   * Registers an HTTP endpoint on a caller-owned executor at this scope's endpoint.
+   *
+   * @param method HTTP method
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes route(
+      HttpMethods method,
+      ExecutorService executor,
+      Handler handler,
+      Consumer<Extensions> configuration) {
+    return registerRoute(
+        method,
+        EMPTY_PATH,
+        Objects.requireNonNull(executor),
+        handler,
+        Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers an HTTP endpoint on a caller-owned executor beneath this scope.
+   *
+   * @param method recognized case-sensitive wire method
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes route(String method, String path, ExecutorService executor, Handler handler) {
+    return route(
+        HttpMethods.httpMethod(Objects.requireNonNull(method))
+            .orElseThrow(() -> new IllegalArgumentException("Unrecognized HTTP method: " + method)),
+        path,
+        executor,
+        handler);
+  }
+
+  /**
+   * Registers an HTTP endpoint on a caller-owned executor beneath this scope.
+   *
+   * @param method recognized case-sensitive wire method
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes route(
+      String method,
+      String path,
+      ExecutorService executor,
+      Handler handler,
+      Consumer<Extensions> configuration) {
+    return route(
+        HttpMethods.httpMethod(Objects.requireNonNull(method))
+            .orElseThrow(() -> new IllegalArgumentException("Unrecognized HTTP method: " + method)),
+        path,
+        executor,
+        handler,
+        configuration);
+  }
+
+  /**
+   * Registers an HTTP endpoint on a caller-owned executor at this scope's endpoint.
+   *
+   * @param method recognized case-sensitive wire method
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @return this scope
+   */
+  public Routes route(String method, ExecutorService executor, Handler handler) {
+    return route(
+        HttpMethods.httpMethod(Objects.requireNonNull(method))
+            .orElseThrow(() -> new IllegalArgumentException("Unrecognized HTTP method: " + method)),
+        EMPTY_PATH,
+        executor,
+        handler);
+  }
+
+  /**
+   * Registers an HTTP endpoint on a caller-owned executor at this scope's endpoint.
+   *
+   * @param method recognized case-sensitive wire method
+   * @param executor asynchronous borrowed executor; see this class's execution contract
+   * @param handler matched endpoint handler
+   * @param configuration local extension configuration
+   * @return this scope
+   */
+  public Routes route(
+      String method,
+      ExecutorService executor,
+      Handler handler,
+      Consumer<Extensions> configuration) {
+    return route(
+        HttpMethods.httpMethod(Objects.requireNonNull(method))
+            .orElseThrow(() -> new IllegalArgumentException("Unrecognized HTTP method: " + method)),
+        EMPTY_PATH,
+        executor,
+        handler,
+        configuration);
   }
 
   /**
@@ -491,7 +1207,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes sse(String path, Handler handler) {
-    return registerSse(path, handler, null);
+    return registerSse(path, null, handler, null);
   }
 
   /**
@@ -503,7 +1219,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes sse(String path, Handler handler, Consumer<Extensions> configuration) {
-    return registerSse(path, handler, Objects.requireNonNull(configuration));
+    return registerSse(path, null, handler, Objects.requireNonNull(configuration));
   }
 
   /**
@@ -521,16 +1237,21 @@ public final class Routes implements Closeable {
    * Keeps the event-stream contract shared by both registration forms.
    *
    * @param path relative path
+   * @param executor borrowed executor, or null for default execution
    * @param handler submitted handler
    * @param configure optional local configuration
    * @return this scope
    */
   private Routes registerSse(
-      String path, Handler handler, @Nullable Consumer<Extensions> configure) {
+      String path,
+      @Nullable ExecutorService executor,
+      Handler handler,
+      @Nullable Consumer<Extensions> configure) {
     Objects.requireNonNull(handler);
     return registerRoute(
         HttpMethods.GET,
         path,
+        executor,
         (request, response) -> {
           response.requireEventStream();
           handler.handle(request, response);
@@ -564,7 +1285,7 @@ public final class Routes implements Closeable {
    */
   public Routes websocket(
       String path, BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory) {
-    return registerWebsocket(path, listenerFactory, null);
+    return registerWebsocket(path, null, listenerFactory, null);
   }
 
   /**
@@ -579,7 +1300,7 @@ public final class Routes implements Closeable {
       String path,
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
       Consumer<Extensions> configuration) {
-    return registerWebsocket(path, listenerFactory, Objects.requireNonNull(configuration));
+    return registerWebsocket(path, null, listenerFactory, Objects.requireNonNull(configuration));
   }
 
   /**
@@ -599,6 +1320,7 @@ public final class Routes implements Closeable {
    * Validates and publishes one configured upgrade endpoint.
    *
    * @param path relative path
+   * @param executor borrowed handshake executor, or null for default execution
    * @param listenerFactory per-connection factory
    * @param configure optional local configuration
    * @return this scope
@@ -606,6 +1328,7 @@ public final class Routes implements Closeable {
    */
   private Routes registerWebsocket(
       String path,
+      @Nullable ExecutorService executor,
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
       @Nullable Consumer<Extensions> configure) {
     RadixRoutes.Endpoint endpoint;
@@ -613,7 +1336,8 @@ public final class Routes implements Closeable {
       requireMutable();
       endpoint =
           RadixRoutes.websocketEndpoint(
-              join(prefix, path), (_, _) -> {}, Objects.requireNonNull(listenerFactory));
+                  join(prefix, path), (_, _) -> {}, Objects.requireNonNull(listenerFactory))
+              .withExecutor(executor);
     }
     return registerEndpoint(endpoint, configure, true);
   }
@@ -758,7 +1482,7 @@ public final class Routes implements Closeable {
    * @throws IllegalStateException if route registration has ended
    */
   public Routes route(HttpMethods method, String path, Handler handler) {
-    return registerRoute(method, path, handler, null);
+    return registerRoute(method, path, null, handler, null);
   }
 
   /**
@@ -772,7 +1496,7 @@ public final class Routes implements Closeable {
    */
   public Routes route(
       HttpMethods method, String path, Handler handler, Consumer<Extensions> configuration) {
-    return registerRoute(method, path, handler, Objects.requireNonNull(configuration));
+    return registerRoute(method, path, null, handler, Objects.requireNonNull(configuration));
   }
 
   /**
@@ -780,17 +1504,24 @@ public final class Routes implements Closeable {
    *
    * @param method HTTP method
    * @param path relative path
+   * @param executor borrowed executor, or null for default execution
    * @param handler submitted handler
    * @param configure optional endpoint configuration
    * @return this scope
    * @throws IllegalArgumentException if the route shape already exists
    */
   private Routes registerRoute(
-      HttpMethods method, String path, Handler handler, @Nullable Consumer<Extensions> configure) {
+      HttpMethods method,
+      String path,
+      @Nullable ExecutorService executor,
+      Handler handler,
+      @Nullable Consumer<Extensions> configure) {
     RadixRoutes.Endpoint endpoint;
     synchronized (lock) {
       requireMutable();
-      endpoint = RadixRoutes.endpoint(Objects.requireNonNull(method), join(prefix, path), handler);
+      endpoint =
+          RadixRoutes.endpoint(Objects.requireNonNull(method), join(prefix, path), handler)
+              .withExecutor(executor);
     }
     return registerEndpoint(endpoint, configure, false);
   }

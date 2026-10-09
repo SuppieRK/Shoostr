@@ -9,14 +9,12 @@ import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -30,11 +28,9 @@ class ObservationHandoffTest {
     var finished = new CompletableFuture<Void>();
     var workers = Executors.newFixedThreadPool(1);
     workers.submit(() -> context.set("worker-base")).get(5, TimeUnit.SECONDS);
-    var transport = new QueuedThreadPool(16, 8);
-    transport.setReservedThreads(0);
-    var execution = new ExecutionSettings(transport, true, workers, Set.of("/nested"));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0), execution)) {
+    try (workers;
+        var app = new Shoostr(Options.defaults().withPort(0))) {
       for (var value : List.of("alpha", "beta")) {
         app.observe(
             _ -> {
@@ -66,7 +62,10 @@ class ObservationHandoffTest {
       }
       app.afterRequest(_ -> finished.complete(null));
       app.routes()
-          .get("/nested", (_, response) -> response.text(Objects.requireNonNull(context.get())));
+          .get(
+              "/nested",
+              workers,
+              (_, response) -> response.text(Objects.requireNonNull(context.get())));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -89,12 +88,10 @@ class ObservationHandoffTest {
     var completions = new AtomicInteger();
     var laterClosed = new AtomicBoolean();
     var laterAttached = new AtomicBoolean();
-    var transport = new QueuedThreadPool(16, 8);
-    transport.setReservedThreads(0);
-    var execution =
-        new ExecutionSettings(transport, true, Executors.newFixedThreadPool(1), Set.of("/failure"));
+    var workers = Executors.newFixedThreadPool(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0), execution)) {
+    try (workers;
+        var app = new Shoostr(Options.defaults().withPort(0))) {
       app.observe(
           _ ->
               new RequestObservation() {
@@ -142,7 +139,7 @@ class ObservationHandoffTest {
                 }
               });
       app.afterRequest(_ -> finished.complete(null));
-      app.routes().get("/failure", (_, response) -> response.text("ok"));
+      app.routes().get("/failure", workers, (_, response) -> response.text("ok"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/failure")).statusCode());
@@ -160,12 +157,10 @@ class ObservationHandoffTest {
     var events = new ArrayList<String>();
     var sameOwner = new AtomicBoolean();
     var finished = new CompletableFuture<Void>();
-    var transport = new QueuedThreadPool(16, 8);
-    transport.setReservedThreads(0);
     var workers = Executors.newFixedThreadPool(1);
-    var execution = new ExecutionSettings(transport, true, workers, Set.of("/rejected"));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0), execution)) {
+    try (workers;
+        var app = new Shoostr(Options.defaults().withPort(0))) {
       app.observe(
           _ -> {
             var owner = Thread.currentThread();
@@ -198,7 +193,7 @@ class ObservationHandoffTest {
       app.exception(
           RejectedExecutionException.class,
           (_, _, response) -> response.status(503).text(Objects.requireNonNull(context.get())));
-      app.routes().get("/rejected", (_, response) -> response.text("wrong"));
+      app.routes().get("/rejected", workers, (_, response) -> response.text("wrong"));
 
       try (var test = TestServer.start(app)) {
         workers.shutdown();

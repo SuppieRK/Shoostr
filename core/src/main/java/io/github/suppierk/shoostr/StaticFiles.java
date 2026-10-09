@@ -193,7 +193,8 @@ final class StaticFiles implements Closeable {
         -1,
         0,
         null,
-        behavior);
+        behavior,
+        null);
   }
 
   /**

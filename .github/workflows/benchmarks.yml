@@ -6,7 +6,7 @@ on:
       mode:
         description: Benchmark mode
         type: choice
-        options: [steady, overload, threading]
+        options: [steady, overload]
         default: steady
       retention_days:
         description: Artifact retention (1–14 days)
@@ -38,12 +38,8 @@ jobs:
           RETENTION_DAYS: ${{ inputs.retention_days }}
         run: |
           [[ "$RETENTION_DAYS" =~ ^([1-9]|1[0-4])$ ]]
-          [[ "$MODE" == steady || "$MODE" == overload || "$MODE" == threading ]]
-          if [[ "$MODE" == threading ]]; then
-            matrix='{"workload":["tiny","io","cpu","mixed"]}'
-          else
-            matrix=$(jq -c --arg mode "$MODE" '{workload:[to_entries[] | select($mode == "steady" or .value.kind == "http") | .key]}' .github/benchmarks/workloads.json)
-          fi
+          [[ "$MODE" == steady || "$MODE" == overload ]]
+          matrix=$(jq -c --arg mode "$MODE" '{workload:[to_entries[] | select($mode == "steady" or .value.kind == "http") | .key]}' .github/benchmarks/workloads.json)
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
@@ -56,13 +52,6 @@ jobs:
         with:
           go-version: '1.26.8'
           cache: false
-      - name: Checkout pinned unchanged-core control
-        if: inputs.mode == 'threading'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: f34092d149badbd8b371a1527ee9c3d1c918a8b9
-          path: benchmark-baseline
-          persist-credentials: false
       - name: Build fixtures and pinned k6
         env:
           GOBIN: ${{ runner.temp }}/benchmark-tools
@@ -70,13 +59,6 @@ jobs:
           ./gradlew :benchmarks:installDist --no-daemon --console=plain
           mkdir -p "$GOBIN/lib"
           cp .github/benchmarks/build/install/benchmarks/lib/*.jar "$GOBIN/lib/"
-          if [[ '${{ inputs.mode }}' == threading ]]; then
-            ./gradlew :microbenchmarks:installDist --no-daemon --console=plain
-            mkdir -p "$GOBIN/micro" "$GOBIN/baseline"
-            cp microbenchmarks/build/install/microbenchmarks/lib/*.jar "$GOBIN/micro/"
-            (cd benchmark-baseline && ./gradlew :core:jar --no-daemon --console=plain)
-            cp benchmark-baseline/core/build/libs/shoostr-core-0.1.0-SNAPSHOT.jar "$GOBIN/baseline/core.jar"
-          fi
           (cd .github/benchmarks && go build -mod=readonly -o "$GOBIN/xk6" go.k6.io/xk6/cmd/xk6)
           "$GOBIN/xk6" build v2.2.0 --with github.com/phymbert/xk6-sse@v0.2.0 --output "$GOBIN/k6"
           "$GOBIN/k6" version
@@ -84,16 +66,8 @@ jobs:
             "$GOBIN/k6" inspect -e WORKLOAD="$selected" -e ROUTE_GROUPS=1000 ".github/benchmarks/$script" > /dev/null
           done < <(jq -r '.[] | [.script,.selected] | @tsv' .github/benchmarks/workloads.json)
           "$GOBIN/k6" inspect -e WORKLOAD=plaintext -e ROUTE_GROUPS=1000 .github/benchmarks/overload.js > /dev/null
-          if [[ '${{ inputs.mode }}' == threading ]]; then
-            for model in A B C D; do
-              for workload in tiny io cpu mixed; do
-                "$GOBIN/k6" inspect -e THREADING_MODEL="$model" -e WORKLOAD="$workload" -e RATE=200 .github/benchmarks/threading.js > /dev/null
-              done
-            done
-          fi
           rm "$GOBIN/xk6"
-          (cd "$GOBIN" && find . -type f -print0 | sort -z | xargs -0 sha256sum) > "$RUNNER_TEMP/benchmark-checksums.txt"
-          mv "$RUNNER_TEMP/benchmark-checksums.txt" "$GOBIN/checksums.txt"
+          (cd "$GOBIN" && sha256sum k6 lib/*.jar > checksums.txt)
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: benchmark-tools
@@ -102,7 +76,7 @@ jobs:
           if-no-files-found: error
 
   benchmark:
-    if: github.event_name == 'workflow_dispatch' && inputs.mode != 'threading'
+    if: github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       actions: read
@@ -196,7 +170,7 @@ jobs:
           [[ "$MEASURE" == success && "$DATA" == success && "$REPORT" == success && "$SUMMARY" == success ]]
 
   report:
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.mode != 'threading'
+    if: always() && github.event_name == 'workflow_dispatch'
     permissions:
       contents: read
       actions: read
@@ -218,148 +192,3 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
         run: node .github/benchmarks/report.mjs campaign "$RUNNER_TEMP/benchmark-summaries" "$MODE" >> "$GITHUB_STEP_SUMMARY"
-
-  threading:
-    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'threading'
-    needs: prepare
-    permissions:
-      contents: read
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    strategy:
-      fail-fast: false
-      max-parallel: 4
-      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
-    name: Threading / ${{ matrix.workload }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: benchmark-tools
-          path: ${{ runner.temp }}/benchmark-tools
-      - name: Three rotated timing repetitions, then separate profiles
-        id: measure
-        continue-on-error: true
-        env:
-          WORKLOAD: ${{ matrix.workload }}
-        run: |
-          tools="$RUNNER_TEMP/benchmark-tools"
-          chmod +x "$tools/k6"
-          (cd "$tools" && sha256sum -c checksums.txt)
-          orders=('A B C D' 'B C D A' 'C D A B')
-          failed=0
-          for repeat in 1 2 3; do
-            for model in ${orders[$((repeat-1))]}; do
-              PROFILE=0 REPEATS=1 THREADING_MODEL="$model" bash .github/benchmarks/run.sh \
-                "$WORKLOAD" threading "$RUNNER_TEMP/threading-results/timing/repeat-$repeat/$model" "$tools" || failed=1
-            done
-          done
-          for model in D A B C; do
-            PROFILE=1 REPEATS=1 THREADING_MODEL="$model" bash .github/benchmarks/run.sh \
-              "$WORKLOAD" threading "$RUNNER_TEMP/threading-results/profile/repeat-1/$model" "$tools" || failed=1
-          done
-          exit "$failed"
-      - name: Publish native per-trial comparison
-        if: always()
-        run: node .github/benchmarks/threading-report.mjs "$RUNNER_TEMP/threading-results" '${{ matrix.workload }}' >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload complete native threading evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: threading-${{ matrix.workload }}
-          path: ${{ runner.temp }}/threading-results/
-          retention-days: ${{ inputs.retention_days }}
-          if-no-files-found: error
-      - name: Preserve tooling failure
-        if: always()
-        env:
-          OUTCOME: ${{ steps.measure.outcome }}
-        run: '[[ "$OUTCOME" == success ]]'
-
-  threading-micro:
-    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'threading'
-    needs: prepare
-    permissions:
-      contents: read
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: benchmark-tools
-          path: ${{ runner.temp }}/benchmark-tools
-      - name: Complete-exchange JMH timing, allocation and separate fork profiles
-        id: measure
-        continue-on-error: true
-        run: |
-          tools="$RUNNER_TEMP/benchmark-tools"
-          results="$RUNNER_TEMP/threading-micro"
-          mkdir -p "$results"
-          (cd "$tools" && sha256sum -c checksums.txt)
-          java -version > "$results/java.txt" 2>&1
-          lscpu > "$results/cpu.txt"
-          free -m > "$results/memory.txt"
-          cp "$tools/checksums.txt" "$results/checksums.txt"
-          mapfile -t cpus < <(lscpu -p=CPU | sed '/^#/d')
-          split=$((${#cpus[@]} / 2))
-          affinity=$(IFS=,; echo "${cpus[*]:0:split}")
-          fork_options="-Xms256m -Xmx256m -XX:+UseG1GC -XX:ActiveProcessorCount=$split"
-          taskset -c "$affinity" java -cp "$tools/micro/*" org.openjdk.jmh.Main EndpointExecutionBenchmark \
-            -f 3 -wi 5 -i 5 -w 2s -r 2s -prof gc -foe true -jvmArgsAppend "$fork_options" \
-            -rf json -rff "$results/candidate.json" > "$results/candidate.log" 2>&1
-          taskset -c "$affinity" java -cp "$tools/baseline/core.jar:$tools/micro/*" org.openjdk.jmh.Main EndpointExecutionBenchmark \
-            -p model=A -p workload=tiny,routed,cpu -f 3 -wi 5 -i 5 -w 2s -r 2s -prof gc \
-            -foe true -jvmArgsAppend "$fork_options" -rf json -rff "$results/original-core.json" \
-            > "$results/original-core.log" 2>&1
-          for model in A B C D; do
-            for workload in tiny routed cpu; do
-              destination="$results/profile-$model-$workload"
-              mkdir "$destination"
-              taskset -c "$affinity" java -cp "$tools/micro/*" org.openjdk.jmh.Main EndpointExecutionBenchmark \
-                -p model="$model" -p workload="$workload" -f 1 -wi 5 -i 5 -w 2s -r 2s -foe true \
-                -jvmArgsAppend "$fork_options -XX:+UnlockDiagnosticVMOptions -XX:+DebugNonSafepoints -XX:StartFlightRecording=filename=$destination/fork.jfr,settings=profile,dumponexit=true,jdk.CPUTimeSample#enabled=true,jdk.CPUTimeSample#throttle=10ms" \
-                > "$destination/profile.log" 2>&1
-              jfr summary "$destination/fork.jfr" > "$destination/summary.txt"
-              for view in hot-methods cpu-time-hot-methods cpu-time-statistics allocation-by-site gc-pauses; do
-                jfr view "$view" "$destination/fork.jfr" > "$destination/$view.txt"
-              done
-            done
-          done
-      - name: Publish JMH native results
-        if: always()
-        run: |
-          {
-          echo '# Contained JMH: completion, not task submission'
-          echo 'Three forks; 5 × 2s warmup and 5 × 2s timing iterations per case. Profile runs are separate, one unique recording per fork. HTTP interpretation is deferred until all trials finish.'
-          for source in candidate original-core; do
-            echo "## $source"
-            echo '```text'
-            sed -n '/^Benchmark /,$p' "$RUNNER_TEMP/threading-micro/$source.log"
-            echo '```'
-          done
-          } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: always()
-        with:
-          name: threading-micro
-          path: ${{ runner.temp }}/threading-micro/
-          retention-days: ${{ inputs.retention_days }}
-          if-no-files-found: error
-      - name: Preserve tooling failure
-        if: always()
-        env:
-          OUTCOME: ${{ steps.measure.outcome }}
-        run: '[[ "$OUTCOME" == success ]]'

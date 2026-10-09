@@ -33,7 +33,7 @@ jobs:
         run: ./gradlew clean build --console=plain
 
       - name: Check benchmark reporting
-        run: node --test .github/benchmarks/report.test.mjs .github/benchmarks/threading-report.test.mjs
+        run: node --test .github/benchmarks/report.test.mjs
 
       - name: Preserve failed test results
         if: failure()

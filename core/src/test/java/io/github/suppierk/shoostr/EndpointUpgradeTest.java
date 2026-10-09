@@ -1,35 +1,66 @@
 package io.github.suppierk.shoostr;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import org.eclipse.jetty.util.thread.QueuedThreadPool;
+import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import org.eclipse.jetty.websocket.api.Session;
-import org.junit.jupiter.api.Test;
+import org.eclipse.jetty.websocket.server.ServerUpgradeResponse;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class EndpointUpgradeTest {
-  @Test
-  void createsWebSocketListenerOnSelectedHttpUpgradeThread() throws Exception {
-    var selected = new CompletableFuture<Boolean>();
-    var transport = new QueuedThreadPool(16, 8);
-    transport.setReservedThreads(0);
-    var execution =
-        new ExecutionSettings(transport, true, Executors.newFixedThreadPool(1), Set.of("/socket"));
+  @ParameterizedTest
+  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  void createsWebSocketListenerOnSelectedHttpUpgradeThread(boolean pathless, boolean configured)
+      throws Exception {
+    var owned = ConcurrentHashMap.<Thread>newKeySet();
+    var selected = new CompletableFuture<Thread>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0), execution)) {
-      app.routes()
-          .websocket(
-              "/socket",
-              (_, _) -> {
-                selected.complete(Thread.currentThread().isVirtual());
-                return new Session.Listener.AutoDemanding() {};
-              });
+    try (var workers =
+            Executors.newFixedThreadPool(
+                1,
+                task -> {
+                  var thread = Thread.ofPlatform().unstarted(task);
+                  owned.add(thread);
+                  return thread;
+                });
+        var app = new Shoostr(Options.defaults().withPort(0))) {
+      var configuredThread = new CompletableFuture<Thread>();
+      BiFunction<Request, ServerUpgradeResponse, Session.Listener> factory =
+          (_, _) -> {
+            selected.complete(Thread.currentThread());
+            return new Session.Listener.AutoDemanding() {};
+          };
+      Consumer<Extensions> configuration =
+          extensions ->
+              extensions.beforeRouteHandler(
+                  (_, _) -> configuredThread.complete(Thread.currentThread()));
+      if (pathless) {
+        app.routes()
+            .path(
+                "/socket",
+                routes -> {
+                  if (configured) {
+                    routes.websocket(workers, factory, configuration);
+                  } else {
+                    routes.websocket(workers, factory);
+                  }
+                });
+      } else if (configured) {
+        app.routes().websocket("/socket", workers, factory, configuration);
+      } else {
+        app.routes().websocket("/socket", workers, factory);
+      }
 
       app.start();
 
@@ -43,7 +74,12 @@ class EndpointUpgradeTest {
                 .get(5, TimeUnit.SECONDS);
 
         try {
-          assertFalse(selected.get(5, TimeUnit.SECONDS));
+          var thread = selected.get(5, TimeUnit.SECONDS);
+          assertTrue(owned.contains(thread));
+          assertEquals(configured, configuredThread.isDone());
+          if (configured) {
+            assertSame(thread, configuredThread.get(5, TimeUnit.SECONDS));
+          }
         } finally {
           socket.abort();
         }
