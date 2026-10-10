@@ -2,6 +2,10 @@
 
 Run **Shoostr benchmarks** manually from the Actions tab. Select the branch,
 `steady` or `overload`, and artifact retention (1–14 days, default 7).
+Set the JVM's logical CPU count (default 1) and total memory cap in MiB (default
+1024). The heap remains fixed at 256 MiB; raising the total cap does not raise it.
+CPU counts must leave at least one permitted CPU for k6. Memory must exceed the
+256 MiB heap and cannot exceed host RAM. Invalid settings fail, never clamp.
 The workflow requires its support files on the selected branch. It does not run
 benchmarks on pushes or pull requests.
 
@@ -13,12 +17,14 @@ own Linux runner. Its three trials use fresh JVMs, a 30-second warmup, and a
 180-second offered-load phase. Up to fourteen workload jobs run concurrently;
 GitHub may queue jobs when account capacity is unavailable.
 
-Overload mode runs only the eight HTTP workloads. Each trial offers 1,000, 2,000,
-5,000, 10,000, 20,000, 50,000 and 100,000 requests/second in 15-second plateaus with
+Overload mode runs only the eight HTTP workloads. Each trial offers 1,000,
+5,000, 10,000 and 50,000 requests/second in 15-second plateaus with
 five-second drains. Threshold breaches appear as **OVERLOAD**, while startup,
 tooling, profiling and publication failures fail the workflow. Steady-mode
 correctness failures also fail the workflow. The load generator can saturate
 before the service; inspect both processes before interpreting a boundary.
+All four plateaus run even if an earlier plateau drops iterations. There is no
+100,000-request/second step or adaptive early-stop controller.
 
 Slow-WebSocket steady traffic uses one session/second: the initial hosted trial
 at ten sessions/second saturated the two-CPU k6 client and failed during warmup.
@@ -26,7 +32,9 @@ Payload validation, callback delay, timeouts and correctness checks are unchange
 
 The build job prepares one fixture distribution and one pinned k6 binary with
 the SSE extension. Workload jobs reuse those binaries and a 256 MiB fixed G1
-heap. Available CPUs are divided evenly between the JVM and k6; actual affinity,
+heap. The JVM uses the requested number of permitted logical CPUs; k6 uses the
+remaining CPUs (normally three with the one-CPU default on a four-CPU runner).
+Actual affinity,
 CPU model, runner image, JVM/client versions, source revision and hashes accompany
 the recordings. This separates the campaign from the developer's machine, but
 hosted runner hardware and images can still vary.
@@ -35,9 +43,19 @@ Each fresh JVM prints and retains native `jcmd` version, command line, effective
 non-default flags and `VM.info` diagnostics before warmup. The complete effective
 flag list (`VM.flags -all`) and OS process limits are also retained. Summaries show
 actual JVM/client CPU affinity and JVM-visible CPU/RAM/container limits. Affinity
-does not reserve exclusive cores; the 256 MiB Java heap cap does not cap native
-memory or process RSS. Older artifacts lacking these diagnostics are visibly
-incomplete under the expanded evidence requirements, not assigned invented limits.
+does not reserve exclusive cores. A fresh cgroup v2 group enforces the JVM's
+total memory cap, including native and cgroup-accounted cache/kernel memory;
+swap is disabled for that group. k6, diagnostic tools and artifact processing
+stay outside it. The runner must support these limits and passwordless sudo;
+failure to apply them fails the run. Before/after native cgroup limits, peak
+memory and OOM events are retained and summarized; an OOM kill fails the run.
+The group is removed after JVM shutdown, including ordinary failure cleanup.
+The 256 MiB Java heap cap alone does not cap native memory or process RSS.
+Historical campaigns retain their prior JVM-diagnostic evidence requirements and
+recorded plateau rates. Unrecorded resource limits remain unknown, not invented.
+Resource-controlled campaigns require the new requested/effective limit and cgroup
+evidence; missing or mismatched limits make their evidence incomplete.
+The new one-CPU configuration is not directly comparable to earlier two-CPU runs.
 
 Each workload summary contains all three trial rows and excerpts from native
 JFR reports. The final job provides a campaign overview and links to downloadable

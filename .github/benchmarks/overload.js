@@ -9,7 +9,7 @@ export default function () {
 }
 
 function smokeOptions() {
-  const rates = (__ENV.SMOKE_RATES || '1000,2000,5000,10000,20000,50000,100000')
+  const rates = (__ENV.SMOKE_RATES || '1000,5000,10000,50000')
     .split(',').map(value => Number(value));
   const seconds = Number(__ENV.SMOKE_STEP_SECONDS || 15);
   const vus = Number(__ENV.VUS || 256);

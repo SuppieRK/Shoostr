@@ -32,8 +32,10 @@ jobs:
       - name: Build and test
         run: ./gradlew clean build --console=plain
 
-      - name: Check benchmark reporting
-        run: node --test .github/benchmarks/report.test.mjs
+      - name: Check benchmark reporting and resource enforcement
+        env:
+          BENCHMARK_TEST_CGROUP: '1'
+        run: node --test .github/benchmarks/*.test.mjs
 
       - name: Preserve failed test results
         if: failure()

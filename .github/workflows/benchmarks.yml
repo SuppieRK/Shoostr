@@ -12,6 +12,14 @@ on:
         description: Artifact retention (1–14 days)
         type: number
         default: 7
+      jvm_cpus:
+        description: JVM logical CPUs (leave at least one for k6)
+        type: number
+        default: 1
+      jvm_memory_mib:
+        description: JVM total memory cap in MiB (heap stays 256 MiB)
+        type: number
+        default: 1024
 
 permissions: {}
 
@@ -36,9 +44,13 @@ jobs:
         env:
           MODE: ${{ inputs.mode }}
           RETENTION_DAYS: ${{ inputs.retention_days }}
+          JVM_CPUS: ${{ inputs.jvm_cpus }}
+          JVM_MEMORY_MIB: ${{ inputs.jvm_memory_mib }}
         run: |
           [[ "$RETENTION_DAYS" =~ ^([1-9]|1[0-4])$ ]]
           [[ "$MODE" == steady || "$MODE" == overload ]]
+          source .github/benchmarks/resources.sh
+          configure_resources
           matrix=$(jq -c --arg mode "$MODE" '{workload:[to_entries[] | select($mode == "steady" or .value.kind == "http") | .key]}' .github/benchmarks/workloads.json)
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
@@ -92,6 +104,8 @@ jobs:
       WORKLOAD: ${{ matrix.workload }}
       MODE: ${{ inputs.mode }}
       RETENTION_DAYS: ${{ inputs.retention_days }}
+      JVM_CPUS: ${{ inputs.jvm_cpus }}
+      JVM_MEMORY_MIB: ${{ inputs.jvm_memory_mib }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
