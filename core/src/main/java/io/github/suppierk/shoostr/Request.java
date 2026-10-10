@@ -53,7 +53,7 @@ import org.jspecify.annotations.Nullable;
  * after framework finalization. Potentially absent values are returned as non-null JDK Optionals; a
  * present empty string is distinct from absence.
  */
-public final class Request {
+public sealed class Request permits TypedRequest {
   // Java 25 readNBytes(int) starts with this much temporary storage.
   private static final int DIRECT_BODY_READ_LIMIT = 16_384;
   private static final String CHARSET_PARAMETER = "charset";
@@ -98,14 +98,16 @@ public final class Request {
    * @param nativeResponse native output for the same exchange
    * @param options validated configuration for both peers
    * @param completion transport completion callback
+   * @param codec optional conversion for a typed exchange
    * @throws NullPointerException if a construction input is null
    * @throws org.eclipse.jetty.http.HttpException.RuntimeException if cookie validation fails
    */
-  private Request(
+  Request(
       org.eclipse.jetty.server.Request delegate,
       org.eclipse.jetty.server.Response nativeResponse,
       Options options,
-      Callback completion) {
+      Callback completion,
+      @Nullable Codec codec) {
     Objects.requireNonNull(options);
     Objects.requireNonNull(nativeResponse);
     Objects.requireNonNull(completion);
@@ -121,12 +123,20 @@ public final class Request {
     this.cookies =
         nativeHeaders.contains(HttpHeaders.COOKIE.value()) ? parseCookies(delegate) : Map.of();
     this.response =
-        new Response(
-            nativeResponse,
-            options,
-            completion,
-            HttpMethods.HEAD.value().equals(delegate.getMethod()),
-            this);
+        codec == null
+            ? new Response(
+                nativeResponse,
+                options,
+                completion,
+                HttpMethods.HEAD.value().equals(delegate.getMethod()),
+                this)
+            : new TypedResponse(
+                nativeResponse,
+                options,
+                completion,
+                HttpMethods.HEAD.value().equals(delegate.getMethod()),
+                this,
+                codec);
     if (isMultipart()) {
       org.eclipse.jetty.server.Request.addCompletionListener(delegate, _ -> closeMultipart());
     }
@@ -148,7 +158,7 @@ public final class Request {
       org.eclipse.jetty.server.Response nativeResponse,
       Options options,
       Callback completion) {
-    return new Request(delegate, nativeResponse, options, completion);
+    return new Request(delegate, nativeResponse, options, completion, null);
   }
 
   /**
@@ -1395,7 +1405,7 @@ public final class Request {
    *
    * @throws IllegalStateException if accessed from another thread or after handler completion
    */
-  private void check() {
+  final void check() {
     if (Thread.currentThread() != owner || finished) {
       throw new IllegalStateException("Request is only available inside its handler");
     }
