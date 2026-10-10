@@ -14,6 +14,30 @@ function shell(script, env = {}) {
   });
 }
 
+function resourceProbe(directory) {
+  const probe = path.join(directory, 'io/github/suppierk/shoostr/bench/ResourceProbe.java');
+  fs.mkdirSync(path.dirname(probe), {recursive: true});
+  fs.writeFileSync(probe, `package io.github.suppierk.shoostr.bench;
+    class ResourceProbe {
+      public static void main(String[] args) throws InterruptedException {
+        System.out.println("READY");
+        Thread.sleep(args.length == 0 ? 30000 : Long.parseLong(args[0]));
+      }
+    }
+  `);
+  return probe;
+}
+
+test('packaged JVM probe starts successfully in source-file mode', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-source-probe-'));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  const java = process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin/java') : 'java';
+  const result = execFileSync(java, ['-Xms256m', '-Xmx256m', '-XX:+UseG1GC', resourceProbe(directory), '0'], {
+    encoding: 'utf8', timeout: 15000
+  });
+  assert.equal(result.trim(), 'READY');
+});
+
 test('CPU selection honors permitted ranges and gives all remaining CPUs to k6', () => {
   assert.equal(shell('select_cpus 2-3,7,9-10 2; printf "%s;%s" "$server_cpus" "$client_cpus"'), '2,3;7,9,10');
 });
@@ -61,15 +85,7 @@ for (const mode of ['normal', 'oom']) {
   }, t => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-cgroup-test-'));
     t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
-    const probe = path.join(directory, 'ResourceProbe.java');
-    fs.writeFileSync(probe, `package io.github.suppierk.shoostr.bench;
-      class ResourceProbe {
-        public static void main(String[] args) throws InterruptedException {
-          System.out.println("READY");
-          Thread.sleep(30000);
-        }
-      }
-    `);
+    const probe = resourceProbe(directory);
     const command = mode === 'normal'
       ? [path.join(process.env.JAVA_HOME, 'bin/java'), '-Xms256m', '-Xmx256m', '-XX:+UseG1GC', probe]
       : [process.execPath, '-e', `
@@ -100,6 +116,10 @@ for (const mode of ['normal', 'oom']) {
         if [[ -n "$server_pid" ]] && grep -q READY "$2/child.log"; then break; fi
         sleep 0.01
       done
+      if [[ -z "$server_pid" ]] || ! grep -q READY "$2/child.log"; then
+        cat "$2/child.log" >&2
+        exit 1
+      fi
       verify_server_cgroup "$server_pid"
       taskset -pc "$server_pid"
       capture_server_cgroup > "$2/before.txt"
