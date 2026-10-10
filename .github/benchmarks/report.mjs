@@ -39,6 +39,20 @@ function cpu(file) {
   return text(file).match(/Percent of CPU this job got: (\d+)%/)?.[1] ?? null;
 }
 
+function affinityCount(file) {
+  const list = text(file).match(/affinity list: ([\d,-]+)$/m)?.[1];
+  if (!list) return null;
+  return list.split(',').reduce((count, range) => {
+    const [first, last = first] = range.split('-').map(Number);
+    return count + last - first + 1;
+  }, 0);
+}
+
+function cgroupNumber(evidence, key) {
+  const match = evidence.match(new RegExp(`^${key}\\n(\\d+)$`, 'm'));
+  return match ? Number(match[1]) : null;
+}
+
 export function trial(directory, workload, mode, index) {
   const configuration = json(path.join(path.dirname(directory), 'configuration.json'));
   const fixture = configuration?.fixture ?? workloads[workload];
@@ -53,10 +67,29 @@ export function trial(directory, workload, mode, index) {
     'VM.version.txt', 'VM.command_line.txt', 'VM.flags.txt', 'VM.flags-all.txt', 'VM.info.txt',
     'server-limits.txt', 'server-affinity.txt', 'client-affinity.txt'];
   const missing = required.filter(file => !exists(path.join(directory, file)));
+  const cgroupBefore = text(path.join(directory, 'server-cgroup-before.txt'));
+  const cgroupAfter = text(path.join(directory, 'server-cgroup-after.txt'));
+  const effectiveCpus = affinityCount(path.join(directory, 'server-affinity.txt'));
+  const memoryMax = cgroupNumber(cgroupAfter, 'memory.max');
+  const swapMax = cgroupNumber(cgroupAfter, 'memory.swap.max');
+  const oomKills = Number(cgroupAfter.match(/^oom_kill (\d+)$/m)?.[1] ?? NaN);
+  if (configuration?.jvm_memory_mib !== undefined) {
+    for (const file of ['server-cgroup-before.txt', 'server-cgroup-after.txt']) {
+      if (!exists(path.join(directory, file))) missing.push(file);
+    }
+    if (memoryMax !== configuration.jvm_memory_mib * 1024 * 1024
+        || cgroupNumber(cgroupBefore, 'memory.max') !== memoryMax || swapMax !== 0
+        || cgroupNumber(cgroupBefore, 'memory.swap.max') !== 0) missing.push('verified JVM memory/swap limits');
+    if (oomKills !== 0) missing.push('OOM-kill-free JVM memory cgroup');
+    if (cgroupNumber(cgroupAfter, 'memory.peak') === null) missing.push('usable JVM cgroup peak memory');
+  }
+  if (configuration?.jvm_cpus !== undefined && effectiveCpus !== configuration.jvm_cpus) {
+    missing.push('verified JVM CPU affinity');
+  }
   const checks = value(metrics?.checks);
   const rows = [];
   const scenarios = mode === 'overload'
-    ? (configuration?.smoke_rates ?? [1000, 2000, 5000, 10000, 20000, 50000, 100000])
+    ? (configuration?.smoke_rates ?? [1000, 5000, 10000, 50000])
       .map(rate => ({rate, suffix: `{scenario:step_${rate}}`}))
     : [{rate: fixture.rate, suffix: fixture.kind === 'http' ? '{scenario:requests}' : ''}];
   for (const scenario of scenarios) {
@@ -82,6 +115,12 @@ export function trial(directory, workload, mode, index) {
     if (!Number.isFinite(row.count) || (row.count > 0 && !Number.isFinite(row.p95))) missing.push(`usable metrics for offered rate ${row.offered}`);
   }
   return {index, outcome: missing.length ? 'INCOMPLETE' : nativeOutcome, missing, rows,
+    server_effective_cpus: effectiveCpus,
+    server_memory_max_mib: memoryMax === null ? null : memoryMax / 1024 / 1024,
+    server_swap_max_bytes: swapMax,
+    server_cgroup_peak_mib: cgroupNumber(cgroupAfter, 'memory.peak') === null ? null
+      : cgroupNumber(cgroupAfter, 'memory.peak') / 1024 / 1024,
+    server_oom_kills: Number.isFinite(oomKills) ? oomKills : null,
     server_lifetime_cpu_percent: cpu(path.join(directory, 'server-resource.txt')),
     client_measured_cpu_percent: cpu(path.join(directory, 'measured-client-resource.txt')),
     server_peak_rss_mib: rss(path.join(directory, 'server-resource.txt')),
@@ -122,16 +161,18 @@ function workloadMarkdown(summary, directory) {
     `Revision: \`${summary.configuration?.revision || 'unknown'}\`; image: \`${summary.configuration?.image || 'unknown'}\`.`, '',
     `Warmup: ${summary.configuration?.warmup_seconds ?? 'unknown'} seconds per fresh JVM.`, '',
     `Configured Java heap: ${summary.configuration?.heap || 'unknown'}; collector: ${summary.configuration?.collector || 'unknown'}. This is not a cap on native memory or process RSS. CPU affinity restricts eligible logical CPUs, not exclusive CPU ownership. Native VM.info and OS limits below describe JVM-visible CPU/RAM and any detected container/process limits; unavailable limits are not inferred.`, '',
+    `Requested JVM limits: ${summary.configuration?.jvm_cpus ?? 'not recorded'} logical CPU(s); ${summary.configuration?.jvm_memory_mib ?? 'not recorded'} MiB total cgroup memory. Heap remains separate. Configured memory includes native memory and cgroup-accounted cache/kernel memory; swap is disabled for new resource-limited runs.`, '',
     'Server peak RSS covers its whole lifetime, including startup/warmup. Client peak RSS covers the measured invocation.'];
   for (const result of summary.trials) {
     lines.push('', `### Trial ${result.index}: ${result.outcome}`, '',
       `Peak RSS: server ${number(result.server_peak_rss_mib)} MiB; client ${number(result.client_peak_rss_mib)} MiB.`, '',
       `Native time CPU: whole JVM lifetime ${result.server_lifetime_cpu_percent ?? '—'}%; measured client ${result.client_measured_cpu_percent ?? '—'}%.`);
+    lines.push('', `Effective JVM limits: ${result.server_effective_cpus ?? '—'} logical CPU(s); ${number(result.server_memory_max_mib)} MiB memory; swap ${result.server_swap_max_bytes ?? '—'} bytes. Cgroup peak: ${number(result.server_cgroup_peak_mib)} MiB; OOM kills: ${result.server_oom_kills ?? '—'}.`);
     if (result.missing.length) lines.push('', `Missing evidence: ${result.missing.join(', ')}.`);
     const trialDirectory = path.join(directory, `trial-${result.index}`);
     lines.push('', `CPU affinity: JVM \`${text(path.join(trialDirectory, 'server-affinity.txt')) || 'Unavailable'}\`; k6 \`${text(path.join(trialDirectory, 'client-affinity.txt')) || 'Unavailable'}\`.`, '',
       '<details><summary>JVM version, flags, CPU/RAM and process limits</summary>', '');
-    for (const file of ['VM.version', 'VM.command_line', 'VM.flags', 'VM.info', 'server-limits']) {
+    for (const file of ['VM.version', 'VM.command_line', 'VM.flags', 'VM.info', 'server-limits', 'server-cgroup-before', 'server-cgroup-after']) {
       lines.push(`**${file}**`, '', '```text', text(path.join(trialDirectory, `${file}.txt`)) || 'Unavailable', '```', '');
     }
     lines.push('The complete effective flag list is retained as `VM.flags-all.txt` in the native artifact.', '', '</details>');

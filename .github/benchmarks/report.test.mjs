@@ -63,7 +63,7 @@ test('missing measurement metrics remain unknown rather than zero', t => {
 
 test('overload uses plateau duration instead of native whole-run rates', t => {
   const metrics = {checks: {passes: 4, fails: 2}};
-  for (const rate of [1000, 2000, 5000, 10000, 20000, 50000, 100000]) {
+  for (const rate of [1000, 5000, 10000, 50000]) {
     const suffix = `{scenario:step_${rate}}`;
     metrics[`http_reqs${suffix}`] = {count: 150, rate: 1};
     metrics[`http_req_duration${suffix}`] = {'p(95)': 5};
@@ -74,7 +74,8 @@ test('overload uses plateau duration instead of native whole-run rates', t => {
   const directory = fixture(t, metrics, 'OVERLOAD');
   const result = trial(directory, 'plaintext', 'overload', 1);
   assert.equal(result.outcome, 'OVERLOAD');
-  assert.equal(result.rows.length, 7);
+  assert.equal(result.rows.length, 4);
+  assert.deepEqual(result.rows.map(row => row.offered), [1000, 5000, 10000, 50000]);
   assert.equal(result.rows[0].rate, 10);
   assert.equal(result.rows[0].check_failures, 2);
   assert.equal(result.rows[0].drops, 50);
@@ -175,7 +176,7 @@ test('scheduled totals use the recorded workload rate and duration', t => {
 
 test('overload drops use each plateau scheduled total', t => {
   const metrics = {checks: {passes: 4, fails: 0}};
-  for (const rate of [1000, 2000, 5000, 10000, 20000, 50000, 100000]) {
+  for (const rate of [1000, 5000, 10000, 50000]) {
     const suffix = `{scenario:step_${rate}}`;
     metrics[`http_reqs${suffix}`] = {count: 100, rate: 1};
     metrics[`http_req_duration${suffix}`] = {'p(95)': 2, 'p(99)': 3, max: 41};
@@ -184,9 +185,65 @@ test('overload drops use each plateau scheduled total', t => {
   const rows = trial(fixture(t, metrics, 'OVERLOAD'), 'plaintext', 'overload', 1).rows;
   assert.equal(rows[0].scheduled_total, 15000);
   assert.equal(rows[0].drop_percentage, 50 / 15000 * 100);
-  assert.equal(rows.at(-1).scheduled_total, 1500000);
-  assert.equal(rows.at(-1).drop_percentage, 50 / 1500000 * 100);
+  assert.equal(rows.at(-1).scheduled_total, 750000);
+  assert.equal(rows.at(-1).drop_percentage, 50 / 750000 * 100);
 });
+
+test('historical overload summaries retain their recorded seven plateaus', t => {
+  const rates = [1000, 2000, 5000, 10000, 20000, 50000, 100000];
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-historical-overload-'));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(directory, 'configuration.json'), JSON.stringify({smoke_rates: rates}));
+  const child = path.join(directory, 'trial-1');
+  fs.cpSync(fixture(t, httpMetrics(), 'OVERLOAD'), child, {recursive: true});
+  assert.deepEqual(trial(child, 'plaintext', 'overload', 1).rows.map(row => row.offered), rates);
+});
+
+function resourceFixture(t) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-resource-report-'));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(directory, 'configuration.json'), JSON.stringify({
+    revision: 'test', heap: '256 MiB', jvm_cpus: 1, jvm_memory_mib: 1024
+  }));
+  for (const index of [1, 2, 3]) {
+    const child = path.join(directory, `trial-${index}`);
+    fs.cpSync(fixture(t, httpMetrics()), child, {recursive: true});
+    fs.writeFileSync(path.join(child, 'server-affinity.txt'), 'pid 123 current affinity list: 2');
+    const cgroup = 'memory.max\n1073741824\nmemory.swap.max\n0\nmemory.current\n0\nmemory.peak\n419430400\nmemory.events\nlow 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n';
+    for (const phase of ['before', 'after']) fs.writeFileSync(path.join(child, `server-cgroup-${phase}.txt`), cgroup);
+  }
+  return directory;
+}
+
+test('resource-limited summary reports requested and effective limits independently of the heap', t => {
+  const directory = resourceFixture(t);
+  const markdown = execFileSync(process.execPath, [
+    fileURLToPath(new URL('./report.mjs', import.meta.url)), 'workload', directory, 'plaintext', 'steady'
+  ], {encoding: 'utf8', env: {...process.env, ARTIFACT_URL: 'https://example.test/native', MEASUREMENT_OUTCOME: 'success'}});
+  assert.ok(markdown.includes('Requested JVM limits: 1 logical CPU(s); 1024 MiB'));
+  assert.ok(markdown.includes('Effective JVM limits: 1 logical CPU(s); 1024.00 MiB memory; swap 0 bytes'));
+  assert.ok(markdown.includes('Cgroup peak: 400.00 MiB; OOM kills: 0'));
+  assert.ok(markdown.includes('Configured Java heap: 256 MiB'));
+});
+
+for (const [name, file, replacement, expected] of [
+  ['missing cgroup snapshot', 'server-cgroup-before.txt', null, 'server-cgroup-before.txt'],
+  ['unapplied memory cap', 'server-cgroup-after.txt', 'memory.max\n2147483648', 'verified JVM memory/swap limits'],
+  ['swap remains enabled', 'server-cgroup-after.txt', 'memory.swap.max\nmax', 'verified JVM memory/swap limits'],
+  ['wrong CPU affinity', 'server-affinity.txt', 'pid 123 current affinity list: 2-3', 'verified JVM CPU affinity'],
+  ['OOM kill', 'server-cgroup-after.txt', 'oom_kill 1', 'OOM-kill-free JVM memory cgroup']
+]) {
+  test(`${name} prevents resource-limited evidence from being marked complete`, t => {
+    const directory = resourceFixture(t);
+    const child = path.join(directory, 'trial-1');
+    const target = path.join(child, file);
+    if (replacement === null) fs.unlinkSync(target);
+    else fs.writeFileSync(target, replacement);
+    const result = trial(child, 'plaintext', 'steady', 1);
+    assert.equal(result.outcome, 'INCOMPLETE');
+    assert.ok(result.missing.includes(expected));
+  });
+}
 
 test('missing JVM limit diagnostics make trial evidence incomplete', t => {
   const directory = fixture(t, httpMetrics());

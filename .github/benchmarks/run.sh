@@ -7,6 +7,10 @@ destination=${3:?Supply a new result directory}
 tools=${4:?Supply the prepared benchmark tools directory}
 : "${JAVA_HOME:?Set JAVA_HOME}"
 support=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=resources.sh
+source "$support/resources.sh"
+configure_resources
 configuration=$(jq -ce --arg workload "$workload" '.[$workload] // error("Unknown workload")' "$support/workloads.json")
 kind=$(jq -r .kind <<< "$configuration")
 case "$mode:$kind" in
@@ -28,6 +32,7 @@ monitor_pid=''
 run_dir=''
 recording=0
 failed=0
+server_cgroup=''
 
 stop_group() {
   local owned=$1 native_pid=$2
@@ -64,6 +69,15 @@ cleanup() {
   stop_group "$server_group" "$server_pid"
   server_group=''
   server_pid=''
+  if [[ -n "$server_cgroup" && -d "$server_cgroup" ]]; then
+    capture_server_cgroup > "$run_dir/server-cgroup-after.txt"
+    if awk '$1 == "oom_kill" && $2 > 0 {found=1} END {exit !found}' "$server_cgroup/memory.events"; then
+      echo MEMORY_LIMIT_EXCEEDED > "$run_dir/outcome.txt"
+      failed=1
+    fi
+    sudo -n rmdir "$server_cgroup"
+    server_cgroup=''
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -73,9 +87,11 @@ cp "$support/workloads.json" "$destination/workloads.json"
 jq -n --arg workload "$workload" --arg mode "$mode" --argjson fixture "$configuration" \
   --arg revision "$(git rev-parse HEAD)" --arg image "${ImageVersion:-unknown}" \
   --arg image_os "${ImageOS:-unknown}" \
+  --argjson jvm_cpus "$jvm_cpus" --argjson jvm_memory_mib "$jvm_memory_mib" \
   '{workload:$workload,mode:$mode,fixture:$fixture,revision:$revision,image:$image,image_os:$image_os,
     repeats:3,warmup_seconds:30,measurement_seconds:180,heap:"256 MiB",collector:"G1",
-    smoke_rates:[1000,2000,5000,10000,20000,50000,100000],smoke_step_seconds:15}' \
+    jvm_cpus:$jvm_cpus,jvm_memory_mib:$jvm_memory_mib,
+    smoke_rates:[1000,5000,10000,50000],smoke_step_seconds:15}' \
   > "$destination/configuration.json"
 "$JAVA_HOME/bin/java" -version > "$destination/java.txt" 2>&1
 "$tools/k6" version > "$destination/k6.txt"
@@ -86,13 +102,8 @@ jq -n --arg workload "$workload" --arg mode "$mode" --argjson fixture "$configur
   df -h "$destination"
 } > "$destination/host.txt"
 sha256sum "$tools/k6" "$tools"/lib/*.jar "$support"/*.js "$support/workloads.json" \
-  "$support/run.sh" "$support/report.mjs" "$support/go.mod" "$support/go.sum" \
+  "$support/run.sh" "$support/resources.sh" "$support/report.mjs" "$support/go.mod" "$support/go.sum" \
   > "$destination/sha256.txt"
-mapfile -t cpus < <(lscpu -p=CPU | sed '/^#/d')
-[[ ${#cpus[@]} -ge 2 ]] || { echo 'At least two CPUs required' >&2; exit 2; }
-split=$((${#cpus[@]} / 2))
-server_cpus=$(IFS=,; echo "${cpus[*]:0:split}")
-client_cpus=$(IFS=,; echo "${cpus[*]:split}")
 printf 'SERVER_CPUS=%s\nCLIENT_CPUS=%s\n' "$server_cpus" "$client_cpus" > "$destination/affinity.txt"
 
 load() {
@@ -108,6 +119,7 @@ load() {
     taskset -c "$client_cpus" "$tools/k6" run --no-usage-report --no-color --quiet \
     -e BASE_URL="$base" -e WORKLOAD="$selected" -e ROUTE_GROUPS=1000 \
     -e RATE="$rate" -e VUS="$vus" -e DURATION="$length" \
+    -e SMOKE_RATES="$(jq -r '.smoke_rates | join(",")' "$destination/configuration.json")" \
     -e FAILURE_DETAILS=1 \
     --summary-export "$run_dir/$phase-summary.json" \
     --out "json=$run_dir/$phase-metrics.json.gz" "$support/$load_script" \
@@ -146,7 +158,10 @@ for repeat in 1 2 3; do
   mkdir "$run_dir"
   echo "::group::$workload trial $repeat ($mode)"
   date -u +%FT%TZ > "$run_dir/start.txt"
+  server_cgroup="/sys/fs/cgroup/shoostr-benchmark-$$-$repeat"
+  create_server_cgroup
   setsid /usr/bin/time -v -o "$run_dir/server-resource.txt" \
+    bash "$support/resources.sh" "$server_cgroup" \
     taskset -c "$server_cpus" "$JAVA_HOME/bin/java" -Xms256m -Xmx256m -XX:+UseG1GC \
     -cp "$tools/lib/*" io.github.suppierk.shoostr.bench.ServerMain 18080 1000 \
     > "$run_dir/server.log" 2>&1 &
@@ -164,6 +179,8 @@ for repeat in 1 2 3; do
     echo '::endgroup::'
     continue
   fi
+  verify_server_cgroup "$server_pid"
+  capture_server_cgroup > "$run_dir/server-cgroup-before.txt"
   taskset -pc "$server_pid" > "$run_dir/server-affinity.txt"
   for command in VM.version VM.command_line VM.flags VM.info; do
     "$JAVA_HOME/bin/jcmd" "$server_pid" "$command" > "$run_dir/$command.txt"
