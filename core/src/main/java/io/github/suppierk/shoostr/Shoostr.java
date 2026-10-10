@@ -4,7 +4,6 @@ import io.github.suppierk.shoostr.http.ForwardedHeaders;
 import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
-import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException;
 import io.github.suppierk.shoostr.http.exceptions.HttpException;
 import java.io.Closeable;
@@ -1105,9 +1104,7 @@ public final class Shoostr implements Closeable {
       errorHandler = exceptionHandler(errors, failure);
     }
 
-    if (failure instanceof AuthenticationRequiredException authentication) {
-      response.requiredChallenge(authentication.challenge());
-    }
+    response.requiredChallenge(failure);
 
     if (response.encodingRejected()) {
       response.emptyEncodingError();

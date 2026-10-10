@@ -6,6 +6,7 @@ import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
+import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.NotAcceptableException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -254,10 +255,12 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   /**
    * Preserves a required authentication challenge through global error rendering.
    *
-   * @param value validated challenge from an authentication-required failure
+   * @param failure application failure, which may require an authentication challenge
    */
-  void requiredChallenge(String value) {
-    requiredChallenge = value;
+  void requiredChallenge(Throwable failure) {
+    if (failure instanceof AuthenticationRequiredException authentication) {
+      requiredChallenge = authentication.challenge();
+    }
   }
 
   /**
