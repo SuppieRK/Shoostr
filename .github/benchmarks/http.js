@@ -41,7 +41,8 @@ export const options = {
   thresholds: {
     checks: ['rate==1'],
     http_req_failed: ['rate==0'],
-    dropped_iterations: ['count==0'],
+    // Saturation is evidence in overload mode, including during warmup.
+    dropped_iterations: __ENV.MODE === 'overload' && __ENV.PHASE === 'warmup' ? [] : ['count==0'],
     'http_req_duration{scenario:requests}': [],
     'http_reqs{scenario:requests}': [],
   },

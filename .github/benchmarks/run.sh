@@ -118,6 +118,7 @@ load() {
     K6_WEB_DASHBOARD_EXPORT="$run_dir/report.html" \
     taskset -c "$client_cpus" "$tools/k6" run --no-usage-report --no-color --quiet \
     -e BASE_URL="$base" -e WORKLOAD="$selected" -e ROUTE_GROUPS=1000 \
+    -e MODE="$mode" -e PHASE="$phase" \
     -e RATE="$rate" -e VUS="$vus" -e DURATION="$length" \
     -e SMOKE_RATES="$(jq -r '.smoke_rates | join(",")' "$destination/configuration.json")" \
     -e FAILURE_DETAILS=1 \
