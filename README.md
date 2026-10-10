@@ -467,7 +467,60 @@ Finite completion hands the owned body buffer to Jetty's asynchronous write call
 
 The default listener uses Jetty 12.1.11 HTTP/1.1 and virtual-thread handlers. Routes match literal and single-segment parameter patterns against Jetty's canonically encoded path, with 404/405 handling. Defaults bind loopback:8080, cap request reads and finite response bodies at 1 MiB, limit each decoded query or form to 1,000 pairs, buffer streaming output in 8 KiB, and use a 30-second connection idle timeout. Override these through `Options` or native Jetty callbacks for transport settings. Idle timeouts do not interrupt arbitrary application work. Shutdown requests interruption after native draining; this slice does not provide per-handler deadlines or global concurrency admission limits.
 
-Applications own serialization/deserialization through bytes and UTF-8 strings; JSON fixtures use pre-encoded bytes. `Request.input()` is one-shot and mutually exclusive with cached `bodyBytes()` and multipart access; it counts bytes as they are consumed, including chunked input, and the framework closes it at handler completion. `Response.body(MediaType, byte[])` and `startStream(MediaType)` accept the immutable [`MediaType` primitive](http/README.md#media-types), while String overloads remain available for other parameters. Media types label bytes without converting them; `text(String)` and `Stream.write(String)` always encode UTF-8. Built-in serializers and template rendering are outside the current scope. Catch-all paths and wildcard patterns remain deferred. Production code and examples use only standard Java annotations; test sources additionally use JUnit 5 annotations, and the isolated `microbenchmarks` module uses JMH annotations. Minimize custom classes, apply YAGNI/KISS, and order methods from high-level operations down to their helpers.
+Applications own serialization/deserialization, either explicitly through bytes and UTF-8 strings or through the opt-in codec handlers below. `Request.input()` is one-shot and mutually exclusive with cached `bodyBytes()` and multipart access; it counts bytes as they are consumed, including chunked input, and the framework closes it at handler completion. `Response.body(MediaType, byte[])` and `startStream(MediaType)` accept the immutable [`MediaType` primitive](http/README.md#media-types), while String overloads remain available for other parameters. Media types label bytes without converting them; `text(String)` and `Stream.write(String)` always encode UTF-8. Built-in serializers and template rendering are outside the current scope. Catch-all paths and wildcard patterns remain deferred. Production code and examples use only standard Java annotations; test sources additionally use JUnit 5 annotations, and the isolated `microbenchmarks` module uses JMH annotations. Minimize custom classes, apply YAGNI/KISS, and order methods from high-level operations down to their helpers.
+
+### Opt-in typed codec handlers
+
+Supply one application-owned, thread-safe `Codec` before startup. Its contract is
+`<T> T read(byte[] source, Class<T> type) throws Exception` and
+`byte[] write(Object value) throws Exception`; no serializer library is bundled. Configure
+the codec before sharing it, and keep any dependencies alive through running handlers.
+Shoostr does not close it or infer an OpenAPI schema from it. The configured view avoids
+repeating a codec adapter at every handler; sealed inheritance avoids copying the ordinary
+request/response interface into standalone facade objects.
+
+```java
+var app = new Shoostr();
+app.codec(codec).routes(routes -> {
+    routes.post("/users", (request, response) -> {
+        var user = request.body(User.class);
+        response.status(201).body(MediaType.APPLICATION_JSON, user);
+    });
+    routes.get("/health", (_, response) -> response.text("healthy"));
+    routes.get("/text", (_, response) -> response.body(
+        MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8), textBytes));
+});
+app.start();
+```
+
+The view registers handlers receiving final `TypedRequest`/`TypedResponse` subclasses of
+sealed `Request`/`Response`. Existing byte/text/metadata operations are inherited and retain
+the same exchange ownership, state and limits; there is no second request/response pair.
+Fluent methods retain typed return values. Ordinary `app.routes()` registrations still
+receive the byte-level types. The typed callback form returns the original app, so
+`app.codec(codec).routes(registration).start()` uses the existing lifecycle. Configure the
+codec once per app, before starting or closing it; keep the view if registering in stages.
+Ordinary routes remain available for SSE, WebSocket and static-resource registration.
+
+`request.body(User.class)` reads bounded bytes and invokes the codec on a fresh defensive
+copy each time. Decoded objects are not cached; concrete Class decoding does not describe
+`List<User>` or other parameterized types. Streaming and multipart input retain their
+existing mutual exclusion with buffered reads. Both object output forms are explicit:
+`response.body("application/json", user)` and
+`response.body(MediaType.APPLICATION_JSON, user)`. A `byte[]` argument selects the existing
+byte overload and bypasses the codec; `text(String)` still encodes UTF-8 directly.
+Media types label the selected representation without codec discovery, transcoding or
+automatic negotiation. An explicit body media type replaces a previously set Content-Type.
+
+The codec's decoded value and encoded bytes must be nonnull. Response output is finite;
+the existing size limit is applied after encoding and cannot bound temporary allocations
+inside user conversion. Writable phase and thread ownership are checked before encoding.
+Codecs may throw checked exceptions: explicit malformed-input failures can use
+`BadRequestException` (400), unsupported formats can use `UnsupportedMediaTypeException`
+(415), and genuine server failures retain their existing error handling. Unexpected
+failures are never automatically reclassified as malformed input. Shared codecs must also
+support concurrent requests on caller-owned executors; no per-request codec or context
+lookup is performed.
 
 Each HTTP handling path receives a bound `Request`/`Response` pair, constructed and
 validated before application hooks run. Both retain their associated peer internally;
