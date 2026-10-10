@@ -1523,9 +1523,7 @@ public final class Shoostr implements Closeable {
         Callback callback,
         @Nullable Completion observation) {
       try {
-        return codec == null
-            ? Request.create(rawRequest, rawResponse, options, callback)
-            : new TypedRequest(rawRequest, rawResponse, options, callback, codec);
+        return Request.create(rawRequest, rawResponse, options, callback, codec);
       } catch (RuntimeException | Error failure) {
         if (observation != null) {
           observation.finish(null, failure);

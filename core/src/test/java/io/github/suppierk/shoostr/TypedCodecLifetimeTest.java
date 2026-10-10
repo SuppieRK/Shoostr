@@ -9,6 +9,7 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -177,7 +178,7 @@ class TypedCodecLifetimeTest {
   @Test
   void rejectsEncodingInsideAfterFlushCallback() throws Exception {
     var codec = new CountingCodec();
-    var observed = new AtomicInteger();
+    var rejection = new CompletableFuture<IllegalStateException>();
 
     try (var app = new Shoostr()) {
       app.codec(codec)
@@ -188,15 +189,20 @@ class TypedCodecLifetimeTest {
               extensions ->
                   extensions.afterResponseFlush(
                       (_, response) -> {
-                        assertThrows(
-                            IllegalStateException.class,
-                            () -> ((TypedResponse) response).body("application/json", "late"));
-                        observed.incrementAndGet();
+                        try {
+                          rejection.complete(
+                              assertThrows(
+                                  IllegalStateException.class,
+                                  () ->
+                                      ((TypedResponse) response).body("application/json", "late")));
+                        } catch (RuntimeException | Error failure) {
+                          rejection.completeExceptionally(failure);
+                        }
                       }));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/flush")).statusCode());
-        assertEquals(1, observed.get());
+        rejection.get(5, TimeUnit.SECONDS);
         assertEquals(0, codec.writes.get());
       }
     }

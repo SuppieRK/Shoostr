@@ -76,19 +76,20 @@ class TypedCodecCompositionTest {
     var requestSeen = new AtomicReference<Request>();
     var responseSeen = new AtomicReference<Response>();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
-    var extension =
-        new Extension<Void>() {
-          @Override
-          public void install(ApplicationCallbacks callbacks) {
-            callbacks
-                .onRouteMatched(
-                    (request, response) -> {
-                      requestSeen.set(request);
-                      responseSeen.set(response);
-                    })
-                .afterRequest(outcomes::add);
-          }
-        };
+    class ExchangeObserver implements Extension<Void> {
+      @Override
+      public void install(ApplicationCallbacks callbacks) {
+        callbacks
+            .onRouteMatched(
+                (request, response) -> {
+                  requestSeen.set(request);
+                  responseSeen.set(response);
+                })
+            .afterRequest(outcomes::add);
+      }
+    }
+
+    var extension = new ExchangeObserver();
 
     try (var app = new Shoostr()) {
       app.extensions(extension)

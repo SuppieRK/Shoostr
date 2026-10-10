@@ -158,7 +158,30 @@ public sealed class Request permits TypedRequest {
       org.eclipse.jetty.server.Response nativeResponse,
       Options options,
       Callback completion) {
-    return new Request(delegate, nativeResponse, options, completion, null);
+    return create(delegate, nativeResponse, options, completion, null);
+  }
+
+  /**
+   * Creates the app's byte-level or codec-enabled pair before framework dispatch.
+   *
+   * @param delegate native inbound exchange
+   * @param nativeResponse native output for the same exchange
+   * @param options validated configuration for both peers
+   * @param completion callback ending the native exchange
+   * @param codec optional application conversion
+   * @return request whose response is fully initialized
+   * @throws NullPointerException if a required construction input is null
+   * @throws org.eclipse.jetty.http.HttpException.RuntimeException if cookie validation fails
+   */
+  static Request create(
+      org.eclipse.jetty.server.Request delegate,
+      org.eclipse.jetty.server.Response nativeResponse,
+      Options options,
+      Callback completion,
+      @Nullable Codec codec) {
+    return codec == null
+        ? new Request(delegate, nativeResponse, options, completion, null)
+        : new TypedRequest(delegate, nativeResponse, options, completion, codec);
   }
 
   /**
