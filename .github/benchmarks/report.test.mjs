@@ -61,6 +61,32 @@ test('missing measurement metrics remain unknown rather than zero', t => {
   assert.equal(result.rows[0].drop_percentage, null);
 });
 
+test('warmup drops retain their own completed count, scheduled total and percentage', t => {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-warmup-drops-'));
+  t.after(() => fs.rmSync(parent, {recursive: true, force: true}));
+  fs.writeFileSync(path.join(parent, 'configuration.json'), JSON.stringify({warmup_seconds: 30}));
+  const directory = path.join(parent, 'trial-3');
+  fs.cpSync(fixture(t, httpMetrics()), directory, {recursive: true});
+  fs.writeFileSync(path.join(directory, 'warmup-summary.json'), JSON.stringify({metrics: {
+    checks: {passes: 119536, fails: 0}, http_req_failed: {value: 0},
+    'http_reqs{scenario:requests}': {count: 29884}, dropped_iterations: {count: 117}
+  }}));
+  const warmup = trial(directory, 'stream', 'overload', 3).warmup;
+  assert.equal(warmup.completed, 29884);
+  assert.equal(warmup.drops, 117);
+  assert.equal(warmup.scheduled_total, 30000);
+  assert.equal(warmup.drop_percentage, 117 / 30000 * 100);
+  assert.equal(warmup.check_failures, 0);
+  assert.equal(warmup.http_failure_rate, 0);
+});
+
+test('missing warmup metrics remain unknown rather than silently passing', t => {
+  const warmup = trial(fixture(t, httpMetrics()), 'stream', 'overload', 1).warmup;
+  assert.equal(warmup.completed, null);
+  assert.equal(warmup.drops, null);
+  assert.equal(warmup.drop_percentage, null);
+});
+
 test('overload uses plateau duration instead of native whole-run rates', t => {
   const metrics = {checks: {passes: 4, fails: 2}};
   for (const rate of [1000, 5000, 10000, 50000]) {
@@ -126,7 +152,12 @@ for (const warmupSeconds of [10, 30]) {
       revision: 'test', warmup_seconds: warmupSeconds
     }));
     for (const index of [1, 2, 3]) {
-      fs.cpSync(fixture(t, httpMetrics()), path.join(directory, `trial-${index}`), {recursive: true});
+      const child = path.join(directory, `trial-${index}`);
+      fs.cpSync(fixture(t, httpMetrics()), child, {recursive: true});
+      fs.writeFileSync(path.join(child, 'warmup-summary.json'), JSON.stringify({metrics: {
+        checks: {passes: 4, fails: 0}, http_req_failed: {value: 0},
+        'http_reqs{scenario:requests}': {count: 100}, dropped_iterations: {count: 9}
+      }}));
     }
     const markdown = execFileSync(process.execPath, [
       fileURLToPath(new URL('./report.mjs', import.meta.url)), 'workload', directory, 'plaintext', 'steady'
@@ -135,6 +166,8 @@ for (const warmupSeconds of [10, 30]) {
       env: {...process.env, ARTIFACT_URL: 'https://example.test/native', MEASUREMENT_OUTCOME: 'success'}
     });
     assert.ok(markdown.includes(`Warmup: ${warmupSeconds} seconds per fresh JVM.`));
+    assert.ok(markdown.includes(`Warmup: completed 100; drops 9 / ${1000 * warmupSeconds}`));
+    assert.ok(markdown.includes('failed checks 0; HTTP failures 0.00%.'));
     assert.ok(!markdown.includes('A 10-second warmup does not guarantee JIT stabilization.'));
   });
 }

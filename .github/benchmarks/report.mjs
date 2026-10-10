@@ -59,6 +59,17 @@ export function trial(directory, workload, mode, index) {
   const seconds = mode === 'overload' ? configuration?.smoke_step_seconds ?? 15
     : configuration?.measurement_seconds ?? 180;
   const metrics = json(path.join(directory, 'measured-summary.json'))?.metrics;
+  const warmupMetrics = json(path.join(directory, 'warmup-summary.json'))?.metrics;
+  const warmupDrops = value(warmupMetrics?.dropped_iterations).count ?? null;
+  const warmupTotal = Number.isFinite(configuration?.warmup_seconds)
+    ? fixture.rate * configuration.warmup_seconds : null;
+  const warmup = {
+    completed: value(warmupMetrics?.[fixture.kind === 'http' ? 'http_reqs{scenario:requests}' : 'iterations']).count ?? null,
+    drops: warmupDrops, scheduled_total: warmupTotal,
+    drop_percentage: Number.isFinite(warmupDrops) && warmupTotal > 0 ? warmupDrops / warmupTotal * 100 : null,
+    check_failures: value(warmupMetrics?.checks).fails ?? null,
+    http_failure_rate: value(warmupMetrics?.http_req_failed).value ?? value(warmupMetrics?.http_req_failed).rate ?? null
+  };
   const nativeOutcome = text(path.join(directory, 'outcome.txt')) || 'INCOMPLETE';
   const required = ['server.jfr', 'jfr-summary.txt', 'measured-summary.json',
     'measured-metrics.json.gz', 'report.html', 'process-monitor.txt', 'monitor-pids.txt',
@@ -114,7 +125,7 @@ export function trial(directory, workload, mode, index) {
   for (const row of rows) {
     if (!Number.isFinite(row.count) || (row.count > 0 && !Number.isFinite(row.p95))) missing.push(`usable metrics for offered rate ${row.offered}`);
   }
-  return {index, outcome: missing.length ? 'INCOMPLETE' : nativeOutcome, missing, rows,
+  return {index, outcome: missing.length ? 'INCOMPLETE' : nativeOutcome, missing, rows, warmup,
     server_effective_cpus: effectiveCpus,
     server_memory_max_mib: memoryMax === null ? null : memoryMax / 1024 / 1024,
     server_swap_max_bytes: swapMax,
@@ -168,6 +179,7 @@ function workloadMarkdown(summary, directory) {
       `Peak RSS: server ${number(result.server_peak_rss_mib)} MiB; client ${number(result.client_peak_rss_mib)} MiB.`, '',
       `Native time CPU: whole JVM lifetime ${result.server_lifetime_cpu_percent ?? '—'}%; measured client ${result.client_measured_cpu_percent ?? '—'}%.`);
     lines.push('', `Effective JVM limits: ${result.server_effective_cpus ?? '—'} logical CPU(s); ${number(result.server_memory_max_mib)} MiB memory; swap ${result.server_swap_max_bytes ?? '—'} bytes. Cgroup peak: ${number(result.server_cgroup_peak_mib)} MiB; OOM kills: ${result.server_oom_kills ?? '—'}.`);
+    lines.push('', `Warmup: completed ${result.warmup.completed ?? '—'}; drops ${result.warmup.drops ?? '—'} / ${result.warmup.scheduled_total ?? '—'} (${percentage(result.warmup.drop_percentage, 4)}); failed checks ${result.warmup.check_failures ?? '—'}; HTTP failures ${percentage(result.warmup.http_failure_rate === null ? null : result.warmup.http_failure_rate * 100)}.`);
     if (result.missing.length) lines.push('', `Missing evidence: ${result.missing.join(', ')}.`);
     const trialDirectory = path.join(directory, `trial-${result.index}`);
     lines.push('', `CPU affinity: JVM \`${text(path.join(trialDirectory, 'server-affinity.txt')) || 'Unavailable'}\`; k6 \`${text(path.join(trialDirectory, 'client-affinity.txt')) || 'Unavailable'}\`.`, '',

@@ -23,6 +23,11 @@ five-second drains. Threshold breaches appear as **OVERLOAD**, while startup,
 tooling, profiling and publication failures fail the workflow. Steady-mode
 correctness failures also fail the workflow. The load generator can saturate
 before the service; inspect both processes before interpreting a boundary.
+Overload warmup permits dropped iterations so saturation does not prevent the
+profiled plateaus from running. Warmup setup, response correctness and HTTP
+failure checks remain strict; steady warmup also requires zero drops. Per-trial
+summaries show warmup completed counts and drops / scheduled total (percentage),
+separately from measured results. Native warmup logs and metrics remain retained.
 All four plateaus run even if an earlier plateau drops iterations. There is no
 100,000-request/second step or adaptive early-stop controller.
 

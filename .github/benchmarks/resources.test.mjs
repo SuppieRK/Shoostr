@@ -79,6 +79,29 @@ test('overload options schedule exactly the four approved plateaus even when thr
   assert.ok(Object.values(options.thresholds).flat().every(threshold => typeof threshold === 'string'));
 });
 
+function httpOptions(env) {
+  const source = fs.readFileSync(new URL('./http.js', import.meta.url), 'utf8');
+  const code = source.slice(source.indexOf('export const options ='), source.indexOf('export default function'))
+    .replace('export const options =', 'return');
+  return new Function('__ENV', code)(env);
+}
+
+test('overload warmup records drops without blocking the profiled measurement', () => {
+  assert.deepEqual(httpOptions({MODE: 'overload', PHASE: 'warmup'}).thresholds.dropped_iterations, []);
+});
+
+for (const env of [{}, {MODE: 'steady', PHASE: 'warmup'}, {MODE: 'overload', PHASE: 'measured'}]) {
+  test(`HTTP drop thresholds remain strict outside overload warmup (${JSON.stringify(env)})`, () => {
+    assert.deepEqual(httpOptions(env).thresholds.dropped_iterations, ['count==0']);
+  });
+}
+
+test('overload warmup retains strict correctness and HTTP failure thresholds', () => {
+  const {thresholds} = httpOptions({MODE: 'overload', PHASE: 'warmup'});
+  assert.deepEqual(thresholds.checks, ['rate==1']);
+  assert.deepEqual(thresholds.http_req_failed, ['rate==0']);
+});
+
 for (const mode of ['normal', 'oom']) {
   test(`native cgroup ${mode} run enforces limits outside the time wrapper and cleans up`, {
     skip: process.env.BENCHMARK_TEST_CGROUP !== '1'
