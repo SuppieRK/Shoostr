@@ -6,6 +6,7 @@ import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
+import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.NotAcceptableException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -50,7 +51,7 @@ import org.eclipse.jetty.util.resource.ResourceFactory;
 import org.jspecify.annotations.Nullable;
 
 /** Finite output is staged until handler return. The framework owns close(). */
-public final class Response implements AutoCloseable {
+public sealed class Response implements AutoCloseable permits TypedResponse {
   /** Tracks writable phases and terminal outcomes independently of transport commitment. */
   private enum State {
     OPEN,
@@ -254,10 +255,12 @@ public final class Response implements AutoCloseable {
   /**
    * Preserves a required authentication challenge through global error rendering.
    *
-   * @param value validated challenge from an authentication-required failure
+   * @param failure application failure, which may require an authentication challenge
    */
-  void requiredChallenge(String value) {
-    requiredChallenge = value;
+  void requiredChallenge(Throwable failure) {
+    if (failure instanceof AuthenticationRequiredException authentication) {
+      requiredChallenge = authentication.challenge();
+    }
   }
 
   /**
@@ -392,6 +395,21 @@ public final class Response implements AutoCloseable {
    */
   public Response body(MediaType contentType, byte[] value) {
     return body(Objects.requireNonNull(contentType).value(), value);
+  }
+
+  /**
+   * Validates codec output admission before calling user conversion, without changing headers.
+   *
+   * @param contentType caller-selected response media type
+   * @throws IllegalStateException if the phase, thread or selected file prohibits finite output
+   */
+  final void requireEncodedBody(String contentType) {
+    require(State.OPEN);
+    if (fileSelected) {
+      throw new IllegalStateException("Response already has file output");
+    }
+
+    validateHeaderValue(contentType);
   }
 
   /**

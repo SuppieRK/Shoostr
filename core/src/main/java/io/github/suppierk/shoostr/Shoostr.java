@@ -4,7 +4,6 @@ import io.github.suppierk.shoostr.http.ForwardedHeaders;
 import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
-import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException;
 import io.github.suppierk.shoostr.http.exceptions.HttpException;
 import java.io.Closeable;
@@ -59,6 +58,7 @@ public final class Shoostr implements Closeable {
   private final Routes routes;
   private final List<Extension<?>> extensions;
   private @Nullable AuthenticationExtension authentication;
+  private @Nullable Codec codec;
   private boolean installing;
   private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> exceptionHandlers;
   private final Map<Integer, Handler> statusHandlers;
@@ -222,6 +222,25 @@ public final class Shoostr implements Closeable {
    */
   public Routes routes() {
     return routes;
+  }
+
+  /**
+   * Selects the app's one caller-owned codec and returns an opt-in typed registration view.
+   * Ordinary routes retain their byte-level handler types. Configure the shared, thread-safe codec
+   * before startup; the application never closes it or infers representation metadata.
+   *
+   * @param codec application-provided finite conversion
+   * @return typed route registration over this same app
+   * @throws IllegalStateException if already configured or application setup has ended
+   * @throws NullPointerException if codec is null
+   */
+  public synchronized TypedShoostr codec(Codec codec) {
+    if (started || closed || installing || this.codec != null) {
+      throw new IllegalStateException("Configure one codec before starting or closing the app");
+    }
+
+    this.codec = Objects.requireNonNull(codec);
+    return new TypedShoostr(this);
   }
 
   /**
@@ -1085,9 +1104,7 @@ public final class Shoostr implements Closeable {
       errorHandler = exceptionHandler(errors, failure);
     }
 
-    if (failure instanceof AuthenticationRequiredException authentication) {
-      response.requiredChallenge(authentication.challenge());
-    }
+    response.requiredChallenge(failure);
 
     if (response.encodingRejected()) {
       response.emptyEncodingError();
@@ -1503,7 +1520,7 @@ public final class Shoostr implements Closeable {
         Callback callback,
         @Nullable Completion observation) {
       try {
-        return Request.create(rawRequest, rawResponse, options, callback);
+        return Request.create(rawRequest, rawResponse, options, callback, codec);
       } catch (RuntimeException | Error failure) {
         if (observation != null) {
           observation.finish(null, failure);
