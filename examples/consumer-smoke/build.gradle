@@ -23,12 +23,22 @@ configurations {
 }
 
 dependencies {
-	implementation standaloneBuild ? 'io.github.suppierk:shoostr-test:0.1.0-SNAPSHOT' : project(':test')
-	baseRuntime standaloneBuild ? 'io.github.suppierk:shoostr-core:0.1.0-SNAPSHOT' : project(':core')
+	if (standaloneBuild) {
+		implementation 'io.github.suppierk:shoostr-test:0.1.0-SNAPSHOT'
+		baseRuntime 'io.github.suppierk:shoostr-core:0.1.0-SNAPSHOT'
+		testImplementation 'io.github.suppierk:shoostr-pac4j:0.1.0-SNAPSHOT'
+		testImplementation 'io.github.suppierk:shoostr-micrometer:0.1.0-SNAPSHOT'
+		testImplementation 'io.github.suppierk:shoostr-opentelemetry:0.1.0-SNAPSHOT'
+		testImplementation 'io.github.suppierk:shoostr-openapi:0.1.0-SNAPSHOT'
+	} else {
+		implementation project(':test')
+		baseRuntime project(':core')
+		testImplementation project(':pac4j')
+		testImplementation project(':micrometer')
+		testImplementation project(':opentelemetry')
+		testImplementation project(':openapi')
+	}
 	compileOnly 'org.jspecify:jspecify:1.0.1'
-	testImplementation standaloneBuild ? 'io.github.suppierk:shoostr-pac4j:0.1.0-SNAPSHOT' : project(':pac4j')
-	testImplementation standaloneBuild ? 'io.github.suppierk:shoostr-micrometer:0.1.0-SNAPSHOT' : project(':micrometer')
-	testImplementation standaloneBuild ? 'io.github.suppierk:shoostr-opentelemetry:0.1.0-SNAPSHOT' : project(':opentelemetry')
 	testImplementation 'io.opentelemetry:opentelemetry-sdk:1.66.0'
 	testImplementation 'io.opentelemetry:opentelemetry-sdk-testing:1.66.0'
 	testImplementation 'org.pac4j:pac4j-http:6.5.9'
@@ -48,6 +58,8 @@ tasks.register('verifyBaseDependencies') {
 			'org.pac4j',
 			'io.micrometer',
 			'io.opentelemetry',
+			'io.swagger',
+			'org.webjars',
 			'com.fasterxml.jackson',
 			'tools.jackson',
 			'com.google.code.gson',
@@ -58,6 +70,7 @@ tasks.register('verifyBaseDependencies') {
 			'pac4j',
 			'micrometer',
 			'opentelemetry',
+			'openapi',
 			'test'
 		].collect {
 			modulePrefix + it

@@ -60,7 +60,7 @@ subprojects {
 			googleJavaFormat()
 			// Bump both Java custom-step versions when StatementSpacingCheck changes.
 			bumpThisNumberIfACustomStepChanges(2)
-			custom 'statement spacing', { source ->
+			custom 'statement spacing', { String source ->
 				StatementSpacingCheck.format(source)
 			}
 		}
@@ -86,7 +86,9 @@ spotless {
 		target 'buildSrc/src/**/*.java', 'config/checkstyle/tests/**/*.java'
 		googleJavaFormat()
 		bumpThisNumberIfACustomStepChanges(2)
-		custom 'statement spacing', { source -> StatementSpacingCheck.format(source) }
+		custom 'statement spacing', { String source ->
+			StatementSpacingCheck.format(source)
+		}
 	}
 }
 
@@ -126,7 +128,8 @@ def frameworkModules = [
 	'test',
 	'pac4j',
 	'micrometer',
-	'opentelemetry'
+	'opentelemetry',
+	'openapi'
 ]
 configure(frameworkModules.collect { project(":${it}") }) {
 	apply plugin: 'jacoco'
@@ -156,7 +159,7 @@ configure(frameworkModules.collect { project(":${it}") }) {
 
 tasks.register('mutationTest') {
 	group = 'verification'
-	description = 'Runs diagnostic mutation analysis for all six client-facing libraries (not part of build).'
+	description = 'Runs diagnostic mutation analysis for all client-facing libraries (not part of build).'
 	dependsOn frameworkModules.collect { ":${it}:pitest" }
 }
 
@@ -189,7 +192,8 @@ configure([
 	project(':test'),
 	project(':pac4j'),
 	project(':micrometer'),
-	project(':opentelemetry')
+	project(':opentelemetry'),
+	project(':openapi')
 ]) {
 	apply plugin: 'maven-publish'
 	base { archivesName = "shoostr-${project.name}" }
@@ -227,6 +231,7 @@ tasks.register('consumerSmoke', Exec) {
 	dependsOn ':pac4j:publishMavenJavaPublicationToConsumerRepository'
 	dependsOn ':micrometer:publishMavenJavaPublicationToConsumerRepository'
 	dependsOn ':opentelemetry:publishMavenJavaPublicationToConsumerRepository'
+	dependsOn ':openapi:publishMavenJavaPublicationToConsumerRepository'
 	commandLine rootProject.file('gradlew').absolutePath,
 			'-p', rootProject.file('examples/consumer-smoke').absolutePath,
 			'runSmoke',

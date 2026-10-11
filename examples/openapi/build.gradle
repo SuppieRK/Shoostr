@@ -1,0 +1,14 @@
+plugins {
+	id 'application'
+}
+
+dependencies {
+	implementation project(':openapi')
+	implementation project(':pac4j')
+	implementation 'org.pac4j:pac4j-http:6.5.9'
+	testImplementation project(':test')
+}
+
+application {
+	mainClass = 'io.github.suppierk.shoostr.example.openapi.OpenApiExample'
+}

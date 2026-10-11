@@ -9,8 +9,11 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
+import io.github.suppierk.shoostr.http.MediaType;
+import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException;
+import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.InetAddress;
@@ -25,6 +28,7 @@ import java.time.Duration;
 import java.util.Arrays;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.http.HttpTester;
 import org.eclipse.jetty.io.QuietException;
 import org.eclipse.jetty.server.HttpStream;
@@ -36,6 +40,195 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(15)
 class BufferedRequestLifecycleTest {
   private static final String PAYLOAD = "01234567890123456789012345678901";
+
+  @ParameterizedTest
+  @ValueSource(ints = {404, 405})
+  void advertisesConnectionClosureWhenRoutingRejectsAnUnavailableBody(int status) throws Exception {
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.routes().get("/get-only", (_, response) -> response.text("unexpected"));
+      app.start();
+
+      try (var socket = new Socket()) {
+        connect(socket, app.port());
+        var path = status == 404 ? "/missing" : "/get-only";
+        socket
+            .getOutputStream()
+            .write(
+                ("POST " + path + " HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var rejected = receive(HttpTester.from(socket.getInputStream()));
+        assertEquals(status, rejected.getStatus());
+        assertEquals("close", rejected.get(HttpHeaders.CONNECTION.value()));
+        assertEquals(-1, socket.getInputStream().read());
+      }
+    }
+  }
+
+  @Test
+  void leavesRejectedBodyReadableByBeforeFlushCallbacks() throws Exception {
+    var observedBody = new AtomicReference<String>();
+    var authentication =
+        new AuthenticationExtension() {
+          @Override
+          public void handle(Request request, Response response) {
+            throw new AuthenticationRequiredException("Basic realm=\"test\"");
+          }
+        };
+
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.authentication(authentication)
+          .beforeResponseFlush((request, _) -> observedBody.set(request.bodyText()))
+          .routes()
+          .post(
+              "/body",
+              (_, response) -> response.text("unexpected"),
+              extensions -> extensions.get(authentication).required());
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/body")
+                        .method("POST")
+                        .body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)));
+        assertEquals(401, result.statusCode());
+        assertEquals(PAYLOAD, observedBody.get());
+      }
+    }
+  }
+
+  @Test
+  void leavesRejectedBodyReadableByACustomAuthenticationErrorRenderer() throws Exception {
+    var authentication =
+        new AuthenticationExtension() {
+          @Override
+          public void handle(Request request, Response response) {
+            throw new AuthenticationRequiredException("Basic realm=\"test\"");
+          }
+        };
+
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.authentication(authentication)
+          .exception(
+              AuthenticationRequiredException.class,
+              (_, request, response) -> response.text(request.bodyText()))
+          .routes()
+          .post(
+              "/body",
+              (_, response) -> response.text("unexpected"),
+              extensions -> extensions.get(authentication).required());
+
+      try (var test = TestServer.start(app)) {
+        var result =
+            test.send(
+                request ->
+                    request
+                        .path("/body")
+                        .method("POST")
+                        .body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(401, result.statusCode());
+        assertEquals(PAYLOAD, result.body());
+      }
+    }
+  }
+
+  @Test
+  void reusesHttp1ConnectionAfterAuthenticationRejectsAnAvailableBody() throws Exception {
+    var authentication =
+        new AuthenticationExtension() {
+          @Override
+          public void handle(Request request, Response response) {
+            if (request.header("Authorization").isEmpty()) {
+              throw new AuthenticationRequiredException("Basic realm=\"test\"");
+            }
+          }
+        };
+
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.authentication(authentication)
+          .routes()
+          .post(
+              "/body",
+              (request, response) -> response.text(request.bodyText()),
+              extensions -> extensions.get(authentication).required());
+      app.start();
+
+      try (var socket = new Socket()) {
+        connect(socket, app.port());
+        var input = HttpTester.from(socket.getInputStream());
+        socket
+            .getOutputStream()
+            .write(
+                ("POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n" + PAYLOAD)
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var rejected = receive(input);
+        assertEquals(401, rejected.getStatus());
+        assertNull(rejected.get(HttpHeaders.CONNECTION.value()));
+        socket
+            .getOutputStream()
+            .write(
+                ("POST /body HTTP/1.1\r\nHost: localhost\r\nAuthorization: present\r\n"
+                        + "Content-Length: 32\r\n\r\n"
+                        + PAYLOAD)
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var accepted = receive(input);
+        assertEquals(200, accepted.getStatus());
+        assertEquals(PAYLOAD, accepted.getContent());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void advertisesConnectionClosureWhenAuthenticationRejectsAnUnavailableBody(
+      boolean streamingRenderer) throws Exception {
+    var authentication =
+        new AuthenticationExtension() {
+          @Override
+          public void handle(Request request, Response response) {
+            throw new AuthenticationRequiredException("Basic realm=\"test\"");
+          }
+        };
+
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      if (streamingRenderer) {
+        app.exception(
+            AuthenticationRequiredException.class,
+            (_, _, response) ->
+                response
+                    .startStream(MediaType.TEXT_PLAIN)
+                    .write("rejected".getBytes(StandardCharsets.US_ASCII)));
+      }
+
+      app.authentication(authentication)
+          .routes()
+          .post(
+              "/body",
+              (_, response) -> response.text("unexpected"),
+              extensions -> extensions.get(authentication).required());
+      app.start();
+
+      try (var socket = new Socket()) {
+        connect(socket, app.port());
+        socket
+            .getOutputStream()
+            .write(
+                "POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var rejected = receive(HttpTester.from(socket.getInputStream()));
+        assertEquals(401, rejected.getStatus());
+        assertEquals("Basic realm=\"test\"", rejected.get("WWW-Authenticate"));
+        assertEquals("close", rejected.get(HttpHeaders.CONNECTION.value()));
+        assertEquals(-1, socket.getInputStream().read());
+      }
+    }
+  }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})

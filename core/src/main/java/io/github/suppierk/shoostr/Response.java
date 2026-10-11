@@ -115,6 +115,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   private boolean frameworkClosing;
   private boolean flushCallback;
   private boolean beforeFlushFailed;
+  private boolean discardInputBeforeFlush;
   private boolean gating;
   private boolean eventStreamOnly;
   private boolean negotiatedByAccept;
@@ -159,6 +160,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     this.request = Objects.requireNonNull(request);
     this.flushCallback = false;
     this.beforeFlushFailed = false;
+    this.discardInputBeforeFlush = false;
     this.headContentLength = -1;
     this.state = State.OPEN;
     this.body = EMPTY;
@@ -1000,6 +1002,15 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   }
 
   /**
+   * Schedules non-blocking input disposal after application pre-flush callbacks and before the
+   * first error write. Jetty can then advertise connection closure when rejected input is not fully
+   * available, while custom renderers and pre-flush callbacks retain access to the body.
+   */
+  void discardInputBeforeFlush() {
+    discardInputBeforeFlush = true;
+  }
+
+  /**
    * Replaces uncommitted application output with a safe status reason phrase and completes it. The
    * caller must check commitment first. A reason phrase exceeding the body limit is omitted.
    *
@@ -1311,7 +1322,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       }
 
       fallback.append(
-          character >= 0x20 && character <= 0x7e && character != HttpCharacters.DOUBLE_QUOTE
+          character <= 0x7e && character != HttpCharacters.DOUBLE_QUOTE
               ? character
               : HttpCharacters.UNDERSCORE);
     }
@@ -1582,7 +1593,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     for (int index = start + 1; index < value.length() - 1; index++) {
       var character = value.charAt(index);
       if (character == HttpCharacters.DOUBLE_QUOTE
-          || character == ' '
           || character < 0x21
           || character == 0x7f
           || character > 0xff) {
@@ -1915,6 +1925,11 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     }
 
     configureHeadCompression();
+
+    if (discardInputBeforeFlush) {
+      nativeRequest().consumeAvailable();
+      discardInputBeforeFlush = false;
+    }
   }
 
   /** Adjusts HEAD framing when native compression may change the representation length. */
@@ -1951,7 +1966,10 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     }
 
     var handler = Objects.requireNonNull(compressionHandler);
-    var selected = org.eclipse.jetty.server.Response.as(delegate, CompressionResponse.class);
+    // Jetty returns null for an absent wrapper; declare that contract for the generic result.
+    var selected =
+        org.eclipse.jetty.server.Response.<@Nullable CompressionResponse>as(
+            delegate, CompressionResponse.class);
     if (selected == null) {
       encodingRejected = true;
       throw new NotAcceptableException();

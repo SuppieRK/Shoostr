@@ -52,7 +52,7 @@ after cleanup; `close()` reports Jetty stop failures as `IOException`. For lifec
 notifications, register Jetty's `LifeCycle.Listener` through `Shoostr.modifyServer` before
 startup. No framework-specific lifecycle annotation is required. Run
 `./gradlew consumerSmoke` to publish `http`, `core`, `test`, `pac4j`,
-`micrometer` and `opentelemetry` into `build/consumer-repository` and execute
+`micrometer`, `opentelemetry` and `openapi` into `build/consumer-repository` and execute
 the independent Java 25 consumer under `examples/consumer-smoke`; this does not
 publish to Maven Local or a remote repository. Its JUnit 5 tests exercise the
 published optional integrations over HTTP. The separate base-runtime check
@@ -146,7 +146,7 @@ The configuration pattern follows [Javalin 7.2.3's native callbacks](https://git
 Java 25 is required; the Gradle wrapper supplies the build tool. Run `cmdshape ./gradlew clean spotlessApply build` to apply formatting, compile, and execute the JUnit 5 test suites and quality checks. Use `gradlew.bat` on Windows. Run end-to-end diagnostics through the manual [benchmark workflow](.github/benchmarks/README.md); each workload publishes k6 and JFR artifacts and an Actions summary.
 
 Run `cmdshape ./gradlew mutationTest` for diagnostic PiTest analysis of `core`, `http`,
-`micrometer`, `opentelemetry`, `pac4j` and `test`. It produces native HTML/XML
+`micrometer`, `opentelemetry`, `pac4j`, `test` and `openapi`. It produces native HTML/XML
 reports and is independent of `build`, `check` and CI, with no mutation-score gate.
 See [mutation testing](core/MUTATION_TESTING.md) for scope, module-specific commands,
 report locations and interpretation. The initial full baseline took 54 minutes.
@@ -343,6 +343,12 @@ availability control, not route concealment. Successful response caching remains
 cached responses never consult a live predicate. Use ordinary Java conditional registration for
 deployment-specific absence: `if (development) routes.get("/debug", debugHandler);`.
 
+The optional [`openapi` module](openapi/README.md) generates startup-frozen OpenAPI 3.1.1 JSON
+from instance-selected explicit operation/schema configuration, with an explicitly registered,
+locally bundled Swagger UI. It adds no OpenAPI dependencies or runtime hooks to core-only apps.
+The [runnable authenticated example](examples/openapi/README.md) covers typed and byte handlers,
+group defaults, independent documents and conditional exclusions.
+
 Extension authors implement `Extension<C>`. Its `configure(Extensions, C inherited)` method returns
 a fresh typed configurator, copies parent values when present, and registers its own callbacks.
 Select collaborating capabilities in the route/group callback; provider-side nested `get` is rejected.
@@ -351,6 +357,12 @@ in first-selection order, followed by directly registered local callbacks; inher
 retain outer-to-inner order. Avoid capturing mutable configurators in runtime callbacks: capture
 the selected values. Core snapshots callback collections and closes registration surfaces before
 traffic; it does not police arbitrary provider-owned setters.
+
+`Extensions.onRoute((method, path) -> ...)` remains available for cold method/path facts.
+The additive `onRoute(info -> ...)` overload supplies `RouteInfo` with final method,
+composed template and an inherited `conditional` flag. Facts arrive before extension
+`beforeStart()` and add no request-time behavior; predicates are never evaluated here.
+HTTP/SSE bindings produce facts, but WebSocket handshakes and static mounts do not.
 
 Internally, each endpoint with local runtime behavior receives an immutable `EndpointBehavior`
 during registration. It combines inherited and local authentication, hooks, renderers
@@ -461,7 +473,7 @@ Error headers belong in the callback, not in exception metadata or copied reques
 
 If the reason phrase exceeds `Options.maxResponseBytes`, core sends the selected status with an empty body. HEAD responses omit the body. After streaming has committed, an HTTP exception aborts the stream without changing the status, appending an error body, or flushing pending application bytes. Request-body limit failures use the public `ContentTooLargeException` and produce `413 Content Too Large`; known oversized requests are rejected before entering the handler, while limits reached during a body read can be caught by application code. Applications needing a custom body or headers can catch an HTTP exception and set the response explicitly before commitment.
 
-Buffered request-body reads close their input adapter on success or failure. Oversized bodies remain rejected on repeated access, including from an exception handler. Cleanup failures are suppressed under the original read or validation failure. Jetty handles unread content and connection reuse; a client that has not finished sending the request can receive the rejection with its connection closed.
+Buffered request-body reads close their input adapter on success or failure. Oversized bodies remain rejected on repeated access, including from an exception handler. Cleanup failures are suppressed under the original read or validation failure. Before the first flush of framework-generated or exception-rendered error responses, core asks Jetty to discard available unread content without waiting for the upload. Custom error renderers and pre-flush callbacks can still read the body before that flush. Jetty handles connection reuse and protocol-specific cleanup; if HTTP/1 input cannot be fully consumed, the error advertises `Connection: close` before closing instead of inviting reuse of a closing connection.
 
 Finite completion hands the owned body buffer to Jetty's asynchronous write callback after closing application access. The HTTP request completes when that write succeeds or fails; the handler thread does not wait through a blocking adapter. Streaming writes still wait for transport completion before reusing their bounded buffer. The defensive copy of caller-supplied finite bodies remains in place.
 
@@ -856,13 +868,13 @@ This changes the source and binary interface: use `.orElseThrow()` where a value
 
 `queryString()` exposes the encoded query without its `?`: `Optional.empty()` when absent, `Optional.of("")` when the target ends in `?`. It does not parse parameter values. `headerMap()` returns the deeply immutable, case-insensitive snapshot captured at request construction, preserving separate repeated values. `header(name)` and `headers(name)` read that same snapshot; later changes made by custom native wrappers do not affect it. `pathParamMap()` snapshots all named captures, including composed path groups, using the same single percent-decoding step as `pathParam(name)`.
 
-| Accessors | Meaning |
-| --- | --- |
-| `url()`, `fullUrl()` | Transport-assembled URL without query/fragment, or with the original query. Encoded path spelling survives; these are not trusted application origins. |
+| Accessors                                                 | Meaning                                                                                                                                                                                         |
+| --------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url()`, `fullUrl()`                                      | Transport-assembled URL without query/fragment, or with the original query. Encoded path spelling survives; these are not trusted application origins.                                          |
 | `scheme()`, `authority()`, `serverName()`, `serverPort()` | Logical request URI/authority. Jetty normalizes default ports and retains IPv6 brackets. Host/absolute-target values are client supplied; missing legacy authority uses the transport fallback. |
-| `protocol()` | HTTP version of the active request. |
-| `remoteAddress()`, `localAddress()` | Direct JDK SocketAddress values from the physical transport endpoint, independently of the requested host/port. No reverse DNS lookup is initiated. |
-| `isSecure()` | Actual endpoint security. An absolute HTTPS URI over plain TCP still returns false, as does plain TCP behind a TLS-terminating proxy. |
+| `protocol()`                                              | HTTP version of the active request.                                                                                                                                                             |
+| `remoteAddress()`, `localAddress()`                       | Direct JDK SocketAddress values from the physical transport endpoint, independently of the requested host/port. No reverse DNS lookup is initiated.                                             |
+| `isSecure()`                                              | Actual endpoint security. An absolute HTTPS URI over plain TCP still returns false, as does plain TCP behind a TLS-terminating proxy.                                                           |
 
 Forwarded/X-Forwarded-* headers remain ordinary input and do not alter URI or connection metadata by default. To opt in, configure `app.trustedProxies(...)` before startup with `io.github.suppierk.shoostr.http.ForwardedHeaders` when selecting the legacy family. `request.isForwarded()`, `clientAddress()` and `effectiveUrl()` then expose selected trusted metadata without rewriting the direct transport accessors. See the [trusted-proxy contract](core/HTTP_CONTRACT.md#trusted-reverse-proxy-metadata) for header-family and trust-boundary rules.
 

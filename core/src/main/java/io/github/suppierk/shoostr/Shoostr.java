@@ -1077,7 +1077,10 @@ public final class Shoostr implements Closeable {
 
   /**
    * Applies the same application-wide exception policy to ordinary HTTP handlers and failed
-   * WebSocket listener factories, preserving session cookies through response reset.
+   * WebSocket listener factories, preserving session cookies through response reset. Schedules
+   * non-blocking input disposal before the first error flush so Jetty can advertise a
+   * non-persistent HTTP/1 connection while custom renderers and pre-flush callbacks retain body
+   * access.
    *
    * @param errors registered exception handlers
    * @param failure initiating application failure
@@ -1103,6 +1106,8 @@ public final class Shoostr implements Closeable {
     if (errorHandler == null) {
       errorHandler = exceptionHandler(errors, failure);
     }
+
+    response.discardInputBeforeFlush();
 
     response.requiredChallenge(failure);
 
@@ -1243,6 +1248,7 @@ public final class Shoostr implements Closeable {
       Request request,
       Response response)
       throws Exception {
+    response.discardInputBeforeFlush();
     var local = request.behavior();
     var handler = local == null ? null : local.statuses().get(status);
     if (handler == null) {
