@@ -63,6 +63,27 @@ public final class Extensions {
   }
 
   /**
+   * Verifies that this application's registry contains the exact extension instance. This check
+   * neither selects route configuration nor contributes request-time behavior. Installation in this
+   * app does not establish exclusive ownership of the extension.
+   *
+   * @param extension installed capability
+   * @return this scope
+   * @throws NullPointerException if the extension is null
+   * @throws IllegalArgumentException if the instance is not installed in this application
+   * @throws IllegalStateException if this registration callback has finished
+   */
+  public Extensions requireInstalled(Extension<?> extension) {
+    requireMutable();
+    Objects.requireNonNull(extension);
+    if (!installed.contains(extension)) {
+      throw new IllegalArgumentException("Install the extension before using it on a route");
+    }
+
+    return this;
+  }
+
+  /**
    * Selects the exact installed instance; repeated selection returns the same local configurator.
    *
    * @param extension installed capability
