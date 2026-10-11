@@ -10,6 +10,7 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
 class RouteInfoTest {
@@ -29,7 +30,10 @@ class RouteInfoTest {
                         () -> conditions.incrementAndGet() > 0,
                         conditional -> conditional.get("/private", (_, _) -> {}));
                   },
-                  e -> e.onRoute(info -> facts.add(info))));
+                  e -> {
+                    Consumer<RouteInfo> collect = facts::add;
+                    e.onRoute(collect);
+                  }));
 
       try (var test = TestServer.start(app)) {
         assertEquals(

@@ -57,9 +57,10 @@ class OpenApiValidationTest {
 
     try (var app = new Shoostr()) {
       app.extensions(docs);
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
-          () -> app.routes().post("/users", (_, _) -> {}, e -> e.get(docs).requestBody(body)));
+          () -> routes.post("/users", (_, _) -> {}, e -> e.get(docs).requestBody(body)));
     }
   }
 
@@ -92,17 +93,14 @@ class OpenApiValidationTest {
   @Test
   void rejectsParametersWithoutSchemaOrContentDuringConfiguration() throws Exception {
     var docs = new OpenApi("API", "1");
+    var parameter = new Parameter().name("page").in("query");
 
     try (var app = new Shoostr()) {
       app.extensions(docs);
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
-          () ->
-              app.routes()
-                  .get(
-                      "/users",
-                      (_, _) -> {},
-                      e -> e.get(docs).parameter(new Parameter().name("page").in("query"))));
+          () -> routes.get("/users", (_, _) -> {}, e -> e.get(docs).parameter(parameter)));
     }
   }
 
@@ -152,23 +150,22 @@ class OpenApiValidationTest {
   @Test
   void rejectsSecuritySchemesMissingTheirRequiredType() throws Exception {
     try (var docs = new OpenApi("API", "1")) {
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> docs.securityScheme("broken", new SecurityScheme()));
+      var scheme = new SecurityScheme();
+      assertThrows(IllegalArgumentException.class, () -> docs.securityScheme("broken", scheme));
     }
   }
 
   @Test
   void rejectsNativeResponsesWithoutRequiredDescriptionsDuringConfiguration() throws Exception {
     var docs = new OpenApi("API", "1");
+    var response = new ApiResponse();
 
     try (var app = new Shoostr()) {
       app.extensions(docs);
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
-          () ->
-              app.routes()
-                  .get("/users", (_, _) -> {}, e -> e.get(docs).response(200, new ApiResponse())));
+          () -> routes.get("/users", (_, _) -> {}, e -> e.get(docs).response(200, response)));
     }
   }
 

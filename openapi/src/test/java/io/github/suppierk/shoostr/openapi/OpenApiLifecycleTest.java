@@ -11,6 +11,7 @@ import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.swagger.v3.oas.models.media.JsonSchema;
 import java.util.ArrayList;
+import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -50,7 +51,8 @@ class OpenApiLifecycleTest {
           assertArrayEquals(original, result.get(10, TimeUnit.SECONDS));
         }
         assertEquals(0, called.get());
-        assertThrows(IllegalStateException.class, () -> retained.get().summary("Late mutation"));
+        var operation = retained.get();
+        assertThrows(IllegalStateException.class, () -> operation.summary("Late mutation"));
       }
     }
   }
@@ -59,13 +61,7 @@ class OpenApiLifecycleTest {
   void closesInstalledExtensionsOnPreparationFailureWithoutStartingTheServer() throws Exception {
     var closed = new AtomicInteger();
     var listening = new AtomicInteger();
-    var observer =
-        new Extension<Void>() {
-          @Override
-          public void close() {
-            closed.incrementAndGet();
-          }
-        };
+    var observer = new ClosingExtension(closed);
     var docs = new OpenApi("API", "1");
 
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
@@ -97,5 +93,16 @@ class OpenApiLifecycleTest {
     }
 
     assertEquals(1, closed.get());
+  }
+
+  private record ClosingExtension(AtomicInteger closes) implements Extension<Void> {
+    private ClosingExtension {
+      Objects.requireNonNull(closes);
+    }
+
+    @Override
+    public void close() {
+      closes.incrementAndGet();
+    }
   }
 }

@@ -93,19 +93,40 @@ final class OpenApiValidation {
         references(item, root, false);
       }
     } else if (node.isObject()) {
-      for (var property : node.properties()) {
-        var name = property.getKey();
-        var value = property.getValue();
-        if (!dictionary && "$ref".equals(name) && value.isTextual()) {
-          var reference = value.asText();
-          if (reference.startsWith("#/components/")
-              && root.at(reference.substring(1)).isMissingNode()) {
-            throw new IllegalArgumentException("Unknown local OpenAPI reference: " + reference);
-          }
-        } else if (dictionary || (!DATA.contains(name) && !name.startsWith("x-"))) {
-          references(value, root, !dictionary && DICTIONARIES.contains(name));
-        }
+      objectReferences(node, root, dictionary);
+    }
+  }
+
+  /**
+   * Traverses model fields without treating arbitrary dictionary keys or example data as keywords.
+   *
+   * @param node generated object subtree
+   * @param root document root used to resolve local references
+   * @param dictionary whether its field names are arbitrary map keys
+   * @throws IllegalArgumentException if a local reference has no target
+   */
+  private static void objectReferences(JsonNode node, JsonNode root, boolean dictionary) {
+    for (var property : node.properties()) {
+      var name = property.getKey();
+      var value = property.getValue();
+      if (!dictionary && "$ref".equals(name) && value.isTextual()) {
+        requireReference(value.asText(), root);
+      } else if (dictionary || (!DATA.contains(name) && !name.startsWith("x-"))) {
+        references(value, root, !dictionary && DICTIONARIES.contains(name));
       }
+    }
+  }
+
+  /**
+   * Resolves only known component references; external and recursive references remain valid.
+   *
+   * @param reference explicitly declared reference
+   * @param root generated document root
+   * @throws IllegalArgumentException if its component target is missing
+   */
+  private static void requireReference(String reference, JsonNode root) {
+    if (reference.startsWith("#/components/") && root.at(reference.substring(1)).isMissingNode()) {
+      throw new IllegalArgumentException("Unknown local OpenAPI reference: " + reference);
     }
   }
 }

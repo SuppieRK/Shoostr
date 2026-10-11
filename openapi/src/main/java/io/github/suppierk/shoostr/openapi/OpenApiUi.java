@@ -9,6 +9,7 @@ import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -26,7 +27,7 @@ final class OpenApiUi implements Handler {
       """;
   private final String basePath;
   private final String specPath;
-  private volatile @Nullable Map<String, Resource> resources;
+  private final AtomicReference<@Nullable Map<String, Resource>> resources;
 
   /**
    * Validates literal local resource paths without preparing assets during registration.
@@ -42,7 +43,7 @@ final class OpenApiUi implements Handler {
       throw new IllegalArgumentException("UI page path must end in a slash");
     }
 
-    resources = null;
+    resources = new AtomicReference<>();
   }
 
   /**
@@ -71,7 +72,7 @@ final class OpenApiUi implements Handler {
               return request;
             }})); });
             """;
-    resources =
+    resources.set(
         Map.of(
             basePath,
             new Resource("text/html; charset=utf-8", HTML.getBytes(StandardCharsets.UTF_8)),
@@ -81,7 +82,7 @@ final class OpenApiUi implements Handler {
             new Resource("text/javascript; charset=utf-8", bundle),
             basePath + "swagger-initializer.js",
             new Resource(
-                "text/javascript; charset=utf-8", initializer.getBytes(StandardCharsets.UTF_8)));
+                "text/javascript; charset=utf-8", initializer.getBytes(StandardCharsets.UTF_8))));
   }
 
   /**
@@ -95,7 +96,7 @@ final class OpenApiUi implements Handler {
    */
   @Override
   public void handle(Request request, Response response) throws IOException {
-    var prepared = resources;
+    var prepared = resources.get();
     if (prepared == null) {
       throw new IllegalStateException("OpenAPI UI is not prepared");
     }

@@ -24,6 +24,7 @@ import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -40,7 +41,7 @@ public final class OpenApi implements Extension<OpenApiOperation> {
   private final List<OpenApiUi> interfaces;
   private boolean installed;
   private boolean prepared;
-  private volatile byte @Nullable [] document;
+  private final AtomicReference<byte @Nullable []> document;
 
   /**
    * Creates one independent document with required title and API version.
@@ -57,7 +58,7 @@ public final class OpenApi implements Extension<OpenApiOperation> {
     interfaces = new ArrayList<>();
     installed = false;
     prepared = false;
-    document = null;
+    document = new AtomicReference<>();
   }
 
   /**
@@ -133,7 +134,7 @@ public final class OpenApi implements Extension<OpenApiOperation> {
    * @return reusable local schema reference
    * @throws IllegalArgumentException if the name is invalid or duplicated
    */
-  public synchronized Schema<?> schema(String name, Schema<?> schema) {
+  public synchronized JsonSchema schema(String name, Schema<?> schema) {
     requireMutable();
     var key = componentName(name);
     if (components.getSchemas() != null && components.getSchemas().containsKey(key)) {
@@ -141,7 +142,9 @@ public final class OpenApi implements Extension<OpenApiOperation> {
     }
 
     components.addSchemas(key, copy(schema, Schema.class));
-    return new JsonSchema().$ref("#/components/schemas/" + key);
+    var reference = new JsonSchema();
+    reference.set$ref("#/components/schemas/" + key);
+    return reference;
   }
 
   /**
@@ -257,7 +260,7 @@ public final class OpenApi implements Extension<OpenApiOperation> {
         }
       }
 
-      document = bytes;
+      document.set(bytes);
     } catch (IOException failure) {
       throw new IllegalStateException("Cannot serialize OpenAPI document", failure);
     }
@@ -271,7 +274,7 @@ public final class OpenApi implements Extension<OpenApiOperation> {
    */
   public Handler handler() {
     return (_, response) -> {
-      var bytes = document;
+      var bytes = document.get();
       if (bytes == null) {
         throw new IllegalStateException("OpenAPI document is not prepared");
       }

@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr.openapi;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -14,6 +15,7 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import io.swagger.v3.core.util.Json31;
 import io.swagger.v3.oas.models.media.Content;
 import io.swagger.v3.oas.models.media.JsonSchema;
+import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.parameters.RequestBody;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import java.util.Map;
@@ -281,6 +283,46 @@ class OpenApiTest {
   }
 
   @Test
+  void intersectsDeclaredSchemaPatternWithRouteConstraintWithoutMutatingCallerSchema()
+      throws Exception {
+    var docs = new OpenApi("Users API", "1.0");
+    var schema = new JsonSchema().types(Set.of("string")).pattern("^1").minLength(2);
+    var parameter = new Parameter().name("id").in("path").required(true).schema(schema);
+
+    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      app.extensions(docs)
+          .routes(
+              routes -> {
+                routes.get(
+                    "/users/{id:[0-9]+}", (_, _) -> {}, e -> e.get(docs).parameter(parameter));
+                routes.get("/openapi.json", docs.handler());
+              });
+
+      try (var test = TestServer.start(app)) {
+        var intersection =
+            Json31.mapper()
+                .readTree(test.send(request -> request.path("/openapi.json")).body())
+                .path("paths")
+                .path("/users/{id}")
+                .path("get")
+                .path("parameters")
+                .path(0)
+                .path("schema")
+                .path("allOf");
+        assertEquals(2, intersection.size());
+        assertEquals("string", intersection.path(0).path("type").asText());
+        assertEquals("^1", intersection.path(0).path("pattern").asText());
+        assertEquals(2, intersection.path(0).path("minLength").asInt());
+        assertEquals("string", intersection.path(1).path("type").asText());
+        assertEquals("^(?:[0-9]+)$", intersection.path(1).path("pattern").asText());
+        assertEquals("^1", schema.getPattern());
+        assertEquals(2, schema.getMinLength());
+        assertNull(schema.getAllOf());
+      }
+    }
+  }
+
+  @Test
   void freezesExplicitReusableSchemasBeforeServing() throws Exception {
     var docs = new OpenApi("Users API", "1.0");
     var schema = new JsonSchema();
@@ -327,7 +369,8 @@ class OpenApiTest {
                 .size());
         schema.addProperty("password", new JsonSchema().types(Set.of("string")));
         assertArrayEquals(original, test.send(request -> request.path("/openapi.json")).body());
-        assertThrows(IllegalStateException.class, () -> docs.schema("Late", new JsonSchema()));
+        var late = new JsonSchema();
+        assertThrows(IllegalStateException.class, () -> docs.schema("Late", late));
       }
     }
   }
