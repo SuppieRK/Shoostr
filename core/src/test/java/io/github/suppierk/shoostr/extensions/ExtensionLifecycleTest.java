@@ -62,9 +62,7 @@ class ExtensionLifecycleTest {
       assertThrows(IllegalArgumentException.class, () -> app.extensions(second));
       assertSame(app, app.authentication(auth));
 
-      try (var anotherAuth = authenticator((_, _) -> {})) {
-        assertThrows(IllegalStateException.class, () -> app.authentication(anotherAuth));
-      }
+      assertThrows(IllegalArgumentException.class, () -> app.authentication(auth));
     }
 
     assertEquals(List.of("install-first", "install-second", "close-second", "close-first"), events);

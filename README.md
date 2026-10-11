@@ -312,8 +312,12 @@ app.authentication(security).extensions(devDocs, publicDocs).routes(routes -> {
 
 `devDocs` and `publicDocs` illustrate optional library instances; core does not ship OpenAPI.
 `extensions(first, additional...)` and `authentication(...)` return the same app. Select the exact
-installed instance with `e.get(instance)`; class/name lookup is absent. Authentication has one
-dedicated app slot, rejected by ordinary `extensions(...)`. Groups configure once. Each child
+installed instance with `e.get(instance)`; class/name lookup is absent. Install authenticators with
+`authentication(first, additional...)`, not ordinary `extensions(...)`. Installation leaves routes
+public; each route/group explicitly selects its required authenticator. A bound endpoint may require
+only one distinct instance: repeating or inheriting that instance runs authentication once, while
+combining different required instances fails during registration. There is no app-wide default,
+authentication chain or implicit credential-scheme selection. Groups configure once. Each child
 receives independent provider configuration, including inherited fields that a local setter does
 not override. Reusing a Handler across paths does not merge those endpoint definitions.
 

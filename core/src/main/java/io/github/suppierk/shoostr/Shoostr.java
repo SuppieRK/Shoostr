@@ -57,7 +57,6 @@ public final class Shoostr implements Closeable {
   private boolean stoppingMatches;
   private final Routes routes;
   private final List<Extension<?>> extensions;
-  private @Nullable AuthenticationExtension authentication;
   private @Nullable Codec codec;
   private boolean installing;
   private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> exceptionHandlers;
@@ -258,14 +257,7 @@ public final class Shoostr implements Closeable {
   public synchronized Shoostr extensions(
       Extension<?> first, Extension<?> @Nullable ... additional) {
     requireExtensionRegistration();
-    var batch = new ArrayList<Extension<?>>();
-    batch.add(Objects.requireNonNull(first));
-    if (additional != null) {
-      for (var extension : additional) {
-        batch.add(Objects.requireNonNull(extension));
-      }
-    }
-
+    var batch = extensionBatch(first, additional);
     for (var extension : batch) {
       if (extension instanceof AuthenticationExtension) {
         throw new IllegalArgumentException("Install authentication through app.authentication");
@@ -276,23 +268,58 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Installs the application's one managed identity source. Routes/groups explicitly require it
-   * using extensions.get(instance).required(); installation itself leaves routes public.
+   * Installs one managed identity source. Routes/groups explicitly require it using
+   * extensions.get(instance).required(); installation itself leaves routes public.
    *
    * @param extension identity source
    * @return this application
-   * @throws IllegalStateException if already configured or installation is closed
+   * @throws NullPointerException if extension is null
+   * @throws IllegalArgumentException if the instance is already installed
+   * @throws IllegalStateException if installation is closed
    */
   public synchronized Shoostr authentication(AuthenticationExtension extension) {
+    return authentication(extension, (AuthenticationExtension[]) null);
+  }
+
+  /**
+   * Installs managed identity sources eagerly in written order. Each route/group explicitly
+   * requires an installed instance; installation does not activate authentication. A bad batch is
+   * rejected before setup, and provider failure closes the application. Each bound endpoint may
+   * require only one distinct identity source; conflicting requirements fail during registration.
+   *
+   * @param first required first identity source
+   * @param additional additional identity sources; null means none
+   * @return this application
+   * @throws NullPointerException if first or an additional identity source is null
+   * @throws IllegalArgumentException if an instance is duplicated or already installed
+   * @throws IllegalStateException if startup, closure or provider installation has begun
+   */
+  public synchronized Shoostr authentication(
+      AuthenticationExtension first, AuthenticationExtension @Nullable ... additional) {
     requireExtensionRegistration();
-    Objects.requireNonNull(extension);
-    if (authentication != null) {
-      throw new IllegalStateException("Only one managed authenticator may be installed");
+    installExtensions(extensionBatch(first, additional));
+    return this;
+  }
+
+  /**
+   * Validates non-null instances without invoking provider code.
+   *
+   * @param first required first capability
+   * @param additional optional additional capabilities
+   * @return validated batch in written order
+   * @throws NullPointerException if any supplied instance is null
+   */
+  private static List<Extension<?>> extensionBatch(
+      Extension<?> first, Extension<?> @Nullable [] additional) {
+    var batch = new ArrayList<Extension<?>>();
+    batch.add(Objects.requireNonNull(first));
+    if (additional != null) {
+      for (var extension : additional) {
+        batch.add(Objects.requireNonNull(extension));
+      }
     }
 
-    installExtensions(List.of(extension));
-    authentication = extension;
-    return this;
+    return batch;
   }
 
   /**
@@ -693,7 +720,6 @@ public final class Shoostr implements Closeable {
     synchronized (pendingMatches) {
       stoppingMatches = true;
     }
-    authentication = null;
     exceptionHandlers.clear();
     statusHandlers.clear();
     requestHeaderHandlers.clear();

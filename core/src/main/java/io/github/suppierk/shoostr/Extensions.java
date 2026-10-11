@@ -226,9 +226,14 @@ public final class Extensions {
    * Marks managed authentication on this scope; repeated selection does not duplicate work.
    *
    * @param handler installed authenticator
+   * @throws IllegalArgumentException if a different authenticator is already required
    */
   void authentication(Handler handler) {
     requireMutable();
+    if (authentication != null && authentication != handler) {
+      throw new IllegalArgumentException("An endpoint may require only one distinct authenticator");
+    }
+
     authentication = handler;
   }
 
@@ -333,7 +338,7 @@ public final class Extensions {
    */
   private void append(Extensions source) {
     if (source.authentication != null) {
-      authentication = source.authentication;
+      authentication(source.authentication);
     }
 
     matched.addAll(source.matched);

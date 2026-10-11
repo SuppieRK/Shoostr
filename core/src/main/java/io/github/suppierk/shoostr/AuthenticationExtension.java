@@ -4,8 +4,9 @@ import java.util.Objects;
 import org.jspecify.annotations.Nullable;
 
 /**
- * The application's single managed identity source. Install through Shoostr.authentication and
- * select required() on routes or groups. Authentication runs before extension/local/app gates.
+ * A managed identity source. Install through Shoostr.authentication and select required() on routes
+ * or groups. Several instances may coexist in an application, but each endpoint may require only
+ * one distinct instance. Authentication runs before extension/local/app gates.
  */
 public abstract class AuthenticationExtension
     implements Extension<AuthenticationExtension.Requirement>, Handler {
@@ -42,6 +43,7 @@ public abstract class AuthenticationExtension
 
     /**
      * Requires authentication once before this route's gates; repeated calls are harmless.
+     * Conflicting requirements are rejected when the endpoint is bound.
      *
      * @return this configuration
      */
