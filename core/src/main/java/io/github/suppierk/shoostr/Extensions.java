@@ -30,7 +30,7 @@ public final class Extensions {
   private final List<Consumer<RequestOutcome>> observers;
   private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors;
   private final Map<Integer, Handler> statuses;
-  private final List<BiConsumer<HttpMethods, String>> routeConsumers;
+  private final List<Consumer<RouteInfo>> routeConsumers;
   private @Nullable Handler authentication;
   private boolean closed;
   private boolean provider;
@@ -102,6 +102,19 @@ public final class Extensions {
    * @return this scope
    */
   public Extensions onRoute(BiConsumer<HttpMethods, String> consumer) {
+    Objects.requireNonNull(consumer);
+    return onRoute(info -> consumer.accept(info.method(), info.pathTemplate()));
+  }
+
+  /**
+   * Receives final HTTP/SSE registration facts, including inherited availability, before startup.
+   * Conditions are reported, never evaluated. This hook adds no request-time behavior. WebSocket
+   * handshakes and static mounts do not produce HTTP facts.
+   *
+   * @param consumer cold registration metadata consumer
+   * @return this scope
+   */
+  public Extensions onRoute(Consumer<RouteInfo> consumer) {
     requireMutable();
     routeConsumers.add(Objects.requireNonNull(consumer));
     return this;
@@ -241,9 +254,10 @@ public final class Extensions {
     }
     combined.append(this);
     closed = true;
-    if (method != null) {
+    if (method != null && !combined.routeConsumers.isEmpty()) {
+      var info = new RouteInfo(method, pathTemplate, !conditions.isEmpty());
       for (var consumer : combined.routeConsumers) {
-        notifications.add(() -> consumer.accept(method, pathTemplate));
+        notifications.add(() -> consumer.accept(info));
       }
     }
 

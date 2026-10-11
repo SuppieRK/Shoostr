@@ -10,9 +10,11 @@ updates:
       - /pac4j
       - /micrometer
       - /opentelemetry
+      - /openapi
       - /.github/benchmarks
       - /microbenchmarks
       - /examples/consumer-smoke
+      - /examples/openapi
     schedule:
       interval: weekly
       day: monday
