@@ -19,6 +19,7 @@ import org.jspecify.annotations.Nullable;
  */
 final class McpRequestLifetime implements RequestObservation {
   private final ScheduledThreadPoolExecutor deadlines;
+  private final String expiredTokenChallenge;
   private @Nullable Instant expiresAt;
   private @Nullable ScheduledFuture<?> deadline;
   private @Nullable Thread owner;
@@ -30,9 +31,11 @@ final class McpRequestLifetime implements RequestObservation {
    * Creates detached state before routing without retaining a live request or response.
    *
    * @param deadlines adapter-owned deadline scheduler
+   * @param expiredTokenChallenge adapter-configured authentication challenge
    */
-  McpRequestLifetime(ScheduledThreadPoolExecutor deadlines) {
+  McpRequestLifetime(ScheduledThreadPoolExecutor deadlines, String expiredTokenChallenge) {
     this.deadlines = Objects.requireNonNull(deadlines);
+    this.expiredTokenChallenge = Objects.requireNonNull(expiredTokenChallenge);
   }
 
   /**
@@ -49,9 +52,10 @@ final class McpRequestLifetime implements RequestObservation {
       throw new IllegalStateException("The MCP HTTP lifetime cannot be armed again");
     }
 
-    stream = Objects.requireNonNull(transport);
+    Objects.requireNonNull(transport);
+    requireFresh(expiry);
+    stream = transport;
     expiresAt = expiry;
-    requireFresh();
     owner = Thread.currentThread();
     if (expiry != null) {
       var remaining = Duration.between(Instant.now(), expiry);
@@ -72,8 +76,18 @@ final class McpRequestLifetime implements RequestObservation {
    * @throws AuthenticationRequiredException if the verified deadline has elapsed
    */
   synchronized void requireFresh() {
-    if (expiresAt != null && !expiresAt.isAfter(Instant.now())) {
-      throw new AuthenticationRequiredException("Bearer error=\"invalid_token\"");
+    requireFresh(expiresAt);
+  }
+
+  /**
+   * Validates a candidate deadline before publishing admission state or writing output.
+   *
+   * @param expiry verified token expiry, or null for a public/non-token identity
+   * @throws AuthenticationRequiredException if the verified deadline has elapsed
+   */
+  private void requireFresh(@Nullable Instant expiry) {
+    if (expiry != null && !expiry.isAfter(Instant.now())) {
+      throw new AuthenticationRequiredException(expiredTokenChallenge);
     }
   }
 

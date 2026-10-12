@@ -37,12 +37,17 @@ import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -250,6 +255,66 @@ class KeycloakAuthenticationTest {
                   "clientInfo":{"name":"expired-fixture","version":"1.0"}}}
                 """
                                 .getBytes(StandardCharsets.UTF_8)));
+        assertEquals(401, response.statusCode());
+        assertEquals(
+            "Bearer error=\"invalid_token\", resource_metadata=\"https://localhost:9443/.well-known/oauth-protected-resource/mcp\"",
+            response.headers().firstValue("WWW-Authenticate").orElseThrow());
+        assertTrue(response.headers().firstValue("Mcp-Session-Id").isEmpty());
+      }
+    }
+  }
+
+  @Test
+  @Timeout(20)
+  void preservesDiscoveryMetadataWhenATokenExpiresAfterAuthenticationBeforeMcpDispatch()
+      throws Exception {
+    var key = new RSAKeyGenerator(2048).keyID("trusted-key").generate();
+    var expiresAt = new AtomicReference<Instant>();
+    var authenticated = new AtomicBoolean();
+
+    try (var issuer = issuerFixture(key)) {
+      var issuerUri = issuer.baseUri().resolve("/realms/fixture");
+      var app =
+          McpOAuthExample.application(
+              Options.defaults(), issuerUri, URI.create("https://localhost:9443/mcp"), trust);
+      app.beforeRouteHandler(
+          (request, _) -> {
+            assertEquals("alice", request.principal().orElseThrow().getName());
+            var deadline = Objects.requireNonNull(expiresAt.get());
+            assertTrue(Instant.now().isBefore(deadline), "Authentication must precede expiry");
+            authenticated.set(true);
+            var wait = new CountDownLatch(1);
+            while (Instant.now().isBefore(deadline.plusMillis(100))) {
+              assertFalse(wait.await(100, TimeUnit.MILLISECONDS));
+            }
+          });
+
+      try (var test = TestServer.start(app)) {
+        expiresAt.set(Instant.now().plusSeconds(5).truncatedTo(ChronoUnit.SECONDS));
+        var token =
+            sign(
+                key,
+                accessClaims(issuerUri)
+                    .expirationTime(Date.from(expiresAt.get()))
+                    .claim("scope", "mcp:read")
+                    .build());
+        var response =
+            test.send(
+                request ->
+                    request
+                        .path("/mcp")
+                        .method("POST")
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "application/json, text/event-stream")
+                        .header("Authorization", "Bearer " + token)
+                        .body(
+                            """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"post-auth-expiry","version":"1.0"}}}
+                """
+                                .getBytes(StandardCharsets.UTF_8)));
+        assertTrue(authenticated.get(), "Exercise expiry after successful managed authentication");
         assertEquals(401, response.statusCode());
         assertEquals(
             "Bearer error=\"invalid_token\", resource_metadata=\"https://localhost:9443/.well-known/oauth-protected-resource/mcp\"",

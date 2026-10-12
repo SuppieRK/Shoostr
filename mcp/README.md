@@ -62,9 +62,12 @@ in [the external OAuth example](../examples/mcp-oauth/README.md).
 
 ## HTTP security
 
-`McpHttpSecurity` has three explicit inputs: allowed origins, current verified
-identity extraction, and operation authorization before SDK dispatch. No policy
-DSL, authorization server or automatic discovery endpoint is added to core.
+`McpHttpSecurity` has three required inputs: allowed origins, current verified
+identity extraction, and operation authorization before SDK dispatch. For OAuth
+header-based discovery, supply the trusted metadata URI as an optional fourth input:
+`new McpHttpSecurity(origins, identity, authorize, metadata)`. It is validated eagerly
+as an absolute HTTPS URL without credentials or a fragment. No policy DSL,
+authorization server or automatic discovery endpoint is added to core.
 
 An absent Origin is allowed for non-browser clients. Every present Origin must
 be well-formed, singular and exactly allowlisted; rejection occurs before managed
@@ -93,6 +96,15 @@ For a verified access token, supply its exact expiry in `McpIdentity`. The adapt
 actively ends open streams at that time and rejects expired output before flush.
 This does not detect immediate revocation. A null expiry is for public/non-token
 identities, not a way to bypass token lifetime validation.
+
+With metadata configured, adapter-generated expiry failures before commitment
+return `Bearer error="invalid_token", resource_metadata="..."` through the shared
+HTTP authentication exception. No caller exception mapping is needed; an optional
+app or route renderer can customize the body while core preserves the challenge
+at status401. The challenge is built once from trusted configuration, never from
+request headers or native context values. The three-argument constructor, or a null
+metadata argument, retains the existing generic `Bearer error="invalid_token"`
+challenge. Already committed streams terminate at expiry rather than changing status.
 
 POST must explicitly accept both `application/json` and `text/event-stream`;
 GET must explicitly accept `text/event-stream`. Absent or unacceptable Accept

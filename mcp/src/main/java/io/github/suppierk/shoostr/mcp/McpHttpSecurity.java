@@ -10,6 +10,7 @@ import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import org.jspecify.annotations.Nullable;
 
 /**
  * Explicit HTTP security inputs. Authentication stays in the application's managed authentication
@@ -21,18 +22,38 @@ import java.util.stream.Collectors;
  * @param allowedOrigins exact browser origins; absent Origin is allowed for non-browser clients
  * @param identity current authenticated-request identity extractor
  * @param authorize pre-dispatch permission callback for requests, notifications and responses
+ * @param resourceMetadata trusted HTTPS discovery URL included in adapter-generated expiry
+ *     challenges, or null to retain the generic Bearer challenge
  */
 public record McpHttpSecurity(
     Set<String> allowedOrigins,
     Function<Request, McpIdentity> identity,
-    BiConsumer<McpIdentity, McpSchema.JSONRPCMessage> authorize) {
+    BiConsumer<McpIdentity, McpSchema.JSONRPCMessage> authorize,
+    @Nullable URI resourceMetadata) {
   private static final String HTTPS = "https";
+
+  /**
+   * Configures generic HTTP security without adding OAuth discovery to expiry challenges.
+   *
+   * @param allowedOrigins exact browser origins; absent Origin is allowed for non-browser clients
+   * @param identity current authenticated-request identity extractor
+   * @param authorize pre-dispatch permission callback
+   * @throws NullPointerException if an input or origin is absent
+   * @throws IllegalArgumentException if an origin is not an HTTP(S) origin
+   */
+  public McpHttpSecurity(
+      Set<String> allowedOrigins,
+      Function<Request, McpIdentity> identity,
+      BiConsumer<McpIdentity, McpSchema.JSONRPCMessage> authorize) {
+    this(allowedOrigins, identity, authorize, null);
+  }
 
   /**
    * Copies and validates all configuration before any request can run.
    *
    * @throws NullPointerException if an input or origin is absent
-   * @throws IllegalArgumentException if an origin is not an HTTP(S) origin
+   * @throws IllegalArgumentException if an origin is not an HTTP(S) origin or supplied metadata is
+   *     not an absolute HTTPS URL without credentials or a fragment
    */
   public McpHttpSecurity {
     allowedOrigins =
@@ -41,6 +62,9 @@ public record McpHttpSecurity(
             .collect(Collectors.toUnmodifiableSet());
     Objects.requireNonNull(identity);
     Objects.requireNonNull(authorize);
+    if (resourceMetadata != null) {
+      validateMetadata(resourceMetadata);
+    }
   }
 
   /**
@@ -70,15 +94,7 @@ public record McpHttpSecurity(
       }
     }
 
-    Objects.requireNonNull(resourceMetadata);
-    if (!HTTPS.equalsIgnoreCase(resourceMetadata.getScheme())
-        || resourceMetadata.getHost() == null
-        || resourceMetadata.getRawUserInfo() != null
-        || resourceMetadata.getRawFragment() != null
-        || resourceMetadata.getRawAuthority().endsWith(":")
-        || resourceMetadata.getPort() > 65535) {
-      throw new IllegalArgumentException("Expected an absolute HTTPS metadata URL");
-    }
+    validateMetadata(resourceMetadata);
 
     return new AuthorizationDeniedException(
         "Bearer error=\"insufficient_scope\", scope=\""
@@ -117,5 +133,24 @@ public record McpHttpSecurity(
         + "://"
         + uri.getHost().toLowerCase(Locale.ROOT)
         + (port == -1 || port == defaultPort ? "" : ":" + port);
+  }
+
+  /**
+   * Validates the trusted discovery URL used in OAuth challenges.
+   *
+   * @param metadata absolute HTTPS URL without credentials or fragment
+   * @throws NullPointerException if metadata is absent
+   * @throws IllegalArgumentException if metadata is unsafe or not an absolute HTTPS URL
+   */
+  private static void validateMetadata(URI metadata) {
+    Objects.requireNonNull(metadata);
+    if (!HTTPS.equalsIgnoreCase(metadata.getScheme())
+        || metadata.getHost() == null
+        || metadata.getRawUserInfo() != null
+        || metadata.getRawFragment() != null
+        || metadata.getRawAuthority().endsWith(":")
+        || metadata.getPort() > 65535) {
+      throw new IllegalArgumentException("Expected an absolute HTTPS metadata URL");
+    }
   }
 }

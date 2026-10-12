@@ -161,6 +161,10 @@ tokens only, with the exact configured issuer and resource audience, required
 expiry/issue-time/identity/scope claims and a 30-second clock skew. Token freshness
 is enforced again against the exact token expiry before scope checks;
 the verifier's permitted clock skew does not extend MCP access or open-stream lifetime.
+The same trusted discovery URI is supplied to `McpHttpSecurity`, so an adapter
+expiry check after successful authentication still returns a complete401 challenge
+with `resource_metadata`. The adapter owns this failure; no example exception mapper
+is required. Committed streams still terminate rather than replacing their status.
 Required identity strings must be nonblank; scope syntax is validated before retaining it. The native
 profile contains the verified subject and immutable issuer/client/scope strings,
 not the raw token. Application callbacks still need to make permission decisions.

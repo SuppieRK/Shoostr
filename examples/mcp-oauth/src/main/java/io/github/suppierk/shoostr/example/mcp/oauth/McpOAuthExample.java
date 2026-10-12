@@ -146,7 +146,8 @@ public final class McpOAuthExample {
                     && McpSchema.METHOD_TOOLS_CALL.equals(request.method())) {
                   requireScopes(identity, Set.of("mcp:read", "mcp:tools"), metadata);
                 }
-              });
+              },
+              metadata);
       var calls = new AtomicInteger();
       var mcp =
           Mcp.sync(

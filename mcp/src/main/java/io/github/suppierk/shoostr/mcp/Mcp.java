@@ -64,6 +64,7 @@ public final class Mcp<S> implements Extension<Void> {
   private static final String FIELD_RESULT = "result";
   private static final String FIELD_ERROR = "error";
   private final McpHttpSecurity security;
+  private final String expiredTokenChallenge;
   private final Provider provider;
   private final S server;
   private final AtomicBoolean owned;
@@ -79,6 +80,10 @@ public final class Mcp<S> implements Extension<Void> {
    */
   private Mcp(McpHttpSecurity security, Function<McpStreamableServerTransportProvider, S> factory) {
     this.security = Objects.requireNonNull(security);
+    var metadata = security.resourceMetadata();
+    expiredTokenChallenge =
+        "Bearer error=\"invalid_token\""
+            + (metadata == null ? "" : ", resource_metadata=\"" + metadata.toASCIIString() + "\"");
     Objects.requireNonNull(factory);
     provider = new Provider();
     owned = new AtomicBoolean();
@@ -185,7 +190,7 @@ public final class Mcp<S> implements Extension<Void> {
             return _ -> {};
           }
 
-          var lifetime = new McpRequestLifetime(deadlines);
+          var lifetime = new McpRequestLifetime(deadlines, expiredTokenChallenge);
           request.attribute(lifetimeAttribute, lifetime);
           return lifetime;
         });
@@ -607,7 +612,7 @@ public final class Mcp<S> implements Extension<Void> {
     var identity = Objects.requireNonNull(security.identity().apply(request));
     var expiry = identity.expiresAt();
     if (expiry != null && !expiry.isAfter(Instant.now())) {
-      throw new AuthenticationRequiredException("Bearer error=\"invalid_token\"");
+      throw new AuthenticationRequiredException(expiredTokenChallenge);
     }
 
     return identity;
