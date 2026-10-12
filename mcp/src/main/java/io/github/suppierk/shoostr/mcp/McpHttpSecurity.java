@@ -26,6 +26,8 @@ public record McpHttpSecurity(
     Set<String> allowedOrigins,
     Function<Request, McpIdentity> identity,
     BiConsumer<McpIdentity, McpSchema.JSONRPCMessage> authorize) {
+  private static final String HTTPS = "https";
+
   /**
    * Copies and validates all configuration before any request can run.
    *
@@ -69,7 +71,7 @@ public record McpHttpSecurity(
     }
 
     Objects.requireNonNull(resourceMetadata);
-    if (!"https".equalsIgnoreCase(resourceMetadata.getScheme())
+    if (!HTTPS.equalsIgnoreCase(resourceMetadata.getScheme())
         || resourceMetadata.getHost() == null
         || resourceMetadata.getRawUserInfo() != null
         || resourceMetadata.getRawFragment() != null
@@ -97,7 +99,7 @@ public record McpHttpSecurity(
     var uri = URI.create(Objects.requireNonNull(value));
     var scheme = uri.getScheme();
     if (scheme == null
-        || !("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
+        || !(HTTPS.equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
         || uri.getHost() == null
         || uri.getRawAuthority().endsWith(":")
         || uri.getRawUserInfo() != null
@@ -110,7 +112,7 @@ public record McpHttpSecurity(
 
     scheme = scheme.toLowerCase(Locale.ROOT);
     var port = uri.getPort();
-    var defaultPort = "https".equals(scheme) ? 443 : 80;
+    var defaultPort = HTTPS.equals(scheme) ? 443 : 80;
     return scheme
         + "://"
         + uri.getHost().toLowerCase(Locale.ROOT)

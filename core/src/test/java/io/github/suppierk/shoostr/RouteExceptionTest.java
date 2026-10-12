@@ -191,9 +191,8 @@ class RouteExceptionTest {
                 retained.set(group);
                 group.get(REJECT);
               });
-      retained
-          .get()
-          .exception(IllegalArgumentException.class, (_, _, response) -> response.text("late"));
+      var group = retained.get();
+      group.exception(IllegalArgumentException.class, (_, _, response) -> response.text("late"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -202,10 +201,7 @@ class RouteExceptionTest {
                 .body());
         assertThrows(
             IllegalStateException.class,
-            () ->
-                retained
-                    .get()
-                    .exception(Exception.class, (_, _, response) -> response.text("closed")));
+            () -> group.exception(Exception.class, (_, _, response) -> response.text("closed")));
       }
     }
   }
@@ -420,10 +416,10 @@ class RouteExceptionTest {
   @Test
   void rejectsMappingRegistrationAfterClosure() throws Exception {
     try (var app = new Shoostr()) {
-      app.routes().close();
+      var routes = app.routes();
+      routes.close();
       assertThrows(
-          IllegalStateException.class,
-          () -> app.routes().exception(Exception.class, (_, _, _) -> {}));
+          IllegalStateException.class, () -> routes.exception(Exception.class, (_, _, _) -> {}));
     }
   }
 
