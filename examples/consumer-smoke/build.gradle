@@ -30,6 +30,7 @@ dependencies {
 		testImplementation 'io.github.suppierk:shoostr-micrometer:0.1.0-SNAPSHOT'
 		testImplementation 'io.github.suppierk:shoostr-opentelemetry:0.1.0-SNAPSHOT'
 		testImplementation 'io.github.suppierk:shoostr-openapi:0.1.0-SNAPSHOT'
+		testImplementation 'io.github.suppierk:shoostr-mcp:0.1.0-SNAPSHOT'
 	} else {
 		implementation project(':test')
 		baseRuntime project(':core')
@@ -37,6 +38,7 @@ dependencies {
 		testImplementation project(':micrometer')
 		testImplementation project(':opentelemetry')
 		testImplementation project(':openapi')
+		testImplementation project(':mcp')
 	}
 	compileOnly 'org.jspecify:jspecify:1.0.1'
 	testImplementation 'io.opentelemetry:opentelemetry-sdk:1.66.0'
@@ -59,6 +61,8 @@ tasks.register('verifyBaseDependencies') {
 			'io.micrometer',
 			'io.opentelemetry',
 			'io.swagger',
+			'io.modelcontextprotocol',
+			'io.projectreactor',
 			'org.webjars',
 			'com.fasterxml.jackson',
 			'tools.jackson',
@@ -71,6 +75,7 @@ tasks.register('verifyBaseDependencies') {
 			'micrometer',
 			'opentelemetry',
 			'openapi',
+			'mcp',
 			'test'
 		].collect {
 			modulePrefix + it

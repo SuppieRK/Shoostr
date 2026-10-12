@@ -52,7 +52,7 @@ after cleanup; `close()` reports Jetty stop failures as `IOException`. For lifec
 notifications, register Jetty's `LifeCycle.Listener` through `Shoostr.modifyServer` before
 startup. No framework-specific lifecycle annotation is required. Run
 `./gradlew consumerSmoke` to publish `http`, `core`, `test`, `pac4j`,
-`micrometer`, `opentelemetry` and `openapi` into `build/consumer-repository` and execute
+`micrometer`, `opentelemetry`, `openapi` and `mcp` into `build/consumer-repository` and execute
 the independent Java 25 consumer under `examples/consumer-smoke`; this does not
 publish to Maven Local or a remote repository. Its JUnit 5 tests exercise the
 published optional integrations over HTTP. The separate base-runtime check
@@ -332,6 +332,16 @@ alone; app rendering applies when no local match exists. Terminal observers rema
 and run local before app after application cleanup and transport completion. Header admission and
 instrumentation stay app-wide because they precede route lookup. Handshake callbacks apply to HTTP
 admission, not later WebSocket messages; static mounts and SSE inherit group callbacks too.
+
+Extensions with long-lived streams can implement `beforeStop()` to reject new work and
+signal their streams before Jetty's graceful drain. Shoostr calls it once in reverse
+ownership order; failures do not skip drain or remaining cleanup. Final `close()` still
+runs after the drain, so telemetry and other resources remain available to finishing requests.
+
+The optional [`mcp` module](mcp/README.md) composes the official Java SDK with explicit
+Streamable HTTP routes, per-request identity and pre-dispatch permissions. It installs
+no automatic endpoint or authenticator. See the [public compatibility example](examples/mcp/README.md)
+and [external OAuth example](examples/mcp-oauth/README.md) for runnable native SDK configuration.
 
 Use runtime conditions for feature flags or authenticated request decisions:
 

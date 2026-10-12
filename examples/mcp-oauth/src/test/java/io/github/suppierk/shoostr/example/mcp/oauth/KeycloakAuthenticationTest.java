@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr.example.mcp.oauth;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -17,16 +18,22 @@ import com.nimbusds.jose.jwk.gen.RSAKeyGenerator;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.PlainJWT;
 import com.nimbusds.jwt.SignedJWT;
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.pac4j.Pac4j;
 import io.github.suppierk.shoostr.testing.TestServer;
+import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
+import io.modelcontextprotocol.spec.McpSchema;
 import java.net.URI;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Date;
 import java.util.List;
 import java.util.Map;
@@ -99,6 +106,160 @@ class KeycloakAuthenticationTest {
   }
 
   @Test
+  void invokesTheExampleToolWithTheCurrentVerifiedIdentityThroughTheOfficialClient()
+      throws Exception {
+    var key = new RSAKeyGenerator(2048).keyID("trusted-key").generate();
+
+    try (var issuer = issuerFixture(key)) {
+      var issuerUri = issuer.baseUri().resolve("/realms/fixture");
+      var token = sign(key, accessClaims(issuerUri).claim("scope", "mcp:read mcp:tools").build());
+      var app =
+          McpOAuthExample.application(
+              Options.defaults(), issuerUri, URI.create("https://localhost:9443/mcp"), trust);
+
+      try (var test = TestServer.start(app);
+          var client =
+              McpClient.sync(
+                      HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                          .endpoint("/mcp")
+                          .httpRequestCustomizer(
+                              (request, _, _, _, _) ->
+                                  request.setHeader("Authorization", "Bearer " + token))
+                          .build())
+                  .requestTimeout(Duration.ofSeconds(5))
+                  .initializationTimeout(Duration.ofSeconds(5))
+                  .build()) {
+        client.initialize();
+        var result =
+            client.callTool(
+                McpSchema.CallToolRequest.builder("increment").arguments(Map.of()).build());
+        assertEquals(
+            "Tool invocation 1 by alice",
+            assertInstanceOf(McpSchema.TextContent.class, result.content().getFirst()).text());
+      }
+    }
+  }
+
+  @Test
+  void deniesInsufficientToolScopeBeforeRecordingAnInvocation() throws Exception {
+    var key = new RSAKeyGenerator(2048).keyID("trusted-key").generate();
+
+    try (var issuer = issuerFixture(key)) {
+      var issuerUri = issuer.baseUri().resolve("/realms/fixture");
+      var readToken = sign(key, accessClaims(issuerUri).build());
+      var toolToken =
+          sign(key, accessClaims(issuerUri).claim("scope", "mcp:read mcp:tools").build());
+      var app =
+          McpOAuthExample.application(
+              Options.defaults(), issuerUri, URI.create("https://localhost:9443/mcp"), trust);
+
+      try (var test = TestServer.start(app)) {
+        var initialized =
+            test.send(
+                request ->
+                    request
+                        .path("/mcp")
+                        .method("POST")
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "application/json, text/event-stream")
+                        .header("Authorization", "Bearer " + readToken)
+                        .body(
+                            """
+                            {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                              "protocolVersion":"2025-11-25","capabilities":{},
+                              "clientInfo":{"name":"oauth-fixture","version":"1.0"}}}
+                            """
+                                .getBytes(StandardCharsets.UTF_8)));
+        assertEquals(200, initialized.statusCode());
+        var session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
+        var call =
+            """
+            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"increment","arguments":{}}}
+            """
+                .getBytes(StandardCharsets.UTF_8);
+        var denied =
+            test.send(
+                request ->
+                    request
+                        .path("/mcp")
+                        .method("POST")
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "application/json, text/event-stream")
+                        .header("Mcp-Session-Id", session)
+                        .header("MCP-Protocol-Version", "2025-11-25")
+                        .header("Authorization", "Bearer " + readToken)
+                        .body(call));
+        assertEquals(403, denied.statusCode());
+        assertEquals(
+            "Bearer error=\"insufficient_scope\", scope=\"mcp:read mcp:tools\", "
+                + "resource_metadata=\"https://localhost:9443/.well-known/oauth-protected-resource/mcp\"",
+            denied.headers().firstValue("WWW-Authenticate").orElseThrow());
+        assertFalse(
+            denied.headers().firstValue("Content-Type").orElse("").contains("text/event-stream"));
+
+        var granted =
+            test.send(
+                request ->
+                    request
+                        .path("/mcp")
+                        .method("POST")
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "application/json, text/event-stream")
+                        .header("Mcp-Session-Id", session)
+                        .header("MCP-Protocol-Version", "2025-11-25")
+                        .header("Authorization", "Bearer " + toolToken)
+                        .body(call),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, granted.statusCode());
+        assertTrue(granted.body().contains("Tool invocation 1 by alice"));
+      }
+    }
+  }
+
+  @Test
+  void rejectsARecentlyExpiredTokenBeforeCheckingItsMissingReadScope() throws Exception {
+    var key = new RSAKeyGenerator(2048).keyID("trusted-key").generate();
+
+    try (var issuer = issuerFixture(key)) {
+      var issuerUri = issuer.baseUri().resolve("/realms/fixture");
+      var token =
+          sign(
+              key,
+              accessClaims(issuerUri)
+                  .expirationTime(Date.from(Instant.now().minusSeconds(5)))
+                  .claim("scope", "mcp:tools")
+                  .build());
+      var app =
+          McpOAuthExample.application(
+              Options.defaults(), issuerUri, URI.create("https://localhost:9443/mcp"), trust);
+
+      try (var test = TestServer.start(app)) {
+        var response =
+            test.send(
+                request ->
+                    request
+                        .path("/mcp")
+                        .method("POST")
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "application/json, text/event-stream")
+                        .header("Authorization", "Bearer " + token)
+                        .body(
+                            """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"expired-fixture","version":"1.0"}}}
+                """
+                                .getBytes(StandardCharsets.UTF_8)));
+        assertEquals(401, response.statusCode());
+        assertEquals(
+            "Bearer error=\"invalid_token\", resource_metadata=\"https://localhost:9443/.well-known/oauth-protected-resource/mcp\"",
+            response.headers().firstValue("WWW-Authenticate").orElseThrow());
+        assertTrue(response.headers().firstValue("Mcp-Session-Id").isEmpty());
+      }
+    }
+  }
+
+  @Test
   void establishesIdentityOnlyAfterVerifyingAnAudienceBoundSignedAccessToken() throws Exception {
     var key =
         new RSAKeyGenerator(2048)
@@ -123,13 +284,14 @@ class KeycloakAuthenticationTest {
     try (var issuer = TestServer.start(keys)) {
       var issuerUri = issuer.baseUri().resolve("/realms/fixture");
       var resource = URI.create("https://localhost:9443/mcp");
+      var expiresAt = Instant.now().plusSeconds(300).truncatedTo(ChronoUnit.SECONDS);
       var claims =
           new JWTClaimsSet.Builder()
               .issuer(issuerUri.toString())
               .audience(resource.toString())
               .subject("alice")
               .issueTime(Date.from(Instant.now()))
-              .expirationTime(Date.from(Instant.now().plusSeconds(300)))
+              .expirationTime(Date.from(expiresAt))
               .jwtID("access-token-1")
               .claim("azp", "example-client")
               .claim("scope", "mcp:read")
@@ -179,7 +341,15 @@ class KeycloakAuthenticationTest {
           var profile = verified.get(5, TimeUnit.SECONDS);
           assertEquals("alice", profile.getId());
           assertEquals(
-              Map.of("iss", issuerUri.toString(), "azp", "example-client", "scope", "mcp:read"),
+              Map.of(
+                  "iss",
+                  issuerUri.toString(),
+                  "azp",
+                  "example-client",
+                  "scope",
+                  "mcp:read",
+                  "expiresAt",
+                  expiresAt),
               profile.getAttributes());
           assertTrue(
               assertInstanceOf(CommonProfile.class, profile)

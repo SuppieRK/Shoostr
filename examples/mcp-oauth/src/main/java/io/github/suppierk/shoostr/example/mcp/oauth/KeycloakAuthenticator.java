@@ -123,6 +123,7 @@ final class KeycloakAuthenticator implements Authenticator, Closeable {
       profile.addAttribute("iss", claims.getIssuer());
       profile.addAttribute("azp", client);
       profile.addAttribute("scope", scope);
+      profile.addAttribute("expiresAt", claims.getExpirationTime().toInstant());
       credentials.setUserProfile(profile);
       return Optional.of(credentials);
     } catch (ParseException | BadJOSEException _) {

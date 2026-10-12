@@ -2,7 +2,7 @@ rootProject.name = 'Shoostr'
 include 'http', 'core', 'test', 'pac4j', 'benchmarks', 'microbenchmarks'
 project(':benchmarks').projectDir = file('.github/benchmarks')
 
-include 'micrometer', 'opentelemetry', 'openapi'
+include 'micrometer', 'opentelemetry', 'openapi', 'mcp'
 
 include 'consumer-smoke'
 project(':consumer-smoke').projectDir = file('examples/consumer-smoke')
@@ -12,3 +12,6 @@ project(':openapi-example').projectDir = file('examples/openapi')
 
 include 'mcp-oauth-example'
 project(':mcp-oauth-example').projectDir = file('examples/mcp-oauth')
+
+include 'mcp-example'
+project(':mcp-example').projectDir = file('examples/mcp')

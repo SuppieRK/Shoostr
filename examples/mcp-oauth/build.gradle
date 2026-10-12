@@ -1,7 +1,30 @@
+plugins {
+	id 'application'
+}
+
 dependencies {
+	implementation project(':mcp')
 	implementation project(':pac4j')
 	implementation 'org.pac4j:pac4j-http:6.5.9'
 	implementation 'com.nimbusds:nimbus-jose-jwt:10.9.1'
 
 	testImplementation project(':test')
+}
+
+application {
+	mainClass = 'io.github.suppierk.shoostr.example.mcp.oauth.McpOAuthExample'
+}
+
+tasks.named('test') {
+	useJUnitPlatform { excludeTags 'oauth' }
+}
+
+tasks.register('oauthTest', Test) {
+	group = 'verification'
+	description = 'Runs the official MCP client through real Keycloak browser authorization.'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform { includeTags 'oauth' }
+	systemProperty 'oauth.directory', projectDir.absolutePath
+	outputs.upToDateWhen { false }
 }

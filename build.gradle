@@ -129,7 +129,8 @@ def frameworkModules = [
 	'pac4j',
 	'micrometer',
 	'opentelemetry',
-	'openapi'
+	'openapi',
+	'mcp'
 ]
 configure(frameworkModules.collect { project(":${it}") }) {
 	apply plugin: 'jacoco'
@@ -193,7 +194,8 @@ configure([
 	project(':pac4j'),
 	project(':micrometer'),
 	project(':opentelemetry'),
-	project(':openapi')
+	project(':openapi'),
+	project(':mcp')
 ]) {
 	apply plugin: 'maven-publish'
 	base { archivesName = "shoostr-${project.name}" }
@@ -232,6 +234,7 @@ tasks.register('consumerSmoke', Exec) {
 	dependsOn ':micrometer:publishMavenJavaPublicationToConsumerRepository'
 	dependsOn ':opentelemetry:publishMavenJavaPublicationToConsumerRepository'
 	dependsOn ':openapi:publishMavenJavaPublicationToConsumerRepository'
+	dependsOn ':mcp:publishMavenJavaPublicationToConsumerRepository'
 	commandLine rootProject.file('gradlew').absolutePath,
 			'-p', rootProject.file('examples/consumer-smoke').absolutePath,
 			'runSmoke',
