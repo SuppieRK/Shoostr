@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
+import io.github.suppierk.shoostr.http.exceptions.AuthorizationDeniedException;
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -52,7 +53,7 @@ class McpScopeDenialTest {
                     null),
             (identity, _) -> {
               if (!Boolean.TRUE.equals(identity.context().get("initializeAllowed"))) {
-                throw new McpScopeDeniedException(
+                throw McpHttpSecurity.scopeDenied(
                     Set.of("tools:write", "tools:read"),
                     URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
               }
@@ -142,7 +143,7 @@ class McpScopeDenialTest {
               if (message instanceof McpSchema.JSONRPCRequest rpc
                   && McpSchema.METHOD_TOOLS_CALL.equals(rpc.method())
                   && !Boolean.TRUE.equals(identity.context().get("writeAllowed"))) {
-                throw new McpScopeDeniedException(
+                throw McpHttpSecurity.scopeDenied(
                     Set.of("tools:write"),
                     URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
               }
@@ -230,20 +231,12 @@ class McpScopeDenialTest {
   }
 
   @Test
-  void rendersTheScopeChallengeInsteadOfInheritedOrAppErrorRenderers() throws Exception {
+  void allowsAnAppRendererToCustomizeTheScopeDenialBody() throws Exception {
     var mcp = refusingServer();
     var app = new Shoostr();
     app.extensions(mcp)
-        .exception(ForbiddenException.class, (_, _, response) -> response.status(500).text("app"))
-        .routes(
-            routes ->
-                routes.path(
-                    "/mcp",
-                    mcp::routes,
-                    extensions ->
-                        extensions.exception(
-                            McpScopeDeniedException.class,
-                            (_, _, response) -> response.status(400).text("inherited"))));
+        .exception(ForbiddenException.class, (_, _, response) -> response.text("app"))
+        .routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var denied =
@@ -254,8 +247,10 @@ class McpScopeDenialTest {
                       .method("POST")
                       .header("Content-Type", "application/json")
                       .header("Accept", "application/json, text/event-stream")
-                      .body(INITIALIZATION.getBytes(StandardCharsets.UTF_8)));
+                      .body(INITIALIZATION.getBytes(StandardCharsets.UTF_8)),
+              HttpResponse.BodyHandlers.ofString());
       assertEquals(403, denied.statusCode());
+      assertEquals("app", denied.body());
       assertEquals(
           "Bearer error=\"insufficient_scope\", scope=\"tools:read\", "
               + "resource_metadata=\"https://example.com/.well-known/oauth-protected-resource/mcp\"",
@@ -284,7 +279,8 @@ class McpScopeDenialTest {
                       .body(INITIALIZATION.getBytes(StandardCharsets.UTF_8)));
       assertEquals(403, denied.statusCode());
       assertInstanceOf(
-          McpScopeDeniedException.class, observed.get(3, TimeUnit.SECONDS).applicationFailure());
+          AuthorizationDeniedException.class,
+          observed.get(3, TimeUnit.SECONDS).applicationFailure());
     }
   }
 
@@ -294,7 +290,7 @@ class McpScopeDenialTest {
             Set.of(),
             _ -> new McpIdentity("alice:client", McpTransportContext.EMPTY, null),
             (_, _) -> {
-              throw new McpScopeDeniedException(
+              throw McpHttpSecurity.scopeDenied(
                   Set.of("tools:read"),
                   URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
             });

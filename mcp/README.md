@@ -76,8 +76,12 @@ Use an unambiguous key containing the verified issuer, subject and client where
 those distinguish owners. Scope escalation need not change that key.
 
 The operation callback receives the detached identity and native JSON-RPC message.
-`McpScopeDeniedException` provides HTTP 403 with the complete required scope set
-and protected-resource metadata URL before tool side effects or SSE commitment.
+Throw `McpHttpSecurity.scopeDenied(requiredScopes, resourceMetadata)` to reject with
+HTTP 403 before tool side effects or SSE commitment. MCP validates and constructs
+the complete scope/metadata challenge; the returned shared `AuthorizationDeniedException`
+belongs to `http.exceptions`. Core renders it and preserves its required challenge.
+No user exception registration is needed. Optional route/group or app-wide exception
+handlers may customize the HTTP error body without losing the challenge at status403.
 Errors thrown inside native tool callbacks instead remain native MCP tool errors.
 
 Authorized notifications and replies return HTTP202 after session-owned admission,

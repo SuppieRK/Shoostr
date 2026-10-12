@@ -275,17 +275,19 @@ class EndpointTracingTest {
       app.extensions(new OpenTelemetryTracing(telemetry).allRequests())
           .afterRequest(completed::complete);
       app.routes()
-          .get(
+          .path(
               "/failure",
-              workers,
-              (_, _) -> {
-                throw new IllegalArgumentException("failed");
-              },
-              extensions ->
-                  extensions.exception(
-                      IllegalArgumentException.class,
-                      (_, _, response) ->
-                          response.status(422).text(Span.current().getSpanContext().getTraceId())));
+              routes -> {
+                routes.exception(
+                    IllegalArgumentException.class,
+                    (_, _, response) ->
+                        response.status(422).text(Span.current().getSpanContext().getTraceId()));
+                routes.get(
+                    workers,
+                    (_, _) -> {
+                      throw new IllegalArgumentException("failed");
+                    });
+              });
 
       try (var test = TestServer.start(app)) {
         var response =
@@ -331,15 +333,15 @@ class EndpointTracingTest {
       app.extensions(new OpenTelemetryTracing(telemetry).allRequests())
           .afterRequest(completed::complete);
       app.routes()
-          .get(
+          .path(
               "/rejected",
-              workers,
-              (_, _) -> invoked.set(true),
-              extensions ->
-                  extensions.exception(
-                      RejectedExecutionException.class,
-                      (_, _, response) ->
-                          response.status(503).text(Span.current().getSpanContext().getTraceId())));
+              routes -> {
+                routes.exception(
+                    RejectedExecutionException.class,
+                    (_, _, response) ->
+                        response.status(503).text(Span.current().getSpanContext().getTraceId()));
+                routes.get(workers, (_, _) -> invoked.set(true));
+              });
 
       try (var test = TestServer.start(app)) {
         workers.shutdown();

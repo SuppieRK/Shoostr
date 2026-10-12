@@ -7,6 +7,7 @@ import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
+import io.github.suppierk.shoostr.http.exceptions.AuthorizationDeniedException;
 import io.github.suppierk.shoostr.http.exceptions.NotAcceptableException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -133,6 +134,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   private long resourceLength;
   private @Nullable String requiredAllow;
   private @Nullable String requiredChallenge;
+  private int requiredChallengeStatus;
   private @Nullable Map<String, String> requiredCorsHeaders;
   private @Nullable Throwable afterFlushFailure;
 
@@ -262,6 +264,10 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   void requiredChallenge(Throwable failure) {
     if (failure instanceof AuthenticationRequiredException authentication) {
       requiredChallenge = authentication.challenge();
+      requiredChallengeStatus = HttpStatusCodes.UNAUTHORIZED.value();
+    } else if (failure instanceof AuthorizationDeniedException authorization) {
+      requiredChallenge = authorization.challenge();
+      requiredChallengeStatus = HttpStatusCodes.FORBIDDEN.value();
     }
   }
 
@@ -2119,7 +2125,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       protectCorsHeaders(requiredCorsHeaders);
     }
 
-    if (requiredChallenge != null && delegate.getStatus() == HttpStatusCodes.UNAUTHORIZED.value()) {
+    if (requiredChallenge != null && delegate.getStatus() == requiredChallengeStatus) {
       delegate.getHeaders().put(HttpHeaders.WWW_AUTHENTICATE.value(), requiredChallenge);
     }
 

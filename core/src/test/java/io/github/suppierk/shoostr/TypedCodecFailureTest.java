@@ -85,16 +85,17 @@ class TypedCodecFailureTest {
       app.exception(IOException.class, (_, _, response) -> response.status(502).text("global"));
       app.codec(codec)
           .routes()
-          .get(
+          .path(
               "/failure",
-              (_, response) -> response.body(MediaType.APPLICATION_JSON, "Alice"),
-              extensions ->
-                  extensions.exception(
-                      IOException.class,
-                      (caught, _, response) -> {
-                        assertSame(failure, caught);
-                        response.status(503).text("local");
-                      }));
+              routes -> {
+                routes.exception(
+                    IOException.class,
+                    (caught, _, response) -> {
+                      assertSame(failure, caught);
+                      response.status(503).text("local");
+                    });
+                routes.get((_, response) -> response.body(MediaType.APPLICATION_JSON, "Alice"));
+              });
 
       try (var test = TestServer.start(app)) {
         var result =

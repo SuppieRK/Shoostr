@@ -42,7 +42,7 @@ class McpReplyAuthorizationTest {
             (identity, message) -> {
               if (message instanceof McpSchema.JSONRPCResponse
                   && !Boolean.TRUE.equals(identity.context().get("replyAllowed"))) {
-                throw new McpScopeDeniedException(
+                throw McpHttpSecurity.scopeDenied(
                     Set.of("client:reply"),
                     URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
               }

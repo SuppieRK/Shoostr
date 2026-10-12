@@ -9,7 +9,9 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -40,6 +42,7 @@ public final class Routes implements Closeable {
   static final String EMPTY_PATH = "";
   private static final String UNRECOGNIZED_HTTP_METHOD = "Unrecognized HTTP method: ";
   private final Routes root;
+  private final @Nullable Routes parent;
   private final Object lock;
   private final String prefix;
   private final int scopeDepth;
@@ -52,6 +55,9 @@ public final class Routes implements Closeable {
   private final List<RadixRoutes.Endpoint> registrations;
   private final List<RadixRoutes.Endpoint> websocketRegistrations;
   private final List<StaticFiles> staticFiles;
+  private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors;
+  private final IdentityHashMap<RadixRoutes.Endpoint, Routes> endpointScopes;
+  private final IdentityHashMap<StaticFiles, Routes> staticScopes;
   private final Set<String> routeKeys;
   private final Set<String> websocketRouteKeys;
   private @Nullable RadixRoutes websocketRouter;
@@ -61,6 +67,7 @@ public final class Routes implements Closeable {
   /** Creates the root scope, which owns registration state and the lock shared by all scopes. */
   Routes() {
     root = this;
+    parent = null;
     lock = new Object();
     prefix = EMPTY_PATH;
     scopeDepth = 0;
@@ -72,6 +79,9 @@ public final class Routes implements Closeable {
     registrations = new ArrayList<>();
     websocketRegistrations = new ArrayList<>();
     staticFiles = new ArrayList<>();
+    errors = new LinkedHashMap<>();
+    endpointScopes = new IdentityHashMap<>();
+    staticScopes = new IdentityHashMap<>();
     routeKeys = new HashSet<>();
     websocketRouteKeys = new HashSet<>();
   }
@@ -79,19 +89,20 @@ public final class Routes implements Closeable {
   /**
    * Creates a path view over the root's registration state, without copying its entries.
    *
-   * @param root owning root scope, not an intermediate path scope
+   * @param parent enclosing registration scope
    * @param prefix composed prefix without its optional trailing separator
    * @param conditions immutable runtime availability checks
    * @param configuration inherited extension configuration, or null
    * @param scopeDepth effective path/when ancestry, from one to ten
    */
   private Routes(
-      Routes root,
+      Routes parent,
       String prefix,
       List<Predicate<Request>> conditions,
       @Nullable Extensions configuration,
       int scopeDepth) {
-    this.root = root;
+    this.parent = parent;
+    this.root = parent.root;
     lock = root.lock;
     this.prefix = prefix;
     this.scopeDepth = scopeDepth;
@@ -103,6 +114,9 @@ public final class Routes implements Closeable {
     registrations = root.registrations;
     websocketRegistrations = root.websocketRegistrations;
     staticFiles = root.staticFiles;
+    errors = new LinkedHashMap<>();
+    endpointScopes = root.endpointScopes;
+    staticScopes = root.staticScopes;
     routeKeys = root.routeKeys;
     websocketRouteKeys = root.websocketRouteKeys;
   }
@@ -125,6 +139,33 @@ public final class Routes implements Closeable {
       synchronized (lock) {
         root.activeRegistrations--;
       }
+    }
+  }
+
+  /**
+   * Registers an exception renderer for this entire scope and its descendants, including endpoints
+   * registered earlier. A child replaces an inherited mapping for the same class; the most-specific
+   * matching class in the resulting scope map wins over app-wide renderers. Repeated registration
+   * in this scope replaces its previous mapping. This method configures the scope, not the last
+   * endpoint returned by a fluent registration. No installed extension is required.
+   *
+   * @param type directly thrown exception family
+   * @param handler renderer receiving the original failure
+   * @param <E> exception type
+   * @return this scope
+   * @throws NullPointerException if either argument is null
+   * @throws IllegalStateException if startup or closure has ended registration
+   */
+  public <E extends Exception> Routes exception(
+      Class<E> type, ExceptionHandler<? super E> handler) {
+    synchronized (lock) {
+      requireMutable();
+      Objects.requireNonNull(type);
+      Objects.requireNonNull(handler);
+      errors.put(
+          type,
+          (failure, request, response) -> handler.handle(type.cast(failure), request, response));
+      return this;
     }
   }
 
@@ -201,7 +242,7 @@ public final class Routes implements Closeable {
         }
       }
 
-      registration.accept(new Routes(root, group, conditions, local, nextDepth));
+      registration.accept(new Routes(this, group, conditions, local, nextDepth));
     } finally {
       if (local != null) {
         local.freeze();
@@ -1162,7 +1203,7 @@ public final class Routes implements Closeable {
       Objects.requireNonNull(registration);
       var inherited = new ArrayList<>(conditions);
       inherited.add(Objects.requireNonNull(condition));
-      child = new Routes(root, prefix, inherited, configuration, nextDepth);
+      child = new Routes(this, prefix, inherited, configuration, nextDepth);
       root.activeRegistrations++;
     }
     activeGroupDepth.set(nextDepth);
@@ -1553,6 +1594,7 @@ public final class Routes implements Closeable {
       if (configuration == null && configure == null && conditions.isEmpty()) {
 
         entries.add(endpoint);
+        endpointScopes.put(endpoint, this);
         return this;
       }
 
@@ -1568,6 +1610,7 @@ public final class Routes implements Closeable {
       synchronized (lock) {
         requireMutable();
         entries.add(enriched);
+        endpointScopes.put(enriched, this);
         publish(behavior, facts);
       }
       return this;
@@ -1759,6 +1802,7 @@ public final class Routes implements Closeable {
       synchronized (lock) {
         requireMutable();
         staticFiles.add(files);
+        staticScopes.put(files, this);
         publish(behavior, List.of());
       }
       return this;
@@ -1795,18 +1839,79 @@ public final class Routes implements Closeable {
         throw new IllegalStateException("Finish route registration callbacks before starting");
       }
 
-      var router = RadixRoutes.from(registrations, staticFiles);
-      root.websocketRouter =
-          websocketRegistrations.isEmpty() ? null : RadixRoutes.from(websocketRegistrations);
+      var resolved =
+          new IdentityHashMap<
+              Routes, Map<Class<? extends Exception>, ExceptionHandler<Exception>>>();
+      var endpoints =
+          registrations.stream().map(endpoint -> finalizeEndpoint(endpoint, resolved)).toList();
+      var handshakes =
+          websocketRegistrations.stream()
+              .map(endpoint -> finalizeEndpoint(endpoint, resolved))
+              .toList();
+      for (var files : staticFiles) {
+        files.exceptions(
+            Objects.requireNonNull(staticScopes.get(files)).exceptionMappings(resolved));
+      }
+
+      var router = RadixRoutes.from(endpoints, staticFiles);
+      root.websocketRouter = handshakes.isEmpty() ? null : RadixRoutes.from(handshakes);
       root.closed = true;
       registrations.clear();
       websocketRegistrations.clear();
       staticFiles.clear();
+      endpointScopes.clear();
+      staticScopes.clear();
       routeKeys.clear();
       websocketRouteKeys.clear();
       installed.clear();
       return router;
     }
+  }
+
+  /**
+   * Freezes scope exception behavior without retaining registration ancestry in the router.
+   *
+   * @param endpoint registered binding
+   * @param resolved startup-only cache of inherited maps
+   * @return binding with its completed immutable behavior
+   */
+  private RadixRoutes.Endpoint finalizeEndpoint(
+      RadixRoutes.Endpoint endpoint,
+      IdentityHashMap<Routes, Map<Class<? extends Exception>, ExceptionHandler<Exception>>>
+          resolved) {
+    var scope = Objects.requireNonNull(endpointScopes.get(endpoint));
+    return endpoint.withBehavior(
+        EndpointBehavior.withErrors(endpoint.behavior(), scope.exceptionMappings(resolved)));
+  }
+
+  /**
+   * Resolves this scope once, with child exact-type replacements independent of registration order.
+   *
+   * @param resolved startup-only cache
+   * @return immutable mappings inherited through registration scopes, not URL prefixes
+   */
+  private Map<Class<? extends Exception>, ExceptionHandler<Exception>> exceptionMappings(
+      IdentityHashMap<Routes, Map<Class<? extends Exception>, ExceptionHandler<Exception>>>
+          resolved) {
+    var found = resolved.get(this);
+    if (found != null) {
+      return found;
+    }
+
+    var inherited =
+        parent == null
+            ? Map.<Class<? extends Exception>, ExceptionHandler<Exception>>of()
+            : parent.exceptionMappings(resolved);
+    if (errors.isEmpty()) {
+      resolved.put(this, inherited);
+      return inherited;
+    }
+
+    var combined = new LinkedHashMap<>(inherited);
+    combined.putAll(errors);
+    var frozen = Map.copyOf(combined);
+    resolved.put(this, frozen);
+    return frozen;
   }
 
   /**
@@ -1836,6 +1941,8 @@ public final class Routes implements Closeable {
       websocketRegistrations.clear();
       closeStaticFiles();
       staticFiles.clear();
+      endpointScopes.clear();
+      staticScopes.clear();
       routeKeys.clear();
       websocketRouteKeys.clear();
       notifications.clear();

@@ -10,7 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-class McpScopeDeniedExceptionTest {
+class McpScopeChallengeTest {
   @ParameterizedTest
   @ValueSource(
       strings = {"", "two scopes", "quote\"", "back\\slash", "newline\n", "tab\t", "é", "\u007f"})
@@ -18,7 +18,10 @@ class McpScopeDeniedExceptionTest {
     var scopes = Set.of(scope);
     var metadata = URI.create("https://example.com/.well-known/oauth-protected-resource");
     assertThrows(
-        IllegalArgumentException.class, () -> new McpScopeDeniedException(scopes, metadata));
+        IllegalArgumentException.class,
+        () -> {
+          throw McpHttpSecurity.scopeDenied(scopes, metadata);
+        });
   }
 
   @Test
@@ -26,7 +29,10 @@ class McpScopeDeniedExceptionTest {
     Set<String> scopes = Set.of();
     var metadata = URI.create("https://example.com/.well-known/oauth-protected-resource");
     assertThrows(
-        IllegalArgumentException.class, () -> new McpScopeDeniedException(scopes, metadata));
+        IllegalArgumentException.class,
+        () -> {
+          throw McpHttpSecurity.scopeDenied(scopes, metadata);
+        });
   }
 
   @ParameterizedTest
@@ -42,14 +48,18 @@ class McpScopeDeniedExceptionTest {
   void rejectsMetadataUrlsThatCannotBeUsedForTrustedHttpsDiscovery(String metadata) {
     var scopes = Set.of("tools:read");
     var uri = URI.create(metadata);
-    assertThrows(IllegalArgumentException.class, () -> new McpScopeDeniedException(scopes, uri));
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> {
+          throw McpHttpSecurity.scopeDenied(scopes, uri);
+        });
   }
 
   @Test
   void snapshotsScopeTokensInsteadOfRetainingTheMutableInput() {
     var scopes = new HashSet<>(Set.of("tools:write", "tools:read"));
     var denied =
-        new McpScopeDeniedException(
+        McpHttpSecurity.scopeDenied(
             scopes, URI.create("https://example.com/.well-known/oauth-protected-resource"));
     scopes.clear();
     assertEquals(

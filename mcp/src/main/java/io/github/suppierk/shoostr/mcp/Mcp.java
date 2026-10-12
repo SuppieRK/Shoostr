@@ -234,14 +234,7 @@ public final class Mcp<S> implements Extension<Void> {
   private void register(Routes routes, @Nullable ExecutorService executor) {
     Objects.requireNonNull(routes);
     Consumer<Extensions> configuration =
-        extensions ->
-            extensions
-                .requireInstalled(this)
-                .onRoute((_, path) -> bind(path))
-                .exception(
-                    McpScopeDeniedException.class,
-                    (failure, _, response) ->
-                        response.status(403).setHeader("WWW-Authenticate", failure.challenge()));
+        extensions -> extensions.requireInstalled(this).onRoute((_, path) -> bind(path));
     Consumer<Extensions> installed = extensions -> extensions.requireInstalled(this);
     if (executor == null) {
       routes.post("", this::post, configuration);

@@ -207,6 +207,15 @@ final class StaticFiles implements Closeable {
   }
 
   /**
+   * Finalizes exception renderers inherited through the mount's registration scope at startup.
+   *
+   * @param errors resolved immutable scope mappings
+   */
+  void exceptions(Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors) {
+    behavior = EndpointBehavior.withErrors(behavior, errors);
+  }
+
+  /**
    * Releases the anchored filesystem directory or classpath archive resources.
    *
    * @throws IllegalStateException if the filesystem source cannot be closed

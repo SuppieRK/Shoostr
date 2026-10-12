@@ -322,7 +322,7 @@ receives independent provider configuration, including inherited fields that a l
 not override. Reusing a Handler across paths does not merge those endpoint definitions.
 
 Route callbacks may register `onRouteMatched`, `beforeRouteHandler`, `afterRouteHandler`,
-`beforeResponseFlush`, `afterResponseFlush`, `afterRequest`, `exception` and `status` directly on
+`beforeResponseFlush`, `afterResponseFlush`, `afterRequest` and `status` directly on
 `Extensions`. Match and ordinary lifecycle hooks run local first, then app; a thrown exception
 stops the ordinary phase. After matched hooks and known-length body validation, admission runs
 managed authentication, inherited/selected extension contributions in first-selection order,
@@ -486,18 +486,34 @@ Register application-wide safety nets before `start()`:
 ```java
 app.exception(UnauthorizedException.class, (exception, request, response) -> {
     response.status(HttpStatusCodes.UNAUTHORIZED.value())
-        .header(HttpHeaders.WWW_AUTHENTICATE.value(), "Bearer realm=\"api\"")
+        .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Bearer realm=\"api\"")
         .text("Unauthorized");
 });
 ```
 
-`Shoostr.exception(Class<E>, ExceptionHandler<? super E>)` selects the most specific superclass of the directly thrown exception, regardless of registration order. Duplicate app-level classes are rejected; registration is synchronized with startup and close, and runtime lookup uses an immutable snapshot without locking. Groups and endpoints may configure local renderers through `Extensions.exception(...)`: a matching local renderer handles the error alone, with app-level rendering used only when no local renderer matches. Renderers do not form a handler chain. Recoverable business errors should normally be handled in business logic.
+`Shoostr.exception(Class<E>, ExceptionHandler<? super E>)` selects the most specific superclass of the directly thrown exception, regardless of registration order. Duplicate app-level classes are rejected; registration is synchronized with startup and close, and runtime lookup uses an immutable snapshot without locking.
+
+Use `Routes.exception(...)` or `TypedRoutes.exception(...)` for application error rendering in a route/group scope, without installing an extension:
+
+```java
+routes.path("/orders", orders -> {
+    orders.exception(OrderMissingException.class,
+        (_, _, response) -> response.text("Order not found"));
+    orders.get("/{id}", findOrder);
+});
+```
+
+The mapping covers the entire registration scope and descendants, including endpoints registered before it. Child scopes replace inherited mappings for the same exception class; the most-specific matching class in the resulting scope map wins. Sibling groups remain isolated even when they use the same URL prefix. Repeated mapping of a class in the same scope replaces it. A fluent `get(...).exception(...)` configures the returned scope, not only the last endpoint; use a one-endpoint `path` scope for endpoint-specific rendering.
+
+Selection is scoped mapping, then app-wide mapping, then built-in HTTP rendering. A selected renderer handles the response alone; renderers do not form a chain. Maps are finalized before the listener starts, with no request-time scope traversal. Recoverable business errors should normally be handled in business logic.
+
+Extensions own their internal/protocol failure handling and use shared `http.exceptions` types for intentional HTTP failures. They need no caller-provided exception mappings; optional scoped or app-wide handlers can customize those HTTP responses. Native protocol errors remain inside their integration. Configuration errors, unexpected bugs and genuine transport failures are not indiscriminately converted into authorization failures.
 
 Custom handlers receive the original readable request on the original handler thread. The failed response's body and headers are cleared first; its initial status is the thrown `HttpException` status or 500. The callback may override that status and set its own headers/body or start a stream. It must finish output before returning; the framework still owns closure. These handlers are shared across requests, so captured mutable application state must be safe for concurrent calls. Request access ends after error handling and finalization; retained objects cannot be used later or on another thread.
 
 A failed custom handler or invalid uncommitted error output falls back to a safe 500 without invoking another mapper. Committed output and fatal errors abort. Transport failures after asynchronous finite submission do not dispatch application error handlers. Ordinary router-generated 404/405 responses are not exceptions and do not invoke these callbacks.
 
-Error headers belong in the callback, not in exception metadata or copied request headers. An application returning 401 must supply its authentication challenge, for example through the handler above; the built-in `UnauthorizedException` fallback cannot infer a scheme or realm. See [RFC 9110 §15.5.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2). The default remains a bare status/reason response unless an application handler supplies that policy.
+Ordinary error headers belong in the callback, not copied request headers. The shared `AuthenticationRequiredException(challenge)` and `AuthorizationDeniedException(challenge)` explicitly carry required `WWW-Authenticate` values for 401 and 403 respectively. Core preserves those values when rendering the corresponding status, including custom-body rendering; custom handlers can still deliberately change the status. Plain `UnauthorizedException` and `ForbiddenException` do not supply challenges. An application returning a plain 401 must supply its challenge, for example through the handler above; core cannot infer a scheme or realm. See [RFC 9110 §15.5.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2).
 
 If the reason phrase exceeds `Options.maxResponseBytes`, core sends the selected status with an empty body. HEAD responses omit the body. After streaming has committed, an HTTP exception aborts the stream without changing the status, appending an error body, or flushing pending application bytes. Request-body limit failures use the public `ContentTooLargeException` and produce `413 Content Too Large`; known oversized requests are rejected before entering the handler, while limits reached during a body read can be caught by application code. Applications needing a custom body or headers can catch an HTTP exception and set the response explicitly before commitment.
 
@@ -626,7 +642,7 @@ app.afterRequest(outcome -> {
 
 `authorize` and `metrics` represent application code, not bundled integrations. `Request.routePattern()` exposes the original composed template, such as `/accounts/{accountId}/orders/{id}`, for route-aware policy and bounded metric labels. It returns `Optional.empty()` without a selected endpoint and follows the existing request thread/lifetime rules. The template is retained at registration, not reconstructed per request. Never substitute a concrete request URL when a metric's route template is absent; normalize unfamiliar methods and failure labels in the chosen metrics adapter.
 
-`beforeRouteHandler(Handler)` runs gates in registration order after matching and the known Content-Length limit check. Gates are skipped for unmatched-path 404s and method-mismatch 405s. An availability-denied 404 follows matching, authentication and gates; a false availability check skips later checks, the endpoint and post-route callbacks. Gates may read bounded request data and stage finite output; setting status/body does not skip the endpoint. Throwing an exception skips subsequent gates and the endpoint, then invokes a matching local exception renderer or, if none matches, app-level error handling. Gate headers/body are cleared on failure, so a 401 challenge belongs in its exception callback. Gates cannot start streams or close the response. Error handlers retain their existing streaming capabilities.
+`beforeRouteHandler(Handler)` runs gates in registration order after matching and the known Content-Length limit check. Gates are skipped for unmatched-path 404s and method-mismatch 405s. An availability-denied 404 follows matching, authentication and gates; a false availability check skips later checks, the endpoint and post-route callbacks. Gates may read bounded request data and stage finite output; setting status/body does not skip the endpoint. Throwing an exception skips subsequent gates and the endpoint, then invokes a matching scoped exception renderer or, if none matches, app-level error handling. Gate headers/body are cleared on failure; use `AuthenticationRequiredException` to carry a required 401 challenge without needing a renderer. Gates cannot start streams or close the response. Error handlers retain their existing streaming capabilities.
 
 The remaining live stages are registered in the same way: `onRequestHeaders`, `onRouteMatched`, `afterRouteHandler`, `beforeResponseFlush`, and `afterResponseFlush`. A successful matched request runs them in this order: request-header callbacks, route-match callbacks, route gates, availability checks, the endpoint, post-route callbacks, then the flush callbacks. Header callbacks also run for unmatched-path 404s and method-mismatch 405s; matched-route, gate, and post-route callbacks do not. Availability-denied 404s retain the earlier matched-route and gate work but skip the endpoint and post-route callbacks. Any live callback can reject the request by throwing; exception selection uses matching local rendering first, then the app fallback. Without a selected endpoint, only app-level rendering applies.
 

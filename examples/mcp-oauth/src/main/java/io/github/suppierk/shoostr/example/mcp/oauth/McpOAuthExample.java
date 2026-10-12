@@ -4,13 +4,11 @@ import com.nimbusds.jose.util.JSONObjectUtils;
 import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
-import io.github.suppierk.shoostr.http.HttpHeaders;
-import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
+import io.github.suppierk.shoostr.http.exceptions.AuthorizationDeniedException;
 import io.github.suppierk.shoostr.mcp.Mcp;
 import io.github.suppierk.shoostr.mcp.McpHttpSecurity;
 import io.github.suppierk.shoostr.mcp.McpIdentity;
-import io.github.suppierk.shoostr.mcp.McpScopeDeniedException;
 import io.github.suppierk.shoostr.pac4j.Pac4j;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
@@ -193,29 +191,7 @@ public final class McpOAuthExample {
                 routes.path(
                     resource.getPath(),
                     mcp::routes,
-                    extensions -> {
-                      extensions.get(authentication).required();
-                      extensions.exception(
-                          McpScopeDeniedException.class,
-                          (failure, _, response) ->
-                              response
-                                  .status(HttpStatusCodes.FORBIDDEN.value())
-                                  .setHeader(
-                                      HttpHeaders.WWW_AUTHENTICATE.value(), failure.challenge()));
-                      extensions.exception(
-                          AuthenticationRequiredException.class,
-                          (failure, _, response) ->
-                              response
-                                  .status(HttpStatusCodes.UNAUTHORIZED.value())
-                                  .setHeader(
-                                      HttpHeaders.WWW_AUTHENTICATE.value(),
-                                      failure.challenge().contains("resource_metadata=")
-                                          ? failure.challenge()
-                                          : failure.challenge()
-                                              + ", resource_metadata=\""
-                                              + metadata.toASCIIString()
-                                              + "\""));
-                    });
+                    extensions -> extensions.get(authentication).required());
               });
     } catch (IOException | RuntimeException | Error failure) {
       try {
@@ -234,12 +210,12 @@ public final class McpOAuthExample {
    * @param identity detached verified identity
    * @param required complete operation grant requirement
    * @param metadata public resource-metadata location for scope escalation
-   * @throws McpScopeDeniedException if any required grant is absent
+   * @throws AuthorizationDeniedException if any required grant is absent
    */
   private static void requireScopes(McpIdentity identity, Set<String> required, URI metadata) {
     if (!(identity.context().get("scope") instanceof String granted)
         || !List.of(granted.split(" ")).containsAll(required)) {
-      throw new McpScopeDeniedException(required, metadata);
+      throw McpHttpSecurity.scopeDenied(required, metadata);
     }
   }
 
