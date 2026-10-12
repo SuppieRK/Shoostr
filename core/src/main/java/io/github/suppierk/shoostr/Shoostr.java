@@ -774,13 +774,7 @@ public final class Shoostr implements Closeable {
     sessionConfiguration = null;
     tlsConfiguration = null;
 
-    for (int index = extensions.size() - 1; index >= 0; index--) {
-      try {
-        extensions.get(index).beforeStop();
-      } catch (RuntimeException stopFailure) {
-        failure = appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
-      }
-    }
+    failure = signalExtensionsBeforeStop(failure);
 
     try {
       if (server != null) {
@@ -827,6 +821,23 @@ public final class Shoostr implements Closeable {
     if (failure != null) {
       throw failure;
     }
+  }
+
+  /**
+   * Signals extensions in reverse ownership order without skipping subsequent shutdown on failure.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException signalExtensionsBeforeStop(@Nullable IOException failure) {
+    for (int index = extensions.size() - 1; index >= 0; index--) {
+      try {
+        extensions.get(index).beforeStop();
+      } catch (RuntimeException stopFailure) {
+        failure = appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
+      }
+    }
+    return failure;
   }
 
   /**

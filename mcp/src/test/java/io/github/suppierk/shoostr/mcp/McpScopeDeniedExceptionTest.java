@@ -15,21 +15,18 @@ class McpScopeDeniedExceptionTest {
   @ValueSource(
       strings = {"", "two scopes", "quote\"", "back\\slash", "newline\n", "tab\t", "é", "\u007f"})
   void rejectsInvalidOAuthScopeTokensBeforeCreatingAChallenge(String scope) {
+    var scopes = Set.of(scope);
+    var metadata = URI.create("https://example.com/.well-known/oauth-protected-resource");
     assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            new McpScopeDeniedException(
-                Set.of(scope),
-                URI.create("https://example.com/.well-known/oauth-protected-resource")));
+        IllegalArgumentException.class, () -> new McpScopeDeniedException(scopes, metadata));
   }
 
   @Test
   void rejectsAnEmptyRequiredScopeSet() {
+    Set<String> scopes = Set.of();
+    var metadata = URI.create("https://example.com/.well-known/oauth-protected-resource");
     assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            new McpScopeDeniedException(
-                Set.of(), URI.create("https://example.com/.well-known/oauth-protected-resource")));
+        IllegalArgumentException.class, () -> new McpScopeDeniedException(scopes, metadata));
   }
 
   @ParameterizedTest
@@ -43,9 +40,9 @@ class McpScopeDeniedExceptionTest {
         "https://example.com:/metadata"
       })
   void rejectsMetadataUrlsThatCannotBeUsedForTrustedHttpsDiscovery(String metadata) {
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> new McpScopeDeniedException(Set.of("tools:read"), URI.create(metadata)));
+    var scopes = Set.of("tools:read");
+    var uri = URI.create(metadata);
+    assertThrows(IllegalArgumentException.class, () -> new McpScopeDeniedException(scopes, uri));
   }
 
   @Test

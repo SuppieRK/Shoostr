@@ -71,10 +71,10 @@ class McpResourceSubscriptionTest {
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
         (request, _) -> {
-          if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
-            if (attached.add(request.header("Mcp-Session-Id").orElseThrow())) {
-              listening.countDown();
-            }
+          if ("GET".equals(request.method())
+              && "/mcp".equals(request.path())
+              && attached.add(request.header("Mcp-Session-Id").orElseThrow())) {
+            listening.countDown();
           }
         });
 

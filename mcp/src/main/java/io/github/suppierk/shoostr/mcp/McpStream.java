@@ -70,13 +70,7 @@ final class McpStream implements McpStreamableServerTransport {
         if (frame == null) {
           output.heartbeat();
         } else {
-          try {
-            output.send(frame.event());
-            frame.acknowledgment().success();
-          } catch (IOException | RuntimeException error) {
-            frame.acknowledgment().error(error);
-            throw error;
-          }
+          send(output, frame);
         }
       }
     } catch (InterruptedException error) {
@@ -84,6 +78,23 @@ final class McpStream implements McpStreamableServerTransport {
       throw new IOException("MCP stream interrupted", error);
     } finally {
       discardPending();
+    }
+  }
+
+  /**
+   * Acknowledges a native frame only after the owner-thread HTTP write succeeds.
+   *
+   * @param output owner-thread event stream
+   * @param frame detached queued frame
+   * @throws IOException if the HTTP write fails
+   */
+  private static void send(Response.EventStream output, Frame frame) throws IOException {
+    try {
+      output.send(frame.event());
+      frame.acknowledgment().success();
+    } catch (IOException | RuntimeException error) {
+      frame.acknowledgment().error(error);
+      throw error;
     }
   }
 

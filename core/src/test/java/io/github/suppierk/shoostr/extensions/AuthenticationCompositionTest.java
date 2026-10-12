@@ -41,19 +41,19 @@ class AuthenticationCompositionTest {
 
     try (var app = new Shoostr()) {
       app.authentication(first, second);
+      var routes = app.routes();
 
       assertThrows(
           IllegalArgumentException.class,
           () ->
-              app.routes()
-                  .get(
-                      "/private",
-                      (_, response) -> response.text("private"),
-                      e -> {
-                        e.onRoute((_, path) -> facts.add(path));
-                        e.get(reverse ? second : first).required();
-                        e.get(reverse ? first : second).required();
-                      }));
+              routes.get(
+                  "/private",
+                  (_, response) -> response.text("private"),
+                  e -> {
+                    e.onRoute((_, path) -> facts.add(path));
+                    e.get(reverse ? second : first).required();
+                    e.get(reverse ? first : second).required();
+                  }));
 
       app.routes()
           .get(
@@ -81,15 +81,15 @@ class AuthenticationCompositionTest {
 
     try (var app = new Shoostr()) {
       app.authentication(first, second);
+      var routes = app.routes();
 
       assertThrows(
           IllegalArgumentException.class,
           () ->
-              app.routes()
-                  .path(
-                      "/private",
-                      child -> child.get("/child", (_, _) -> {}, e -> e.get(second).required()),
-                      e -> e.get(first).required()));
+              routes.path(
+                  "/private",
+                  child -> child.get("/child", (_, _) -> {}, e -> e.get(second).required()),
+                  e -> e.get(first).required()));
 
       app.routes().get("/private/child", (_, response) -> response.text("corrected"));
 

@@ -60,6 +60,9 @@ import reactor.core.scheduler.Schedulers;
  */
 public final class Mcp<S> implements Extension<Void> {
   private static final MediaType EVENT_STREAM = MediaType.of("text/event-stream");
+  private static final String FIELD_METHOD = "method";
+  private static final String FIELD_RESULT = "result";
+  private static final String FIELD_ERROR = "error";
   private final McpHttpSecurity security;
   private final Provider provider;
   private final S server;
@@ -86,20 +89,36 @@ public final class Mcp<S> implements Extension<Void> {
     deadlines.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
     lifetimeAttribute = McpRequestLifetime.class.getName() + "." + UUID.randomUUID();
 
+    server = createServer(factory);
+  }
+
+  /**
+   * Builds the native server and releases owned transport resources if construction fails.
+   *
+   * @param factory eager native server factory
+   * @return non-null server bound to this transport
+   * @throws IllegalArgumentException if the factory does not bind the supplied transport
+   */
+  private S createServer(Function<McpStreamableServerTransportProvider, S> factory) {
+    boolean created = false;
+
     try {
-      server = Objects.requireNonNull(factory.apply(provider));
+      var nativeServer = Objects.requireNonNull(factory.apply(provider));
       if (provider.factory == null) {
         throw new IllegalArgumentException(
             "The native factory must bind the supplied MCP transport");
       }
-    } catch (RuntimeException | Error failure) {
-      try {
-        provider.closeGracefully().block();
-      } finally {
-        deadlines.shutdownNow();
-      }
 
-      throw failure;
+      created = true;
+      return nativeServer;
+    } finally {
+      if (!created) {
+        try {
+          provider.closeGracefully().block();
+        } finally {
+          deadlines.shutdownNow();
+        }
+      }
     }
   }
 
@@ -315,7 +334,7 @@ public final class Mcp<S> implements Extension<Void> {
     try {
       var body = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
       decoded = provider.mapper.readValue(body, new TypeRef<>() {});
-    } catch (IOException failure) {
+    } catch (IOException _) {
       rejectMessage(response, -32700, "Parse error", null);
       return;
     }
@@ -332,49 +351,25 @@ public final class Mcp<S> implements Extension<Void> {
     McpSchema.JSONRPCMessage message;
 
     try {
-      Class<? extends McpSchema.JSONRPCMessage> type =
-          fields.containsKey("method")
-              ? (fields.containsKey("id")
-                  ? McpSchema.JSONRPCRequest.class
-                  : McpSchema.JSONRPCNotification.class)
-              : McpSchema.JSONRPCResponse.class;
+      Class<? extends McpSchema.JSONRPCMessage> type;
+      if (fields.containsKey(FIELD_METHOD)) {
+        type =
+            fields.containsKey("id")
+                ? McpSchema.JSONRPCRequest.class
+                : McpSchema.JSONRPCNotification.class;
+      } else {
+        type = McpSchema.JSONRPCResponse.class;
+      }
+
       message = provider.mapper.convertValue(fields, type);
-    } catch (IllegalArgumentException failure) {
+    } catch (IllegalArgumentException _) {
       rejectMessage(response, -32600, "Invalid Request", fields.get("id"));
       return;
     }
 
     if (message instanceof McpSchema.JSONRPCRequest rpc
         && McpSchema.METHOD_INITIALIZE.equals(rpc.method())) {
-      if (!validInitialization(rpc.params())) {
-        rejectMessage(response, -32602, "Invalid params", rpc.id());
-        return;
-      }
-
-      McpSchema.InitializeRequest parameters;
-
-      try {
-        parameters = provider.mapper.convertValue(rpc.params(), McpSchema.InitializeRequest.class);
-      } catch (IllegalArgumentException failure) {
-        rejectMessage(response, -32602, "Invalid params", rpc.id());
-        return;
-      }
-
-      security.authorize().accept(identity, message);
-      var initialized = Objects.requireNonNull(provider.factory).startSession(parameters);
-      var result =
-          Objects.requireNonNull(
-              initialized
-                  .initResult()
-                  .contextWrite(context -> context.put(McpTransportContext.KEY, identity.context()))
-                  .block());
-      provider.publish(new Session(initialized.session(), identity.sessionOwner()));
-      response
-          .setHeader("Mcp-Session-Id", initialized.session().getId())
-          .body(
-              "application/json",
-              provider.mapper.writeValueAsBytes(
-                  McpSchema.JSONRPCResponse.result(rpc.id(), result)));
+      initialize(rpc, identity, response);
       return;
     }
 
@@ -395,6 +390,46 @@ public final class Mcp<S> implements Extension<Void> {
       provider.accept(session, message, identity.context());
       response.status(202);
     }
+  }
+
+  /**
+   * Validates and publishes one native initialization with no pre-validation side effects.
+   *
+   * @param rpc initialization request
+   * @param identity detached authenticated identity
+   * @param response owner-thread response
+   * @throws IOException if protocol output cannot be encoded
+   */
+  private void initialize(McpSchema.JSONRPCRequest rpc, McpIdentity identity, Response response)
+      throws IOException {
+    if (!validInitialization(rpc.params())) {
+      rejectMessage(response, -32602, "Invalid params", rpc.id());
+      return;
+    }
+
+    McpSchema.InitializeRequest parameters;
+
+    try {
+      parameters = provider.mapper.convertValue(rpc.params(), McpSchema.InitializeRequest.class);
+    } catch (IllegalArgumentException _) {
+      rejectMessage(response, -32602, "Invalid params", rpc.id());
+      return;
+    }
+
+    security.authorize().accept(identity, rpc);
+    var initialized = Objects.requireNonNull(provider.factory).startSession(parameters);
+    var result =
+        Objects.requireNonNull(
+            initialized
+                .initResult()
+                .contextWrite(context -> context.put(McpTransportContext.KEY, identity.context()))
+                .block());
+    provider.publish(new Session(initialized.session(), identity.sessionOwner()));
+    response
+        .setHeader("Mcp-Session-Id", initialized.session().getId())
+        .body(
+            "application/json",
+            provider.mapper.writeValueAsBytes(McpSchema.JSONRPCResponse.result(rpc.id(), result)));
   }
 
   /**
@@ -425,23 +460,24 @@ public final class Mcp<S> implements Extension<Void> {
       return false;
     }
 
-    if (fields.containsKey("method")) {
-      return fields.get("method") instanceof String method
+    if (fields.containsKey(FIELD_METHOD)) {
+      return fields.get(FIELD_METHOD) instanceof String method
           && !method.isBlank()
-          && !fields.containsKey("result")
-          && !fields.containsKey("error")
+          && !fields.containsKey(FIELD_RESULT)
+          && !fields.containsKey(FIELD_ERROR)
           && (!fields.containsKey("params") || fields.get("params") instanceof Map<?, ?>);
     }
 
-    if (!fields.containsKey("id") || fields.containsKey("result") == fields.containsKey("error")) {
+    if (!fields.containsKey("id")
+        || fields.containsKey(FIELD_RESULT) == fields.containsKey(FIELD_ERROR)) {
       return false;
     }
 
-    if (fields.containsKey("result")) {
-      return fields.get("result") instanceof Map<?, ?>;
+    if (fields.containsKey(FIELD_RESULT)) {
+      return fields.get(FIELD_RESULT) instanceof Map<?, ?>;
     }
 
-    return fields.get("error") instanceof Map<?, ?> error
+    return fields.get(FIELD_ERROR) instanceof Map<?, ?> error
         && error.get("code") instanceof Integer
         && error.get("message") instanceof String;
   }
@@ -850,6 +886,8 @@ public final class Mcp<S> implements Extension<Void> {
         streams.put(stream, session);
       }
 
+      boolean subscribed = false;
+
       try {
         session
             .sdk()
@@ -857,11 +895,13 @@ public final class Mcp<S> implements Extension<Void> {
             .contextWrite(current -> current.put(McpTransportContext.KEY, context))
             .subscribeOn(Schedulers.boundedElastic())
             .subscribe(dispatch);
-      } catch (RuntimeException | Error failure) {
-        dispatch.dispose();
-        streams.remove(stream);
-        stream.finish();
-        throw failure;
+        subscribed = true;
+      } finally {
+        if (!subscribed) {
+          dispatch.dispose();
+          streams.remove(stream);
+          stream.finish();
+        }
       }
     }
 
@@ -909,6 +949,8 @@ public final class Mcp<S> implements Extension<Void> {
         }
       }
 
+      boolean subscribed = false;
+
       try {
         Mono.defer(
                 () -> {
@@ -925,9 +967,11 @@ public final class Mcp<S> implements Extension<Void> {
             .contextWrite(current -> current.put(McpTransportContext.KEY, context))
             .subscribeOn(Schedulers.boundedElastic())
             .subscribe(dispatch);
-      } catch (RuntimeException | Error failure) {
-        dispatch.dispose();
-        throw failure;
+        subscribed = true;
+      } finally {
+        if (!subscribed) {
+          dispatch.dispose();
+        }
       }
     }
 

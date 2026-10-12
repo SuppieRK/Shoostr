@@ -207,12 +207,11 @@ class ExtensionShutdownTest {
         };
 
     try (var app = new Shoostr()) {
+      var first = capability("first", events);
+      var last = capability("last", events);
       assertSame(
           setupFailure,
-          assertThrows(
-              IllegalArgumentException.class,
-              () ->
-                  app.extensions(capability("first", events), broken, capability("last", events))));
+          assertThrows(IllegalArgumentException.class, () -> app.extensions(first, broken, last)));
       assertEquals(
           List.of(
               "before-last",
@@ -316,21 +315,21 @@ class ExtensionShutdownTest {
 
     try (var app = new Shoostr();
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-      app.extensions(
-          new Extension<Void>() {
-            @Override
-            public void beforeStop() {
-              signals.incrementAndGet();
-              entered.countDown();
+      class WaitingShutdown implements Extension<Void> {
+        @Override
+        public void beforeStop() {
+          signals.incrementAndGet();
+          entered.countDown();
 
-              try {
-                assertTrue(release.await(5, TimeUnit.SECONDS));
-              } catch (InterruptedException error) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(error);
-              }
-            }
-          });
+          try {
+            assertTrue(release.await(5, TimeUnit.SECONDS));
+          } catch (InterruptedException error) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(error);
+          }
+        }
+      }
+      app.extensions(new WaitingShutdown());
       var first =
           workers.submit(
               () -> {

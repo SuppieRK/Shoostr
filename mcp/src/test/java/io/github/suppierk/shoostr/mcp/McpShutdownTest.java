@@ -160,13 +160,13 @@ class McpShutdownTest {
             },
             (_, _) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
-    Extension<Void> witness =
-        new Extension<>() {
-          @Override
-          public void beforeStop() {
-            stopped.countDown();
-          }
-        };
+    class ShutdownWitness implements Extension<Void> {
+      @Override
+      public void beforeStop() {
+        stopped.countDown();
+      }
+    }
+    Extension<Void> witness = new ShutdownWitness();
     var app = new Shoostr();
     app.extensions(witness, mcp).routes(routes -> routes.path("/mcp", mcp::routes));
 

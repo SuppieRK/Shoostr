@@ -35,9 +35,7 @@ class McpRefreshTest {
                 new McpIdentity(
                     "alice:client",
                     McpTransportContext.EMPTY,
-                    request.header("X-Old-Token").isPresent()
-                        ? Instant.now().plusSeconds(2)
-                        : Instant.now().plusSeconds(10)),
+                    Instant.now().plusSeconds(request.header("X-Old-Token").isPresent() ? 2 : 10)),
             (_, _) -> {});
     var mcp =
         Mcp.sync(

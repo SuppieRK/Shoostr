@@ -179,13 +179,14 @@ class ExtensionOwnershipTest {
     var owned = new OwnedCapability();
     var authentication = owningAuthenticator(owned);
     var prefix = new OwnedCapability();
+    var prefixAuthentication = owningAuthenticator(prefix);
 
     try (var owner = new Shoostr();
         var rejected = new Shoostr()) {
       owner.authentication(authentication);
       assertThrows(
           IllegalStateException.class,
-          () -> rejected.authentication(owningAuthenticator(prefix), authentication));
+          () -> rejected.authentication(prefixAuthentication, authentication));
       assertEquals(1, prefix.closes.get());
       assertEquals(0, owned.closes.get());
     }
@@ -196,20 +197,20 @@ class ExtensionOwnershipTest {
   @Test
   void cleanupFailureDoesNotReplaceTheOwnershipRejection() throws Exception {
     var rejection = new IllegalStateException("ownership rejected");
-    Extension<Void> prefix =
-        new Extension<>() {
-          @Override
-          public void close() throws IOException {
-            throw new IOException("cleanup failed");
-          }
-        };
-    Extension<Void> rejected =
-        new Extension<>() {
-          @Override
-          public void claimOwnership() {
-            throw rejection;
-          }
-        };
+    class FailingCleanup implements Extension<Void> {
+      @Override
+      public void close() throws IOException {
+        throw new IOException("cleanup failed");
+      }
+    }
+    Extension<Void> prefix = new FailingCleanup();
+    class RejectedClaim implements Extension<Void> {
+      @Override
+      public void claimOwnership() {
+        throw rejection;
+      }
+    }
+    Extension<Void> rejected = new RejectedClaim();
 
     try (var app = new Shoostr()) {
       var failure =
@@ -256,18 +257,18 @@ class ExtensionOwnershipTest {
 
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
       var routes = app.routes();
-      Extension<Void> checking =
-          new Extension<>() {
-            @Override
-            public void claimOwnership() {
-              assertThrows(
-                  IllegalArgumentException.class,
-                  () -> routes.get("/first", (_, _) -> {}, e -> e.requireInstalled(first)));
-              assertThrows(
-                  IllegalArgumentException.class,
-                  () -> routes.get("/last", (_, _) -> {}, e -> e.requireInstalled(last)));
-            }
-          };
+      class CheckingClaim implements Extension<Void> {
+        @Override
+        public void claimOwnership() {
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> routes.get("/first", (_, _) -> {}, e -> e.requireInstalled(first)));
+          assertThrows(
+              IllegalArgumentException.class,
+              () -> routes.get("/last", (_, _) -> {}, e -> e.requireInstalled(last)));
+        }
+      }
+      Extension<Void> checking = new CheckingClaim();
       app.extensions(first, checking, last);
       routes.get("/first", (_, response) -> response.text("ok"), e -> e.requireInstalled(first));
 
@@ -282,14 +283,14 @@ class ExtensionOwnershipTest {
     var last = new OwnedCapability();
 
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      Extension<Void> first =
-          new Extension<>() {
-            @Override
-            public void install(ApplicationCallbacks callbacks) {
-              app.routes()
-                  .get("/", (_, response) -> response.text("ok"), e -> e.requireInstalled(last));
-            }
-          };
+      class InstallingRoute implements Extension<Void> {
+        @Override
+        public void install(ApplicationCallbacks callbacks) {
+          app.routes()
+              .get("/", (_, response) -> response.text("ok"), e -> e.requireInstalled(last));
+        }
+      }
+      Extension<Void> first = new InstallingRoute();
       app.extensions(first, last);
 
       try (var test = TestServer.start(app)) {
@@ -303,13 +304,13 @@ class ExtensionOwnershipTest {
     var nested = new OwnedCapability();
 
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      Extension<Void> first =
-          new Extension<>() {
-            @Override
-            public void claimOwnership() {
-              assertThrows(IllegalStateException.class, () -> app.extensions(nested));
-            }
-          };
+      class ReentrantInstallation implements Extension<Void> {
+        @Override
+        public void claimOwnership() {
+          assertThrows(IllegalStateException.class, () -> app.extensions(nested));
+        }
+      }
+      Extension<Void> first = new ReentrantInstallation();
       app.extensions(first);
       app.extensions(nested).routes().get("/", (_, response) -> response.text("ok"));
 
@@ -327,13 +328,13 @@ class ExtensionOwnershipTest {
     var nested = owningAuthenticator(owned);
 
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      Extension<Void> first =
-          new Extension<>() {
-            @Override
-            public void claimOwnership() {
-              assertThrows(IllegalStateException.class, () -> app.authentication(nested));
-            }
-          };
+      class ReentrantAuthentication implements Extension<Void> {
+        @Override
+        public void claimOwnership() {
+          assertThrows(IllegalStateException.class, () -> app.authentication(nested));
+        }
+      }
+      Extension<Void> first = new ReentrantAuthentication();
       app.extensions(first);
       app.authentication(nested).routes().get("/", (_, response) -> response.text("ok"));
 
@@ -348,13 +349,13 @@ class ExtensionOwnershipTest {
   @Test
   void rejectsReentrantStartupDuringOwnershipClaims() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      Extension<Void> first =
-          new Extension<>() {
-            @Override
-            public void claimOwnership() {
-              assertThrows(IllegalStateException.class, app::start);
-            }
-          };
+      class ReentrantStartup implements Extension<Void> {
+        @Override
+        public void claimOwnership() {
+          assertThrows(IllegalStateException.class, app::start);
+        }
+      }
+      Extension<Void> first = new ReentrantStartup();
       app.extensions(first).routes().get("/", (_, response) -> response.text("ok"));
 
       try (var test = TestServer.start(app)) {
@@ -396,7 +397,9 @@ class ExtensionOwnershipTest {
       }
 
       @Override
-      public void handle(Request request, Response response) {}
+      public void handle(Request request, Response response) {
+        // This ownership fixture deliberately contributes no request behavior.
+      }
 
       @Override
       public void close() {
@@ -414,7 +417,7 @@ class ExtensionOwnershipTest {
     try {
       app.extensions(capability);
       return true;
-    } catch (IllegalStateException rejected) {
+    } catch (IllegalStateException _) {
       return false;
     }
   }

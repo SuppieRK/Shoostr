@@ -1,9 +1,9 @@
 package io.github.suppierk.shoostr.mcp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -26,8 +26,8 @@ class McpOwnershipTest {
     assertThrows(
         NullPointerException.class,
         () -> {
-          try (var _ = Mcp.sync(security, _ -> null)) {
-            fail("A null native server must not create an adapter");
+          try (var unexpected = Mcp.sync(security, _ -> null)) {
+            assertNotNull(unexpected);
           }
         });
   }
@@ -42,14 +42,14 @@ class McpOwnershipTest {
     assertThrows(
         IllegalStateException.class,
         () -> {
-          try (var _ =
+          try (var unexpected =
               Mcp.sync(
                   security,
                   transport -> {
                     McpServer.sync(transport).build();
                     return McpServer.sync(transport).build();
                   })) {
-            fail("A duplicate native binding must not create an adapter");
+            assertNotNull(unexpected);
           }
         });
   }
@@ -79,8 +79,8 @@ class McpOwnershipTest {
       assertThrows(
           IllegalArgumentException.class,
           () -> {
-            try (var _ = Mcp.sync(security, _ -> mcp.server())) {
-              fail("An unused transport must not create an adapter");
+            try (var unexpected = Mcp.sync(security, _ -> mcp.server())) {
+              assertNotNull(unexpected);
             }
           });
       assertEquals("owner", client.initialize().serverInfo().name());

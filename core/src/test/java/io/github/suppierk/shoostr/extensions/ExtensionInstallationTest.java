@@ -43,17 +43,17 @@ class ExtensionInstallationTest {
 
     try (var capability = new Extension<Void>() {};
         var app = new Shoostr()) {
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
           () ->
-              app.routes()
-                  .get(
-                      "/capability",
-                      (_, response) -> response.text("rejected"),
-                      extensions -> {
-                        extensions.onRoute((_, path) -> facts.add(path));
-                        extensions.requireInstalled(capability);
-                      }));
+              routes.get(
+                  "/capability",
+                  (_, response) -> response.text("rejected"),
+                  extensions -> {
+                    extensions.onRoute((_, path) -> facts.add(path));
+                    extensions.requireInstalled(capability);
+                  }));
       app.routes()
           .get(
               "/capability",
@@ -77,11 +77,11 @@ class ExtensionInstallationTest {
     try (var owner = new Shoostr();
         var other = new Shoostr()) {
       owner.extensions(capability);
+      var routes = other.routes();
 
       assertThrows(
           IllegalArgumentException.class,
-          () ->
-              other.routes().get("/capability", (_, _) -> {}, e -> e.requireInstalled(capability)));
+          () -> routes.get("/capability", (_, _) -> {}, e -> e.requireInstalled(capability)));
     }
   }
 
@@ -93,19 +93,21 @@ class ExtensionInstallationTest {
     try (var app = new Shoostr()) {
       app.extensions(installed);
       assertEquals(installed, missing);
+      var routes = app.routes();
 
       assertThrows(
           IllegalArgumentException.class,
-          () -> app.routes().get("/capability", (_, _) -> {}, e -> e.requireInstalled(missing)));
+          () -> routes.get("/capability", (_, _) -> {}, e -> e.requireInstalled(missing)));
     }
   }
 
   @Test
   void rejectsANullInstallationRequirement() throws Exception {
     try (var app = new Shoostr()) {
+      var routes = app.routes();
       assertThrows(
           NullPointerException.class,
-          () -> app.routes().get("/capability", (_, _) -> {}, e -> e.requireInstalled(null)));
+          () -> routes.get("/capability", (_, _) -> {}, e -> e.requireInstalled(null)));
     }
   }
 
@@ -117,8 +119,9 @@ class ExtensionInstallationTest {
     try (var app = new Shoostr()) {
       app.extensions(capability);
       app.routes().get("/capability", (_, _) -> {}, retained::set);
+      var frozen = Objects.requireNonNull(retained.get());
 
-      assertThrows(IllegalStateException.class, () -> retained.get().requireInstalled(capability));
+      assertThrows(IllegalStateException.class, () -> frozen.requireInstalled(capability));
     }
   }
 
@@ -130,8 +133,9 @@ class ExtensionInstallationTest {
     try (var app = new Shoostr()) {
       app.extensions(capability);
       app.routes().path("/capability", child -> child.get((_, _) -> {}), retained::set);
+      var frozen = Objects.requireNonNull(retained.get());
 
-      assertThrows(IllegalStateException.class, () -> retained.get().requireInstalled(capability));
+      assertThrows(IllegalStateException.class, () -> frozen.requireInstalled(capability));
     }
   }
 

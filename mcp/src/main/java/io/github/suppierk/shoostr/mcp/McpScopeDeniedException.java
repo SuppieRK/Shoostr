@@ -11,6 +11,7 @@ import java.util.Set;
  * challenge. Throw from {@link McpHttpSecurity#authorize()}; native tool/resource failures remain
  * protocol errors instead. The application explicitly serves the referenced metadata document.
  */
+@SuppressWarnings("java:S110") // Preserve the established typed HTTP403 exception hierarchy.
 public final class McpScopeDeniedException extends ForbiddenException {
   @Serial private static final long serialVersionUID = 1L;
 

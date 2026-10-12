@@ -44,9 +44,7 @@ class McpPostExpiryTest {
                 new McpIdentity(
                     "alice:client",
                     McpTransportContext.EMPTY,
-                    request.header("X-Old-Token").isPresent()
-                        ? Instant.now().plusSeconds(2)
-                        : Instant.now().plusSeconds(10)),
+                    Instant.now().plusSeconds(request.header("X-Old-Token").isPresent() ? 2 : 10)),
             (_, _) -> {});
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
     var mcp =
