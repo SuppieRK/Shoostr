@@ -252,7 +252,8 @@ public final class Shoostr implements Closeable {
    * @return this application
    * @throws NullPointerException if first or an additional capability is null
    * @throws IllegalArgumentException if a capability is duplicated or is an authenticator
-   * @throws IllegalStateException if startup, closure or provider installation has begun
+   * @throws IllegalStateException if startup, closure or provider installation has begun, or a
+   *     provider rejects ownership
    */
   public synchronized Shoostr extensions(
       Extension<?> first, Extension<?> @Nullable ... additional) {
@@ -275,7 +276,7 @@ public final class Shoostr implements Closeable {
    * @return this application
    * @throws NullPointerException if extension is null
    * @throws IllegalArgumentException if the instance is already installed
-   * @throws IllegalStateException if installation is closed
+   * @throws IllegalStateException if installation is closed or the provider rejects ownership
    */
   public synchronized Shoostr authentication(AuthenticationExtension extension) {
     return authentication(extension, (AuthenticationExtension[]) null);
@@ -292,7 +293,8 @@ public final class Shoostr implements Closeable {
    * @return this application
    * @throws NullPointerException if first or an additional identity source is null
    * @throws IllegalArgumentException if an instance is duplicated or already installed
-   * @throws IllegalStateException if startup, closure or provider installation has begun
+   * @throws IllegalStateException if startup, closure or provider installation has begun, or a
+   *     provider rejects ownership
    */
   public synchronized Shoostr authentication(
       AuthenticationExtension first, AuthenticationExtension @Nullable ... additional) {
@@ -334,18 +336,22 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Claims a fully validated batch before eager setup and cleans owned resources on failure.
+   * Claims validated instances before publishing the batch and eagerly installing providers.
    *
    * @param batch non-null capabilities in written order
    * @throws IllegalStateException if setup closes the application
    */
   @SuppressWarnings("java:S1181") // Provider setup must clean resources even on Error.
   private void installExtensions(List<Extension<?>> batch) {
-    routes.install(batch);
-    extensions.addAll(batch);
+    routes.validateInstallation(batch);
     installing = true;
 
     try {
+      for (var extension : batch) {
+        claimExtension(extension);
+      }
+      routes.install(batch);
+
       for (var extension : batch) {
         var callbacks = new ApplicationCallbacks();
 
@@ -379,6 +385,29 @@ public final class Shoostr implements Closeable {
     } finally {
       installing = false;
     }
+  }
+
+  /**
+   * Transfers cleanup responsibility after a successful claim, including reentrant app closure.
+   *
+   * @param extension capability to claim
+   * @throws IllegalStateException if the claim closes the application
+   */
+  private void claimExtension(Extension<?> extension) {
+    extension.claimOwnership();
+    if (closed) {
+      var failure = new IllegalStateException("Provider ownership claim closed the application");
+
+      try {
+        extension.close();
+      } catch (IOException | RuntimeException cleanup) {
+        failure.addSuppressed(cleanup);
+      }
+
+      throw failure;
+    }
+
+    extensions.add(extension);
   }
 
   /**

@@ -1855,12 +1855,12 @@ public final class Routes implements Closeable {
   }
 
   /**
-   * Validates a batch before any installation becomes visible to endpoint configuration.
+   * Validates a batch without publishing it or invoking provider code.
    *
    * @param extensions capabilities to install
    * @throws IllegalArgumentException if an instance occurs twice or is already installed
    */
-  void install(List<Extension<?>> extensions) {
+  void validateInstallation(List<Extension<?>> extensions) {
     synchronized (lock) {
       requireMutable();
       var unique = Collections.newSetFromMap(new IdentityHashMap<Extension<?>, Boolean>());
@@ -1869,6 +1869,19 @@ public final class Routes implements Closeable {
           throw new IllegalArgumentException("An extension instance can only be installed once");
         }
       }
+    }
+  }
+
+  /**
+   * Publishes a claimed batch, rechecking registration after provider ownership callbacks.
+   *
+   * @param extensions claimed capabilities to install
+   * @throws IllegalArgumentException if an instance occurs twice or is already installed
+   * @throws IllegalStateException if route registration has ended
+   */
+  void install(List<Extension<?>> extensions) {
+    synchronized (lock) {
+      validateInstallation(extensions);
       installed.addAll(extensions);
     }
   }

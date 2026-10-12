@@ -399,8 +399,17 @@ explicitly registered documentation handler's own route, without executing handl
 handshakes and static mounts produce no invented HTTP documentation paths. Generate final metadata
 in `beforeStart()`. Explicitly register any serving handler yourself and protect it normally.
 The app closes owned extension resources in reverse installation order; borrowed dependencies
-remain the application's responsibility. Bad installation batches have no setup effects. Provider
-setup/finalization failure closes the app and prevents restart. Native asynchronous protocol
+remain the application's responsibility. Structurally invalid installation batches are rejected
+before invoking any provider hook. For a valid batch, `Extension.claimOwnership()` runs in written
+order before any `install` callback and before the batch becomes available to route configuration.
+A successful claim transfers cleanup responsibility, including if a later claim or setup fails.
+Failure closes the app and its successfully claimed resources; rejected and not-yet-claimed
+instances remain outside its cleanup list. Providers owning exclusive resources must atomically
+reject reuse across apps (including concurrent attempts) in this hook. The default is a no-op,
+not a universal single-owner guarantee. A failed claim must leave existing ownership intact and
+release anything acquired by that failed attempt. Claims run only during registration and add no
+request-time work. Provider setup/finalization failure closes the app and prevents restart.
+Native asynchronous protocol
 lifetimes, schemas, UI serving and codec integration belong to their respective optional adapters.
 
 Protection belongs to selected extensions, not a core `Routes.protect` method. Matched hooks run
