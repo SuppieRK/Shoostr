@@ -1,0 +1,7 @@
+dependencies {
+	implementation project(':pac4j')
+	implementation 'org.pac4j:pac4j-http:6.5.9'
+	implementation 'com.nimbusds:nimbus-jose-jwt:10.9.1'
+
+	testImplementation project(':test')
+}
