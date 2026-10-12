@@ -398,8 +398,13 @@ and before `Extension.beforeStart()`. They describe actual ordinary HTTP/SSE bin
 explicitly registered documentation handler's own route, without executing handlers. WebSocket
 handshakes and static mounts produce no invented HTTP documentation paths. Generate final metadata
 in `beforeStart()`. Explicitly register any serving handler yourself and protect it normally.
-The app closes owned extension resources in reverse installation order; borrowed dependencies
-remain the application's responsibility. Structurally invalid installation batches are rejected
+Before native graceful drain, the app calls `Extension.beforeStop()` once in reverse claim order.
+Use this optional signal to reject new work and wake owned long-lived streams; return promptly,
+without accessing live requests/responses or disposing resources that draining requests still need.
+The app then closes owned extension resources through `close()` after drain, again in reverse claim
+order. Ordinary signalling failures do not skip other signals, native shutdown or final cleanup.
+Both phases also run for successfully claimed providers after incomplete setup or startup.
+Borrowed dependencies remain the application's responsibility. Structurally invalid installation batches are rejected
 before invoking any provider hook. For a valid batch, `Extension.claimOwnership()` runs in written
 order before any `install` callback and before the batch becomes available to route configuration.
 A successful claim transfers cleanup responsibility, including if a later claim or setup fails.

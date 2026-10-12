@@ -62,6 +62,18 @@ public interface Extension<C> extends Closeable {
   default void beforeStart() {}
 
   /**
+   * Signals owned long-lived work to finish before native graceful shutdown begins. Invoked once in
+   * reverse claim order, including cleanup after incomplete installation or startup. Return
+   * promptly without waiting for handlers or disposing resources still needed by draining requests
+   * and terminal observers; final resource disposal belongs in {@link #close()}.
+   *
+   * <p>Prevent new work atomically while signalling active work. Never access a live request or
+   * response from this shutdown callback. Runtime failures are collected without skipping other
+   * extensions, native shutdown or final cleanup. The default contributes no shutdown work.
+   */
+  default void beforeStop() {}
+
+  /**
    * Releases extension-owned resources once after a successful ownership claim, in reverse claim
    * order, even if installation was never reached. Running handlers on caller-owned endpoint
    * executors may complete after the native graceful drain and this method. Their retained

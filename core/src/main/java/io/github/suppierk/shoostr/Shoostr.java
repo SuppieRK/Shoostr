@@ -399,6 +399,12 @@ public final class Shoostr implements Closeable {
       var failure = new IllegalStateException("Provider ownership claim closed the application");
 
       try {
+        extension.beforeStop();
+      } catch (RuntimeException cleanup) {
+        failure.addSuppressed(cleanup);
+      }
+
+      try {
         extension.close();
       } catch (IOException | RuntimeException cleanup) {
         failure.addSuppressed(cleanup);
@@ -729,13 +735,15 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Drains and stops Jetty using its configured native timeouts, then interrupts remaining owned
-   * virtual-thread tasks and removes the shutdown hook. Does not wait for application code that
-   * ignores interruption. Repeated calls are harmless, including a call before startup.
-   * Caller-owned endpoint executors are never closed or interrupted. Unstarted selected requests
-   * are canceled after draining; running handlers may finish and release their resources after this
-   * method returns. The caller must coordinate their completion before closing supplied
-   * dependencies.
+   * Signals installed extensions before draining and stopping Jetty using its configured native
+   * timeouts, then interrupts remaining owned virtual-thread tasks and removes the shutdown hook.
+   * Does not wait for application code that ignores interruption. Repeated calls are harmless,
+   * including a call before startup. Caller-owned endpoint executors are never closed or
+   * interrupted. Unstarted selected requests are canceled after draining; running handlers may
+   * finish and release their resources after this method returns. The caller must coordinate their
+   * completion before closing supplied dependencies. Final extension resource cleanup follows
+   * native drain; ordinary signalling failures are collected without skipping subsequent shutdown
+   * or cleanup.
    *
    * @throws IOException if resources cannot be closed
    */
@@ -765,6 +773,14 @@ public final class Shoostr implements Closeable {
     httpConfigurations.clear();
     sessionConfiguration = null;
     tlsConfiguration = null;
+
+    for (int index = extensions.size() - 1; index >= 0; index--) {
+      try {
+        extensions.get(index).beforeStop();
+      } catch (RuntimeException stopFailure) {
+        failure = appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
+      }
+    }
 
     try {
       if (server != null) {
