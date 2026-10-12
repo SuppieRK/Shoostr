@@ -44,7 +44,7 @@ Then start the fixture:
 
 ```bash
 cmdshape docker compose -p shoostr-mcp-oauth up -d keycloak
-cmdshape curl --fail --retry 30 --retry-delay 2 --retry-connrefused \
+cmdshape curl --fail --retry 30 --retry-delay 2 --retry-connrefused --retry-all-errors \
   --max-time 5 --retry-max-time 120 http://127.0.0.1:9000/health/ready
 cmdshape curl --fail --cacert .local/fixture-ca.pem \
   https://localhost:8443/realms/shoostr-mcp/.well-known/openid-configuration
