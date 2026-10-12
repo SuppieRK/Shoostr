@@ -4,6 +4,8 @@ import com.nimbusds.jose.util.JSONObjectUtils;
 import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
+import io.github.suppierk.shoostr.http.HttpHeaders;
+import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.mcp.Mcp;
 import io.github.suppierk.shoostr.mcp.McpHttpSecurity;
@@ -197,15 +199,16 @@ public final class McpOAuthExample {
                           McpScopeDeniedException.class,
                           (failure, _, response) ->
                               response
-                                  .status(403)
-                                  .setHeader("WWW-Authenticate", failure.challenge()));
+                                  .status(HttpStatusCodes.FORBIDDEN.value())
+                                  .setHeader(
+                                      HttpHeaders.WWW_AUTHENTICATE.value(), failure.challenge()));
                       extensions.exception(
                           AuthenticationRequiredException.class,
                           (failure, _, response) ->
                               response
-                                  .status(401)
+                                  .status(HttpStatusCodes.UNAUTHORIZED.value())
                                   .setHeader(
-                                      "WWW-Authenticate",
+                                      HttpHeaders.WWW_AUTHENTICATE.value(),
                                       failure.challenge().contains("resource_metadata=")
                                           ? failure.challenge()
                                           : failure.challenge()
