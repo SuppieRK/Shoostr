@@ -505,7 +505,7 @@ public final class Mcp<S> implements Extension<Void> {
       throws IOException {
     var envelope = new HashMap<String, Object>();
     envelope.put("jsonrpc", "2.0");
-    envelope.put("error", Map.of("code", code, "message", message));
+    envelope.put(FIELD_ERROR, Map.of("code", code, "message", message));
     if (validId(id)) {
       envelope.put("id", id);
     }
