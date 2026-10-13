@@ -32,19 +32,19 @@ public final class ExceptionExample {
    */
   public static Shoostr application() {
     return new Shoostr()
-        // App-wide fallback handles this exception family when no scope renderer matches.
+        // Handle IllegalStateException when no matching exception handler is registered on routes.
         .exception(
             IllegalStateException.class,
             (_, _, response) ->
                 response
                     .status(HttpStatusCodes.INTERNAL_SERVER_ERROR.value())
                     .text("Application failure"))
-        // Generated routing statuses are separate from exceptions thrown by matched handlers.
+        // Customize 404 when no route matches; this does not handle thrown exceptions.
         .status(
             HttpStatusCodes.NOT_FOUND.value(), (_, response) -> response.text("Route not found"))
         .routes(
             routes -> {
-              // Root scope rendering applies to these routes and is inherited by child groups.
+              // Handle IllegalArgumentException for these routes and their nested route groups.
               routes.exception(
                   IllegalArgumentException.class,
                   (_, _, response) ->
@@ -52,14 +52,14 @@ public final class ExceptionExample {
                           .status(HttpStatusCodes.BAD_REQUEST.value())
                           .text("Route input error"));
 
-              // Let this failure escape the handler and reach the root scope's renderer.
+              // The exception handler registered on routes handles this failure.
               routes.get(
                   "/route-failure",
                   (_, _) -> {
                     throw new IllegalArgumentException("Example-only invalid argument details");
                   });
 
-              // Replace the inherited mapping for this exception class only within /group.
+              // Register a different IllegalArgumentException handler for the /group routes.
               routes.path(
                   "/group",
                   group -> {
@@ -76,7 +76,7 @@ public final class ExceptionExample {
                         });
                   });
 
-              // Without an override, this sibling group inherits the root renderer.
+              // This route group uses the IllegalArgumentException handler registered on routes.
               routes.path(
                   "/inherited",
                   group ->
@@ -87,7 +87,7 @@ public final class ExceptionExample {
                                 "Example-only inherited input details");
                           }));
 
-              // Staged output is reset when the uncommitted response becomes an error response.
+              // Discard the unsent response body before invoking the app's exception handler.
               routes.get(
                   "/app-failure",
                   (_, response) -> {
@@ -95,21 +95,21 @@ public final class ExceptionExample {
                     throw new IllegalStateException("Example-only internal failure details");
                   });
 
-              // Unhandled HTTP exceptions retain their status without exposing diagnostics.
+              // Default handling returns 400 without exposing the exception message.
               routes.get(
                   "/builtin/bad-request",
                   (_, _) -> {
                     throw new BadRequestException("Example-only invalid input details");
                   });
 
-              // This matched-handler exception does not invoke the generated-404 status renderer.
+              // Throwing NotFoundException returns the default 404, not the app.status response.
               routes.get(
                   "/builtin/not-found",
                   (_, _) -> {
                     throw new NotFoundException("Example-only missing resource details");
                   });
 
-              // Recover from a known parsing failure here, rather than using an error renderer.
+              // Catch invalid numbers here instead of invoking a registered exception handler.
               routes.get(
                   "/number",
                   (request, response) -> {
