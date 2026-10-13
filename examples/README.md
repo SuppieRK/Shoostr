@@ -21,7 +21,7 @@ framework modules do not select a provider or enable per-request logging by defa
 | Task | Example / Gradle project | Observable lesson |
 | --- | --- | --- |
 | Start/stop a server and return text | [01-hello](01-hello/README.md) / `hello-example` | `GET /hello`, plain response and deterministic test ownership |
-| Read inputs and substitute a dependency in a test | [02-requests](02-requests/README.md) / `requests-example` | Decoded path/query inputs, optional defaults, repeated values, supplied JDK function |
+| Route HTTP methods, read inputs and vary availability | [02-requests](02-requests/README.md) / `requests-example` | Seven verbs, generic route, path groups/patterns, both `when` forms, query/form/body/header/cookie inputs, supplied unary operation |
 | Mix typed JSON/text and render scoped errors | [03-json-errors](03-json-errors/README.md) / `json-errors-example` | Explicit codec, validated payload, scoped 400/500 rendering |
 | Authenticate a group and authorize an operation | [04-authentication](04-authentication/README.md) / `authentication-example` | Public route, Basic challenge, principal, reader/admin role policy |
 | Serve classpath assets and finite HTTP/SSE streams | [05-static-streaming](05-static-streaming/README.md) / `static-streaming-example` | Narrow asset mount, CSV chunks, exact completed event frames |
