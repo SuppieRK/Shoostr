@@ -31,7 +31,7 @@ failures remain500 and do not expose SQL details in the default HTTP body.
 Compose waits for PostgreSQL readiness; application startup validates/applies migrationV1.
 PostgreSQL18 persists under `/var/lib/postgresql`, backed by this project's `notes` volume.
 Normal `down` retains it; the explicitly destructive command below removes only this
-example's data. The database has no published host port. App HTTP is loopback-only;
+example's data. The database has no published host port. App HTTP is published on host loopback only;
 `APP_PORT=8081` changes the host port. `demo / local-only` is a disposable database fixture
 with broad local privileges, not a production database/user security configuration.
 

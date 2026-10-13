@@ -5,7 +5,6 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.swagger.v3.core.util.Json31;
-import org.eclipse.jetty.server.ServerConnector;
 
 /** Composes the explicit OpenAPI, codec and authentication demonstration. */
 public final class OpenApiExample {
@@ -19,10 +18,6 @@ public final class OpenApiExample {
    */
   static void main() throws Exception {
     var app = application(Options.defaults());
-    app.modifyServer(
-        server ->
-            ((ServerConnector) server.getConnectors()[0])
-                .setHost(System.getProperty("shoostr.host", "127.0.0.1")));
     app.start();
     System.out.println("Open http://127.0.0.1:" + app.port() + "/docs/");
     System.out.println("Demo username: demo");

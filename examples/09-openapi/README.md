@@ -3,7 +3,8 @@
 Run `cmdshape ./gradlew :openapi-example:run` with Java 25. Open
 `http://127.0.0.1:8080/docs/` and answer the browser's HTTP Basic challenge with
 **demo / local-only**. These are public local-development fixture credentials, not a production
-identity store. The default bind is loopback. Production Basic authentication requires TLS;
+identity store. The default bind is all IPv4 interfaces (`0.0.0.0`), not loopback.
+Use a trusted development environment. Production Basic authentication requires TLS;
 replace this authenticator with a real identity provider.
 
 Page, CSS, bundle, initializer and both specs all require authentication. Browser bootstrap
@@ -55,5 +56,5 @@ cmdshape docker compose -f examples/09-openapi/compose.yaml down
 ```
 
 Open the same `/docs/` URL and use the same fixture credentials. Java25 runs as a nonroot
-container user; only the listener binds all container interfaces, while Compose publishes
+container user; the listener binds all IPv4 interfaces, while Compose publishes
 host loopback. `APP_PORT=8081` changes the published port. The core owns JVM shutdown.

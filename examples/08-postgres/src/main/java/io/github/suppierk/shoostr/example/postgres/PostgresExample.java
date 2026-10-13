@@ -11,7 +11,6 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.LongFunction;
-import org.eclipse.jetty.server.ServerConnector;
 
 /** Composes persistence functions without a DI framework or framework-owned database. */
 public final class PostgresExample {
@@ -26,10 +25,6 @@ public final class PostgresExample {
   static void main() throws Exception {
     var notes = DatabaseConfiguration.create();
     var app = application(Options.defaults(), notes::create, notes::find);
-    app.modifyServer(
-        server ->
-            ((ServerConnector) server.getConnectors()[0])
-                .setHost(System.getProperty("shoostr.host", "127.0.0.1")));
     app.start();
   }
 

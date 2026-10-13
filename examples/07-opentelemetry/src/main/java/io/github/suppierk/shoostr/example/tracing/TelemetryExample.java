@@ -6,7 +6,6 @@ import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.opentelemetry.OpenTelemetryTracing;
 import io.opentelemetry.api.trace.Span;
 import java.io.IOException;
-import org.eclipse.jetty.server.ServerConnector;
 
 /** Wires request handling independently from tracing configuration. */
 public final class TelemetryExample {
@@ -22,10 +21,6 @@ public final class TelemetryExample {
     var app = application(Options.defaults());
 
     try {
-      app.modifyServer(
-          server ->
-              ((ServerConnector) server.getConnectors()[0])
-                  .setHost(System.getProperty("shoostr.host", "127.0.0.1")));
       app.start();
     } catch (Exception | Error failure) {
       try {

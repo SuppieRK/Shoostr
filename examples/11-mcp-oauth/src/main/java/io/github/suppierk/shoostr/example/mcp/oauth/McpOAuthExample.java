@@ -9,7 +9,6 @@ import java.nio.file.Path;
 import java.security.KeyStore;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
-import org.eclipse.jetty.server.ServerConnector;
 
 /** Composes one HTTPS MCP resource server with separate security and SDK configuration. */
 public final class McpOAuthExample {
@@ -43,10 +42,6 @@ public final class McpOAuthExample {
                 });
 
     try {
-      app.modifyServer(
-          server ->
-              ((ServerConnector) server.getConnectors()[0])
-                  .setHost(System.getProperty("shoostr.host", "127.0.0.1")));
       app.start();
     } catch (Exception | Error failure) {
       try {

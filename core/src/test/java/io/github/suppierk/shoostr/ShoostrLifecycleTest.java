@@ -20,6 +20,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.channels.ServerSocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -53,6 +54,42 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(20)
 class ShoostrLifecycleTest {
   @TempDir private Path temporary;
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void bindsWildcardByDefaultAndPreservesExplicitLoopback(boolean loopback) throws Exception {
+    var options =
+        loopback
+            ? new Options("127.0.0.1", 0, 1_048_576, 1_048_576, 8192, 30_000)
+            : Options.defaults().withPort(0);
+    var listener = new AtomicReference<ServerConnector>();
+
+    try (var app = new Shoostr(options);
+        var client = HttpClient.newHttpClient()) {
+      app.modifyServer(
+          server ->
+              listener.set(assertInstanceOf(ServerConnector.class, server.getConnectors()[0])));
+      app.routes().get("/", (_, response) -> response.text("configured listener"));
+      app.start();
+
+      var address =
+          assertInstanceOf(ServerSocketChannel.class, listener.get().getTransport())
+              .socket()
+              .getInetAddress();
+      assertEquals(loopback, address.isLoopbackAddress());
+      assertEquals(!loopback, address.isAnyLocalAddress());
+
+      // TestServer intentionally replaces the binding, so this transport check owns its client.
+      var reply =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, reply.statusCode());
+      assertEquals("configured listener", reply.body());
+    }
+  }
 
   @Test
   void usesAnUnlimitedVirtualPoolForNativeRequestProduction() throws Exception {

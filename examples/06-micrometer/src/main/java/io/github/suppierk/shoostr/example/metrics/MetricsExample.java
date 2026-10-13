@@ -5,7 +5,6 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.micrometer.MicrometerMetrics;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import org.eclipse.jetty.server.ServerConnector;
 
 /** Composes the metrics demonstration without a second HTTP server for metrics. */
 public final class MetricsExample {
@@ -21,10 +20,6 @@ public final class MetricsExample {
     var app = application(Options.defaults());
 
     try {
-      app.modifyServer(
-          server ->
-              ((ServerConnector) server.getConnectors()[0])
-                  .setHost(System.getProperty("shoostr.host", "127.0.0.1")));
       app.start();
     } catch (Exception | Error failure) {
       try {

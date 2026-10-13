@@ -2,7 +2,6 @@ package io.github.suppierk.shoostr.example.authentication;
 
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
-import org.eclipse.jetty.server.ServerConnector;
 
 /** Registers routes using a separately configured authentication policy. */
 public final class AuthenticationExample {
@@ -16,10 +15,6 @@ public final class AuthenticationExample {
    */
   static void main() throws Exception {
     var app = application(Options.defaults());
-    app.modifyServer(
-        server ->
-            ((ServerConnector) server.getConnectors()[0])
-                .setHost(System.getProperty("shoostr.host", "127.0.0.1")));
     app.start();
     System.out.println("Auth: http://127.0.0.1:" + app.port() + "/private/me");
     System.out.println("Demo logins: demo / local-only; admin / local-only");

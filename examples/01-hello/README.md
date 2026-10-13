@@ -3,6 +3,9 @@
 Start with Java 25: `./gradlew :hello-example:run`, then
 `curl http://127.0.0.1:8080/hello` → `Hello, Shoostr!`.
 
+The default listener binds all IPv4 interfaces (`0.0.0.0:8080`), so the same app
+works directly and in Docker without a Jetty connector override or host property.
+
 [HelloExample](src/main/java/io/github/suppierk/shoostr/example/hello/HelloExample.java)
 owns startup and defines its route inline. Shoostr installs its shutdown hook:
 Ctrl+C stops the listener without another hook, latch or polling loop.

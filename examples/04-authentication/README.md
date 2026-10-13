@@ -15,7 +15,9 @@ The public endpoint returns200 without credentials. The protected requests retur
 reader, and200 with `admin operation allowed` for the admin identity.
 Both passwords are **local-only**, printed at startup. These are public local
 fixtures, not a production identity store. Basic requires TLS in deployment;
-Compose publishes only host loopback. Do not expose this demo on a public interface.
+Direct runs bind all IPv4 interfaces; use only a trusted development environment or
+configure an explicit loopback `Options` host. Compose publishes only host loopback.
+Do not expose this demo to an untrusted network.
 
 [AuthenticationExample](src/main/java/io/github/suppierk/shoostr/example/authentication/AuthenticationExample.java)
 wires the app and defines routes inline, selecting authentication for the whole

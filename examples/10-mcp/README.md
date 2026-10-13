@@ -1,6 +1,6 @@
 # Runnable MCP example and official compatibility tests
 
-This public loopback app uses Shoostr's MCP extension and the official Java SDK
+This public app uses Shoostr's MCP extension and the official Java SDK
 `2.0.1`, targeting protocol `2025-11-25`. Its fixed native tool/resource/prompt
 catalog is the fixture expected by the official suite, not a production business
 service. The protected OAuth example is separate. Node is test tooling only,
@@ -15,7 +15,8 @@ cmdshape ./gradlew :mcp-example:run
 Connect an MCP client to `http://127.0.0.1:8080/mcp`. `/health` is a finite readiness
 route. Core owns JVM shutdown cleanup; the example does not install another hook.
 `McpExample.application(options)` also returns the same app unstarted for live tests.
-The configured listener origin is the only allowed present browser Origin; absent
+The listener binds all IPv4 interfaces. The separately configured public URL is the
+only allowed present browser Origin; absent
 Origin is allowed for non-browser clients. Use the exact `127.0.0.1` URL printed
 by the example, rather than a different browser-origin alias.
 
@@ -39,7 +40,8 @@ cmdshape docker compose -f examples/10-mcp/compose.yaml down
 
 The Java25 image is nonroot. Compose publishes loopback only and sets `MCP_PUBLIC_ORIGIN`
 to that public URL, not the container listener address. `APP_PORT=8081` changes both published
-port and allowed origin. For host-run execution the origin defaults to `Options`; override
+port and allowed origin. For host-run execution the origin defaults to
+`http://127.0.0.1:<Options.port()>`, independently of the bind address; override
 `MCP_PUBLIC_ORIGIN` only when you intentionally expose a different canonical origin.
 
 Use Node 22. Run commands below from `examples/10-mcp`:

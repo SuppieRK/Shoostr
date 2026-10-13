@@ -3,9 +3,8 @@ package io.github.suppierk.shoostr.example.mcp;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import java.io.IOException;
-import org.eclipse.jetty.server.ServerConnector;
 
-/** Public loopback fixture using the SDK's own configuration and feature types. */
+/** Public MCP example using the SDK's own configuration and feature types. */
 public final class McpExample {
   /** Prevents instantiation of the example factory. */
   private McpExample() {}
@@ -19,10 +18,6 @@ public final class McpExample {
     var app = application(Options.defaults());
 
     try {
-      app.modifyServer(
-          server ->
-              ((ServerConnector) server.getConnectors()[0])
-                  .setHost(System.getProperty("shoostr.host", "127.0.0.1")));
       app.start();
     } catch (Exception | Error failure) {
       try {

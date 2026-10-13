@@ -20,7 +20,7 @@ final class McpConfiguration {
   /**
    * Creates an owned MCP extension using the SDK's native feature registrations.
    *
-   * @param options public loopback origin used by the local fixture
+   * @param options listener settings supplying the local public URL's port
    * @return extension to install before mounting its routes
    */
   static Mcp<?> create(Options options) {
@@ -28,8 +28,7 @@ final class McpConfiguration {
         new McpHttpSecurity(
             Set.of(
                 System.getenv()
-                    .getOrDefault(
-                        "MCP_PUBLIC_ORIGIN", "http://" + options.host() + ":" + options.port())),
+                    .getOrDefault("MCP_PUBLIC_ORIGIN", "http://127.0.0.1:" + options.port())),
             _ -> new McpIdentity("public-example", McpTransportContext.EMPTY, null),
             (_, _) -> {});
     return Mcp.sync(

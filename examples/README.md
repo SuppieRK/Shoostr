@@ -5,6 +5,12 @@ then run the matching live HTTP test. There is no DI container, annotation routi
 multi-app demonstration or shared example runtime. Java 25 and the repository Gradle
 wrapper are required. Docker Engine and Compose are needed only for containers/backends.
 
+Direct runs use Shoostr's default `0.0.0.0` listener: all IPv4 interfaces, not only
+localhost. Demonstration credentials and public endpoints are not production security;
+run examples only in a trusted development environment. `TestServer` always binds
+loopback, and the supplied Compose recipes publish user-facing ports on host loopback.
+Choose an explicit `Options` host of `127.0.0.1` for a loopback-only application.
+
 ## Learning path
 
 | Task | Example / Gradle project | Observable lesson |

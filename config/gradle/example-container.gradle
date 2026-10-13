@@ -9,7 +9,6 @@ jib {
 		user = '1000:1000'
 		ports = ['8080']
 		jvmFlags = [
-			'-Dshoostr.host=0.0.0.0',
 			'-XX:MaxRAMPercentage=75.0'
 		]
 	}

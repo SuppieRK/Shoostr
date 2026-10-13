@@ -5,7 +5,6 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import java.util.Objects;
 import java.util.function.Function;
-import org.eclipse.jetty.server.ServerConnector;
 
 /** Wires explicit dependencies and starts the request-input demonstration. */
 public final class RequestExample {
@@ -19,10 +18,6 @@ public final class RequestExample {
    */
   static void main() throws Exception {
     var app = application(Options.defaults(), name -> "Hello, " + name + "!");
-    app.modifyServer(
-        server ->
-            ((ServerConnector) server.getConnectors()[0])
-                .setHost(System.getProperty("shoostr.host", "127.0.0.1")));
     app.start();
     System.out.println("Inputs: http://127.0.0.1:" + app.port() + "/greetings/Ada");
   }
