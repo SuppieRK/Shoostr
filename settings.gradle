@@ -15,3 +15,27 @@ project(':mcp-oauth-example').projectDir = file('examples/mcp-oauth')
 
 include 'mcp-example'
 project(':mcp-example').projectDir = file('examples/mcp')
+
+include 'hello-example'
+project(':hello-example').projectDir = file('examples/hello')
+
+include 'requests-example'
+project(':requests-example').projectDir = file('examples/requests')
+
+include 'json-errors-example'
+project(':json-errors-example').projectDir = file('examples/json-errors')
+
+include 'authentication-example'
+project(':authentication-example').projectDir = file('examples/authentication')
+
+include 'micrometer-example'
+project(':micrometer-example').projectDir = file('examples/micrometer')
+
+include 'opentelemetry-example'
+project(':opentelemetry-example').projectDir = file('examples/opentelemetry')
+
+include 'static-streaming-example'
+project(':static-streaming-example').projectDir = file('examples/static-streaming')
+
+include 'postgres-example'
+project(':postgres-example').projectDir = file('examples/postgres')

@@ -40,3 +40,20 @@ byte/text handlers remain available in the same app. OpenAPI does not discover c
 Run `cmdshape ./gradlew :openapi-example:test` for live HTTP checks. The root build includes
 example compilation and these checks; browser verification additionally needs a real browser
 to confirm challenge/bootstrap, rendering and Try it out.
+
+The entry point only composes the app. `OpenApiConfiguration` defines documents and schemas;
+`OpenApiAuthentication` defines the local identity policy; `OpenApiRoutes` registers operations;
+`User` and `UserCodec` own the payload contract and conversion. No document-schema setup or
+credential verification is hidden in main.
+
+For a Dockerfile-free local container:
+
+```sh
+cmdshape ./gradlew :openapi-example:jibDockerBuild
+cmdshape docker compose -f examples/openapi/compose.yaml up -d
+cmdshape docker compose -f examples/openapi/compose.yaml down
+```
+
+Open the same `/docs/` URL and use the same fixture credentials. Java25 runs as a nonroot
+container user; only the listener binds all container interfaces, while Compose publishes
+host loopback. `APP_PORT=8081` changes the published port. The core owns JVM shutdown.

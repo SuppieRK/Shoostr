@@ -1,0 +1,14 @@
+tasks.named('test') {
+	useJUnitPlatform { excludeTags 'docker' }
+}
+
+tasks.register('dockerTest', Test) {
+	group = 'verification'
+	description = 'Verifies this Jib-built example against its real Compose backends.'
+	dependsOn tasks.named('jibDockerBuild')
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform { includeTags 'docker' }
+	systemProperty 'example.directory', projectDir.absolutePath
+	outputs.upToDateWhen { false }
+}

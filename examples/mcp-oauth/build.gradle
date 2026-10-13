@@ -14,6 +14,13 @@ dependencies {
 application {
 	mainClass = 'io.github.suppierk.shoostr.example.mcp.oauth.McpOAuthExample'
 }
+apply from: rootProject.file('config/gradle/example-container.gradle')
+jib.container {
+	ports = ['9443']
+	jvmFlags += [
+		'-Dshoostr.oauth.keyStore=/app/fixture.p12'
+	]
+}
 
 tasks.named('test') {
 	useJUnitPlatform { excludeTags 'oauth' }

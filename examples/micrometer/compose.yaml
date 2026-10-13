@@ -1,0 +1,36 @@
+services:
+  app:
+    image: shoostr/micrometer-example:local
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    mem_limit: 256m
+    read_only: true
+    tmpfs:
+      - /tmp
+  prometheus:
+    image: prom/prometheus:v3.13.4@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+    mem_limit: 256m
+  grafana:
+    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: demo
+      GF_SECURITY_ADMIN_PASSWORD: local-only
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "false"
+      GF_PLUGINS_PREINSTALL: ""
+      GF_PLUGINS_PREINSTALL_SYNC: "prometheus@13.2.3"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+      GF_PLUGINS_DISABLE_PLUGINS: "jaeger,grafana-lokiexplore-app,grafana-pyroscope-app,grafana-exploretraces-app,grafana-metricsdrilldown-app,elasticsearch,tempo,zipkin,opentsdb,stackdriver,mssql,loki,mysql,influxdb,grafana-advisor-app,grafana-postgresql-datasource,grafana-pyroscope-datasource,grafana-pathfinder-app,grafana-assistant-app"
+    volumes:
+      - ./grafana/datasources.yaml:/etc/grafana/provisioning/datasources/shoostr.yaml:ro
+      - ./grafana/dashboards.yaml:/etc/grafana/provisioning/dashboards/shoostr.yaml:ro
+      - ./grafana/requests.json:/etc/grafana/dashboards/requests.json:ro
+    mem_limit: 512m

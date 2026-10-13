@@ -8,6 +8,7 @@ dependencies {
 application {
 	mainClass = 'io.github.suppierk.shoostr.example.mcp.McpExample'
 }
+apply from: rootProject.file('config/gradle/example-container.gradle')
 
 tasks.named('jar') {
 	from('THIRD-PARTY-NOTICES.md') { into 'META-INF' }

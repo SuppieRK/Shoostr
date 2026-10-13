@@ -87,13 +87,56 @@ jobs:
       - name: Verify MCP authorization through the official client and Keycloak
         run: ./gradlew :mcp-oauth-example:oauthTest --console=plain
 
+      - name: Build focused example container images with Jib
+        run: >-
+          ./gradlew :hello-example:jibDockerBuild :requests-example:jibDockerBuild
+          :json-errors-example:jibDockerBuild :authentication-example:jibDockerBuild
+          :static-streaming-example:jibDockerBuild :openapi-example:jibDockerBuild
+          :mcp-example:jibDockerBuild :mcp-oauth-example:jibDockerBuild --console=plain
+
+      - name: Verify real observability and persistence examples
+        run: >-
+          ./gradlew :micrometer-example:dockerTest :opentelemetry-example:dockerTest
+          :postgres-example:dockerTest --console=plain
+
+      - name: Verify the containerized HTTPS OAuth example
+        working-directory: examples/mcp-oauth
+        run: |
+          # The Jib app runs as UID1000; transfer only this disposable server keystore.
+          sudo chown 1000 .local/fixture.p12
+          docker compose -p shoostr-mcp-oauth-ci -f compose.yaml -f compose.app.yaml up -d
+          curl --fail --cacert .local/fixture-ca.pem \
+            --retry 60 --retry-delay 2 --retry-connrefused --retry-all-errors \
+            --max-time 5 --retry-max-time 180 \
+            https://localhost:8443/realms/shoostr-mcp/.well-known/openid-configuration
+          curl --fail --cacert .local/fixture-ca.pem \
+            --retry 30 --retry-delay 2 --retry-connrefused --retry-all-errors \
+            --max-time 5 --retry-max-time 90 \
+            https://localhost:9443/.well-known/oauth-protected-resource/mcp
+          NODE_EXTRA_CA_CERTS="$PWD/.local/fixture-ca.pem" node --test oauth-test.mjs
+
       - name: Stop OAuth fixture and preserve diagnostics
         if: always()
         working-directory: examples/mcp-oauth
         run: |
           mkdir -p build/oauth
-          docker compose -p shoostr-mcp-oauth-ci logs --no-color keycloak > build/oauth/keycloak.log
-          docker compose -p shoostr-mcp-oauth-ci down --timeout 20
+          docker compose -p shoostr-mcp-oauth-ci -f compose.yaml -f compose.app.yaml \
+            logs --no-color > build/oauth/keycloak.log
+          docker compose -p shoostr-mcp-oauth-ci -f compose.yaml -f compose.app.yaml down --timeout 20
+
+      - name: Preserve real-backend example results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: example-backend-results
+          path: |
+            examples/micrometer/build/docker/
+            examples/micrometer/build/test-results/dockerTest/
+            examples/opentelemetry/build/docker/
+            examples/opentelemetry/build/test-results/dockerTest/
+            examples/postgres/build/docker/
+            examples/postgres/build/test-results/dockerTest/
+          if-no-files-found: warn
 
       - name: Preserve MCP OAuth reports
         if: always()

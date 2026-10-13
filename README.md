@@ -1,5 +1,8 @@
 # Shoostr
 
+For runnable, task-focused tutorials and container recipes, start with the
+[executable examples](examples/README.md).
+
 [Shoostr](https://github.com/SuppieRK/Shoostr) is a small experimental Java 25 HTTP framework with separate request/response arguments. The public API lives in `io.github.suppierk.shoostr`; public signatures are provisional. Register routes through `app.routes(routes -> { ... })`.
 
 ```java

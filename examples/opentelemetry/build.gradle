@@ -1,0 +1,13 @@
+plugins { id 'application' }
+dependencies {
+	implementation project(':opentelemetry')
+	implementation 'io.opentelemetry:opentelemetry-sdk:1.66.0'
+	implementation 'io.opentelemetry:opentelemetry-exporter-otlp:1.66.0'
+	testImplementation project(':test')
+	testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.22.3'
+}
+application {
+	mainClass = 'io.github.suppierk.shoostr.example.tracing.TelemetryExample'
+}
+apply from: rootProject.file('config/gradle/example-container.gradle')
+apply from: rootProject.file('config/gradle/example-docker-test.gradle')

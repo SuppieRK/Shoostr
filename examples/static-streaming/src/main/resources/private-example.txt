@@ -1,0 +1,1 @@
+This existing classpath resource must not be exposed by the public mount.

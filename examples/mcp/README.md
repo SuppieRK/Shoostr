@@ -25,6 +25,23 @@ The app owns the native server; `mcp.server()` is borrowed management access, no
 an independently closeable resource. Fixture callbacks use native SDK content,
 sampling, elicitation, logging, progress and resource-template descriptors.
 
+`McpExample` is only startup and dependency composition; `McpConfiguration` owns native extension
+setup, `McpRoutes` registers HTTP endpoints, and `CompatibilityFixtures` contains the SDK
+callbacks required by the official suite.
+
+```sh
+cmdshape ./gradlew :mcp-example:jibDockerBuild
+cmdshape docker compose -f examples/mcp/compose.yaml up -d
+cmdshape curl --fail --retry 30 --retry-delay 1 --retry-connrefused --retry-all-errors \
+  --max-time 3 --retry-max-time 60 http://127.0.0.1:8080/health
+cmdshape docker compose -f examples/mcp/compose.yaml down
+```
+
+The Java25 image is nonroot. Compose publishes loopback only and sets `MCP_PUBLIC_ORIGIN`
+to that public URL, not the container listener address. `APP_PORT=8081` changes both published
+port and allowed origin. For host-run execution the origin defaults to `Options`; override
+`MCP_PUBLIC_ORIGIN` only when you intentionally expose a different canonical origin.
+
 Use Node 22. Run commands below from `examples/mcp`:
 
 ```bash

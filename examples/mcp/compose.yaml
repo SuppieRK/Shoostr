@@ -1,0 +1,11 @@
+services:
+  app:
+    image: shoostr/mcp-example:local
+    environment:
+      MCP_PUBLIC_ORIGIN: "http://127.0.0.1:${APP_PORT:-8080}"
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    mem_limit: 256m
+    read_only: true
+    tmpfs:
+      - /tmp

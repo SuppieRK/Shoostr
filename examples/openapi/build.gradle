@@ -12,3 +12,4 @@ dependencies {
 application {
 	mainClass = 'io.github.suppierk.shoostr.example.openapi.OpenApiExample'
 }
+apply from: rootProject.file('config/gradle/example-container.gradle')

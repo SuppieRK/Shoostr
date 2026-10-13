@@ -153,6 +153,42 @@ CI runs both the Docker-free signed-token tests and this explicit external test,
 with an isolated pinned Keycloak fixture. It preserves sanitized diagnostics, not
 tokens, browser traces, private keys or the fixture trust files.
 
+## Run the application in a Jib-built container
+
+Security/discovery configuration is in `OAuthConfiguration`, native MCP tools in
+`OAuthMcpConfiguration`, HTTP registration in `OAuthRoutes`, and startup wiring in
+`McpOAuthExample`. The installed security configuration owns the verifier and is closed
+after its borrowing adapters. The public application factory and existing HTTP behavior
+remain the same.
+
+After generating the TLS fixture above, build from the repository root:
+
+```sh
+cmdshape ./gradlew :mcp-oauth-example:jibDockerBuild
+```
+
+From this example directory, on Linux make the disposable PKCS12 server keystore readable
+by the Jib app's UID1000, just as the Keycloak server key was above. Do not make it world-readable:
+
+```sh
+cmdshape sudo chown 1000 .local/fixture.p12
+cmdshape docker compose -p shoostr-mcp-oauth -f compose.yaml -f compose.app.yaml up -d
+cmdshape curl --fail --cacert .local/fixture-ca.pem \
+  https://localhost:9443/.well-known/oauth-protected-resource/mcp
+NODE_EXTRA_CA_CERTS="$PWD/.local/fixture-ca.pem" cmdshape node --test oauth-test.mjs
+cmdshape docker compose -p shoostr-mcp-oauth -f compose.yaml -f compose.app.yaml down --timeout 20
+```
+
+Use the readiness/discovery checks above before the browser driver. The overlay shares
+Keycloak's network namespace with the one Shoostr app and publishes9443 there. This
+retains the exact HTTPS `localhost` issuer/resource for both browser and server without
+disabling TLS verification or rewriting token audiences. Compose may recreate an existing
+fixture to add that published port; run it only against your own disposable project.
+The base recipe remains for a host-run app or Gradle `oauthTest`; stop the containerized
+app before running that test, since both need port9443. The container image uses Java25,
+nonroot UID1000 and a read-only keystore mount; no real secrets are built into the image.
+The rest of `.local`, including private keys, is never uploaded as CI diagnostics.
+
 ## Token-verification tests
 
 The example's `KeycloakAuthenticator` uses explicitly configured Nimbus JOSE + JWT

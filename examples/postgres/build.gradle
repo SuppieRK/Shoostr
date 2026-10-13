@@ -1,0 +1,14 @@
+plugins { id 'application' }
+dependencies {
+	implementation project(':core')
+	implementation 'org.postgresql:postgresql:42.7.14'
+	implementation 'org.flywaydb:flyway-core:13.10.0'
+	implementation 'org.flywaydb:flyway-database-postgresql:13.10.0'
+	implementation 'org.jooq:jooq:3.21.9'
+	testImplementation project(':test')
+}
+application {
+	mainClass = 'io.github.suppierk.shoostr.example.postgres.PostgresExample'
+}
+apply from: rootProject.file('config/gradle/example-container.gradle')
+apply from: rootProject.file('config/gradle/example-docker-test.gradle')

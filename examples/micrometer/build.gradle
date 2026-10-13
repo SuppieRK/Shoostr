@@ -1,0 +1,12 @@
+plugins { id 'application' }
+dependencies {
+	implementation project(':micrometer')
+	implementation 'io.micrometer:micrometer-registry-prometheus:1.17.1'
+	testImplementation project(':test')
+	testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.22.3'
+}
+application {
+	mainClass = 'io.github.suppierk.shoostr.example.metrics.MetricsExample'
+}
+apply from: rootProject.file('config/gradle/example-container.gradle')
+apply from: rootProject.file('config/gradle/example-docker-test.gradle')

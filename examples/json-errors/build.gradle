@@ -1,0 +1,11 @@
+plugins { id 'application' }
+dependencies {
+	implementation project(':core')
+	implementation platform('com.fasterxml.jackson:jackson-bom:2.22.3')
+	implementation 'com.fasterxml.jackson.core:jackson-databind'
+	testImplementation project(':test')
+}
+application {
+	mainClass = 'io.github.suppierk.shoostr.example.json.JsonExample'
+}
+apply from: rootProject.file('config/gradle/example-container.gradle')
