@@ -23,6 +23,25 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class HttpExceptionTest {
+  @Test
+  void preservesAuthorizationDenialChallengeAndForbiddenStatus() {
+    var exception = new AuthorizationDeniedException("Bearer error=\"insufficient_scope\"");
+    assertEquals("Bearer error=\"insufficient_scope\"", exception.challenge());
+    assertSame(HttpStatusCodes.FORBIDDEN, exception.statusCode());
+    assertInstanceOf(ForbiddenException.class, exception);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"", " ", "Bearer\r", "Bearer\n", "\tBasic", "Basic\u007f", "Bearer\u0080"})
+  void rejectsUnsafeAuthorizationChallengesDuringConstruction(String challenge) {
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> {
+          throw new AuthorizationDeniedException(challenge);
+        });
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {"", " ", "Bearer\r", "Bearer\n", "\tBasic", "Basic\u007f", "Bearer\u0080"})

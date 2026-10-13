@@ -51,4 +51,35 @@ record EndpointBehavior(
     statuses = Map.copyOf(statuses);
     conditions = List.copyOf(conditions);
   }
+
+  /**
+   * Adds resolved scope renderers during startup while preserving all previously bound phases.
+   *
+   * @param behavior existing local phases, or null
+   * @param errors immutable resolved scope renderers
+   * @return completed behavior, unchanged when no scope renderer applies
+   */
+  static @Nullable EndpointBehavior withErrors(
+      @Nullable EndpointBehavior behavior,
+      Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors) {
+    if (errors.isEmpty()) {
+      return behavior;
+    }
+
+    return behavior == null
+        ? new EndpointBehavior(
+            null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), errors,
+            Map.of(), List.of())
+        : new EndpointBehavior(
+            behavior.authentication,
+            behavior.matched,
+            behavior.before,
+            behavior.after,
+            behavior.beforeFlush,
+            behavior.afterFlush,
+            behavior.observers,
+            errors,
+            behavior.statuses,
+            behavior.conditions);
+  }
 }

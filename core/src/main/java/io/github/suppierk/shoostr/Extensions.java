@@ -28,7 +28,6 @@ public final class Extensions {
   private final List<Handler> beforeFlush;
   private final List<Handler> afterFlush;
   private final List<Consumer<RequestOutcome>> observers;
-  private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors;
   private final Map<Integer, Handler> statuses;
   private final List<Consumer<RouteInfo>> routeConsumers;
   private @Nullable Handler authentication;
@@ -51,7 +50,6 @@ public final class Extensions {
     beforeFlush = new ArrayList<>();
     afterFlush = new ArrayList<>();
     observers = new ArrayList<>();
-    errors = new LinkedHashMap<>();
     statuses = new LinkedHashMap<>();
     routeConsumers = new ArrayList<>();
     if (inherited != null) {
@@ -60,6 +58,27 @@ public final class Extensions {
         inherit(extension, Objects.requireNonNull(inherited.selections.get(extension)));
       }
     }
+  }
+
+  /**
+   * Verifies that this application's registry contains the exact extension instance. This check
+   * neither selects route configuration nor contributes request-time behavior. Installation in this
+   * app does not establish exclusive ownership of the extension.
+   *
+   * @param extension installed capability
+   * @return this scope
+   * @throws NullPointerException if the extension is null
+   * @throws IllegalArgumentException if the instance is not installed in this application
+   * @throws IllegalStateException if this registration callback has finished
+   */
+  public Extensions requireInstalled(Extension<?> extension) {
+    requireMutable();
+    Objects.requireNonNull(extension);
+    if (!installed.contains(extension)) {
+      throw new IllegalArgumentException("Install the extension before using it on a route");
+    }
+
+    return this;
   }
 
   /**
@@ -185,26 +204,6 @@ public final class Extensions {
   }
 
   /**
-   * Adds a local exception renderer. A matching local renderer wins over every app renderer; the
-   * closest local superclass wins. A child scope may override an inherited exact type.
-   *
-   * @param type directly thrown exception family
-   * @param handler error renderer
-   * @param <E> exception type
-   * @return this scope
-   */
-  public <E extends Exception> Extensions exception(
-      Class<E> type, ExceptionHandler<? super E> handler) {
-    requireMutable();
-    Objects.requireNonNull(type);
-    Objects.requireNonNull(handler);
-    errors.put(
-        type,
-        (failure, request, response) -> handler.handle(type.cast(failure), request, response));
-    return this;
-  }
-
-  /**
    * Adds a generated-status renderer; a local match suppresses the app renderer.
    *
    * @param status HTTP status from 100 through 599
@@ -226,9 +225,14 @@ public final class Extensions {
    * Marks managed authentication on this scope; repeated selection does not duplicate work.
    *
    * @param handler installed authenticator
+   * @throws IllegalArgumentException if a different authenticator is already required
    */
   void authentication(Handler handler) {
     requireMutable();
+    if (authentication != null && authentication != handler) {
+      throw new IllegalArgumentException("An endpoint may require only one distinct authenticator");
+    }
+
     authentication = handler;
   }
 
@@ -269,7 +273,6 @@ public final class Extensions {
         && combined.beforeFlush.isEmpty()
         && combined.afterFlush.isEmpty()
         && combined.observers.isEmpty()
-        && combined.errors.isEmpty()
         && combined.statuses.isEmpty()) {
       return null;
     }
@@ -282,7 +285,7 @@ public final class Extensions {
         combined.beforeFlush,
         combined.afterFlush,
         combined.observers,
-        combined.errors,
+        Map.of(),
         combined.statuses,
         conditions);
   }
@@ -333,7 +336,7 @@ public final class Extensions {
    */
   private void append(Extensions source) {
     if (source.authentication != null) {
-      authentication = source.authentication;
+      authentication(source.authentication);
     }
 
     matched.addAll(source.matched);
@@ -342,7 +345,6 @@ public final class Extensions {
     beforeFlush.addAll(source.beforeFlush);
     afterFlush.addAll(source.afterFlush);
     observers.addAll(source.observers);
-    errors.putAll(source.errors);
     statuses.putAll(source.statuses);
     routeConsumers.addAll(source.routeConsumers);
   }

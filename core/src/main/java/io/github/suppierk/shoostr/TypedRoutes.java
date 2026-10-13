@@ -27,6 +27,23 @@ public final class TypedRoutes implements Closeable {
   }
 
   /**
+   * Registers a renderer for this whole typed scope, including earlier endpoints and descendants.
+   * Uses the same scope inheritance and local-before-app selection as ordinary Routes. The renderer
+   * receives the original Request and Response; codec-backed instances remain available through
+   * their normal restricted inheritance without an additional renderer interface.
+   *
+   * @param type directly thrown exception family
+   * @param handler renderer receiving the original failure
+   * @param <E> exception type
+   * @return this scope
+   */
+  public <E extends Exception> TypedRoutes exception(
+      Class<E> type, ExceptionHandler<? super E> handler) {
+    routes.exception(type, handler);
+    return this;
+  }
+
+  /**
    * Registers a nested typed group under the same depth and lifetime guards as ordinary routes.
    *
    * @param path relative prefix

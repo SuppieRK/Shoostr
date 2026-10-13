@@ -248,17 +248,19 @@ class EndpointExecutionTest {
       app.exception(
           RejectedExecutionException.class, (_, _, response) -> response.status(503).text("app"));
       app.routes()
-          .get(
+          .path(
               "/rejected",
-              workers,
-              (_, response) -> {
-                invoked.set(true);
-                response.text("endpoint");
-              },
-              extensions ->
-                  extensions.exception(
-                      RejectedExecutionException.class,
-                      (_, _, response) -> response.status(503).text("local")));
+              routes -> {
+                routes.exception(
+                    RejectedExecutionException.class,
+                    (_, _, response) -> response.status(503).text("local"));
+                routes.get(
+                    workers,
+                    (_, response) -> {
+                      invoked.set(true);
+                      response.text("endpoint");
+                    });
+              });
 
       try (var test = TestServer.start(app)) {
         workers.shutdown();

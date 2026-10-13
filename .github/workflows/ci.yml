@@ -29,8 +29,92 @@ jobs:
         with:
           cache-provider: basic
 
+      - name: Set up MCP compatibility tooling
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            examples/mcp/package-lock.json
+            examples/mcp-oauth/package-lock.json
+
+      - name: Install pinned MCP compatibility tests
+        working-directory: examples/mcp
+        run: npm ci --ignore-scripts
+
+      - name: Install pinned MCP OAuth client and browser
+        working-directory: examples/mcp-oauth
+        run: |
+          npm ci --ignore-scripts
+          node node_modules/playwright/cli.js install --with-deps firefox
+
+      - name: Start isolated HTTPS OAuth fixture
+        working-directory: examples/mcp-oauth
+        run: |
+          mkdir -p .local
+          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
+            -keyout .local/fixture-ca.key -out .local/fixture-ca.pem \
+            -subj '/CN=Shoostr local fixture CA' \
+            -addext 'basicConstraints=critical,CA:TRUE' \
+            -addext 'keyUsage=critical,keyCertSign,cRLSign'
+          openssl req -new -newkey rsa:2048 -sha256 -nodes \
+            -keyout .local/fixture-key.pem -out .local/fixture.csr \
+            -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
+            -addext 'basicConstraints=critical,CA:FALSE' \
+            -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
+            -addext 'extendedKeyUsage=serverAuth'
+          openssl x509 -req -in .local/fixture.csr \
+            -CA .local/fixture-ca.pem -CAkey .local/fixture-ca.key -CAcreateserial \
+            -out .local/fixture-cert.pem -days 2 -sha256 -copy_extensions copy
+          openssl pkcs12 -export -in .local/fixture-cert.pem \
+            -inkey .local/fixture-key.pem -certfile .local/fixture-ca.pem \
+            -out .local/fixture.p12 -name localhost -passout pass:changeit
+          # The pinned image runs as UID1000; the hosted runner owns files as UID1001.
+          # Transfer only this disposable server key, without making it world-readable.
+          sudo chown 1000 .local/fixture-key.pem
+          docker compose -p shoostr-mcp-oauth-ci up -d keycloak
+          curl --fail --retry 60 --retry-delay 2 --retry-connrefused --retry-all-errors \
+            --max-time 5 --retry-max-time 180 http://127.0.0.1:9000/health/ready
+          curl --fail --cacert .local/fixture-ca.pem \
+            https://localhost:8443/realms/shoostr-mcp/.well-known/openid-configuration
+
       - name: Build and test
         run: ./gradlew clean build --console=plain
+
+      - name: Verify MCP interoperability with the official suite
+        run: ./gradlew :mcp-example:conformanceTest --console=plain
+
+      - name: Verify MCP authorization through the official client and Keycloak
+        run: ./gradlew :mcp-oauth-example:oauthTest --console=plain
+
+      - name: Stop OAuth fixture and preserve diagnostics
+        if: always()
+        working-directory: examples/mcp-oauth
+        run: |
+          mkdir -p build/oauth
+          docker compose -p shoostr-mcp-oauth-ci logs --no-color keycloak > build/oauth/keycloak.log
+          docker compose -p shoostr-mcp-oauth-ci down --timeout 20
+
+      - name: Preserve MCP OAuth reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcp-oauth-results
+          path: |
+            examples/mcp-oauth/build/oauth/runner.log
+            examples/mcp-oauth/build/oauth/keycloak.log
+            examples/mcp-oauth/build/test-results/oauthTest/
+          if-no-files-found: warn
+
+      - name: Preserve MCP compatibility reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mcp-conformance-results
+          path: |
+            examples/mcp/build/conformance/
+            examples/mcp/build/test-results/conformanceTest/
+          if-no-files-found: warn
 
       - name: Check benchmark reporting and resource enforcement
         env:

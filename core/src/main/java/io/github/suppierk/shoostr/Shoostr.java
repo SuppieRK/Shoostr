@@ -57,7 +57,6 @@ public final class Shoostr implements Closeable {
   private boolean stoppingMatches;
   private final Routes routes;
   private final List<Extension<?>> extensions;
-  private @Nullable AuthenticationExtension authentication;
   private @Nullable Codec codec;
   private boolean installing;
   private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> exceptionHandlers;
@@ -253,19 +252,13 @@ public final class Shoostr implements Closeable {
    * @return this application
    * @throws NullPointerException if first or an additional capability is null
    * @throws IllegalArgumentException if a capability is duplicated or is an authenticator
-   * @throws IllegalStateException if startup, closure or provider installation has begun
+   * @throws IllegalStateException if startup, closure or provider installation has begun, or a
+   *     provider rejects ownership
    */
   public synchronized Shoostr extensions(
       Extension<?> first, Extension<?> @Nullable ... additional) {
     requireExtensionRegistration();
-    var batch = new ArrayList<Extension<?>>();
-    batch.add(Objects.requireNonNull(first));
-    if (additional != null) {
-      for (var extension : additional) {
-        batch.add(Objects.requireNonNull(extension));
-      }
-    }
-
+    var batch = extensionBatch(first, additional);
     for (var extension : batch) {
       if (extension instanceof AuthenticationExtension) {
         throw new IllegalArgumentException("Install authentication through app.authentication");
@@ -276,23 +269,59 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Installs the application's one managed identity source. Routes/groups explicitly require it
-   * using extensions.get(instance).required(); installation itself leaves routes public.
+   * Installs one managed identity source. Routes/groups explicitly require it using
+   * extensions.get(instance).required(); installation itself leaves routes public.
    *
    * @param extension identity source
    * @return this application
-   * @throws IllegalStateException if already configured or installation is closed
+   * @throws NullPointerException if extension is null
+   * @throws IllegalArgumentException if the instance is already installed
+   * @throws IllegalStateException if installation is closed or the provider rejects ownership
    */
   public synchronized Shoostr authentication(AuthenticationExtension extension) {
+    return authentication(extension, (AuthenticationExtension[]) null);
+  }
+
+  /**
+   * Installs managed identity sources eagerly in written order. Each route/group explicitly
+   * requires an installed instance; installation does not activate authentication. A bad batch is
+   * rejected before setup, and provider failure closes the application. Each bound endpoint may
+   * require only one distinct identity source; conflicting requirements fail during registration.
+   *
+   * @param first required first identity source
+   * @param additional additional identity sources; null means none
+   * @return this application
+   * @throws NullPointerException if first or an additional identity source is null
+   * @throws IllegalArgumentException if an instance is duplicated or already installed
+   * @throws IllegalStateException if startup, closure or provider installation has begun, or a
+   *     provider rejects ownership
+   */
+  public synchronized Shoostr authentication(
+      AuthenticationExtension first, AuthenticationExtension @Nullable ... additional) {
     requireExtensionRegistration();
-    Objects.requireNonNull(extension);
-    if (authentication != null) {
-      throw new IllegalStateException("Only one managed authenticator may be installed");
+    installExtensions(extensionBatch(first, additional));
+    return this;
+  }
+
+  /**
+   * Validates non-null instances without invoking provider code.
+   *
+   * @param first required first capability
+   * @param additional optional additional capabilities
+   * @return validated batch in written order
+   * @throws NullPointerException if any supplied instance is null
+   */
+  private static List<Extension<?>> extensionBatch(
+      Extension<?> first, Extension<?> @Nullable [] additional) {
+    var batch = new ArrayList<Extension<?>>();
+    batch.add(Objects.requireNonNull(first));
+    if (additional != null) {
+      for (var extension : additional) {
+        batch.add(Objects.requireNonNull(extension));
+      }
     }
 
-    installExtensions(List.of(extension));
-    authentication = extension;
-    return this;
+    return batch;
   }
 
   /**
@@ -307,18 +336,22 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Claims a fully validated batch before eager setup and cleans owned resources on failure.
+   * Claims validated instances before publishing the batch and eagerly installing providers.
    *
    * @param batch non-null capabilities in written order
    * @throws IllegalStateException if setup closes the application
    */
   @SuppressWarnings("java:S1181") // Provider setup must clean resources even on Error.
   private void installExtensions(List<Extension<?>> batch) {
-    routes.install(batch);
-    extensions.addAll(batch);
+    routes.validateInstallation(batch);
     installing = true;
 
     try {
+      for (var extension : batch) {
+        claimExtension(extension);
+      }
+      routes.install(batch);
+
       for (var extension : batch) {
         var callbacks = new ApplicationCallbacks();
 
@@ -352,6 +385,35 @@ public final class Shoostr implements Closeable {
     } finally {
       installing = false;
     }
+  }
+
+  /**
+   * Transfers cleanup responsibility after a successful claim, including reentrant app closure.
+   *
+   * @param extension capability to claim
+   * @throws IllegalStateException if the claim closes the application
+   */
+  private void claimExtension(Extension<?> extension) {
+    extension.claimOwnership();
+    if (closed) {
+      var failure = new IllegalStateException("Provider ownership claim closed the application");
+
+      try {
+        extension.beforeStop();
+      } catch (RuntimeException cleanup) {
+        failure.addSuppressed(cleanup);
+      }
+
+      try {
+        extension.close();
+      } catch (IOException | RuntimeException cleanup) {
+        failure.addSuppressed(cleanup);
+      }
+
+      throw failure;
+    }
+
+    extensions.add(extension);
   }
 
   /**
@@ -673,13 +735,15 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Drains and stops Jetty using its configured native timeouts, then interrupts remaining owned
-   * virtual-thread tasks and removes the shutdown hook. Does not wait for application code that
-   * ignores interruption. Repeated calls are harmless, including a call before startup.
-   * Caller-owned endpoint executors are never closed or interrupted. Unstarted selected requests
-   * are canceled after draining; running handlers may finish and release their resources after this
-   * method returns. The caller must coordinate their completion before closing supplied
-   * dependencies.
+   * Signals installed extensions before draining and stopping Jetty using its configured native
+   * timeouts, then interrupts remaining owned virtual-thread tasks and removes the shutdown hook.
+   * Does not wait for application code that ignores interruption. Repeated calls are harmless,
+   * including a call before startup. Caller-owned endpoint executors are never closed or
+   * interrupted. Unstarted selected requests are canceled after draining; running handlers may
+   * finish and release their resources after this method returns. The caller must coordinate their
+   * completion before closing supplied dependencies. Final extension resource cleanup follows
+   * native drain; ordinary signalling failures are collected without skipping subsequent shutdown
+   * or cleanup.
    *
    * @throws IOException if resources cannot be closed
    */
@@ -693,7 +757,6 @@ public final class Shoostr implements Closeable {
     synchronized (pendingMatches) {
       stoppingMatches = true;
     }
-    authentication = null;
     exceptionHandlers.clear();
     statusHandlers.clear();
     requestHeaderHandlers.clear();
@@ -710,6 +773,8 @@ public final class Shoostr implements Closeable {
     httpConfigurations.clear();
     sessionConfiguration = null;
     tlsConfiguration = null;
+
+    failure = signalExtensionsBeforeStop(failure);
 
     try {
       if (server != null) {
@@ -756,6 +821,23 @@ public final class Shoostr implements Closeable {
     if (failure != null) {
       throw failure;
     }
+  }
+
+  /**
+   * Signals extensions in reverse ownership order without skipping subsequent shutdown on failure.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException signalExtensionsBeforeStop(@Nullable IOException failure) {
+    for (int index = extensions.size() - 1; index >= 0; index--) {
+      try {
+        extensions.get(index).beforeStop();
+      } catch (RuntimeException stopFailure) {
+        failure = appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
+      }
+    }
+    return failure;
   }
 
   /**

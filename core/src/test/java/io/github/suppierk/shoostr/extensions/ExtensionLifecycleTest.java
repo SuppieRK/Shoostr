@@ -62,9 +62,7 @@ class ExtensionLifecycleTest {
       assertThrows(IllegalArgumentException.class, () -> app.extensions(second));
       assertSame(app, app.authentication(auth));
 
-      try (var anotherAuth = authenticator((_, _) -> {})) {
-        assertThrows(IllegalStateException.class, () -> app.authentication(anotherAuth));
-      }
+      assertThrows(IllegalArgumentException.class, () -> app.authentication(auth));
     }
 
     assertEquals(List.of("install-first", "install-second", "close-second", "close-first"), events);
@@ -431,16 +429,19 @@ class ExtensionLifecycleTest {
       app.afterRouteHandler((_, _) -> events.add("after-app"));
       app.exception(IllegalArgumentException.class, (_, _, response) -> response.text("app error"));
       app.routes()
-          .get(
+          .path(
               "/fail",
-              (_, response) -> response.text("handler"),
-              e -> {
-                e.beforeRouteHandler(
-                    (_, _) -> {
-                      throw new IllegalArgumentException("local");
+              routes -> {
+                routes.exception(Exception.class, (_, _, response) -> response.text("local error"));
+                routes.get(
+                    (_, response) -> response.text("handler"),
+                    e -> {
+                      e.beforeRouteHandler(
+                          (_, _) -> {
+                            throw new IllegalArgumentException("local");
+                          });
+                      e.afterRouteHandler((_, _) -> events.add("after-local"));
                     });
-                e.afterRouteHandler((_, _) -> events.add("after-local"));
-                e.exception(Exception.class, (_, _, response) -> response.text("local error"));
               });
       app.routes()
           .get(
@@ -620,16 +621,15 @@ class ExtensionLifecycleTest {
               () -> {
                 throw new IllegalArgumentException("flag unavailable");
               },
-              routes ->
-                  routes.get(
-                      "/flag",
-                      (_, response) -> response.text("unexpected"),
-                      e -> {
-                        e.exception(
-                            IllegalArgumentException.class,
-                            (_, _, response) -> response.text("flag failed"));
-                        e.afterRequest(outcomes::add);
-                      }));
+              routes -> {
+                routes.exception(
+                    IllegalArgumentException.class,
+                    (_, _, response) -> response.text("flag failed"));
+                routes.get(
+                    "/flag",
+                    (_, response) -> response.text("unexpected"),
+                    e -> e.afterRequest(outcomes::add));
+              });
 
       try (var test = TestServer.start(app)) {
         var result =

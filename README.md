@@ -52,7 +52,7 @@ after cleanup; `close()` reports Jetty stop failures as `IOException`. For lifec
 notifications, register Jetty's `LifeCycle.Listener` through `Shoostr.modifyServer` before
 startup. No framework-specific lifecycle annotation is required. Run
 `./gradlew consumerSmoke` to publish `http`, `core`, `test`, `pac4j`,
-`micrometer`, `opentelemetry` and `openapi` into `build/consumer-repository` and execute
+`micrometer`, `opentelemetry`, `openapi` and `mcp` into `build/consumer-repository` and execute
 the independent Java 25 consumer under `examples/consumer-smoke`; this does not
 publish to Maven Local or a remote repository. Its JUnit 5 tests exercise the
 published optional integrations over HTTP. The separate base-runtime check
@@ -312,13 +312,17 @@ app.authentication(security).extensions(devDocs, publicDocs).routes(routes -> {
 
 `devDocs` and `publicDocs` illustrate optional library instances; core does not ship OpenAPI.
 `extensions(first, additional...)` and `authentication(...)` return the same app. Select the exact
-installed instance with `e.get(instance)`; class/name lookup is absent. Authentication has one
-dedicated app slot, rejected by ordinary `extensions(...)`. Groups configure once. Each child
+installed instance with `e.get(instance)`; class/name lookup is absent. Install authenticators with
+`authentication(first, additional...)`, not ordinary `extensions(...)`. Installation leaves routes
+public; each route/group explicitly selects its required authenticator. A bound endpoint may require
+only one distinct instance: repeating or inheriting that instance runs authentication once, while
+combining different required instances fails during registration. There is no app-wide default,
+authentication chain or implicit credential-scheme selection. Groups configure once. Each child
 receives independent provider configuration, including inherited fields that a local setter does
 not override. Reusing a Handler across paths does not merge those endpoint definitions.
 
 Route callbacks may register `onRouteMatched`, `beforeRouteHandler`, `afterRouteHandler`,
-`beforeResponseFlush`, `afterResponseFlush`, `afterRequest`, `exception` and `status` directly on
+`beforeResponseFlush`, `afterResponseFlush`, `afterRequest` and `status` directly on
 `Extensions`. Match and ordinary lifecycle hooks run local first, then app; a thrown exception
 stops the ordinary phase. After matched hooks and known-length body validation, admission runs
 managed authentication, inherited/selected extension contributions in first-selection order,
@@ -328,6 +332,16 @@ alone; app rendering applies when no local match exists. Terminal observers rema
 and run local before app after application cleanup and transport completion. Header admission and
 instrumentation stay app-wide because they precede route lookup. Handshake callbacks apply to HTTP
 admission, not later WebSocket messages; static mounts and SSE inherit group callbacks too.
+
+Extensions with long-lived streams can implement `beforeStop()` to reject new work and
+signal their streams before Jetty's graceful drain. Shoostr calls it once in reverse
+ownership order; failures do not skip drain or remaining cleanup. Final `close()` still
+runs after the drain, so telemetry and other resources remain available to finishing requests.
+
+The optional [`mcp` module](mcp/README.md) composes the official Java SDK with explicit
+Streamable HTTP routes, per-request identity and pre-dispatch permissions. It installs
+no automatic endpoint or authenticator. See the [public compatibility example](examples/mcp/README.md)
+and [external OAuth example](examples/mcp-oauth/README.md) for runnable native SDK configuration.
 
 Use runtime conditions for feature flags or authenticated request decisions:
 
@@ -394,9 +408,23 @@ and before `Extension.beforeStart()`. They describe actual ordinary HTTP/SSE bin
 explicitly registered documentation handler's own route, without executing handlers. WebSocket
 handshakes and static mounts produce no invented HTTP documentation paths. Generate final metadata
 in `beforeStart()`. Explicitly register any serving handler yourself and protect it normally.
-The app closes owned extension resources in reverse installation order; borrowed dependencies
-remain the application's responsibility. Bad installation batches have no setup effects. Provider
-setup/finalization failure closes the app and prevents restart. Native asynchronous protocol
+Before native graceful drain, the app calls `Extension.beforeStop()` once in reverse claim order.
+Use this optional signal to reject new work and wake owned long-lived streams; return promptly,
+without accessing live requests/responses or disposing resources that draining requests still need.
+The app then closes owned extension resources through `close()` after drain, again in reverse claim
+order. Ordinary signalling failures do not skip other signals, native shutdown or final cleanup.
+Both phases also run for successfully claimed providers after incomplete setup or startup.
+Borrowed dependencies remain the application's responsibility. Structurally invalid installation batches are rejected
+before invoking any provider hook. For a valid batch, `Extension.claimOwnership()` runs in written
+order before any `install` callback and before the batch becomes available to route configuration.
+A successful claim transfers cleanup responsibility, including if a later claim or setup fails.
+Failure closes the app and its successfully claimed resources; rejected and not-yet-claimed
+instances remain outside its cleanup list. Providers owning exclusive resources must atomically
+reject reuse across apps (including concurrent attempts) in this hook. The default is a no-op,
+not a universal single-owner guarantee. A failed claim must leave existing ownership intact and
+release anything acquired by that failed attempt. Claims run only during registration and add no
+request-time work. Provider setup/finalization failure closes the app and prevents restart.
+Native asynchronous protocol
 lifetimes, schemas, UI serving and codec integration belong to their respective optional adapters.
 
 Protection belongs to selected extensions, not a core `Routes.protect` method. Matched hooks run
@@ -458,18 +486,34 @@ Register application-wide safety nets before `start()`:
 ```java
 app.exception(UnauthorizedException.class, (exception, request, response) -> {
     response.status(HttpStatusCodes.UNAUTHORIZED.value())
-        .header(HttpHeaders.WWW_AUTHENTICATE.value(), "Bearer realm=\"api\"")
+        .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Bearer realm=\"api\"")
         .text("Unauthorized");
 });
 ```
 
-`Shoostr.exception(Class<E>, ExceptionHandler<? super E>)` selects the most specific superclass of the directly thrown exception, regardless of registration order. Duplicate app-level classes are rejected; registration is synchronized with startup and close, and runtime lookup uses an immutable snapshot without locking. Groups and endpoints may configure local renderers through `Extensions.exception(...)`: a matching local renderer handles the error alone, with app-level rendering used only when no local renderer matches. Renderers do not form a handler chain. Recoverable business errors should normally be handled in business logic.
+`Shoostr.exception(Class<E>, ExceptionHandler<? super E>)` selects the most specific superclass of the directly thrown exception, regardless of registration order. Duplicate app-level classes are rejected; registration is synchronized with startup and close, and runtime lookup uses an immutable snapshot without locking.
+
+Use `Routes.exception(...)` or `TypedRoutes.exception(...)` for application error rendering in a route/group scope, without installing an extension:
+
+```java
+routes.path("/orders", orders -> {
+    orders.exception(OrderMissingException.class,
+        (_, _, response) -> response.text("Order not found"));
+    orders.get("/{id}", findOrder);
+});
+```
+
+The mapping covers the entire registration scope and descendants, including endpoints registered before it. Child scopes replace inherited mappings for the same exception class; the most-specific matching class in the resulting scope map wins. Sibling groups remain isolated even when they use the same URL prefix. Repeated mapping of a class in the same scope replaces it. A fluent `get(...).exception(...)` configures the returned scope, not only the last endpoint; use a one-endpoint `path` scope for endpoint-specific rendering.
+
+Selection is scoped mapping, then app-wide mapping, then built-in HTTP rendering. A selected renderer handles the response alone; renderers do not form a chain. Maps are finalized before the listener starts, with no request-time scope traversal. Recoverable business errors should normally be handled in business logic.
+
+Extensions own their internal/protocol failure handling and use shared `http.exceptions` types for intentional HTTP failures. They need no caller-provided exception mappings; optional scoped or app-wide handlers can customize those HTTP responses. Native protocol errors remain inside their integration. Configuration errors, unexpected bugs and genuine transport failures are not indiscriminately converted into authorization failures.
 
 Custom handlers receive the original readable request on the original handler thread. The failed response's body and headers are cleared first; its initial status is the thrown `HttpException` status or 500. The callback may override that status and set its own headers/body or start a stream. It must finish output before returning; the framework still owns closure. These handlers are shared across requests, so captured mutable application state must be safe for concurrent calls. Request access ends after error handling and finalization; retained objects cannot be used later or on another thread.
 
 A failed custom handler or invalid uncommitted error output falls back to a safe 500 without invoking another mapper. Committed output and fatal errors abort. Transport failures after asynchronous finite submission do not dispatch application error handlers. Ordinary router-generated 404/405 responses are not exceptions and do not invoke these callbacks.
 
-Error headers belong in the callback, not in exception metadata or copied request headers. An application returning 401 must supply its authentication challenge, for example through the handler above; the built-in `UnauthorizedException` fallback cannot infer a scheme or realm. See [RFC 9110 §15.5.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2). The default remains a bare status/reason response unless an application handler supplies that policy.
+Ordinary error headers belong in the callback, not copied request headers. The shared `AuthenticationRequiredException(challenge)` and `AuthorizationDeniedException(challenge)` explicitly carry required `WWW-Authenticate` values for 401 and 403 respectively. Core preserves those values when rendering the corresponding status, including custom-body rendering; custom handlers can still deliberately change the status. Plain `UnauthorizedException` and `ForbiddenException` do not supply challenges. An application returning a plain 401 must supply its challenge, for example through the handler above; core cannot infer a scheme or realm. See [RFC 9110 §15.5.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.5.2).
 
 If the reason phrase exceeds `Options.maxResponseBytes`, core sends the selected status with an empty body. HEAD responses omit the body. After streaming has committed, an HTTP exception aborts the stream without changing the status, appending an error body, or flushing pending application bytes. Request-body limit failures use the public `ContentTooLargeException` and produce `413 Content Too Large`; known oversized requests are rejected before entering the handler, while limits reached during a body read can be caught by application code. Applications needing a custom body or headers can catch an HTTP exception and set the response explicitly before commitment.
 
@@ -598,7 +642,7 @@ app.afterRequest(outcome -> {
 
 `authorize` and `metrics` represent application code, not bundled integrations. `Request.routePattern()` exposes the original composed template, such as `/accounts/{accountId}/orders/{id}`, for route-aware policy and bounded metric labels. It returns `Optional.empty()` without a selected endpoint and follows the existing request thread/lifetime rules. The template is retained at registration, not reconstructed per request. Never substitute a concrete request URL when a metric's route template is absent; normalize unfamiliar methods and failure labels in the chosen metrics adapter.
 
-`beforeRouteHandler(Handler)` runs gates in registration order after matching and the known Content-Length limit check. Gates are skipped for unmatched-path 404s and method-mismatch 405s. An availability-denied 404 follows matching, authentication and gates; a false availability check skips later checks, the endpoint and post-route callbacks. Gates may read bounded request data and stage finite output; setting status/body does not skip the endpoint. Throwing an exception skips subsequent gates and the endpoint, then invokes a matching local exception renderer or, if none matches, app-level error handling. Gate headers/body are cleared on failure, so a 401 challenge belongs in its exception callback. Gates cannot start streams or close the response. Error handlers retain their existing streaming capabilities.
+`beforeRouteHandler(Handler)` runs gates in registration order after matching and the known Content-Length limit check. Gates are skipped for unmatched-path 404s and method-mismatch 405s. An availability-denied 404 follows matching, authentication and gates; a false availability check skips later checks, the endpoint and post-route callbacks. Gates may read bounded request data and stage finite output; setting status/body does not skip the endpoint. Throwing an exception skips subsequent gates and the endpoint, then invokes a matching scoped exception renderer or, if none matches, app-level error handling. Gate headers/body are cleared on failure; use `AuthenticationRequiredException` to carry a required 401 challenge without needing a renderer. Gates cannot start streams or close the response. Error handlers retain their existing streaming capabilities.
 
 The remaining live stages are registered in the same way: `onRequestHeaders`, `onRouteMatched`, `afterRouteHandler`, `beforeResponseFlush`, and `afterResponseFlush`. A successful matched request runs them in this order: request-header callbacks, route-match callbacks, route gates, availability checks, the endpoint, post-route callbacks, then the flush callbacks. Header callbacks also run for unmatched-path 404s and method-mismatch 405s; matched-route, gate, and post-route callbacks do not. Availability-denied 404s retain the earlier matched-route and gate work but skip the endpoint and post-route callbacks. Any live callback can reject the request by throwing; exception selection uses matching local rendering first, then the app fallback. Without a selected endpoint, only app-level rendering applies.
 
