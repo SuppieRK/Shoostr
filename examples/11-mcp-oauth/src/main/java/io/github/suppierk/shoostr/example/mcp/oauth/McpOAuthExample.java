@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.example.mcp.oauth;
 
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
+import io.github.suppierk.shoostr.http.MediaType;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.file.Path;
@@ -10,7 +11,7 @@ import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import org.eclipse.jetty.server.ServerConnector;
 
-/** Composes one HTTPS MCP resource server with separate security, SDK and route configuration. */
+/** Composes one HTTPS MCP resource server with separate security and SDK configuration. */
 public final class McpOAuthExample {
   /** Prevents instantiation of the example factory. */
   private McpOAuthExample() {}
@@ -82,7 +83,28 @@ public final class McpOAuthExample {
       var mcp = OAuthMcpConfiguration.create(configuration.security());
       return app.authentication(configuration.authentication(), configuration.restAuthentication())
           .extensions(mcp)
-          .routes(routes -> OAuthRoutes.register(routes, resource, configuration, mcp));
+          .routes(
+              routes -> {
+                var metadata = configuration.metadata();
+                var document = configuration.document();
+                var authentication = configuration.authentication();
+                var restAuthentication = configuration.restAuthentication();
+                routes.get(
+                    metadata.getPath(),
+                    (_, response) -> response.body(MediaType.APPLICATION_JSON, document));
+                routes.path(
+                    "/api",
+                    api ->
+                        api.get(
+                            "/profile",
+                            (request, response) ->
+                                response.text(request.principal().orElseThrow().getName())),
+                    extensions -> extensions.get(restAuthentication).required());
+                routes.path(
+                    resource.getPath(),
+                    mcp::routes,
+                    extensions -> extensions.get(authentication).required());
+              });
     } catch (IOException | RuntimeException | Error failure) {
       try {
         app.close();

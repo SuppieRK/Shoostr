@@ -4,7 +4,7 @@ Start with Java 25: `./gradlew :hello-example:run`, then
 `curl http://127.0.0.1:8080/hello` → `Hello, Shoostr!`.
 
 [HelloExample](src/main/java/io/github/suppierk/shoostr/example/hello/HelloExample.java)
-owns startup; route definitions are separate. Shoostr installs its shutdown hook:
+owns startup and defines its route inline. Shoostr installs its shutdown hook:
 Ctrl+C stops the listener without another hook, latch or polling loop.
 Use try-with-resources for bounded lifetimes, as the
 [JUnit test](src/test/java/io/github/suppierk/shoostr/example/hello/HelloExampleTest.java)

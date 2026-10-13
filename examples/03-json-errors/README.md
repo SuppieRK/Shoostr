@@ -15,12 +15,12 @@ The valid request returns201 and `{"name":"Ada"}`. Invalid input returns400,
 returns500 with `{"error":"internal_error"}`, not its internal exception message.
 
 [JsonExample](src/main/java/io/github/suppierk/shoostr/example/json/JsonExample.java)
-only wires the app. The separate
+defines the endpoints inline and installs the codec. The separate
 [User](src/main/java/io/github/suppierk/shoostr/example/json/User.java),
 [UserCodec](src/main/java/io/github/suppierk/shoostr/example/json/UserCodec.java),
-[UserRoutes](src/main/java/io/github/suppierk/shoostr/example/json/UserRoutes.java) and
+and
 [UserErrors](src/main/java/io/github/suppierk/shoostr/example/json/UserErrors.java)
-own validation, explicit JSON trees, endpoints and scoped rendering respectively.
+own validation, explicit JSON trees and scoped rendering respectively.
 No application-model scanning, serialization annotations or schema inference occur.
 
 The optional codec makes typed methods available while retaining ordinary byte/text

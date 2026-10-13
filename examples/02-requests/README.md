@@ -9,9 +9,8 @@ Run `./gradlew :requests-example:run`.
 - An explicitly blank name returns400; a missing name uses the default instead.
 
 [RequestExample](src/main/java/io/github/suppierk/shoostr/example/requests/RequestExample.java)
-supplies a concurrent-safe JDK function explicitly;
-[RequestRoutes](src/main/java/io/github/suppierk/shoostr/example/requests/RequestRoutes.java)
-handles decoded path and ordered repeated query values. There is no DI container or
+supplies a concurrent-safe JDK function explicitly and defines routes inline for
+decoded path and ordered repeated query values. There is no DI container or
 dependency lookup. Empty search returns empty text.
 
 [RequestExampleTest](src/test/java/io/github/suppierk/shoostr/example/requests/RequestExampleTest.java)

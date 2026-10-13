@@ -4,6 +4,7 @@ import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.micrometer.MicrometerMetrics;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import org.eclipse.jetty.server.ServerConnector;
 
 /** Composes the metrics demonstration without a second HTTP server for metrics. */
@@ -51,7 +52,20 @@ public final class MetricsExample {
       var configuration = new MetricsConfiguration();
       app.extensions(configuration);
       app.extensions(new MicrometerMetrics(configuration.registry()).allRequests());
-      app.routes(routes -> MetricsRoutes.register(routes, configuration.registry()));
+      app.routes(
+          routes -> {
+            var registry = configuration.registry();
+            routes.get(
+                "/hello/{name}",
+                (request, response) ->
+                    response.text("Hello, " + request.pathParam("name").orElseThrow() + "!"));
+            routes.get(
+                "/metrics",
+                (_, response) ->
+                    response.body(
+                        "text/plain; version=0.0.4; charset=utf-8",
+                        registry.scrape().getBytes(StandardCharsets.UTF_8)));
+          });
       return app;
     } catch (RuntimeException | Error failure) {
       try {

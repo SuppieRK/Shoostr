@@ -31,6 +31,7 @@ public final class HelloExample {
    * @return configured application
    */
   public static Shoostr application(Options options) {
-    return new Shoostr(options).routes(HelloRoutes::register);
+    return new Shoostr(options)
+        .routes(routes -> routes.get("/hello", (_, response) -> response.text("Hello, Shoostr!")));
   }
 }

@@ -15,7 +15,7 @@ response yourself, write after handler return, or create an unbounded background
 The download explicitly flushes its header; SSE sends flush each complete event.
 
 [StreamingExample](src/main/java/io/github/suppierk/shoostr/example/streaming/StreamingExample.java)
-owns startup wiring; `StreamingRoutes` mounts only `/public` resources beneath `/assets`.
+defines its routes inline and mounts only `/public` resources beneath `/assets`.
 It does not expose the classpath root or arbitrary filesystem paths. Missing resources
 return404; traversal outside the mount is rejected. There is no HTML renderer or UI toolchain.
 

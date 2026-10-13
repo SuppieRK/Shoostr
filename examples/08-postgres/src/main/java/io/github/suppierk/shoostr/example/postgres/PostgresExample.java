@@ -2,6 +2,11 @@ package io.github.suppierk.shoostr.example.postgres;
 
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
+import io.github.suppierk.shoostr.http.HttpHeaders;
+import io.github.suppierk.shoostr.http.HttpStatusCodes;
+import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
+import io.github.suppierk.shoostr.http.exceptions.NotFoundException;
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
@@ -40,6 +45,38 @@ public final class PostgresExample {
       Options options, Function<String, Note> create, LongFunction<Optional<Note>> find) {
     Objects.requireNonNull(create);
     Objects.requireNonNull(find);
-    return new Shoostr(options).routes(routes -> NoteRoutes.register(routes, create, find));
+    return new Shoostr(options)
+        .routes(
+            routes -> {
+              routes.get("/health", (_, response) -> response.text("healthy"));
+              routes.get(
+                  "/notes/{id:[0-9]+}",
+                  (request, response) -> {
+                    long id;
+
+                    try {
+                      id = Long.parseLong(request.pathParam("id").orElseThrow());
+                    } catch (NumberFormatException failure) {
+                      throw new BadRequestException(
+                          "Note identity exceeds the supported range", failure);
+                    }
+
+                    response.text(find.apply(id).orElseThrow(NotFoundException::new).text());
+                  });
+              routes.post(
+                  "/notes",
+                  (request, response) -> {
+                    var text = new String(request.bodyBytes(), StandardCharsets.UTF_8);
+                    if (text.isBlank()) {
+                      throw new BadRequestException("Note text must not be blank");
+                    }
+
+                    var note = create.apply(text);
+                    response
+                        .status(HttpStatusCodes.CREATED.value())
+                        .setHeader(HttpHeaders.LOCATION.value(), "/notes/" + note.id())
+                        .text(note.text());
+                  });
+            });
   }
 }

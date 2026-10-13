@@ -2,6 +2,8 @@ package io.github.suppierk.shoostr.example.json;
 
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
+import io.github.suppierk.shoostr.http.HttpStatusCodes;
+import io.github.suppierk.shoostr.http.MediaType;
 import org.eclipse.jetty.server.ServerConnector;
 
 /** Wires the codec and handlers without adding serialization to the framework core. */
@@ -32,7 +34,29 @@ public final class JsonExample {
    */
   public static Shoostr application(Options options) {
     var app = new Shoostr(options);
-    app.codec(new UserCodec()).routes(UserRoutes::register);
+    app.codec(new UserCodec())
+        .routes(
+            routes ->
+                routes.path(
+                    "/users",
+                    users -> {
+                      UserErrors.register(users);
+                      users.get(
+                          "/help",
+                          (_, response) ->
+                              response.text("POST a JSON object with a nonblank name"));
+                      users.get(
+                          "/failure",
+                          (_, _) -> {
+                            throw new IllegalStateException(
+                                "Example-only internal details must not reach the client");
+                          });
+                      users.post(
+                          (request, response) ->
+                              response
+                                  .status(HttpStatusCodes.CREATED.value())
+                                  .body(MediaType.APPLICATION_JSON, request.body(User.class)));
+                    }));
     return app;
   }
 }

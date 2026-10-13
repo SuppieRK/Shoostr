@@ -2,9 +2,10 @@
 
 This intentionally small create/read API teaches persistence, not a CRUD framework.
 [PostgresExample](src/main/java/io/github/suppierk/shoostr/example/postgres/PostgresExample.java)
-wires ordinary creation/lookup functions. `DatabaseConfiguration` applies the checked-in
+wires ordinary creation/lookup functions and defines HTTP routes and validation inline.
+`DatabaseConfiguration` applies the checked-in
 Flyway migration before listener startup; `JdbcNotes` uses the jOOQ runtime DSL with bound
-values and a closed JDBC connection per operation. `NoteRoutes` owns HTTP validation;
+values and a closed JDBC connection per operation;
 `Note` establishes data invariants. No DI, ORM, generated classes or connection pool is needed.
 
 ```sh

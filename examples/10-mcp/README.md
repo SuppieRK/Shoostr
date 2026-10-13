@@ -25,8 +25,8 @@ The app owns the native server; `mcp.server()` is borrowed management access, no
 an independently closeable resource. Fixture callbacks use native SDK content,
 sampling, elicitation, logging, progress and resource-template descriptors.
 
-`McpExample` is only startup and dependency composition; `McpConfiguration` owns native extension
-setup, `McpRoutes` registers HTTP endpoints, and `CompatibilityFixtures` contains the SDK
+`McpExample` defines HTTP routes inline and owns startup; `McpConfiguration` owns native extension
+setup, and `CompatibilityFixtures` contains the SDK
 callbacks required by the official suite.
 
 ```sh

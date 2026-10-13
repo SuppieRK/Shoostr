@@ -18,10 +18,9 @@ fixtures, not a production identity store. Basic requires TLS in deployment;
 Compose publishes only host loopback. Do not expose this demo on a public interface.
 
 [AuthenticationExample](src/main/java/io/github/suppierk/shoostr/example/authentication/AuthenticationExample.java)
-wires the app. [DemoAuthentication](src/main/java/io/github/suppierk/shoostr/example/authentication/DemoAuthentication.java)
-owns credential verification and its native Pac4j role policy;
-[PrivateRoutes](src/main/java/io/github/suppierk/shoostr/example/authentication/PrivateRoutes.java)
-selects the installed instance for the whole `/private` group. Authentication
+wires the app and defines routes inline, selecting authentication for the whole
+`/private` group. [DemoAuthentication](src/main/java/io/github/suppierk/shoostr/example/authentication/DemoAuthentication.java)
+owns credential verification and its native Pac4j role policy. Authentication
 establishes identity; authorization separately decides whether an operation is allowed.
 Installation alone does not protect any endpoint. No wrapper around each handler,
 global authentication chain or exception-handling extension is necessary.

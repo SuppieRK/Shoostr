@@ -41,8 +41,8 @@ Run `cmdshape ./gradlew :openapi-example:test` for live HTTP checks. The root bu
 example compilation and these checks; browser verification additionally needs a real browser
 to confirm challenge/bootstrap, rendering and Try it out.
 
-The entry point only composes the app. `OpenApiConfiguration` defines documents and schemas;
-`OpenApiAuthentication` defines the local identity policy; `OpenApiRoutes` registers operations;
+The app factory defines routes inline. `OpenApiConfiguration` defines documents and schemas;
+`OpenApiAuthentication` defines the local identity policy;
 `User` and `UserCodec` own the payload contract and conversion. No document-schema setup or
 credential verification is hidden in main.
 

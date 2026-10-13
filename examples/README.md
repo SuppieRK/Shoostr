@@ -1,6 +1,6 @@
 # Executable examples
 
-Pick one task, read its small composition root and separate route/handler configuration,
+Pick one task and read its app factory, where route definitions appear inline,
 then run the matching live HTTP test. There is no DI container, annotation routing,
 multi-app demonstration or shared example runtime. Java 25 and the repository Gradle
 wrapper are required. Docker Engine and Compose are needed only for containers/backends.

@@ -4,7 +4,7 @@ import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import org.eclipse.jetty.server.ServerConnector;
 
-/** Wires authentication separately from its credential policy and request handlers. */
+/** Registers routes using a separately configured authentication policy. */
 public final class AuthenticationExample {
   /** Prevents construction of the launcher. */
   private AuthenticationExample() {}
@@ -35,6 +35,19 @@ public final class AuthenticationExample {
     var auth = DemoAuthentication.create();
     return new Shoostr(options)
         .authentication(auth)
-        .routes(routes -> PrivateRoutes.register(routes, auth));
+        .routes(
+            routes -> {
+              routes.get("/public", (_, response) -> response.text("public"));
+              routes.path(
+                  "/private",
+                  group -> {
+                    group.get(
+                        "/me",
+                        (request, response) ->
+                            response.text(request.principal().orElseThrow().getName()));
+                    group.get("/admin", (_, response) -> response.text("admin operation allowed"));
+                  },
+                  extensions -> extensions.get(auth).required());
+            });
   }
 }

@@ -1,8 +1,8 @@
 # Request traces with Jaeger and Grafana
 
 [TelemetryExample](src/main/java/io/github/suppierk/shoostr/example/tracing/TelemetryExample.java)
-composes one app. `TelemetryConfiguration` owns an explicit SDK, OTLP HTTP exporter,
-batch processor and W3C propagation; `TelemetryRoutes` handles requests. The installed
+composes one app with inline routes. `TelemetryConfiguration` owns an explicit SDK,
+OTLP HTTP exporter, batch processor and W3C propagation. The installed
 `OpenTelemetryTracing(...).allRequests()` borrows the SDK. No global SDK, Java agent,
 Collector or second Shoostr app is needed.
 

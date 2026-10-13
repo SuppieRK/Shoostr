@@ -48,7 +48,12 @@ public final class McpExample {
 
     try {
       var mcp = McpConfiguration.create(options);
-      return app.extensions(mcp).routes(routes -> McpRoutes.register(routes, mcp));
+      return app.extensions(mcp)
+          .routes(
+              routes -> {
+                routes.get("/health", (_, response) -> response.text("healthy"));
+                routes.path("/mcp", mcp::routes);
+              });
     } catch (RuntimeException | Error failure) {
       try {
         app.close();

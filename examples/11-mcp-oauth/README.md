@@ -156,7 +156,7 @@ tokens, browser traces, private keys or the fixture trust files.
 ## Run the application in a Jib-built container
 
 Security/discovery configuration is in `OAuthConfiguration`, native MCP tools in
-`OAuthMcpConfiguration`, HTTP registration in `OAuthRoutes`, and startup wiring in
+`OAuthMcpConfiguration`, and inline HTTP registration and startup wiring in
 `McpOAuthExample`. The installed security configuration owns the verifier and is closed
 after its borrowing adapters. The public application factory and existing HTTP behavior
 remain the same.

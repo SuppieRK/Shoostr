@@ -30,6 +30,25 @@ public final class StreamingExample {
    * @return app with file and stream handlers
    */
   public static Shoostr application(Options options) {
-    return new Shoostr(options).routes(StreamingRoutes::register);
+    return new Shoostr(options)
+        .routes(
+            routes -> {
+              routes.classpathResources("/assets", "/public");
+              routes.sse(
+                  "/events",
+                  (_, response) -> {
+                    var events = response.startEventStream();
+                    events.send("starting");
+                    events.send("complete");
+                  });
+              routes.get(
+                  "/download",
+                  (_, response) -> {
+                    var output = response.startStream("text/csv; charset=utf-8");
+                    output.write("name\n").flush();
+                    output.write("Ada\n");
+                    output.write("Grace\n");
+                  });
+            });
   }
 }

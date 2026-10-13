@@ -2,8 +2,8 @@
 
 One Shoostr app exports its own `/metrics`; no second metrics server or DI container is
 needed. [MetricsExample](src/main/java/io/github/suppierk/shoostr/example/metrics/MetricsExample.java)
-is only the composition root. Registry ownership is in `MetricsConfiguration`, request
-handling in `MetricsRoutes`. `MicrometerMetrics` borrows the registry and enables observation
+defines its routes inline. Registry ownership is in `MetricsConfiguration`.
+`MicrometerMetrics` borrows the registry and enables observation
 explicitly with `allRequests()`. The app closes the registry after request drain.
 
 ```sh

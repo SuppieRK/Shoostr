@@ -2,7 +2,9 @@ package io.github.suppierk.shoostr.example.tracing;
 
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
+import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.opentelemetry.OpenTelemetryTracing;
+import io.opentelemetry.api.trace.Span;
 import java.io.IOException;
 import org.eclipse.jetty.server.ServerConnector;
 
@@ -49,7 +51,16 @@ public final class TelemetryExample {
       var configuration = new TelemetryConfiguration();
       app.extensions(configuration);
       app.extensions(new OpenTelemetryTracing(configuration.sdk()).allRequests());
-      return app.routes(TelemetryRoutes::register);
+      return app.routes(
+          routes ->
+              routes.get(
+                  "/hello/{name}",
+                  (request, response) -> {
+                    response.setHeader(
+                        HttpHeaders.of("X-Trace-Id").value(),
+                        Span.current().getSpanContext().getTraceId());
+                    response.text("Hello, " + request.pathParam("name").orElseThrow() + "!");
+                  }));
     } catch (RuntimeException | Error failure) {
       try {
         app.close();
