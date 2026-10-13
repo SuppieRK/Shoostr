@@ -35,21 +35,21 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: |
-            examples/10-mcp/package-lock.json
-            examples/11-mcp-oauth/package-lock.json
+            examples/11-mcp/package-lock.json
+            examples/12-mcp-oauth/package-lock.json
 
       - name: Install pinned MCP compatibility tests
-        working-directory: examples/10-mcp
+        working-directory: examples/11-mcp
         run: npm ci --ignore-scripts
 
       - name: Install pinned MCP OAuth client and browser
-        working-directory: examples/11-mcp-oauth
+        working-directory: examples/12-mcp-oauth
         run: |
           npm ci --ignore-scripts
           node node_modules/playwright/cli.js install --with-deps firefox
 
       - name: Start isolated HTTPS OAuth fixture
-        working-directory: examples/11-mcp-oauth
+        working-directory: examples/12-mcp-oauth
         run: |
           mkdir -p .local
           openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
@@ -90,7 +90,8 @@ jobs:
       - name: Build focused example container images with Jib
         run: >-
           ./gradlew :hello-example:jibDockerBuild :requests-example:jibDockerBuild
-          :json-errors-example:jibDockerBuild :authentication-example:jibDockerBuild
+          :exceptions-example:jibDockerBuild :json-errors-example:jibDockerBuild
+          :authentication-example:jibDockerBuild
           :static-streaming-example:jibDockerBuild :openapi-example:jibDockerBuild
           :mcp-example:jibDockerBuild :mcp-oauth-example:jibDockerBuild --console=plain
 
@@ -100,7 +101,7 @@ jobs:
           :postgres-example:dockerTest --console=plain
 
       - name: Verify the containerized HTTPS OAuth example
-        working-directory: examples/11-mcp-oauth
+        working-directory: examples/12-mcp-oauth
         run: |
           # The Jib app runs as UID1000; transfer only this disposable server keystore.
           sudo chown 1000 .local/fixture.p12
@@ -117,7 +118,7 @@ jobs:
 
       - name: Stop OAuth fixture and preserve diagnostics
         if: always()
-        working-directory: examples/11-mcp-oauth
+        working-directory: examples/12-mcp-oauth
         run: |
           mkdir -p build/oauth
           docker compose -p shoostr-mcp-oauth-ci -f compose.yaml -f compose.app.yaml \
@@ -130,12 +131,12 @@ jobs:
         with:
           name: example-backend-results
           path: |
-            examples/06-micrometer/build/docker/
-            examples/06-micrometer/build/test-results/dockerTest/
-            examples/07-opentelemetry/build/docker/
-            examples/07-opentelemetry/build/test-results/dockerTest/
-            examples/08-postgres/build/docker/
-            examples/08-postgres/build/test-results/dockerTest/
+            examples/07-micrometer/build/docker/
+            examples/07-micrometer/build/test-results/dockerTest/
+            examples/08-opentelemetry/build/docker/
+            examples/08-opentelemetry/build/test-results/dockerTest/
+            examples/09-postgres/build/docker/
+            examples/09-postgres/build/test-results/dockerTest/
           if-no-files-found: warn
 
       - name: Preserve MCP OAuth reports
@@ -144,9 +145,9 @@ jobs:
         with:
           name: mcp-oauth-results
           path: |
-            examples/11-mcp-oauth/build/oauth/runner.log
-            examples/11-mcp-oauth/build/oauth/keycloak.log
-            examples/11-mcp-oauth/build/test-results/oauthTest/
+            examples/12-mcp-oauth/build/oauth/runner.log
+            examples/12-mcp-oauth/build/oauth/keycloak.log
+            examples/12-mcp-oauth/build/test-results/oauthTest/
           if-no-files-found: warn
 
       - name: Preserve MCP compatibility reports
@@ -155,8 +156,8 @@ jobs:
         with:
           name: mcp-conformance-results
           path: |
-            examples/10-mcp/build/conformance/
-            examples/10-mcp/build/test-results/conformanceTest/
+            examples/11-mcp/build/conformance/
+            examples/11-mcp/build/test-results/conformanceTest/
           if-no-files-found: warn
 
       - name: Check benchmark reporting and resource enforcement

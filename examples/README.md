@@ -22,15 +22,16 @@ framework modules do not select a provider or enable per-request logging by defa
 | --- | --- | --- |
 | Start/stop a server and return text | [01-hello](01-hello/README.md) / `hello-example` | `GET /hello`, plain response and deterministic test ownership |
 | Route HTTP methods, read inputs and vary availability | [02-requests](02-requests/README.md) / `requests-example` | Seven verbs, generic route, path groups/patterns, both `when` forms, query/form/body/header/cookie inputs, supplied unary operation |
-| Mix typed JSON/text and render scoped errors | [03-json-errors](03-json-errors/README.md) / `json-errors-example` | Explicit codec, validated payload, scoped 400/500 rendering |
-| Authenticate a group and authorize an operation | [04-authentication](04-authentication/README.md) / `authentication-example` | Public route, Basic challenge, principal, reader/admin role policy |
-| Serve classpath assets and finite HTTP/SSE streams | [05-static-streaming](05-static-streaming/README.md) / `static-streaming-example` | Narrow asset mount, CSV chunks, exact completed event frames |
-| Export request metrics to Prometheus and Grafana | [06-micrometer](06-micrometer/README.md) / `micrometer-example` | Real scrape samples and a provisioned request dashboard |
-| Export request traces to Jaeger and Grafana | [07-opentelemetry](07-opentelemetry/README.md) / `opentelemetry-example` | Explicit SDK/export, W3C parent continuation and Grafana Explore |
-| Persist a resource with PostgreSQL/Flyway/jOOQ | [08-postgres](08-postgres/README.md) / `postgres-example` | Startup migration, create/read and retained data across app restart |
-| Describe and try explicitly documented endpoints | [09-openapi](09-openapi/README.md) / `openapi-example` | Explicit schemas, two documents, codec, protected docs and Swagger authorization |
-| Mount a native SDK MCP extension | [10-mcp](10-mcp/README.md) / `mcp-example` | Separate native SDK configuration and official interoperability checks |
-| Use an external OAuth authorization server | [11-mcp-oauth](11-mcp-oauth/README.md) / `mcp-oauth-example` | Real TLS/Keycloak, PKCE/scope escalation and distinct REST/MCP authentication |
+| Handle exceptions and generated HTTP statuses | [03-exceptions](03-exceptions/README.md) / `exceptions-example` | Built-in errors, local recovery, app fallback, route/group overrides and inheritance, generated versus thrown 404 |
+| Mix typed JSON/text and render scoped errors | [04-json-errors](04-json-errors/README.md) / `json-errors-example` | Explicit codec, validated payload, inline scoped JSON 400/500 rendering |
+| Authenticate a group and authorize an operation | [05-authentication](05-authentication/README.md) / `authentication-example` | Public route, Basic challenge, principal, reader/admin role policy |
+| Serve classpath assets and finite HTTP/SSE streams | [06-static-streaming](06-static-streaming/README.md) / `static-streaming-example` | Narrow asset mount, CSV chunks, exact completed event frames |
+| Export request metrics to Prometheus and Grafana | [07-micrometer](07-micrometer/README.md) / `micrometer-example` | Real scrape samples and a provisioned request dashboard |
+| Export request traces to Jaeger and Grafana | [08-opentelemetry](08-opentelemetry/README.md) / `opentelemetry-example` | Explicit SDK/export, W3C parent continuation and Grafana Explore |
+| Persist a resource with PostgreSQL/Flyway/jOOQ | [09-postgres](09-postgres/README.md) / `postgres-example` | Startup migration, create/read and retained data across app restart |
+| Describe and try explicitly documented endpoints | [10-openapi](10-openapi/README.md) / `openapi-example` | Explicit schemas, two documents, codec, protected docs and Swagger authorization |
+| Mount a native SDK MCP extension | [11-mcp](11-mcp/README.md) / `mcp-example` | Separate native SDK configuration and official interoperability checks |
+| Use an external OAuth authorization server | [12-mcp-oauth](12-mcp-oauth/README.md) / `mcp-oauth-example` | Real TLS/Keycloak, PKCE/scope escalation and distinct REST/MCP authentication |
 
 Every server example remains independently runnable and understandable. Ordinary
 `./gradlew build` compiles examples and runs Docker-free JUnit HTTP tests through
