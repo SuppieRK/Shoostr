@@ -26,6 +26,7 @@ public final class PostgresExample {
    * @throws Exception if migration or listener startup fails
    */
   static void main() throws Exception {
+    // These example-local classes configure JDBC/Flyway and use jOOQ; Shoostr has no database API.
     var notes = DatabaseConfiguration.create();
     var app = application(notes::create, notes::find);
     app.start();
@@ -41,12 +42,14 @@ public final class PostgresExample {
    */
   public static Shoostr application(
       Function<String, Note> create, LongFunction<Optional<Note>> find) {
+    // Supply JDK functions explicitly; handlers can use real persistence or test replacements.
     Objects.requireNonNull(create);
     Objects.requireNonNull(find);
     return new Shoostr()
         .routes(
             routes -> {
               routes.get("/health", (_, response) -> response.text("healthy"));
+              // Shoostr constrains the path segment to digits; parsing still checks long overflow.
               routes.get(
                   "/notes/{id:[0-9]+}",
                   (request, response) -> {
@@ -69,6 +72,7 @@ public final class PostgresExample {
                       throw new BadRequestException("Note text must not be blank");
                     }
 
+                    // Note is this example's record; Location identifies the newly stored resource.
                     var note = create.apply(text);
                     response
                         .status(HttpStatusCodes.CREATED.value())

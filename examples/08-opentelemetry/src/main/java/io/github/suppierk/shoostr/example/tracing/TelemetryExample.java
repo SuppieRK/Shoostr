@@ -47,14 +47,19 @@ public final class TelemetryExample {
     var app = new Shoostr();
 
     try {
+      // TelemetryConfiguration is example-local; it creates and owns the OpenTelemetry SDK.
       var configuration = new TelemetryConfiguration();
+      // Register it as a core Extension so app.close() also flushes and closes the SDK.
       app.extensions(configuration);
+      // Shoostr's opentelemetry module provides the adapter; allRequests enables request tracing.
       app.extensions(new OpenTelemetryTracing(configuration.sdk()).allRequests());
       return app.routes(
           routes ->
               routes.get(
                   "/hello/{name}",
                   (request, response) -> {
+                    // OpenTelemetry's Span.current() exposes the server span created by the
+                    // adapter.
                     response.setHeader(
                         HttpHeaders.of("X-Trace-Id").value(),
                         Span.current().getSpanContext().getTraceId());

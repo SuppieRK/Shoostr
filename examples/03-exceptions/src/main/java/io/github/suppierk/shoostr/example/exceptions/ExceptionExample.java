@@ -95,6 +95,7 @@ public final class ExceptionExample {
                     throw new IllegalStateException("Example-only internal failure details");
                   });
 
+              // BadRequestException comes from Shoostr's http module.
               // Default handling returns 400 without exposing the exception message.
               routes.get(
                   "/builtin/bad-request",

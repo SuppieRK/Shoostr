@@ -14,19 +14,24 @@ final class OpenApiConfiguration {
 
   /** Defines the two independent documents and named user schema eagerly. */
   OpenApiConfiguration() {
+    // Each OpenApi instance from Shoostr's openapi module owns an independent document.
     docs =
         new OpenApi("Users API", "1.0")
             .description(
                 "Explicit schemas, optional typed handlers, and protected local documentation")
             .tag("users", "User operations");
     internal = new OpenApi("Operations API", "1.0");
+    // Swagger's model types describe auth and JSON shapes; they do not enforce either at runtime.
     var basic = new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme("basic");
     docs.securityScheme("basic", basic);
     internal.securityScheme("basic", basic);
+    // Declare the User schema explicitly; neither the codec nor the Java record is scanned.
     var userSchema = new JsonSchema();
     userSchema.setTypes(Set.of("object"));
     userSchema.addProperty("name", new JsonSchema().types(Set.of("string")).minLength(1));
     userSchema.setRequired(List.of("name"));
+    // Register the reusable schema and retain its reference for endpoint request/response
+    // descriptions.
     user = docs.schema("User", userSchema);
   }
 

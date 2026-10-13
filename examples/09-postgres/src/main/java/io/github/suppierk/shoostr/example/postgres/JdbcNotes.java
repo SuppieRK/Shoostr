@@ -28,6 +28,7 @@ final class JdbcNotes {
    * @throws IllegalStateException if connection establishment or cleanup fails
    */
   Note create(String text) {
+    // This method closes its JDBC connection after jOOQ executes the parameterized SQL.
     try (var connection = source.getConnection()) {
       var id = DSL.field("id", Long.class);
       var content = DSL.field("text", String.class);

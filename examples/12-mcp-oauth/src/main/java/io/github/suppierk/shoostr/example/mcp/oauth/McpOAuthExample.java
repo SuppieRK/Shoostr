@@ -25,6 +25,7 @@ public final class McpOAuthExample {
    * @throws Exception if fixture TLS material cannot be loaded or startup fails
    */
   static void main() throws Exception {
+    // JDK TLS types load the local certificate; this demo trusts its own development issuer.
     var certificate =
         KeyStore.getInstance(
             Path.of(System.getProperty("shoostr.oauth.keyStore", ".local/fixture.p12")).toFile(),
@@ -39,6 +40,7 @@ public final class McpOAuthExample {
                 URI.create("https://localhost:8443/realms/shoostr-mcp"),
                 URI.create("https://localhost:9443/mcp"),
                 trust)
+            // Shoostr's TLS configurator uses the certificate to serve HTTPS on the app listener.
             .tls(
                 tls -> {
                   tls.setKeyStore(certificate);
@@ -91,9 +93,13 @@ public final class McpOAuthExample {
     var app = new Shoostr(options);
 
     try {
+      // Example-local configuration combines Nimbus token verification and Shoostr's Pac4j adapter.
       var configuration = new OAuthConfiguration(issuer, resource, issuerTrust);
+      // This local class implements core's Extension so app.close() releases its issuer-key source.
       app.extensions(configuration);
+      // The local factory creates Shoostr's mcp extension with the official SDK's tool definitions.
       var mcp = OAuthMcpConfiguration.create(configuration.security());
+      // Install both authenticators; each protected group selects one, not a chained requirement.
       return app.authentication(configuration.authentication(), configuration.restAuthentication())
           .extensions(mcp)
           .routes(
@@ -102,9 +108,12 @@ public final class McpOAuthExample {
                 var document = configuration.document();
                 var authentication = configuration.authentication();
                 var restAuthentication = configuration.restAuthentication();
+                // Publish OAuth discovery metadata explicitly; it must be accessible without a
+                // token.
                 routes.get(
                     metadata.getPath(),
                     (_, response) -> response.body(MediaType.APPLICATION_JSON, document));
+                // REST selects the installed Basic authenticator for this group only.
                 routes.path(
                     "/api",
                     api ->
@@ -113,6 +122,8 @@ public final class McpOAuthExample {
                             (request, response) ->
                                 response.text(request.principal().orElseThrow().getName())),
                     extensions -> extensions.get(restAuthentication).required());
+                // MCP selects the Bearer authenticator; mcp::routes adds the protocol's HTTP
+                // handlers.
                 routes.path(
                     resource.getPath(),
                     mcp::routes,

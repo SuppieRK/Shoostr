@@ -37,13 +37,15 @@ public final class JsonExample {
    */
   public static Shoostr application() {
     var app = new Shoostr();
+    // UserCodec is this example's Jackson-backed implementation of core's Codec interface.
+    // Register it to enable typed body methods; byte[] and text methods remain available.
     app.codec(new UserCodec())
         .routes(
             routes ->
                 routes.path(
                     "/users",
                     users -> {
-                      // Render invalid input as JSON only within this route group.
+                      // Return JSON for invalid input only within this route group.
                       users.exception(
                           BadRequestException.class,
                           (_, _, response) ->
@@ -65,7 +67,7 @@ public final class JsonExample {
                           (_, response) ->
                               response.text("POST a JSON object with a nonblank name"));
 
-                      // Throw an example failure to exercise the group's safe JSON renderer.
+                      // Throw a failure handled by this group's JSON exception handler.
                       users.get(
                           "/failure",
                           (_, _) -> {

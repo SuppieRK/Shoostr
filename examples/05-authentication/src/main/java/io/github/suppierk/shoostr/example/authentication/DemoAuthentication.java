@@ -17,7 +17,9 @@ final class DemoAuthentication {
    * @return extension to install and select on the protected route group
    */
   static Pac4j create() {
+    // Shoostr's pac4j module adapts the third-party pac4j clients to managed authentication.
     return new Pac4j(
+        // pac4j extracts HTTP Basic credentials; this example checks fixed demo accounts.
         new DirectBasicAuthClient(
             (_, supplied) -> {
               if (!(supplied instanceof UsernamePasswordCredentials credentials)
@@ -37,6 +39,7 @@ final class DemoAuthentication {
               return Optional.of(credentials);
             }),
         "Basic realm=\"shoostr-demo\", charset=\"UTF-8\"",
+        // This authorization callback requires the admin role only for /private/admin.
         (context, _, profiles) ->
             !"/private/admin".equals(context.getPath())
                 || profiles.getFirst().getRoles().contains("admin"));

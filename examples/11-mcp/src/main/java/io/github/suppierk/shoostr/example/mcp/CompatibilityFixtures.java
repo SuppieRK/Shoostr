@@ -27,6 +27,8 @@ final class CompatibilityFixtures {
    * @return immutable native tool registrations
    */
   static List<McpServerFeatures.SyncToolSpecification> tools() {
+    // SDK tools pair an input schema with a callback invoked by MCP tools/call, not a Shoostr
+    // route.
     return List.of(
         tool(
             "test_simple_text",
@@ -91,6 +93,7 @@ final class CompatibilityFixtures {
             "test_tool_with_logging",
             NO_ARGUMENTS,
             (exchange, _) -> {
+              // The SDK exchange sends protocol notifications to the connected MCP client.
               for (var message : List.of("Started", "Processing", "Completed")) {
                 exchange.loggingNotification(
                     McpSchema.LoggingMessageNotification.builder(
@@ -129,6 +132,7 @@ final class CompatibilityFixtures {
                 "required",
                 List.of("prompt")),
             (exchange, request) -> {
+              // Sampling asks the MCP client to generate a message; this server supplies no LLM.
               var sampled =
                   exchange.createMessage(
                       McpSchema.CreateMessageRequest.builder(
@@ -156,6 +160,8 @@ final class CompatibilityFixtures {
                 "required",
                 List.of("message")),
             (exchange, request) -> {
+              // Elicitation asks the MCP client to collect user input using this explicit form
+              // schema.
               var result =
                   exchange.createElicitation(
                       McpSchema.ElicitFormRequest.builder(
@@ -212,6 +218,7 @@ final class CompatibilityFixtures {
    * @return native resource registrations
    */
   static List<McpServerFeatures.SyncResourceSpecification> resources() {
+    // SDK resources expose content addressed by MCP URIs, not files served at HTTP URL paths.
     return List.of(
         new McpServerFeatures.SyncResourceSpecification(
             McpSchema.Resource.builder("test://static-text", "Static text")
@@ -258,6 +265,7 @@ final class CompatibilityFixtures {
    * @return native resource-template registration
    */
   static List<McpServerFeatures.SyncResourceTemplateSpecification> resourceTemplates() {
+    // An SDK resource template resolves parameterized MCP URIs; Shoostr does not match these paths.
     return List.of(
         new McpServerFeatures.SyncResourceTemplateSpecification(
             McpSchema.ResourceTemplate.builder("test://template/{id}/data", "Template data")
@@ -291,6 +299,7 @@ final class CompatibilityFixtures {
    * @return native prompt registrations
    */
   static List<McpServerFeatures.SyncPromptSpecification> prompts() {
+    // SDK prompts return reusable message templates with arguments supplied by the MCP client.
     return List.of(
         new McpServerFeatures.SyncPromptSpecification(
             McpSchema.Prompt.builder("test_simple_prompt").description("A text prompt").build(),

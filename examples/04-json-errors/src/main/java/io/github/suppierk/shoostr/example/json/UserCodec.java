@@ -7,12 +7,13 @@ import io.github.suppierk.shoostr.Codec;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import java.io.IOException;
 
-/** Explicit JSON trees: no model scanning, third-party annotations or inferred media types. */
+/** Example-local implementation of Shoostr's core Codec interface, using Jackson JSON trees. */
 final class UserCodec implements Codec {
   private final ObjectMapper mapper;
 
   /** Creates the mapper once, before any concurrent request can use it. */
   UserCodec() {
+    // Jackson's ObjectMapper does the JSON conversion; Shoostr does not choose a JSON library.
     mapper = new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
   }
 
@@ -29,6 +30,7 @@ final class UserCodec implements Codec {
    */
   @Override
   public <T> T read(byte[] source, Class<T> type) throws IOException {
+    // User is this example's record, not a framework model or an automatically scanned type.
     if (type != User.class) {
       throw new IllegalArgumentException("This codec supports only User");
     }

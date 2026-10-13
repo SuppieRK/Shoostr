@@ -55,6 +55,7 @@ final class KeycloakAuthenticator implements Authenticator, Closeable {
       throw new IllegalArgumentException("The Keycloak issuer must not end with a slash");
     }
 
+    // Nimbus retrieves verification keys from this trusted issuer using the supplied JDK TLS trust.
     var retrieval = new DefaultResourceRetriever(2000, 2000, 131072, true, tls.getSocketFactory());
     var keys =
         JWKSourceBuilder.create(
@@ -66,6 +67,8 @@ final class KeycloakAuthenticator implements Authenticator, Closeable {
     }
 
     keySource = closeable;
+    // Nimbus checks the signature, token type and claims; pac4j only supplies extracted
+    // credentials.
     processor = new DefaultJWTProcessor<>();
     processor.setJWSTypeVerifier(new DefaultJOSEObjectTypeVerifier<>(new JOSEObjectType("at+jwt")));
     processor.setJWSKeySelector(new JWSVerificationKeySelector<>(JWSAlgorithm.RS256, keys));
@@ -118,6 +121,7 @@ final class KeycloakAuthenticator implements Authenticator, Closeable {
       }
 
       validateScopes(scope);
+      // pac4j's profile carries only verified identity/grants to Shoostr's authentication adapter.
       var profile = new CommonProfile();
       profile.setId(subject);
       profile.addAttribute("iss", claims.getIssuer());

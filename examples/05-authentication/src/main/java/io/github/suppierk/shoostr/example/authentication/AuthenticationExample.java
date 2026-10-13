@@ -29,12 +29,16 @@ public final class AuthenticationExample {
    * @return app owned by its eventual caller
    */
   public static Shoostr application() {
+    // DemoAuthentication is this example's configuration, not a framework class.
+    // It creates a Pac4j authentication extension from Shoostr's separate pac4j module.
     var auth = DemoAuthentication.create();
     return new Shoostr()
+        // Install the instance; authentication is required only where routes select it below.
         .authentication(auth)
         .routes(
             routes -> {
               routes.get("/public", (_, response) -> response.text("public"));
+              // Select that same extension instance for the /private route group only.
               routes.path(
                   "/private",
                   group -> {

@@ -33,10 +33,14 @@ public final class OpenApiExample {
    * @return app owned by its caller
    */
   public static Shoostr application() {
+    // Example-local configuration creates two OpenApi extensions from Shoostr's openapi module.
     var configuration = new OpenApiConfiguration();
+    // This example-local factory creates the Pac4j extension from Shoostr's pac4j module.
     var security = OpenApiAuthentication.create();
     var app =
         new Shoostr()
+            // Install authentication and both documents; endpoint configuration selects each
+            // instance.
             .authentication(security)
             .extensions(configuration.docs(), configuration.internal())
             .routes(
@@ -44,7 +48,11 @@ public final class OpenApiExample {
                   var docs = configuration.docs();
                   var internal = configuration.internal();
                   var user = configuration.user();
+                  // Shoostr's OpenAPI extension supplies the UI handler; register its URLs
+                  // explicitly.
                   var ui = docs.uiHandler("/docs/", "/openapi.json");
+                  // e.get(docs) configures this endpoint's documentation on that installed
+                  // instance.
                   routes.get(
                       "/health",
                       (_, response) -> response.text("healthy"),
@@ -53,6 +61,7 @@ public final class OpenApiExample {
                               .summary("Health")
                               .operationId("health")
                               .response(200, "Healthy", MediaType.TEXT_PLAIN));
+                  // OpenAPI settings on a route group become defaults for its endpoints.
                   routes.path(
                       "/users",
                       group -> {
@@ -85,6 +94,7 @@ public final class OpenApiExample {
                               .tag("users")
                               .description("Grouped defaults copied independently")
                               .response(404, "Not found"));
+                  // Authentication enforces access; OpenAPI's security entry only documents it.
                   routes.get(
                       "/me",
                       (request, response) ->
@@ -96,6 +106,8 @@ public final class OpenApiExample {
                             .security("basic")
                             .response(200, "Identity", MediaType.TEXT_PLAIN);
                       });
+                  // Include this operation only in the internal OpenAPI document.
+                  // Authentication is configured separately.
                   routes.get(
                       "/admin/ping",
                       (_, response) -> response.text("pong"),
@@ -106,6 +118,8 @@ public final class OpenApiExample {
                             .security("basic")
                             .response(200, "Pong", MediaType.TEXT_PLAIN);
                       });
+                  // when controls runtime availability; selected OpenAPI documents still include
+                  // it.
                   routes.when(
                       () -> true,
                       conditional ->
@@ -116,6 +130,7 @@ public final class OpenApiExample {
                                   e.get(internal)
                                       .summary("Development endpoint")
                                       .response(200, "Available", MediaType.TEXT_PLAIN)));
+                  // Serve UI assets through two routes; hidden keeps them out of the document.
                   routes.path(
                       "/docs",
                       group -> {
@@ -126,6 +141,7 @@ public final class OpenApiExample {
                         e.get(security).required();
                         e.get(docs).hidden();
                       });
+                  // handler() serves the specification generated once during application startup.
                   routes.get(
                       "/openapi.json",
                       docs.handler(),
@@ -141,6 +157,8 @@ public final class OpenApiExample {
                       internal.handler(),
                       e -> e.get(security).required());
                 });
+    // UserCodec is example-local and implements core's Codec using Swagger's Jackson mapper.
+    // Only this typed route registration uses the codec; earlier byte/text routes remain untyped.
     app.codec(new UserCodec())
         .routes(
             routes -> {

@@ -18,6 +18,8 @@ final class OpenApiAuthentication {
    * @return explicit managed authentication extension
    */
   static Pac4j create() {
+    // Shoostr's Pac4j extension wraps the third-party pac4j HTTP Basic client.
+    // This callback checks fixed local credentials, not accounts managed by OpenAPI.
     return new Pac4j(
         new DirectBasicAuthClient(
             (_, supplied) -> {

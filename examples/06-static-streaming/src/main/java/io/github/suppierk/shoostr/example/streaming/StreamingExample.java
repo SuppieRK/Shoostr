@@ -31,10 +31,13 @@ public final class StreamingExample {
     return new Shoostr()
         .routes(
             routes -> {
+              // Shoostr serves only this classpath directory; /assets is its public URL prefix.
               routes.classpathResources("/assets", "/public");
+              // Shoostr's SSE route sends server-sent events, not an ordinary buffered body.
               routes.sse(
                   "/events",
                   (_, response) -> {
+                    // EventStream is Shoostr's event writer; send formats each SSE message.
                     var events = response.startEventStream();
                     events.send("starting");
                     events.send("complete");
@@ -42,6 +45,7 @@ public final class StreamingExample {
               routes.get(
                   "/download",
                   (_, response) -> {
+                    // Shoostr's response stream writes incrementally; flush sends the first chunk.
                     var output = response.startStream("text/csv; charset=utf-8");
                     output.write("name\n").flush();
                     output.write("Ada\n");

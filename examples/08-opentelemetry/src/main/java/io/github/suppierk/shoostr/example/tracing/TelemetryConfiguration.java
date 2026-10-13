@@ -20,11 +20,13 @@ final class TelemetryConfiguration implements Extension<Void> {
     var endpoint =
         System.getenv()
             .getOrDefault("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://127.0.0.1:4318/v1/traces");
+    // OpenTelemetry's OTLP HTTP exporter sends spans to the Compose trace backend.
     var exporter =
         OtlpHttpSpanExporter.builder()
             .setEndpoint(endpoint)
             .setTimeout(Duration.ofSeconds(2))
             .build();
+    // OpenTelemetry batches finished spans and tags them with this example's service name.
     var provider =
         SdkTracerProvider.builder()
             .setResource(
@@ -39,6 +41,7 @@ final class TelemetryConfiguration implements Extension<Void> {
                     .setScheduleDelay(Duration.ofMillis(100))
                     .build())
             .build();
+    // Build an app-local SDK; W3C propagation reads and writes standard trace-context headers.
     sdk =
         OpenTelemetrySdk.builder()
             .setTracerProvider(provider)

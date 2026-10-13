@@ -21,7 +21,10 @@ final class OAuthMcpConfiguration {
    * @return MCP extension to install before registering its routes
    */
   static Mcp<?> create(McpHttpSecurity security) {
+    // JDK atomic state belongs to this example; concurrent SDK tool calls share the counter.
     var calls = new AtomicInteger();
+    // Shoostr provides HTTP transport/security; McpServer and feature descriptors are official SDK
+    // APIs.
     return Mcp.sync(
         security,
         transport ->
@@ -29,6 +32,8 @@ final class OAuthMcpConfiguration {
                 .serverInfo("shoostr-mcp-oauth-example", "1.0")
                 .requestTimeout(Duration.ofSeconds(30))
                 .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
+                // A tool is an SDK operation with its own input schema and callback, not an HTTP
+                // route.
                 .tools(
                     McpServerFeatures.SyncToolSpecification.builder()
                         .tool(

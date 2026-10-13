@@ -46,8 +46,11 @@ public final class MetricsExample {
     var app = new Shoostr();
 
     try {
+      // MetricsConfiguration is example-local; it creates and owns Micrometer's registry.
       var configuration = new MetricsConfiguration();
+      // Register it as a core Extension so app.close() also closes the registry.
       app.extensions(configuration);
+      // Shoostr's micrometer module provides this adapter; allRequests enables instrumentation.
       app.extensions(new MicrometerMetrics(configuration.registry()).allRequests());
       app.routes(
           routes -> {
@@ -58,6 +61,7 @@ public final class MetricsExample {
                     response.text("Hello, " + request.pathParam("name").orElseThrow() + "!"));
             routes.get(
                 "/metrics",
+                // Micrometer produces Prometheus text; this is an ordinary Shoostr HTTP handler.
                 (_, response) ->
                     response.body(
                         "text/plain; version=0.0.4; charset=utf-8",

@@ -24,6 +24,8 @@ final class McpConfiguration {
    * @return extension to install before mounting its routes
    */
   static Mcp<?> create(Options options) {
+    // Shoostr's mcp module provides Origin checks, request identity and pre-dispatch permissions.
+    // This public demo uses a fixed identity without requiring HTTP authentication.
     var security =
         new McpHttpSecurity(
             Set.of(
@@ -31,12 +33,14 @@ final class McpConfiguration {
                     .getOrDefault("MCP_PUBLIC_ORIGIN", "http://127.0.0.1:" + options.port())),
             _ -> new McpIdentity("public-example", McpTransportContext.EMPTY, null),
             (_, _) -> {});
+    // Shoostr owns the HTTP transport; the official SDK configures and dispatches MCP operations.
     return Mcp.sync(
         security,
         transport ->
             McpServer.sync(transport)
                 .serverInfo("shoostr-mcp-example", "1.0")
                 .requestTimeout(Duration.ofSeconds(30))
+                // SDK capabilities advertise the features implemented by the registrations below.
                 .capabilities(
                     McpSchema.ServerCapabilities.builder()
                         .tools(false)
@@ -44,10 +48,12 @@ final class McpConfiguration {
                         .prompts(false)
                         .completions()
                         .build())
+                // CompatibilityFixtures is example-local; these are native SDK feature definitions.
                 .tools(CompatibilityFixtures.tools())
                 .resources(CompatibilityFixtures.resources())
                 .resourceTemplates(CompatibilityFixtures.resourceTemplates())
                 .prompts(CompatibilityFixtures.prompts())
+                // SDK completions suggest values for prompt/resource arguments, not HTTP routes.
                 .completions(
                     new McpServerFeatures.SyncCompletionSpecification(
                         new McpSchema.PromptReference("test_prompt_with_arguments"),

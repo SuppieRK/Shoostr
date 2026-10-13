@@ -10,6 +10,7 @@ final class MetricsConfiguration implements Extension<Void> {
 
   /** Configures one registry eagerly, before the listener can accept traffic. */
   MetricsConfiguration() {
+    // This registry comes from Micrometer's Prometheus integration, not Shoostr's core.
     registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
   }
 

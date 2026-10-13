@@ -24,6 +24,7 @@ final class UserCodec implements Codec {
    */
   @Override
   public <T> T read(byte[] source, Class<T> type) throws IOException {
+    // Json31 supplies Swagger's Jackson mapper; User is this example's record, not a schema type.
     if (type != User.class) {
       throw new IllegalArgumentException("Example codec supports only User");
     }

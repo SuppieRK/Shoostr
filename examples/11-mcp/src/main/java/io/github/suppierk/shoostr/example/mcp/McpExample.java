@@ -52,14 +52,19 @@ public final class McpExample {
    * @return app owned by its eventual caller or test fixture
    */
   public static Shoostr application(Options options) {
+    // Options comes from Shoostr core and configures the listener, not the SDK's MCP features.
     var app = new Shoostr(options);
 
     try {
+      // This example-local factory builds Shoostr's mcp extension using the official Java SDK.
       var mcp = McpConfiguration.create(options);
+      // Install it for lifecycle management; installation alone does not register HTTP endpoints.
       return app.extensions(mcp)
           .routes(
               routes -> {
                 routes.get("/health", (_, response) -> response.text("healthy"));
+                // The extension contributes its protocol handlers beneath Shoostr's /mcp route
+                // group.
                 routes.path("/mcp", mcp::routes);
               });
     } catch (RuntimeException | Error failure) {

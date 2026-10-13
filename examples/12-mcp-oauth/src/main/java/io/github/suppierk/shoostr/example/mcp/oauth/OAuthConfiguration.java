@@ -44,10 +44,13 @@ final class OAuthConfiguration implements Extension<Void> {
    * @throws IOException if key-source setup or failure cleanup fails
    */
   OAuthConfiguration(URI issuer, URI resource, SSLContext issuerTrust) throws IOException {
+    // KeycloakAuthenticator is example-local; Nimbus verifies the issuer's signed access tokens.
     verifier = new KeycloakAuthenticator(issuer, resource, issuerTrust);
 
     try {
       metadata = resource.resolve("/.well-known/oauth-protected-resource" + resource.getRawPath());
+      // OAuth resource metadata tells clients where to obtain tokens; it is not an OpenAPI
+      // document.
       document =
           JSONObjectUtils.toJSONString(
                   Map.of(
@@ -56,6 +59,7 @@ final class OAuthConfiguration implements Extension<Void> {
                       "scopes_supported", List.of("mcp:read"),
                       "bearer_methods_supported", List.of("header")))
               .getBytes(StandardCharsets.UTF_8);
+      // Shoostr's Pac4j extension wraps pac4j's Bearer client and checks this resource's grants.
       authentication =
           new Pac4j(
               new DirectBearerAuthClient(verifier),
@@ -73,7 +77,11 @@ final class OAuthConfiguration implements Extension<Void> {
                 context.setRequestAttribute(IDENTITY_ATTRIBUTE, identity);
                 return true;
               });
+      // A separate Basic configuration serves REST; groups choose it instead of the Bearer
+      // instance.
       restAuthentication = createRestAuthentication();
+      // Shoostr's MCP security config checks Origin, extracts identity and authorizes before
+      // dispatch.
       security =
           new McpHttpSecurity(
               Set.of(resource.getScheme() + "://" + resource.getRawAuthority()),
@@ -85,6 +93,7 @@ final class OAuthConfiguration implements Extension<Void> {
                       .orElseThrow(
                           () -> new IllegalStateException("Verified MCP identity is absent")),
               (identity, message) -> {
+                // This policy checks OAuth scopes; they are token grants, not route groups.
                 if (message instanceof McpSchema.JSONRPCRequest request
                     && McpSchema.METHOD_TOOLS_CALL.equals(request.method())) {
                   requireScopes(identity, Set.of("mcp:read", "mcp:tools"), metadata);
@@ -202,6 +211,7 @@ final class OAuthConfiguration implements Extension<Void> {
    * @return immutable identity, with a collision-free issuer/subject/client owner key
    */
   private static McpIdentity identity(UserProfile profile) {
+    // Copy verified claims into Shoostr's immutable MCP identity and the SDK's transport context.
     var issuer = Objects.requireNonNull((String) profile.getAttribute("iss"));
     var subject = Objects.requireNonNull(profile.getId());
     var client = Objects.requireNonNull((String) profile.getAttribute("azp"));

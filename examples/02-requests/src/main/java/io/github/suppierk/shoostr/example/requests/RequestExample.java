@@ -51,6 +51,7 @@ public final class RequestExample {
    */
   public static Shoostr application(
       UnaryOperator<String> greeting, BooleanSupplier previewEnabled) {
+    // These JDK functions are caller-supplied dependencies, not framework-managed services.
     Objects.requireNonNull(greeting);
     Objects.requireNonNull(previewEnabled);
     return new Shoostr()
@@ -81,6 +82,8 @@ public final class RequestExample {
                       response.text(String.join(",", request.queryParams("tag"))));
 
               // Group all seven convenience verbs at one path; these echoes store no state.
+              // Shoostr's path method prefixes each nested registration with /echo.
+              // Method, status, header and media-type constants come from Shoostr's http module.
               routes.path(
                   "/echo",
                   echo -> {
@@ -171,6 +174,7 @@ public final class RequestExample {
                   (request, response) -> response.text(request.pathParam("tail").orElseThrow()));
 
               // Require both a live flag and a request predicate; this is availability, not auth.
+              // Shoostr evaluates when conditions per matched request; false produces a 404.
               routes.when(
                   previewEnabled,
                   preview ->
