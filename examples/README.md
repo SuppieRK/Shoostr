@@ -9,17 +9,17 @@ wrapper are required. Docker Engine and Compose are needed only for containers/b
 
 | Task | Example / Gradle project | Observable lesson |
 | --- | --- | --- |
-| Start/stop a server and return text | [hello](hello/README.md) / `hello-example` | `GET /hello`, plain response and deterministic test ownership |
-| Read inputs and substitute a dependency in a test | [requests](requests/README.md) / `requests-example` | Decoded path/query inputs, optional defaults, repeated values, supplied JDK function |
-| Mix typed JSON/text and render scoped errors | [json-errors](json-errors/README.md) / `json-errors-example` | Explicit codec, validated payload, scoped 400/500 rendering |
-| Authenticate a group and authorize an operation | [authentication](authentication/README.md) / `authentication-example` | Public route, Basic challenge, principal, reader/admin role policy |
-| Serve classpath assets and finite HTTP/SSE streams | [static-streaming](static-streaming/README.md) / `static-streaming-example` | Narrow asset mount, CSV chunks, exact completed event frames |
-| Export request metrics to Prometheus and Grafana | [micrometer](micrometer/README.md) / `micrometer-example` | Real scrape samples and a provisioned request dashboard |
-| Export request traces to Jaeger and Grafana | [opentelemetry](opentelemetry/README.md) / `opentelemetry-example` | Explicit SDK/export, W3C parent continuation and Grafana Explore |
-| Persist a resource with PostgreSQL/Flyway/jOOQ | [postgres](postgres/README.md) / `postgres-example` | Startup migration, create/read and retained data across app restart |
-| Describe and try explicitly documented endpoints | [openapi](openapi/README.md) / `openapi-example` | Explicit schemas, two documents, codec, protected docs and Swagger authorization |
-| Mount a native SDK MCP extension | [mcp](mcp/README.md) / `mcp-example` | Separate native SDK configuration and official interoperability checks |
-| Use an external OAuth authorization server | [mcp-oauth](mcp-oauth/README.md) / `mcp-oauth-example` | Real TLS/Keycloak, PKCE/scope escalation and distinct REST/MCP authentication |
+| Start/stop a server and return text | [01-hello](01-hello/README.md) / `hello-example` | `GET /hello`, plain response and deterministic test ownership |
+| Read inputs and substitute a dependency in a test | [02-requests](02-requests/README.md) / `requests-example` | Decoded path/query inputs, optional defaults, repeated values, supplied JDK function |
+| Mix typed JSON/text and render scoped errors | [03-json-errors](03-json-errors/README.md) / `json-errors-example` | Explicit codec, validated payload, scoped 400/500 rendering |
+| Authenticate a group and authorize an operation | [04-authentication](04-authentication/README.md) / `authentication-example` | Public route, Basic challenge, principal, reader/admin role policy |
+| Serve classpath assets and finite HTTP/SSE streams | [05-static-streaming](05-static-streaming/README.md) / `static-streaming-example` | Narrow asset mount, CSV chunks, exact completed event frames |
+| Export request metrics to Prometheus and Grafana | [06-micrometer](06-micrometer/README.md) / `micrometer-example` | Real scrape samples and a provisioned request dashboard |
+| Export request traces to Jaeger and Grafana | [07-opentelemetry](07-opentelemetry/README.md) / `opentelemetry-example` | Explicit SDK/export, W3C parent continuation and Grafana Explore |
+| Persist a resource with PostgreSQL/Flyway/jOOQ | [08-postgres](08-postgres/README.md) / `postgres-example` | Startup migration, create/read and retained data across app restart |
+| Describe and try explicitly documented endpoints | [09-openapi](09-openapi/README.md) / `openapi-example` | Explicit schemas, two documents, codec, protected docs and Swagger authorization |
+| Mount a native SDK MCP extension | [10-mcp](10-mcp/README.md) / `mcp-example` | Separate native SDK configuration and official interoperability checks |
+| Use an external OAuth authorization server | [11-mcp-oauth](11-mcp-oauth/README.md) / `mcp-oauth-example` | Real TLS/Keycloak, PKCE/scope escalation and distinct REST/MCP authentication |
 
 Every server example remains independently runnable and understandable. Ordinary
 `./gradlew build` compiles examples and runs Docker-free JUnit HTTP tests through
@@ -48,9 +48,6 @@ Compose project names and remove their own disposable resources; do not run a se
 on their test ports. CI builds all example images, runs the three real-backend tests and
 verifies the OAuth container with the same official browser/client driver. Ordinary
 `build` needs neither Docker nor external metrics, trace, database or identity services.
-
-Existing [consumer-smoke](consumer-smoke/) checks locally published artifacts; it is
-not a beginner server tutorial. Root `./gradlew consumerSmoke` keeps that packaging gate.
 
 Topic selection follows the focused [Javalin tutorials](https://javalin.io/tutorials/),
 [Jooby manual](https://jooby.io/) and [Spring guides](https://spring.io/guides/).

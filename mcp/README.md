@@ -31,7 +31,7 @@ var app = new Shoostr()
 This example deliberately makes the endpoint public. Origin validation is not
 authentication. For a protected deployment, select a managed authenticator on
 the enclosing group and derive the identity from its verified claims, as shown
-in [the external OAuth example](../examples/mcp-oauth/README.md).
+in [the external OAuth example](../examples/11-mcp-oauth/README.md).
 
 ## Configuration and ownership
 
@@ -137,7 +137,7 @@ The current verification boundary is explicit:
 | External OAuth discovery, browser PKCE and scope escalation | Official TypeScript client against real Keycloak |
 | Startup ownership, explicit deletion and application shutdown | Live registration/client/lifecycle tests |
 
-The [runnable public example](../examples/mcp/README.md) configures the official
+The [runnable public example](../examples/10-mcp/README.md) configures the official
 suite's native catalog and runs the pinned dated requirements, session lifecycle
 and JSON Schema checks. The OAuth example adds the official TypeScript client,
 a real external Keycloak authorization server, browser PKCE and scope escalation.

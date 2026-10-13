@@ -5,37 +5,37 @@ project(':benchmarks').projectDir = file('.github/benchmarks')
 include 'micrometer', 'opentelemetry', 'openapi', 'mcp'
 
 include 'consumer-smoke'
-project(':consumer-smoke').projectDir = file('examples/consumer-smoke')
+project(':consumer-smoke').projectDir = file('verification/consumer-smoke')
 
 include 'openapi-example'
-project(':openapi-example').projectDir = file('examples/openapi')
+project(':openapi-example').projectDir = file('examples/09-openapi')
 
 include 'mcp-oauth-example'
-project(':mcp-oauth-example').projectDir = file('examples/mcp-oauth')
+project(':mcp-oauth-example').projectDir = file('examples/11-mcp-oauth')
 
 include 'mcp-example'
-project(':mcp-example').projectDir = file('examples/mcp')
+project(':mcp-example').projectDir = file('examples/10-mcp')
 
 include 'hello-example'
-project(':hello-example').projectDir = file('examples/hello')
+project(':hello-example').projectDir = file('examples/01-hello')
 
 include 'requests-example'
-project(':requests-example').projectDir = file('examples/requests')
+project(':requests-example').projectDir = file('examples/02-requests')
 
 include 'json-errors-example'
-project(':json-errors-example').projectDir = file('examples/json-errors')
+project(':json-errors-example').projectDir = file('examples/03-json-errors')
 
 include 'authentication-example'
-project(':authentication-example').projectDir = file('examples/authentication')
+project(':authentication-example').projectDir = file('examples/04-authentication')
 
 include 'micrometer-example'
-project(':micrometer-example').projectDir = file('examples/micrometer')
+project(':micrometer-example').projectDir = file('examples/06-micrometer')
 
 include 'opentelemetry-example'
-project(':opentelemetry-example').projectDir = file('examples/opentelemetry')
+project(':opentelemetry-example').projectDir = file('examples/07-opentelemetry')
 
 include 'static-streaming-example'
-project(':static-streaming-example').projectDir = file('examples/static-streaming')
+project(':static-streaming-example').projectDir = file('examples/05-static-streaming')
 
 include 'postgres-example'
-project(':postgres-example').projectDir = file('examples/postgres')
+project(':postgres-example').projectDir = file('examples/08-postgres')

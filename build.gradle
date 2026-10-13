@@ -237,7 +237,7 @@ tasks.register('consumerSmoke', Exec) {
 	dependsOn ':openapi:publishMavenJavaPublicationToConsumerRepository'
 	dependsOn ':mcp:publishMavenJavaPublicationToConsumerRepository'
 	commandLine rootProject.file('gradlew').absolutePath,
-			'-p', rootProject.file('examples/consumer-smoke').absolutePath,
+			'-p', rootProject.file('verification/consumer-smoke').absolutePath,
 			'runSmoke',
 			"-PframeworkRepository=${rootProject.layout.buildDirectory.dir('consumer-repository').get().asFile.absolutePath}",
 			'--console=plain'

@@ -56,12 +56,12 @@ notifications, register Jetty's `LifeCycle.Listener` through `Shoostr.modifyServ
 startup. No framework-specific lifecycle annotation is required. Run
 `./gradlew consumerSmoke` to publish `http`, `core`, `test`, `pac4j`,
 `micrometer`, `opentelemetry`, `openapi` and `mcp` into `build/consumer-repository` and execute
-the independent Java 25 consumer under `examples/consumer-smoke`; this does not
+the independent Java 25 verification fixture under `verification/consumer-smoke`; this does not
 publish to Maven Local or a remote repository. Its JUnit 5 tests exercise the
 published optional integrations over HTTP. The separate base-runtime check
 rejects optional integration, JUnit, JSpecify and common codec dependencies
 from `core`; the original smoke checks native configuration, start/stop
-notifications and error propagation. The example is also the `:consumer-smoke`
+notifications and error propagation. The fixture also participates as the `:consumer-smoke`
 Gradle module: `./gradlew :consumer-smoke:test` and the root `build` run its
 tests against project dependencies, while `consumerSmoke` verifies published
 artifacts from the independent build.
@@ -343,8 +343,8 @@ runs after the drain, so telemetry and other resources remain available to finis
 
 The optional [`mcp` module](mcp/README.md) composes the official Java SDK with explicit
 Streamable HTTP routes, per-request identity and pre-dispatch permissions. It installs
-no automatic endpoint or authenticator. See the [public compatibility example](examples/mcp/README.md)
-and [external OAuth example](examples/mcp-oauth/README.md) for runnable native SDK configuration.
+no automatic endpoint or authenticator. See the [public compatibility example](examples/10-mcp/README.md)
+and [external OAuth example](examples/11-mcp-oauth/README.md) for runnable native SDK configuration.
 
 Use runtime conditions for feature flags or authenticated request decisions:
 
@@ -363,7 +363,7 @@ deployment-specific absence: `if (development) routes.get("/debug", debugHandler
 The optional [`openapi` module](openapi/README.md) generates startup-frozen OpenAPI 3.1.1 JSON
 from instance-selected explicit operation/schema configuration, with an explicitly registered,
 locally bundled Swagger UI. It adds no OpenAPI dependencies or runtime hooks to core-only apps.
-The [runnable authenticated example](examples/openapi/README.md) covers typed and byte handlers,
+The [runnable authenticated example](examples/09-openapi/README.md) covers typed and byte handlers,
 group defaults, independent documents and conditional exclusions.
 
 Extension authors implement `Extension<C>`. Its `configure(Extensions, C inherited)` method returns
