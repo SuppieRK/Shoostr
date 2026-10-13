@@ -13,6 +13,12 @@ Use try-with-resources for bounded lifetimes, as the
 [JUnit test](src/test/java/io/github/suppierk/shoostr/example/hello/HelloExampleTest.java)
 does with `TestServer`. It chooses an ephemeral loopback port and closes the app.
 
+The application logs through SLF4J and selects Logback as its runtime backend.
+[logback.xml](src/main/resources/logback.xml) sends INFO and higher levels to stderr.
+The runtime `slf4j-jdk-platform-logging` bridge sends Shoostr's existing
+`System.Logger` events to the same backend as the application and Jetty.
+The framework itself does not impose a logging backend or log every request.
+
 Docker: `./gradlew :hello-example:jibDockerBuild`, then
 `docker compose -f examples/01-hello/compose.yaml up -d`.
 The same curl works. Stop with `docker compose -f examples/01-hello/compose.yaml down`.

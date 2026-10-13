@@ -9,9 +9,13 @@ import java.nio.file.Path;
 import java.security.KeyStore;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Composes one HTTPS MCP resource server with separate security and SDK configuration. */
 public final class McpOAuthExample {
+  private static final Logger LOGGER = LoggerFactory.getLogger(McpOAuthExample.class);
+
   /** Prevents instantiation of the example factory. */
   private McpOAuthExample() {}
 
@@ -53,9 +57,23 @@ public final class McpOAuthExample {
       throw failure;
     }
 
-    System.out.println("MCP endpoint: https://localhost:" + app.port() + "/mcp");
-    System.out.println("Keycloak demo login: mcp-demo / mcp-demo-local-only");
-    System.out.println("REST Basic demo login: rest-demo / rest-demo-local-only");
+    LOGGER.info("MCP endpoint: https://localhost:{}/mcp", app.port());
+    LOGGER.info("Keycloak demo login: mcp-demo / mcp-demo-local-only");
+    LOGGER.info("REST Basic demo login: rest-demo / rest-demo-local-only");
+  }
+
+  /**
+   * Creates an unstarted OAuth application with default listener settings.
+   *
+   * @param issuer exact trusted HTTPS authorization server
+   * @param resource canonical HTTPS MCP resource audience
+   * @param issuerTrust explicit issuer TLS trust
+   * @return application owned by its caller
+   * @throws IOException if verifier configuration or failure cleanup fails
+   */
+  public static Shoostr application(URI issuer, URI resource, SSLContext issuerTrust)
+      throws IOException {
+    return application(Options.defaults(), issuer, resource, issuerTrust);
   }
 
   /**

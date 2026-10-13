@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import org.junit.jupiter.api.Test;
@@ -12,7 +11,7 @@ import org.junit.jupiter.api.Test;
 class MetricsExampleTest {
   @Test
   void exposesTheCompletedRequestUnderItsRouteTemplate() throws Exception {
-    try (var test = TestServer.start(MetricsExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(MetricsExample.application())) {
       assertEquals(200, test.send(request -> request.path("/hello/Ada")).statusCode());
       var scrape =
           test.send(request -> request.path("/metrics"), HttpResponse.BodyHandlers.ofString());
@@ -25,7 +24,7 @@ class MetricsExampleTest {
 
   @Test
   void servesTheInstrumentedGreeting() throws Exception {
-    try (var test = TestServer.start(MetricsExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(MetricsExample.application())) {
       var response =
           test.send(request -> request.path("/hello/Ada"), HttpResponse.BodyHandlers.ofString());
       assertAll(

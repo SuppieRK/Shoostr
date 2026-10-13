@@ -1,10 +1,13 @@
 package io.github.suppierk.shoostr.example.hello;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Composes the hello application; Shoostr owns the listener and shutdown hook. */
 public final class HelloExample {
+  private static final Logger LOGGER = LoggerFactory.getLogger(HelloExample.class);
+
   /** Prevents construction of the launcher. */
   private HelloExample() {}
 
@@ -14,19 +17,18 @@ public final class HelloExample {
    * @throws Exception if the listener cannot start
    */
   static void main() throws Exception {
-    var app = application(Options.defaults());
+    var app = application();
     app.start();
-    System.out.println("Hello: http://127.0.0.1:" + app.port() + "/hello");
+    LOGGER.info("Hello: http://127.0.0.1:{}/hello", app.port());
   }
 
   /**
    * Returns an unstarted app; callers or TestServer own its eventual lifetime.
    *
-   * @param options listener settings
    * @return configured application
    */
-  public static Shoostr application(Options options) {
-    return new Shoostr(options)
+  public static Shoostr application() {
+    return new Shoostr()
         .routes(routes -> routes.get("/hello", (_, response) -> response.text("Hello, Shoostr!")));
   }
 }

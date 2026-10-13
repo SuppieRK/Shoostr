@@ -18,7 +18,6 @@ import com.nimbusds.jose.jwk.gen.RSAKeyGenerator;
 import com.nimbusds.jwt.JWTClaimsSet;
 import com.nimbusds.jwt.PlainJWT;
 import com.nimbusds.jwt.SignedJWT;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.pac4j.Pac4j;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -119,8 +118,7 @@ class KeycloakAuthenticationTest {
       var issuerUri = issuer.baseUri().resolve("/realms/fixture");
       var token = sign(key, accessClaims(issuerUri).claim("scope", "mcp:read mcp:tools").build());
       var app =
-          McpOAuthExample.application(
-              Options.defaults(), issuerUri, URI.create("https://localhost:9443/mcp"), trust);
+          McpOAuthExample.application(issuerUri, URI.create("https://localhost:9443/mcp"), trust);
 
       try (var test = TestServer.start(app);
           var client =
@@ -155,8 +153,7 @@ class KeycloakAuthenticationTest {
       var toolToken =
           sign(key, accessClaims(issuerUri).claim("scope", "mcp:read mcp:tools").build());
       var app =
-          McpOAuthExample.application(
-              Options.defaults(), issuerUri, URI.create("https://localhost:9443/mcp"), trust);
+          McpOAuthExample.application(issuerUri, URI.create("https://localhost:9443/mcp"), trust);
 
       try (var test = TestServer.start(app)) {
         var initialized =
@@ -235,8 +232,7 @@ class KeycloakAuthenticationTest {
                   .claim("scope", "mcp:tools")
                   .build());
       var app =
-          McpOAuthExample.application(
-              Options.defaults(), issuerUri, URI.create("https://localhost:9443/mcp"), trust);
+          McpOAuthExample.application(issuerUri, URI.create("https://localhost:9443/mcp"), trust);
 
       try (var test = TestServer.start(app)) {
         var response =
@@ -275,8 +271,7 @@ class KeycloakAuthenticationTest {
     try (var issuer = issuerFixture(key)) {
       var issuerUri = issuer.baseUri().resolve("/realms/fixture");
       var app =
-          McpOAuthExample.application(
-              Options.defaults(), issuerUri, URI.create("https://localhost:9443/mcp"), trust);
+          McpOAuthExample.application(issuerUri, URI.create("https://localhost:9443/mcp"), trust);
       app.beforeRouteHandler(
           (request, _) -> {
             assertEquals("alice", request.principal().orElseThrow().getName());

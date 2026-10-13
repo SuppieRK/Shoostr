@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
@@ -37,7 +36,7 @@ class McpExampleTest {
           "clientInfo":{"name":"browser-origin-test","version":"1.0"}}}
         """;
 
-    try (var test = TestServer.start(McpExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(McpExample.application())) {
       var reply =
           test.send(
               request ->
@@ -55,7 +54,7 @@ class McpExampleTest {
   @Test
   @Timeout(20)
   void servesTheConformanceTextToolThroughTheRunnableApplication() throws Exception {
-    try (var test = TestServer.start(McpExample.application(Options.defaults()));
+    try (var test = TestServer.start(McpExample.application());
         var client =
             McpClient.sync(
                     HttpClientStreamableHttpTransport.builder(test.baseUri().toString())

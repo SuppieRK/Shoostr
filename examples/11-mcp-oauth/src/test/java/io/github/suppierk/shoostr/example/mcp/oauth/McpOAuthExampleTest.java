@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.nimbusds.jose.util.JSONObjectUtils;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.URI;
 import java.net.http.HttpResponse;
@@ -19,7 +18,6 @@ class McpOAuthExampleTest {
   void challengesUnauthenticatedInitializationWithTheCanonicalMetadataLocation() throws Exception {
     var app =
         McpOAuthExample.application(
-            Options.defaults(),
             URI.create("https://localhost:8443/realms/shoostr-mcp"),
             URI.create("https://localhost:9443/mcp"),
             SSLContext.getDefault());
@@ -53,7 +51,6 @@ class McpOAuthExampleTest {
   void servesCanonicalResourceAndIssuerMetadataWithoutAuthentication() throws Exception {
     var app =
         McpOAuthExample.application(
-            Options.defaults(),
             URI.create("https://localhost:8443/realms/shoostr-mcp"),
             URI.create("https://localhost:9443/mcp"),
             SSLContext.getDefault());
@@ -80,7 +77,6 @@ class McpOAuthExampleTest {
   void acceptsRestBasicCredentialsWithoutAcceptingThemForMcp() throws Exception {
     var app =
         McpOAuthExample.application(
-            Options.defaults(),
             URI.create("https://localhost:8443/realms/shoostr-mcp"),
             URI.create("https://localhost:9443/mcp"),
             SSLContext.getDefault());

@@ -1,10 +1,13 @@
 package io.github.suppierk.shoostr.example.streaming;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Composes one file-and-stream example without managing a second server. */
 public final class StreamingExample {
+  private static final Logger LOGGER = LoggerFactory.getLogger(StreamingExample.class);
+
   /** Prevents construction of the launcher. */
   private StreamingExample() {}
 
@@ -14,18 +17,18 @@ public final class StreamingExample {
    * @throws Exception if startup fails
    */
   static void main() throws Exception {
-    var app = application(Options.defaults());
+    var app = application();
     app.start();
+    LOGGER.info("Assets and streams: http://127.0.0.1:{}/assets/greeting.txt", app.port());
   }
 
   /**
    * Returns an unstarted app whose lifecycle belongs to its caller.
    *
-   * @param options listener settings
    * @return app with file and stream handlers
    */
-  public static Shoostr application(Options options) {
-    return new Shoostr(options)
+  public static Shoostr application() {
+    return new Shoostr()
         .routes(
             routes -> {
               routes.classpathResources("/assets", "/public");

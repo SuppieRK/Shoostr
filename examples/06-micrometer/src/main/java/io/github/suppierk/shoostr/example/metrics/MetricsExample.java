@@ -1,13 +1,16 @@
 package io.github.suppierk.shoostr.example.metrics;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.micrometer.MicrometerMetrics;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Composes the metrics demonstration without a second HTTP server for metrics. */
 public final class MetricsExample {
+  private static final Logger LOGGER = LoggerFactory.getLogger(MetricsExample.class);
+
   /** Prevents construction of the launcher. */
   private MetricsExample() {}
 
@@ -17,7 +20,7 @@ public final class MetricsExample {
    * @throws Exception if startup fails
    */
   static void main() throws Exception {
-    var app = application(Options.defaults());
+    var app = application();
 
     try {
       app.start();
@@ -31,17 +34,16 @@ public final class MetricsExample {
       throw failure;
     }
 
-    System.out.println("Metrics: http://127.0.0.1:" + app.port() + "/metrics");
+    LOGGER.info("Metrics: http://127.0.0.1:{}/metrics", app.port());
   }
 
   /**
    * Returns the app with explicit registry ownership and instrumentation installation.
    *
-   * @param options listener settings
    * @return app owned by its eventual caller
    */
-  public static Shoostr application(Options options) {
-    var app = new Shoostr(options);
+  public static Shoostr application() {
+    var app = new Shoostr();
 
     try {
       var configuration = new MetricsConfiguration();

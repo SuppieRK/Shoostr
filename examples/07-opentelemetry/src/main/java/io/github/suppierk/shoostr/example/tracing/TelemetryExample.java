@@ -1,14 +1,17 @@
 package io.github.suppierk.shoostr.example.tracing;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.opentelemetry.OpenTelemetryTracing;
 import io.opentelemetry.api.trace.Span;
 import java.io.IOException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Wires request handling independently from tracing configuration. */
 public final class TelemetryExample {
+  private static final Logger LOGGER = LoggerFactory.getLogger(TelemetryExample.class);
+
   /** Prevents construction of the launcher. */
   private TelemetryExample() {}
 
@@ -18,7 +21,7 @@ public final class TelemetryExample {
    * @throws Exception if startup fails
    */
   static void main() throws Exception {
-    var app = application(Options.defaults());
+    var app = application();
 
     try {
       app.start();
@@ -31,16 +34,17 @@ public final class TelemetryExample {
 
       throw failure;
     }
+
+    LOGGER.info("Tracing: http://127.0.0.1:{}/hello/Ada", app.port());
   }
 
   /**
    * Builds an unstarted app for explicit caller-owned lifecycle.
    *
-   * @param options listener settings
    * @return unstarted tracing application
    */
-  public static Shoostr application(Options options) {
-    var app = new Shoostr(options);
+  public static Shoostr application() {
+    var app = new Shoostr();
 
     try {
       var configuration = new TelemetryConfiguration();

@@ -2,6 +2,9 @@ plugins { id 'application' }
 
 dependencies {
 	implementation project(':core')
+	implementation 'org.slf4j:slf4j-api:2.0.20'
+	runtimeOnly 'ch.qos.logback:logback-classic:1.6.5'
+	runtimeOnly 'org.slf4j:slf4j-jdk-platform-logging:2.0.20'
 	testImplementation project(':test')
 }
 

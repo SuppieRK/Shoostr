@@ -11,6 +11,11 @@ run examples only in a trusted development environment. `TestServer` always bind
 loopback, and the supplied Compose recipes publish user-facing ports on host loopback.
 Choose an explicit `Options` host of `127.0.0.1` for a loopback-only application.
 
+Each example uses SLF4J with an application-owned Logback backend. Its local
+`src/main/resources/logback.xml` sends INFO and higher levels to stderr. The runtime
+`slf4j-jdk-platform-logging` bridge routes Shoostr's JDK logger into that same backend;
+framework modules do not select a provider or enable per-request logging by default.
+
 ## Learning path
 
 | Task | Example / Gradle project | Observable lesson |

@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr.example.tracing;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import org.junit.jupiter.api.Test;
@@ -11,7 +10,7 @@ import org.junit.jupiter.api.Test;
 class TelemetryExampleTest {
   @Test
   void continuesTheIncomingW3cTraceInTheHandler() throws Exception {
-    try (var test = TestServer.start(TelemetryExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(TelemetryExample.application())) {
       var response =
           test.send(
               request ->

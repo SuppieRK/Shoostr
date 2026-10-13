@@ -1,10 +1,13 @@
 package io.github.suppierk.shoostr.example.authentication;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Registers routes using a separately configured authentication policy. */
 public final class AuthenticationExample {
+  private static final Logger LOGGER = LoggerFactory.getLogger(AuthenticationExample.class);
+
   /** Prevents construction of the launcher. */
   private AuthenticationExample() {}
 
@@ -14,21 +17,20 @@ public final class AuthenticationExample {
    * @throws Exception if startup fails
    */
   static void main() throws Exception {
-    var app = application(Options.defaults());
+    var app = application();
     app.start();
-    System.out.println("Auth: http://127.0.0.1:" + app.port() + "/private/me");
-    System.out.println("Demo logins: demo / local-only; admin / local-only");
+    LOGGER.info("Auth: http://127.0.0.1:{}/private/me", app.port());
+    LOGGER.info("Demo logins: demo / local-only; admin / local-only");
   }
 
   /**
    * Returns an unstarted app with explicit group protection.
    *
-   * @param options listener settings
    * @return app owned by its eventual caller
    */
-  public static Shoostr application(Options options) {
+  public static Shoostr application() {
     var auth = DemoAuthentication.create();
-    return new Shoostr(options)
+    return new Shoostr()
         .authentication(auth)
         .routes(
             routes -> {

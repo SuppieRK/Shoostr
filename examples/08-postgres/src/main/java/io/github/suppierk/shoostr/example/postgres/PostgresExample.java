@@ -1,6 +1,5 @@
 package io.github.suppierk.shoostr.example.postgres;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
@@ -11,9 +10,13 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.function.LongFunction;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Composes persistence functions without a DI framework or framework-owned database. */
 public final class PostgresExample {
+  private static final Logger LOGGER = LoggerFactory.getLogger(PostgresExample.class);
+
   /** Prevents construction of the launcher. */
   private PostgresExample() {}
 
@@ -24,23 +27,23 @@ public final class PostgresExample {
    */
   static void main() throws Exception {
     var notes = DatabaseConfiguration.create();
-    var app = application(Options.defaults(), notes::create, notes::find);
+    var app = application(notes::create, notes::find);
     app.start();
+    LOGGER.info("PostgreSQL notes: http://127.0.0.1:{}/notes", app.port());
   }
 
   /**
    * Builds an unstarted app with application-selected persistence dependencies.
    *
-   * @param options listener settings
    * @param create note creation, safe for concurrent calls
    * @param find note lookup, safe for concurrent calls
    * @return app owned by its caller; supplied dependencies remain caller-owned
    */
   public static Shoostr application(
-      Options options, Function<String, Note> create, LongFunction<Optional<Note>> find) {
+      Function<String, Note> create, LongFunction<Optional<Note>> find) {
     Objects.requireNonNull(create);
     Objects.requireNonNull(find);
-    return new Shoostr(options)
+    return new Shoostr()
         .routes(
             routes -> {
               routes.get("/health", (_, response) -> response.text("healthy"));

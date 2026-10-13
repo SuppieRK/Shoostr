@@ -33,7 +33,7 @@ Select POST `/users` in the UI, authorize basic credentials, then send `{"name":
 Try it out should return 201 and the same JSON. Missing credentials return 401; a malformed name
 returns 400. `/users/alice` returns 404. Group response overrides preserve unrelated defaults.
 
-`OpenApiExample.application(options)` returns an unstarted app, allowing the test harness to
+`OpenApiExample.application()` returns an unstarted app, allowing the test harness to
 choose an ephemeral port. Its dependencies and schemas are application-owned configuration.
 The example codec converts explicit JSON trees without scanning application models; ordinary
 byte/text handlers remain available in the same app. OpenAPI does not discover codec types.

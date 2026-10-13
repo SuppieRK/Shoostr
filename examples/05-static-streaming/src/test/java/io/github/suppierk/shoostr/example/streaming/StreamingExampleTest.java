@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr.example.streaming;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import org.junit.jupiter.api.Test;
@@ -11,14 +10,14 @@ import org.junit.jupiter.api.Test;
 class StreamingExampleTest {
   @Test
   void returnsNotFoundForAnAbsentMountedAsset() throws Exception {
-    try (var test = TestServer.start(StreamingExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(StreamingExample.application())) {
       assertEquals(404, test.send(request -> request.path("/assets/missing.txt")).statusCode());
     }
   }
 
   @Test
   void refusesTraversalOutsideTheMountedDirectory() throws Exception {
-    try (var test = TestServer.start(StreamingExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(StreamingExample.application())) {
       assertEquals(
           404, test.send(request -> request.path("/assets/../private-example.txt")).statusCode());
     }
@@ -26,7 +25,7 @@ class StreamingExampleTest {
 
   @Test
   void completesAfterSendingBothEventFrames() throws Exception {
-    try (var test = TestServer.start(StreamingExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(StreamingExample.application())) {
       var response =
           test.send(
               request -> request.path("/events").header("Accept", "text/event-stream"),
@@ -39,7 +38,7 @@ class StreamingExampleTest {
 
   @Test
   void completesTheFiniteDownloadWhenItsHandlerReturns() throws Exception {
-    try (var test = TestServer.start(StreamingExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(StreamingExample.application())) {
       var response =
           test.send(request -> request.path("/download"), HttpResponse.BodyHandlers.ofString());
       assertAll(
@@ -54,7 +53,7 @@ class StreamingExampleTest {
 
   @Test
   void servesTheClasspathAssetFromItsExplicitMount() throws Exception {
-    try (var test = TestServer.start(StreamingExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(StreamingExample.application())) {
       var response =
           test.send(
               request -> request.path("/assets/greeting.txt"),

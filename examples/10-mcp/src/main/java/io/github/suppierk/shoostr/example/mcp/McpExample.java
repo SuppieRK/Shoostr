@@ -3,9 +3,13 @@ package io.github.suppierk.shoostr.example.mcp;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import java.io.IOException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Public MCP example using the SDK's own configuration and feature types. */
 public final class McpExample {
+  private static final Logger LOGGER = LoggerFactory.getLogger(McpExample.class);
+
   /** Prevents instantiation of the example factory. */
   private McpExample() {}
 
@@ -15,7 +19,7 @@ public final class McpExample {
    * @throws Exception if startup fails
    */
   static void main() throws Exception {
-    var app = application(Options.defaults());
+    var app = application();
 
     try {
       app.start();
@@ -29,7 +33,16 @@ public final class McpExample {
       throw failure;
     }
 
-    System.out.println("MCP endpoint: http://127.0.0.1:" + app.port() + "/mcp");
+    LOGGER.info("MCP endpoint: http://127.0.0.1:{}/mcp", app.port());
+  }
+
+  /**
+   * Creates an unstarted MCP application with default listener settings.
+   *
+   * @return application owned by its eventual caller
+   */
+  public static Shoostr application() {
+    return application(Options.defaults());
   }
 
   /**

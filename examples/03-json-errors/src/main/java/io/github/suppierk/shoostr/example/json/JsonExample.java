@@ -1,12 +1,15 @@
 package io.github.suppierk.shoostr.example.json;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Wires the codec and handlers without adding serialization to the framework core. */
 public final class JsonExample {
+  private static final Logger LOGGER = LoggerFactory.getLogger(JsonExample.class);
+
   /** Prevents construction of the launcher. */
   private JsonExample() {}
 
@@ -16,19 +19,18 @@ public final class JsonExample {
    * @throws Exception if startup fails
    */
   static void main() throws Exception {
-    var app = application(Options.defaults());
+    var app = application();
     app.start();
-    System.out.println("JSON: http://127.0.0.1:" + app.port() + "/users");
+    LOGGER.info("JSON: http://127.0.0.1:{}/users", app.port());
   }
 
   /**
    * Creates the unstarted JSON app; tests use its actual HTTP interface.
    *
-   * @param options listener settings
    * @return application owned by the caller
    */
-  public static Shoostr application(Options options) {
-    var app = new Shoostr(options);
+  public static Shoostr application() {
+    var app = new Shoostr();
     app.codec(new UserCodec())
         .routes(
             routes ->

@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.swagger.v3.core.util.Json31;
 import java.net.http.HttpResponse;
@@ -16,7 +15,7 @@ import org.junit.jupiter.api.Test;
 class OpenApiExampleTest {
   @Test
   void acceptsAuthenticatedTypedPostAfterRejectingUnreadBody() throws Exception {
-    try (var test = TestServer.start(OpenApiExample.application(Options.defaults().withPort(0)))) {
+    try (var test = TestServer.start(OpenApiExample.application())) {
       assertEquals(
           "healthy",
           test.send(request -> request.path("/health"), HttpResponse.BodyHandlers.ofString())
@@ -53,7 +52,7 @@ class OpenApiExampleTest {
 
   @Test
   void documentsConditionalEndpointsOnlyInTheirSelectedInternalDocument() throws Exception {
-    try (var test = TestServer.start(OpenApiExample.application(Options.defaults().withPort(0)))) {
+    try (var test = TestServer.start(OpenApiExample.application())) {
       var authorization =
           "Basic "
               + Base64.getEncoder()
@@ -86,7 +85,7 @@ class OpenApiExampleTest {
 
   @Test
   void requiresAuthenticationForEveryDocumentationBootstrapResource() throws Exception {
-    try (var test = TestServer.start(OpenApiExample.application(Options.defaults().withPort(0)))) {
+    try (var test = TestServer.start(OpenApiExample.application())) {
       for (var path :
           List.of(
               "/docs/",

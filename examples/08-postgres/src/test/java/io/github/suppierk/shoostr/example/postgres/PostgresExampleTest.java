@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr.example.postgres;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
@@ -16,8 +15,7 @@ class PostgresExampleTest {
   void returnsNotFoundWhenTheLookupHasNoSuchNote() throws Exception {
     try (var test =
         TestServer.start(
-            PostgresExample.application(
-                Options.defaults(), text -> new Note(41, text), _ -> Optional.empty()))) {
+            PostgresExample.application(text -> new Note(41, text), _ -> Optional.empty()))) {
       assertEquals(404, test.send(request -> request.path("/notes/41")).statusCode());
     }
   }
@@ -26,8 +24,7 @@ class PostgresExampleTest {
   void rejectsBlankTextBeforeCreation() throws Exception {
     try (var test =
         TestServer.start(
-            PostgresExample.application(
-                Options.defaults(), text -> new Note(41, text), _ -> Optional.empty()))) {
+            PostgresExample.application(text -> new Note(41, text), _ -> Optional.empty()))) {
       assertEquals(
           400,
           test.send(
@@ -44,8 +41,7 @@ class PostgresExampleTest {
   void rejectsAnIdentityBeyondTheLongRange() throws Exception {
     try (var test =
         TestServer.start(
-            PostgresExample.application(
-                Options.defaults(), text -> new Note(41, text), _ -> Optional.empty()))) {
+            PostgresExample.application(text -> new Note(41, text), _ -> Optional.empty()))) {
       assertEquals(
           400, test.send(request -> request.path("/notes/9223372036854775808")).statusCode());
     }
@@ -56,7 +52,6 @@ class PostgresExampleTest {
     try (var test =
         TestServer.start(
             PostgresExample.application(
-                Options.defaults(),
                 text -> new Note(41, text),
                 identity -> Optional.of(new Note(identity, "Stored note"))))) {
       var response =
@@ -71,8 +66,7 @@ class PostgresExampleTest {
   void returnsTheIdentityFromTheSuppliedCreationFunction() throws Exception {
     try (var test =
         TestServer.start(
-            PostgresExample.application(
-                Options.defaults(), text -> new Note(41, text), _ -> Optional.empty()))) {
+            PostgresExample.application(text -> new Note(41, text), _ -> Optional.empty()))) {
       var response =
           test.send(
               request ->

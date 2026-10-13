@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr.example.mcp.oauth;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -53,7 +52,7 @@ class ExternalOAuthTest {
     Files.createDirectories(output);
     var log = output.resolve("runner.log");
     var app =
-        McpOAuthExample.application(Options.defaults(), issuer, resource, trust)
+        McpOAuthExample.application(issuer, resource, trust)
             .tls(
                 tls -> {
                   tls.setKeyStore(keys);

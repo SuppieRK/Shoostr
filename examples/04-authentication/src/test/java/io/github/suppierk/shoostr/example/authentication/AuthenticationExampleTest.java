@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr.example.authentication;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
@@ -14,7 +13,7 @@ import org.junit.jupiter.api.Test;
 class AuthenticationExampleTest {
   @Test
   void leavesThePublicRouteOutsideTheAuthenticationGroup() throws Exception {
-    try (var test = TestServer.start(AuthenticationExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(AuthenticationExample.application())) {
       var response =
           test.send(request -> request.path("/public"), HttpResponse.BodyHandlers.ofString());
       assertAll(
@@ -25,7 +24,7 @@ class AuthenticationExampleTest {
 
   @Test
   void exposesTheAuthenticatedPrincipalOnTheProtectedGroup() throws Exception {
-    try (var test = TestServer.start(AuthenticationExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(AuthenticationExample.application())) {
       var credentials =
           Base64.getEncoder().encodeToString("demo:local-only".getBytes(StandardCharsets.UTF_8));
       var response =
@@ -43,7 +42,7 @@ class AuthenticationExampleTest {
 
   @Test
   void permitsTheAdministratorToUseTheRoleProtectedOperation() throws Exception {
-    try (var test = TestServer.start(AuthenticationExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(AuthenticationExample.application())) {
       var credentials =
           Base64.getEncoder().encodeToString("admin:local-only".getBytes(StandardCharsets.UTF_8));
       var response =
@@ -61,7 +60,7 @@ class AuthenticationExampleTest {
 
   @Test
   void rejectsAnIncorrectPasswordBeforeInvokingTheProtectedHandler() throws Exception {
-    try (var test = TestServer.start(AuthenticationExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(AuthenticationExample.application())) {
       var credentials =
           Base64.getEncoder().encodeToString("demo:wrong".getBytes(StandardCharsets.UTF_8));
       var response =
@@ -76,7 +75,7 @@ class AuthenticationExampleTest {
 
   @Test
   void rejectsAnAuthenticatedReaderWithoutTheAdminRole() throws Exception {
-    try (var test = TestServer.start(AuthenticationExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(AuthenticationExample.application())) {
       var credentials =
           Base64.getEncoder().encodeToString("demo:local-only".getBytes(StandardCharsets.UTF_8));
       var response =
@@ -92,7 +91,7 @@ class AuthenticationExampleTest {
 
   @Test
   void challengesAnUnauthenticatedRequestToTheProtectedGroup() throws Exception {
-    try (var test = TestServer.start(AuthenticationExample.application(Options.defaults()))) {
+    try (var test = TestServer.start(AuthenticationExample.application())) {
       var response = test.send(request -> request.path("/private/me"));
       assertAll(
           () -> assertEquals(401, response.statusCode()),

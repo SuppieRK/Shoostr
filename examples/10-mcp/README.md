@@ -14,7 +14,9 @@ cmdshape ./gradlew :mcp-example:run
 
 Connect an MCP client to `http://127.0.0.1:8080/mcp`. `/health` is a finite readiness
 route. Core owns JVM shutdown cleanup; the example does not install another hook.
-`McpExample.application(options)` also returns the same app unstarted for live tests.
+`McpExample.application()` also returns the same app unstarted for live tests.
+Pass explicit `Options` only when selecting custom listener settings; its port determines
+the default allowed browser Origin.
 The listener binds all IPv4 interfaces. The separately configured public URL is the
 only allowed present browser Origin; absent
 Origin is allowed for non-browser clients. Use the exact `127.0.0.1` URL printed

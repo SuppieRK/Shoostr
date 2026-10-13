@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr.example.requests;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import org.junit.jupiter.api.Test;
@@ -11,9 +10,7 @@ import org.junit.jupiter.api.Test;
 class RequestExampleTest {
   @Test
   void passesTheDecodedExplicitQueryNameToTheDependency() throws Exception {
-    try (var test =
-        TestServer.start(
-            RequestExample.application(Options.defaults(), name -> "Welcome " + name))) {
+    try (var test = TestServer.start(RequestExample.application(name -> "Welcome " + name))) {
       var response =
           test.send(
               request -> request.path("/welcome?name=Ada%20Lovelace"),
@@ -26,8 +23,7 @@ class RequestExampleTest {
 
   @Test
   void returnsEmptySearchTextWhenNoTagsAreSupplied() throws Exception {
-    try (var test =
-        TestServer.start(RequestExample.application(Options.defaults(), name -> name))) {
+    try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(request -> request.path("/search"), HttpResponse.BodyHandlers.ofString());
       assertAll(
@@ -37,17 +33,14 @@ class RequestExampleTest {
 
   @Test
   void rejectsABlankExplicitQueryNameRatherThanApplyingTheDefault() throws Exception {
-    try (var test =
-        TestServer.start(RequestExample.application(Options.defaults(), name -> name))) {
+    try (var test = TestServer.start(RequestExample.application(name -> name))) {
       assertEquals(400, test.send(request -> request.path("/welcome?name=%20")).statusCode());
     }
   }
 
   @Test
   void usesWorldWhenTheOptionalQueryNameIsAbsent() throws Exception {
-    try (var test =
-        TestServer.start(
-            RequestExample.application(Options.defaults(), name -> "Welcome " + name))) {
+    try (var test = TestServer.start(RequestExample.application(name -> "Welcome " + name))) {
       var response =
           test.send(request -> request.path("/welcome"), HttpResponse.BodyHandlers.ofString());
       assertAll(
@@ -58,8 +51,7 @@ class RequestExampleTest {
 
   @Test
   void preservesRepeatedQueryValuesInOrder() throws Exception {
-    try (var test =
-        TestServer.start(RequestExample.application(Options.defaults(), name -> name))) {
+    try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(
               request -> request.path("/search?tag=java&tag=HTTP%20API"),
@@ -72,8 +64,7 @@ class RequestExampleTest {
 
   @Test
   void usesTheDependencySuppliedBeforeStartingTheFixture() throws Exception {
-    try (var test =
-        TestServer.start(RequestExample.application(Options.defaults(), name -> "Test " + name))) {
+    try (var test = TestServer.start(RequestExample.application(name -> "Test " + name))) {
       var response =
           test.send(
               request -> request.path("/greetings/Ada"), HttpResponse.BodyHandlers.ofString());

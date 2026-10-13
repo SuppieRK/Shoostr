@@ -1,13 +1,16 @@
 package io.github.suppierk.shoostr.example.openapi;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.swagger.v3.core.util.Json31;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /** Composes the explicit OpenAPI, codec and authentication demonstration. */
 public final class OpenApiExample {
+  private static final Logger LOGGER = LoggerFactory.getLogger(OpenApiExample.class);
+
   /** Prevents instantiation of the example factory. */
   private OpenApiExample() {}
 
@@ -17,24 +20,23 @@ public final class OpenApiExample {
    * @throws Exception if startup fails
    */
   static void main() throws Exception {
-    var app = application(Options.defaults());
+    var app = application();
     app.start();
-    System.out.println("Open http://127.0.0.1:" + app.port() + "/docs/");
-    System.out.println("Demo username: demo");
-    System.out.println("Demo password: local-only");
+    LOGGER.info("Open http://127.0.0.1:{}/docs/", app.port());
+    LOGGER.info("Demo username: demo");
+    LOGGER.info("Demo password: local-only");
   }
 
   /**
    * Builds an unstarted app with independently configured dependencies.
    *
-   * @param options listener settings
    * @return app owned by its caller
    */
-  public static Shoostr application(Options options) {
+  public static Shoostr application() {
     var configuration = new OpenApiConfiguration();
     var security = OpenApiAuthentication.create();
     var app =
-        new Shoostr(options)
+        new Shoostr()
             .authentication(security)
             .extensions(configuration.docs(), configuration.internal())
             .routes(
