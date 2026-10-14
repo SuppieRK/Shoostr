@@ -170,10 +170,15 @@ final class StaticFiles implements Closeable {
    * Returns a synthetic endpoint for one existing GET or HEAD resource. The resource is opened by
    * the endpoint only after hooks and gates have admitted the request.
    *
+   * <p>Sonar rule S4449 is suppressed here because the endpoint record's constructor already marks
+   * its optional WebSocket factory, local behavior and executor with JSpecify {@code @Nullable}.
+   * Passing null for those components intentionally selects the ordinary HTTP defaults.
+   *
    * @param path request path
    * @param method requested HTTP method
    * @return synthetic endpoint, or null when this mount has no matching resource
    */
+  @SuppressWarnings("java:S4449")
   RadixRoutes.@Nullable Endpoint endpoint(String path, @Nullable HttpMethods method) {
     if (method == null || (method != HttpMethods.GET && method != HttpMethods.HEAD)) {
       return null;
