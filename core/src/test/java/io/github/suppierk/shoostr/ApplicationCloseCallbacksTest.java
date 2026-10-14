@@ -177,11 +177,9 @@ class ApplicationCloseCallbacksTest {
     try (var app = new Shoostr()) {
       app.beforeClose(() -> invoked.add("stop"));
       app.afterClose(() -> invoked.add("dispose"));
+      var extension = new FailingInstallation(rejected);
       assertSame(
-          rejected,
-          assertThrows(
-              IllegalStateException.class,
-              () -> app.extensions(new FailingInstallation(rejected))));
+          rejected, assertThrows(IllegalStateException.class, () -> app.extensions(extension)));
     }
 
     assertEquals(List.of("stop", "dispose"), invoked);
@@ -272,10 +270,8 @@ class ApplicationCloseCallbacksTest {
             throw cleanup;
           });
 
-      var failure =
-          assertThrows(
-              IllegalArgumentException.class,
-              () -> app.extensions(new FailingInstallation(rejected)));
+      var extension = new FailingInstallation(rejected);
+      var failure = assertThrows(IllegalArgumentException.class, () -> app.extensions(extension));
       assertSame(rejected, failure);
       assertEquals(1, failure.getSuppressed().length);
       var callbackFailure = assertInstanceOf(IOException.class, failure.getSuppressed()[0]);
@@ -291,8 +287,8 @@ class ApplicationCloseCallbacksTest {
 
     try (var app = new Shoostr()) {
       app.afterClose(() -> invoked.add("registry"));
-      assertThrows(
-          IllegalStateException.class, () -> app.extensions(new ClosingInstallation(app, invoked)));
+      var extension = new ClosingInstallation(app, invoked);
+      assertThrows(IllegalStateException.class, () -> app.extensions(extension));
     }
 
     assertEquals(List.of("beforeStop", "extension", "registry"), invoked);
@@ -337,6 +333,7 @@ class ApplicationCloseCallbacksTest {
       var root = app.routes();
       var child = new AtomicReference<Routes>();
       root.path("/child", child::set);
+      var nested = child.get();
       app.beforeClose(
           () -> {
             assertAll(
@@ -349,7 +346,7 @@ class ApplicationCloseCallbacksTest {
                         IllegalStateException.class, () -> root.get("/late", (_, _) -> {})),
                 () ->
                     assertThrows(
-                        IllegalStateException.class, () -> child.get().get("/late", (_, _) -> {})));
+                        IllegalStateException.class, () -> nested.get("/late", (_, _) -> {})));
             verified.set(true);
           });
     }

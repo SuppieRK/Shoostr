@@ -892,14 +892,7 @@ public final class Shoostr implements Closeable {
       failure = cancelPendingMatches(failure);
 
       removeShutdownHook();
-      for (int index = extensions.size() - 1; index >= 0; index--) {
-        try {
-          extensions.get(index).close();
-        } catch (IOException | RuntimeException closeFailure) {
-          failure = appendCloseFailure(failure, "Could not close extension", closeFailure);
-        }
-      }
-      extensions.clear();
+      failure = closeExtensions(failure);
       if (!installing) {
         failure =
             runCloseCallbacks(
@@ -968,6 +961,24 @@ public final class Shoostr implements Closeable {
         failure = appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
       }
     }
+    return failure;
+  }
+
+  /**
+   * Closes and releases owned extensions in reverse order without skipping ordinary failures.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException closeExtensions(@Nullable IOException failure) {
+    for (int index = extensions.size() - 1; index >= 0; index--) {
+      try {
+        extensions.get(index).close();
+      } catch (IOException | RuntimeException closeFailure) {
+        failure = appendCloseFailure(failure, "Could not close extension", closeFailure);
+      }
+    }
+    extensions.clear();
     return failure;
   }
 
