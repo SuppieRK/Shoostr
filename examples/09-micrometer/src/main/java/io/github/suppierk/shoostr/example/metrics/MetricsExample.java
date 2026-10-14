@@ -2,6 +2,8 @@ package io.github.suppierk.shoostr.example.metrics;
 
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.micrometer.MicrometerMetrics;
+import io.micrometer.prometheusmetrics.PrometheusConfig;
+import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import org.slf4j.Logger;
@@ -45,9 +47,9 @@ public final class MetricsExample {
    * Returns the app with explicit registry ownership and instrumentation installation.
    *
    * <p>S2095 is suppressed because the caller owns the returned app, which owns the registry
-   * through MetricsConfiguration; the metrics adapter borrows that registry. S1181 is suppressed
-   * because failed assembly must also clean up after an Error before rethrowing the original
-   * failure.
+   * through its explicit afterClose callback; the metrics adapter borrows that registry. S1181 is
+   * suppressed because failed assembly must also clean up after an Error before rethrowing the
+   * original failure.
    *
    * @return app owned by its eventual caller
    */
@@ -56,15 +58,14 @@ public final class MetricsExample {
     var app = new Shoostr();
 
     try {
-      // MetricsConfiguration is example-local; it creates and owns Micrometer's registry.
-      var configuration = new MetricsConfiguration();
-      // Register it as a core Extension so app.close() also closes the registry.
-      app.extensions(configuration);
+      // Micrometer's Prometheus integration creates the registry; Shoostr does not configure it.
+      var registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
+      // Core's afterClose callback releases it after request drain and extension cleanup.
+      app.afterClose(registry::close);
       // Shoostr's micrometer module provides this adapter; allRequests enables instrumentation.
-      app.extensions(new MicrometerMetrics(configuration.registry()).allRequests());
+      app.extensions(new MicrometerMetrics(registry).allRequests());
       app.routes(
           routes -> {
-            var registry = configuration.registry();
             routes.get(
                 "/hello/{name}",
                 (request, response) ->

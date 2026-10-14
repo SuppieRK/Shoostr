@@ -17,7 +17,34 @@ app.routes(routes -> {
 }).start();
 ```
 
-`Shoostr` implements `java.io.Closeable`. `start()` registers its JVM shutdown hook after starting the listener, so standalone servers need no application-managed hook. `close()` stops the listener and executor and removes that hook; repeated and concurrent close calls are harmless. A listener startup failure after route compilation cleans up acquired resources and prevents restart. A rejected route compilation leaves registration open for retry, including when a path callback is still active. Closing before startup ends registration and prevents startup. Shutdown failures from explicit `close()` are reported as `IOException`, and failures in the JVM hook are logged with the JDK logger.
+`Shoostr` implements `java.io.Closeable`. Each successfully constructed instance registers one
+JVM shutdown hook, including applications that never start; standalone servers need no
+application-managed hook. `start()` does not add another hook. `close()` stops the listener and
+owned executor and removes that hook; repeated and concurrent close calls are harmless. The
+unstarted hook does not keep the JVM alive, but retains an unclosed application until JVM
+shutdown. Explicitly close abandoned instances rather than relying on garbage collection.
+A listener startup failure after route compilation cleans up acquired resources and prevents
+restart. A rejected route compilation leaves registration open for retry, including when a
+path callback is still active. Closing before startup ends registration and prevents startup.
+Shutdown failures from explicit `close()` are reported as `IOException`, and failures in the
+JVM hook are logged with the JDK logger.
+
+Register `beforeClose(Runnable)` for prompt application-work signalling and
+`afterClose(Runnable)` for final application resource cleanup. Both return the same app and
+must be configured before startup. Before callbacks run in written order after the app and
+route registration are marked closed, but before resource disposal and native drain. After
+callbacks run in reverse order after framework and extension cleanup.
+If provider setup calls `close()` reentrantly, final callbacks wait until setup unwinds and
+cleanup of successfully claimed providers finishes. Each registration runs
+once, including explicit close before startup, try-with-resources, failed startup and JVM
+shutdown; repeated registrations are not deduplicated. Ordinary callback failures are collected
+as `IOException` without skipping remaining callbacks or ordinary shutdown. Callbacks execute
+synchronously on the closing thread while holding the app monitor: do not wait for another
+thread that needs a synchronized app operation. Early callbacks must not wait for handlers or
+close dependencies still used by draining requests. Caller-owned executor tasks and code that
+ignores interruption may outlive shutdown; coordinate that work before disposing its dependencies.
+The JVM hook is an exit fallback, not immediate rollback: if assembly fails and the JVM continues
+running, explicitly close the partially configured app.
 
 `Closeable` also extends `AutoCloseable`: try-with-resources still closes the app when its block ends. Use it for scoped lifetimes such as tests; normal server setup can use the unscoped example above. Registration is thread-safe across the root and every nested scope and must finish before `start()`. No builder is involved.
 

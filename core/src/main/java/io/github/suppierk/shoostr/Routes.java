@@ -2075,6 +2075,13 @@ public final class Routes implements Closeable {
     return root.websocketRouter;
   }
 
+  /** Ends registration across all scopes without disposing pending registration resources. */
+  void endRegistration() {
+    synchronized (lock) {
+      root.closed = true;
+    }
+  }
+
   /**
    * Permanently ends registration for the root and every child scope and releases pending endpoint
    * entries and duplicate-detection keys. Repeated calls are harmless, including calls through

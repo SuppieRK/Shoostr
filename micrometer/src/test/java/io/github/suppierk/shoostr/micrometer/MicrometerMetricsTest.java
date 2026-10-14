@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
@@ -23,11 +24,13 @@ import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -36,6 +39,51 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 class MicrometerMetricsTest {
+  @Test
+  @Timeout(15)
+  void keepsRegistryOpenUntilDrainingRequestsAndExtensionCleanupFinish() throws Exception {
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var consumed = new AtomicBoolean();
+    var registry = new SimpleMeterRegistry();
+
+    try (var app = new Shoostr(Options.defaults().withPort(0));
+        var requests = Executors.newVirtualThreadPerTaskExecutor()) {
+      app.afterClose(registry::close);
+      app.beforeClose(release::countDown);
+      app.extensions(
+          new MicrometerMetrics(registry).allRequests(), new RegistryConsumer(registry, consumed));
+      app.routes()
+          .get(
+              "/drain",
+              (_, response) -> {
+                entered.countDown();
+                assertTrue(release.await(5, TimeUnit.SECONDS));
+                response.text("drained");
+              });
+
+      try (var test = TestServer.start(app)) {
+        var pending =
+            requests.submit(
+                () ->
+                    test.send(
+                        request -> request.path("/drain"), HttpResponse.BodyHandlers.discarding()));
+
+        try {
+          assertTrue(entered.await(5, TimeUnit.SECONDS));
+          app.close();
+          assertEquals(200, pending.get(5, TimeUnit.SECONDS).statusCode());
+          assertTrue(consumed.get());
+          assertTrue(registry.isClosed());
+        } finally {
+          release.countDown();
+        }
+      }
+    } finally {
+      registry.close();
+    }
+  }
+
   @ParameterizedTest
   @CsvSource({"200, none", "404, none", "500, server"})
   @Timeout(10)
@@ -389,5 +437,20 @@ class MicrometerMetricsTest {
         Map.of("method", "GET", "route", route, "status", Integer.toString(status), "error", error),
         timer.getId().getTags().stream().collect(Collectors.toMap(Tag::getKey, Tag::getValue)));
     assertEquals(1L, timer.count());
+  }
+
+  private record RegistryConsumer(SimpleMeterRegistry registry, AtomicBoolean consumed)
+      implements Extension<Void> {
+    private RegistryConsumer {
+      Objects.requireNonNull(registry);
+      Objects.requireNonNull(consumed);
+    }
+
+    @Override
+    public void close() {
+      assertFalse(registry.isClosed());
+      assertEquals(1, registry.get("http.server.requests").tag("route", "/drain").timer().count());
+      consumed.set(true);
+    }
   }
 }
