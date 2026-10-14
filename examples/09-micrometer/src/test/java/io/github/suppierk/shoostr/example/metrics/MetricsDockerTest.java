@@ -1,7 +1,9 @@
 package io.github.suppierk.shoostr.example.metrics;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -54,27 +56,23 @@ class MetricsDockerTest {
               APP.resolve("/metrics"),
               PROMETHEUS.resolve("/-/ready"),
               GRAFANA.resolve("/api/health"))) {
-        var deadline = System.nanoTime() + Duration.ofMinutes(2).toNanos();
-        boolean ready = false;
-        while (System.nanoTime() < deadline) {
-          try {
-            var response =
-                client.send(
-                    HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(3)).GET().build(),
-                    HttpResponse.BodyHandlers.discarding());
-            ready = response.statusCode() == 200;
-          } catch (IOException unavailable) {
-            // Container listeners can refuse/reset connections while starting.
-          }
-
-          if (ready) {
-            break;
-          }
-
-          TimeUnit.MILLISECONDS.sleep(200);
-        }
-
-        assertTrue(ready, "Backend did not become ready: " + uri);
+        await("Backend readiness: " + uri)
+            .atMost(Duration.ofMinutes(2))
+            .pollInterval(Duration.ofMillis(200))
+            .pollInSameThread()
+            .ignoreExceptionsInstanceOf(IOException.class)
+            .untilAsserted(
+                () ->
+                    assertEquals(
+                        200,
+                        client
+                            .send(
+                                HttpRequest.newBuilder(uri)
+                                    .timeout(Duration.ofSeconds(3))
+                                    .GET()
+                                    .build(),
+                                HttpResponse.BodyHandlers.discarding())
+                            .statusCode()));
       }
     } catch (Exception | Error failure) {
       try {
@@ -136,29 +134,30 @@ class MetricsDockerTest {
         URLEncoder.encode(
             "http_server_requests_seconds_count{route=\"/hello/{name}\",status=\"200\"}",
             StandardCharsets.UTF_8);
-    var deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
-    double count = 0;
-    while (System.nanoTime() < deadline && count < target) {
-      var response =
-          client.send(
-              HttpRequest.newBuilder(PROMETHEUS.resolve("/api/v1/query?query=" + query))
-                  .timeout(Duration.ofSeconds(5))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, response.statusCode());
-      var result = JSON.readTree(response.body()).path("data").path("result");
-      if (!result.isEmpty()) {
-        assertEquals("/hello/{name}", result.get(0).path("metric").path("route").asText());
-        count = Double.parseDouble(result.get(0).path("value").get(1).asText());
-      }
-
-      if (count < target) {
-        TimeUnit.MILLISECONDS.sleep(200);
-      }
-    }
-
-    assertEquals(target, count, "The three additional completed requests must reach Prometheus");
+    await("The three additional completed requests must reach Prometheus")
+        .atMost(Duration.ofSeconds(30))
+        .pollInterval(Duration.ofMillis(200))
+        .pollInSameThread()
+        .untilAsserted(
+            () -> {
+              var response =
+                  client.send(
+                      HttpRequest.newBuilder(PROMETHEUS.resolve("/api/v1/query?query=" + query))
+                          .timeout(Duration.ofSeconds(5))
+                          .GET()
+                          .build(),
+                      HttpResponse.BodyHandlers.ofString());
+              assertEquals(200, response.statusCode());
+              var result = JSON.readTree(response.body()).path("data").path("result");
+              assertFalse(result.isEmpty(), "Prometheus has not scraped the request metric yet");
+              assertAll(
+                  () ->
+                      assertEquals(
+                          "/hello/{name}", result.get(0).path("metric").path("route").asText()),
+                  () ->
+                      assertEquals(
+                          target, Double.parseDouble(result.get(0).path("value").get(1).asText())));
+            });
   }
 
   @Test
@@ -220,31 +219,26 @@ class MetricsDockerTest {
                 "now-5m",
                 "to",
                 "now"));
-    var deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
-    double count = 0;
-    while (System.nanoTime() < deadline && count < 1) {
-      var response =
-          client.send(
-              HttpRequest.newBuilder(GRAFANA.resolve("/api/ds/query"))
-                  .header(HttpHeaders.AUTHORIZATION.value(), AUTHORIZATION)
-                  .header(HttpHeaders.CONTENT_TYPE.value(), "application/json")
-                  .timeout(Duration.ofSeconds(5))
-                  .POST(HttpRequest.BodyPublishers.ofString(body))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, response.statusCode());
-      var frames = JSON.readTree(response.body()).path("results").path("A").path("frames");
-      if (!frames.isEmpty()) {
-        count = frames.get(0).path("data").path("values").get(1).get(0).asDouble();
-      }
-
-      if (count < 1) {
-        TimeUnit.MILLISECONDS.sleep(200);
-      }
-    }
-
-    assertTrue(
-        count >= 1, "Grafana must query actual backend samples, not just provision successfully");
+    await("Grafana must query actual backend samples, not just provision successfully")
+        .atMost(Duration.ofSeconds(30))
+        .pollInterval(Duration.ofMillis(200))
+        .pollInSameThread()
+        .untilAsserted(
+            () -> {
+              var response =
+                  client.send(
+                      HttpRequest.newBuilder(GRAFANA.resolve("/api/ds/query"))
+                          .header(HttpHeaders.AUTHORIZATION.value(), AUTHORIZATION)
+                          .header(HttpHeaders.CONTENT_TYPE.value(), "application/json")
+                          .timeout(Duration.ofSeconds(5))
+                          .POST(HttpRequest.BodyPublishers.ofString(body))
+                          .build(),
+                      HttpResponse.BodyHandlers.ofString());
+              assertEquals(200, response.statusCode());
+              var frames = JSON.readTree(response.body()).path("results").path("A").path("frames");
+              assertFalse(frames.isEmpty(), "Grafana has not received backend samples yet");
+              assertTrue(frames.get(0).path("data").path("values").get(1).get(0).asDouble() >= 1);
+            });
   }
 
   private static void compose(boolean diagnostics, String... arguments) throws Exception {

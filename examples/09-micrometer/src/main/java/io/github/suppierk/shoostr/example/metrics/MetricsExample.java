@@ -17,8 +17,12 @@ public final class MetricsExample {
   /**
    * Starts the app; backend addresses are described by the Compose recipe.
    *
+   * <p>S1181 is suppressed because failed startup must release the owned registry even when an
+   * Error escapes; cleanup runs before the original failure is rethrown.
+   *
    * @throws Exception if startup fails
    */
+  @SuppressWarnings("java:S1181")
   static void main() throws Exception {
     var app = application();
 
@@ -40,8 +44,14 @@ public final class MetricsExample {
   /**
    * Returns the app with explicit registry ownership and instrumentation installation.
    *
+   * <p>S2095 is suppressed because the caller owns the returned app, which owns the registry
+   * through MetricsConfiguration; the metrics adapter borrows that registry. S1181 is suppressed
+   * because failed assembly must also clean up after an Error before rethrowing the original
+   * failure.
+   *
    * @return app owned by its eventual caller
    */
+  @SuppressWarnings({"java:S2095", "java:S1181"})
   public static Shoostr application() {
     var app = new Shoostr();
 

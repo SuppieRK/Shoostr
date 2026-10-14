@@ -16,8 +16,12 @@ public final class McpExample {
   /**
    * Starts the fixture; Shoostr owns JVM shutdown cleanup.
    *
+   * <p>S1181 is suppressed because failed startup must release the owned MCP server even when an
+   * Error escapes; cleanup runs before the original failure is rethrown.
+   *
    * @throws Exception if startup fails
    */
+  @SuppressWarnings("java:S1181")
   static void main() throws Exception {
     var app = application();
 
@@ -48,9 +52,14 @@ public final class McpExample {
   /**
    * Creates an unstarted application with explicit native SDK registrations.
    *
+   * <p>S2095 is suppressed because the caller owns the returned app, which owns the immediately
+   * installed MCP extension and its resources. S1181 is suppressed because failed assembly must
+   * also clean up after an Error before rethrowing the original failure.
+   *
    * @param options listener and resource settings
    * @return app owned by its eventual caller or test fixture
    */
+  @SuppressWarnings({"java:S2095", "java:S1181"})
   public static Shoostr application(Options options) {
     // Options comes from Shoostr core and configures the listener, not the SDK's MCP features.
     var app = new Shoostr(options);

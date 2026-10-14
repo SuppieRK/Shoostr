@@ -420,23 +420,25 @@ class ManagedWebSocketTest {
 
     try (var app = new Shoostr()) {
       app.routes().websocket("/echo", captured::set);
+      var configuration = captured.get();
+      assertNotNull(configuration);
       assertThrows(
-          IllegalStateException.class, () -> captured.get().onText(WebSocketConnection::send));
+          IllegalStateException.class, () -> configuration.onText(WebSocketConnection::send));
     }
   }
 
   @Test
   void releasesAReservedRouteWhenConfigurationFails() throws Exception {
     try (var app = new Shoostr()) {
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
           () ->
-              app.routes()
-                  .websocket(
-                      "/retry",
-                      _ -> {
-                        throw new IllegalArgumentException("Fixture failure");
-                      }));
+              routes.websocket(
+                  "/retry",
+                  _ -> {
+                    throw new IllegalArgumentException("Fixture failure");
+                  }));
       app.routes().websocket("/retry", events -> events.onText(WebSocketConnection::send));
     }
   }
@@ -971,6 +973,105 @@ class ManagedWebSocketTest {
 
   @Test
   @Timeout(10)
+  void preservesInterruptionWhenAnErrorObserverThrowsAnError() throws Exception {
+    var observed = new CompletableFuture<Boolean>();
+    var fatal = new LinkageError("Observer failure");
+    var app =
+        new Shoostr()
+            .routes(
+                routes ->
+                    routes.websocket(
+                        "/failure",
+                        events -> {
+                          events.onOpen(
+                              _ ->
+                                  Thread.currentThread()
+                                      .setUncaughtExceptionHandler(
+                                          (thread, failure) -> {
+                                            if (failure == fatal) {
+                                              observed.complete(thread.isInterrupted());
+                                            } else {
+                                              observed.completeExceptionally(failure);
+                                            }
+                                          }));
+                          events.onText(
+                              (_, _) -> {
+                                Thread.currentThread().interrupt();
+                                throw new IOException("Fixture failure");
+                              });
+                          events.onError(
+                              (_, _) -> {
+                                throw fatal;
+                              });
+                        }));
+
+    try (var test = TestServer.start(app);
+        var client = HttpClient.newHttpClient()) {
+      var socket =
+          client
+              .newWebSocketBuilder()
+              .buildAsync(
+                  new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null),
+                  new Messages())
+              .get(3, TimeUnit.SECONDS);
+
+      try {
+        socket.sendText("fail", true).get(3, TimeUnit.SECONDS);
+        assertTrue(observed.get(3, TimeUnit.SECONDS));
+      } finally {
+        socket.abort();
+      }
+    }
+  }
+
+  @Test
+  @Timeout(10)
+  void completesInterruptibleCloseWorkAfterAnErrorObserverIsInterrupted() throws Exception {
+    var observed = new CompletableFuture<Boolean>();
+    var ready = new CountDownLatch(0);
+    var app =
+        new Shoostr()
+            .routes(
+                routes ->
+                    routes.websocket(
+                        "/failure",
+                        events -> {
+                          events.onText(
+                              (_, _) -> {
+                                throw new IOException("Fixture failure");
+                              });
+                          events.onError(
+                              (_, _) -> {
+                                throw new InterruptedException("Observer interrupted");
+                              });
+                          events.onClose(
+                              (_, _, _) -> {
+                                ready.await();
+                                observed.complete(true);
+                              });
+                        }));
+
+    try (var test = TestServer.start(app);
+        var client = HttpClient.newHttpClient()) {
+      var socket =
+          client
+              .newWebSocketBuilder()
+              .buildAsync(
+                  new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null),
+                  new Messages())
+              .get(3, TimeUnit.SECONDS);
+
+      try {
+        socket.sendText("fail", true).get(3, TimeUnit.SECONDS);
+        assertTrue(observed.get(3, TimeUnit.SECONDS));
+      } finally {
+        socket.abort();
+      }
+    }
+  }
+
+  @Test
+  @Timeout(10)
   void validatesCloseArgumentsBeforeChangingConnectionState() throws Exception {
     var opened = new CompletableFuture<WebSocketConnection>();
     var app =
@@ -993,7 +1094,8 @@ class ManagedWebSocketTest {
       try {
         var connection = opened.get(3, TimeUnit.SECONDS);
         assertThrows(IllegalArgumentException.class, () -> connection.close(1006, "Invalid"));
-        assertThrows(IllegalArgumentException.class, () -> connection.close(1000, "x".repeat(124)));
+        var oversizedReason = "x".repeat(124);
+        assertThrows(IllegalArgumentException.class, () -> connection.close(1000, oversizedReason));
         connection.send("still open");
         assertEquals("still open", received.text.poll(3, TimeUnit.SECONDS));
       } finally {

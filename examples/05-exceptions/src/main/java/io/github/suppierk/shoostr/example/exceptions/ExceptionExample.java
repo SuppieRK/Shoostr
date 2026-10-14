@@ -28,8 +28,12 @@ public final class ExceptionExample {
   /**
    * Creates an unstarted app with inline error-handling demonstrations.
    *
+   * <p>S2095 is suppressed because the caller owns the returned app's lifecycle; closing it here
+   * would return an unusable app.
+   *
    * @return application owned by the caller
    */
+  @SuppressWarnings("java:S2095")
   public static Shoostr application() {
     return new Shoostr()
         // Handle IllegalStateException when no matching exception handler is registered on routes.

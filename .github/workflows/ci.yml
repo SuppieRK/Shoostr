@@ -51,6 +51,10 @@ jobs:
       - name: Start isolated HTTPS OAuth fixture
         working-directory: examples/14-mcp-oauth
         run: |
+          SHOOSTR_OAUTH_KEYSTORE_PASSWORD="$(openssl rand -hex 24)"
+          export SHOOSTR_OAUTH_KEYSTORE_PASSWORD
+          echo "::add-mask::$SHOOSTR_OAUTH_KEYSTORE_PASSWORD"
+          printf 'SHOOSTR_OAUTH_KEYSTORE_PASSWORD=%s\n' "$SHOOSTR_OAUTH_KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
           mkdir -p .local
           openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
             -keyout .local/fixture-ca.key -out .local/fixture-ca.pem \
@@ -68,7 +72,7 @@ jobs:
             -out .local/fixture-cert.pem -days 2 -sha256 -copy_extensions copy
           openssl pkcs12 -export -in .local/fixture-cert.pem \
             -inkey .local/fixture-key.pem -certfile .local/fixture-ca.pem \
-            -out .local/fixture.p12 -name localhost -passout pass:changeit
+            -out .local/fixture.p12 -name localhost -passout env:SHOOSTR_OAUTH_KEYSTORE_PASSWORD
           # The pinned image runs as UID1000; the hosted runner owns files as UID1001.
           # Transfer only this disposable server key, without making it world-readable.
           sudo chown 1000 .local/fixture-key.pem
@@ -122,9 +126,13 @@ jobs:
         working-directory: examples/14-mcp-oauth
         run: |
           mkdir -p build/oauth
-          docker compose -p shoostr-mcp-oauth-ci -f compose.yaml -f compose.app.yaml \
+          compose_files=(-f compose.yaml)
+          if [[ -n "${SHOOSTR_OAUTH_KEYSTORE_PASSWORD:-}" ]]; then
+            compose_files+=(-f compose.app.yaml)
+          fi
+          docker compose -p shoostr-mcp-oauth-ci "${compose_files[@]}" \
             logs --no-color > build/oauth/keycloak.log
-          docker compose -p shoostr-mcp-oauth-ci -f compose.yaml -f compose.app.yaml down --timeout 20
+          docker compose -p shoostr-mcp-oauth-ci "${compose_files[@]}" down --timeout 20
 
       - name: Preserve real-backend example results
         if: always()

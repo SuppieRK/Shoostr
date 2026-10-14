@@ -72,7 +72,7 @@ public final class ManagedWebSocket implements Session.Listener {
 
     try {
       runtime.execute(this);
-    } catch (RejectedExecutionException failure) {
+    } catch (RejectedExecutionException _) {
       stop();
       runtime.remove(this);
     }
@@ -301,7 +301,7 @@ public final class ManagedWebSocket implements Session.Listener {
 
     try {
       opened.close(1001, "Server stopping", Callback.NOOP);
-    } catch (RuntimeException failure) {
+    } catch (RuntimeException _) {
       opened.disconnect();
     }
   }
@@ -372,51 +372,57 @@ public final class ManagedWebSocket implements Session.Listener {
     }
   }
 
-  /** Waits for native acknowledgment without treating cancellation as application completion. */
+  /**
+   * Waits for native acknowledgment without treating cancellation as application completion.
+   * Remembered interruption is restored after both observers, including exceptional exits.
+   */
   private void notifyTerminal() {
     boolean interrupted = Thread.interrupted();
-    int code;
-    String reason;
-    Throwable failure;
-    boolean ready;
-    synchronized (events) {
-      while (!closeReady && !stopping) {
-        try {
-          events.wait();
-        } catch (InterruptedException _) {
+
+    try {
+      int code;
+      String reason;
+      Throwable failure;
+      boolean ready;
+      synchronized (events) {
+        while (!closeReady && !stopping) {
+          try {
+            events.wait();
+          } catch (InterruptedException _) {
+            interrupted = true;
+          }
+        }
+        code = closeCode;
+        reason = closeReason;
+        failure = error;
+        ready = closeReady;
+      }
+
+      try {
+        var observer = configuration.error();
+        if (observer != null && failure != null) {
+          observer.handle(Objects.requireNonNull(connection), failure);
+        }
+      } catch (Exception observerFailure) {
+        if (observerFailure instanceof InterruptedException) {
           interrupted = true;
         }
-      }
-      code = closeCode;
-      reason = closeReason;
-      failure = error;
-      ready = closeReady;
-    }
 
-    try {
-      var observer = configuration.error();
-      if (observer != null && failure != null) {
-        observer.handle(Objects.requireNonNull(connection), failure);
-      }
-    } catch (Exception observerFailure) {
-      if (observerFailure instanceof InterruptedException) {
-        interrupted = true;
+        LOGGER.warn("WebSocket error observer failed", observerFailure);
       }
 
-      LOGGER.warn("WebSocket error observer failed", observerFailure);
-    }
+      try {
+        var handler = configuration.close();
+        if (handler != null && ready) {
+          handler.handle(Objects.requireNonNull(connection), code, reason);
+        }
+      } catch (Exception observerFailure) {
+        if (observerFailure instanceof InterruptedException) {
+          interrupted = true;
+        }
 
-    try {
-      var handler = configuration.close();
-      if (handler != null && ready) {
-        handler.handle(Objects.requireNonNull(connection), code, reason);
+        LOGGER.warn("WebSocket close observer failed", observerFailure);
       }
-    } catch (Exception observerFailure) {
-      if (observerFailure instanceof InterruptedException) {
-        interrupted = true;
-      }
-
-      LOGGER.warn("WebSocket close observer failed", observerFailure);
     } finally {
       if (interrupted) {
         Thread.currentThread().interrupt();

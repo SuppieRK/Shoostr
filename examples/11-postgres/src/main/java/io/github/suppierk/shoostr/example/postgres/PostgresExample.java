@@ -36,10 +36,14 @@ public final class PostgresExample {
   /**
    * Builds an unstarted app with application-selected persistence dependencies.
    *
+   * <p>S2095 is suppressed because the caller owns the returned app's lifecycle; closing it here
+   * would return an unusable app. The persistence functions remain caller-owned.
+   *
    * @param create note creation, safe for concurrent calls
    * @param find note lookup, safe for concurrent calls
    * @return app owned by its caller; supplied dependencies remain caller-owned
    */
+  @SuppressWarnings("java:S2095")
   public static Shoostr application(
       Function<String, Note> create, LongFunction<Optional<Note>> find) {
     // Supply JDK functions explicitly; handlers can use real persistence or test replacements.

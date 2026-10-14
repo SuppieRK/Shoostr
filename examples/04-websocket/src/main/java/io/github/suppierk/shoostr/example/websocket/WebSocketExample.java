@@ -29,8 +29,12 @@ public final class WebSocketExample {
   /**
    * Returns an unstarted app owned by its caller.
    *
+   * <p>S2095 is suppressed because the caller owns the returned app and its managed connections;
+   * closing it here would return an unusable app.
+   *
    * @return configured application
    */
+  @SuppressWarnings("java:S2095")
   public static Shoostr application() {
     return new Shoostr()
         .routes(

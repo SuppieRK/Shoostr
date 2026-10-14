@@ -1,5 +1,7 @@
 package io.github.suppierk.shoostr.example.mcp.oauth;
 
+import static io.github.suppierk.shoostr.example.mcp.oauth.KeycloakAuthenticator.SCOPE_CLAIM;
+
 import com.nimbusds.jose.util.JSONObjectUtils;
 import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
@@ -28,6 +30,7 @@ import org.pac4j.http.client.direct.DirectBearerAuthClient;
 /** Owns token verification, detached identity, scope policy and public discovery metadata. */
 final class OAuthConfiguration implements Extension<Void> {
   private static final String IDENTITY_ATTRIBUTE = McpOAuthExample.class.getName() + ".identity";
+  private static final String READ_SCOPE = "mcp:read";
   private final KeycloakAuthenticator verifier;
   private final URI metadata;
   private final byte[] document;
@@ -38,11 +41,15 @@ final class OAuthConfiguration implements Extension<Void> {
   /**
    * Configures the two independent authentication schemes and MCP permission checks.
    *
+   * <p>S1181 is suppressed because failed construction must close the acquired verifier even when
+   * an Error escapes; cleanup runs before the original failure is rethrown.
+   *
    * @param issuer trusted HTTPS authorization server
    * @param resource canonical HTTPS resource audience
    * @param issuerTrust explicit issuer TLS trust
    * @throws IOException if key-source setup or failure cleanup fails
    */
+  @SuppressWarnings("java:S1181")
   OAuthConfiguration(URI issuer, URI resource, SSLContext issuerTrust) throws IOException {
     // KeycloakAuthenticator is example-local; Nimbus verifies the issuer's signed access tokens.
     verifier = new KeycloakAuthenticator(issuer, resource, issuerTrust);
@@ -56,7 +63,7 @@ final class OAuthConfiguration implements Extension<Void> {
                   Map.of(
                       "resource", resource.toASCIIString(),
                       "authorization_servers", List.of(issuer.toASCIIString()),
-                      "scopes_supported", List.of("mcp:read"),
+                      "scopes_supported", List.of(READ_SCOPE),
                       "bearer_methods_supported", List.of("header")))
               .getBytes(StandardCharsets.UTF_8);
       // Shoostr's Pac4j extension wraps pac4j's Bearer client and checks this resource's grants.
@@ -73,7 +80,7 @@ final class OAuthConfiguration implements Extension<Void> {
                           + "\"");
                 }
 
-                requireScopes(identity, Set.of("mcp:read"), metadata);
+                requireScopes(identity, Set.of(READ_SCOPE), metadata);
                 context.setRequestAttribute(IDENTITY_ATTRIBUTE, identity);
                 return true;
               });
@@ -96,7 +103,7 @@ final class OAuthConfiguration implements Extension<Void> {
                 // This policy checks OAuth scopes; they are token grants, not route groups.
                 if (message instanceof McpSchema.JSONRPCRequest request
                     && McpSchema.METHOD_TOOLS_CALL.equals(request.method())) {
-                  requireScopes(identity, Set.of("mcp:read", "mcp:tools"), metadata);
+                  requireScopes(identity, Set.of(READ_SCOPE, "mcp:tools"), metadata);
                 }
               },
               metadata);
@@ -175,7 +182,7 @@ final class OAuthConfiguration implements Extension<Void> {
    * @throws AuthorizationDeniedException if any required grant is absent
    */
   private static void requireScopes(McpIdentity identity, Set<String> required, URI metadata) {
-    if (!(identity.context().get("scope") instanceof String granted)
+    if (!(identity.context().get(SCOPE_CLAIM) instanceof String granted)
         || !List.of(granted.split(" ")).containsAll(required)) {
       throw McpHttpSecurity.scopeDenied(required, metadata);
     }
@@ -215,11 +222,11 @@ final class OAuthConfiguration implements Extension<Void> {
     var issuer = Objects.requireNonNull((String) profile.getAttribute("iss"));
     var subject = Objects.requireNonNull(profile.getId());
     var client = Objects.requireNonNull((String) profile.getAttribute("azp"));
-    var scope = Objects.requireNonNull((String) profile.getAttribute("scope"));
+    var scope = Objects.requireNonNull((String) profile.getAttribute(SCOPE_CLAIM));
     var expiry = Objects.requireNonNull((Instant) profile.getAttribute("expiresAt"));
     return new McpIdentity(
         part(issuer) + part(subject) + part(client),
-        McpTransportContext.create(Map.of("subject", subject, "scope", scope)),
+        McpTransportContext.create(Map.of("subject", subject, SCOPE_CLAIM, scope)),
         expiry);
   }
 

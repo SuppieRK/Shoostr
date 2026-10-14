@@ -8,6 +8,8 @@ import org.pac4j.http.client.direct.DirectBasicAuthClient;
 
 /** Fixed demonstration credentials only; replace with a real identity provider for deployment. */
 final class DemoAuthentication {
+  private static final String ADMIN = "admin";
+
   /** Prevents construction of the configuration factory. */
   private DemoAuthentication() {}
 
@@ -24,15 +26,15 @@ final class DemoAuthentication {
             (_, supplied) -> {
               if (!(supplied instanceof UsernamePasswordCredentials credentials)
                   || !("demo".equals(credentials.getUsername())
-                      || "admin".equals(credentials.getUsername()))
+                      || ADMIN.equals(credentials.getUsername()))
                   || !"local-only".equals(credentials.getPassword())) {
                 return Optional.empty();
               }
 
               var profile = new CommonProfile();
               profile.setId(credentials.getUsername());
-              if ("admin".equals(credentials.getUsername())) {
-                profile.addRole("admin");
+              if (ADMIN.equals(credentials.getUsername())) {
+                profile.addRole(ADMIN);
               }
 
               credentials.setUserProfile(profile);
@@ -42,6 +44,6 @@ final class DemoAuthentication {
         // This authorization callback requires the admin role only for /private/admin.
         (context, _, profiles) ->
             !"/private/admin".equals(context.getPath())
-                || profiles.getFirst().getRoles().contains("admin"));
+                || profiles.getFirst().getRoles().contains(ADMIN));
   }
 }

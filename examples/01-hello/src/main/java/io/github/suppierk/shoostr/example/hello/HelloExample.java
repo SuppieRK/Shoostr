@@ -27,8 +27,12 @@ public final class HelloExample {
   /**
    * Returns an unstarted app; callers or TestServer own its eventual lifetime.
    *
+   * <p>S2095 is suppressed because this factory transfers app ownership to its caller; closing it
+   * here would return an unusable app.
+   *
    * @return configured application
    */
+  @SuppressWarnings("java:S2095")
   public static Shoostr application() {
     // Shoostr comes from the core module; construction configures the app without starting it.
     return new Shoostr()

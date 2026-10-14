@@ -22,14 +22,24 @@ public final class McpOAuthExample {
   /**
    * Starts the local HTTPS example; core owns the installed resources and JVM shutdown.
    *
+   * <p>S1181 is suppressed because failed startup must release the owned verifier and MCP server
+   * even when an Error escapes; cleanup runs before the original failure is rethrown.
+   *
+   * @throws IllegalStateException if SHOOSTR_OAUTH_KEYSTORE_PASSWORD is absent or blank
    * @throws Exception if fixture TLS material cannot be loaded or startup fails
    */
+  @SuppressWarnings("java:S1181")
   static void main() throws Exception {
+    var password = System.getenv("SHOOSTR_OAUTH_KEYSTORE_PASSWORD");
+    if (password == null || password.isBlank()) {
+      throw new IllegalStateException("SHOOSTR_OAUTH_KEYSTORE_PASSWORD must be set and nonblank");
+    }
+
     // JDK TLS types load the local certificate; this demo trusts its own development issuer.
     var certificate =
         KeyStore.getInstance(
             Path.of(System.getProperty("shoostr.oauth.keyStore", ".local/fixture.p12")).toFile(),
-            "changeit".toCharArray());
+            password.toCharArray());
     var managers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
     managers.init(certificate);
     var trust = SSLContext.getInstance("TLS");
@@ -44,7 +54,7 @@ public final class McpOAuthExample {
             .tls(
                 tls -> {
                   tls.setKeyStore(certificate);
-                  tls.setKeyStorePassword("changeit");
+                  tls.setKeyStorePassword(password);
                 });
 
     try {
@@ -81,6 +91,10 @@ public final class McpOAuthExample {
   /**
    * Creates an unstarted app that owns its security configuration and native MCP server.
    *
+   * <p>S2095 is suppressed because the caller owns the returned app, which owns the installed
+   * verifier and MCP extension. S1181 is suppressed because failed assembly must also clean up
+   * after an Error before rethrowing the original failure.
+   *
    * @param options listener settings
    * @param issuer exact trusted HTTPS authorization server
    * @param resource canonical HTTPS MCP resource audience
@@ -88,6 +102,7 @@ public final class McpOAuthExample {
    * @return app owned by its caller
    * @throws IOException if verifier configuration or failure cleanup fails
    */
+  @SuppressWarnings({"java:S2095", "java:S1181"})
   public static Shoostr application(
       Options options, URI issuer, URI resource, SSLContext issuerTrust) throws IOException {
     var app = new Shoostr(options);

@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.example.mcp;
 
+import io.github.suppierk.shoostr.http.MediaType;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.server.McpSyncServerExchange;
@@ -12,8 +13,23 @@ import java.util.function.BiFunction;
 
 /** Native compatibility catalog; adapted fixture data is credited in THIRD-PARTY-NOTICES.md. */
 final class CompatibilityFixtures {
+  private static final String OBJECT = "object";
+  private static final String PROPERTIES = "properties";
+  private static final String STRING = "string";
+  private static final String PROMPT = "prompt";
+  private static final String REQUIRED = "required";
+  private static final String MESSAGE = "message";
+  private static final String EMAIL = "email";
+  private static final String CONTENT_SEPARATOR = "; content: ";
+  private static final String ACTION_PREFIX = "Action: ";
+  private static final String DEFAULT = "default";
+  private static final String CONST = "const";
+  private static final String TITLE = "title";
+  private static final String CONTACT_METHOD = "contactMethod";
+  private static final String PHONE = "phone";
+  private static final MediaType PNG_TYPE = MediaType.of("image/png");
   private static final Map<String, Object> NO_ARGUMENTS =
-      Map.of("type", "object", "properties", Map.of());
+      Map.of("type", OBJECT, PROPERTIES, Map.of());
   private static final String PNG =
       "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
   private static final String WAV = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQAAAAA=";
@@ -42,7 +58,7 @@ final class CompatibilityFixtures {
             NO_ARGUMENTS,
             (_, _) ->
                 McpSchema.CallToolResult.builder()
-                    .content(List.of(McpSchema.ImageContent.builder(PNG, "image/png").build()))
+                    .content(List.of(McpSchema.ImageContent.builder(PNG, PNG_TYPE.value()).build()))
                     .build()),
         tool(
             "test_audio_content",
@@ -61,7 +77,7 @@ final class CompatibilityFixtures {
                             McpSchema.EmbeddedResource.builder(
                                     McpSchema.TextResourceContents.builder(
                                             "test://embedded-resource", "Embedded resource content")
-                                        .mimeType("text/plain")
+                                        .mimeType(MediaType.TEXT_PLAIN.value())
                                         .build())
                                 .build()))
                     .build()),
@@ -73,11 +89,11 @@ final class CompatibilityFixtures {
                     .content(
                         List.of(
                             McpSchema.TextContent.builder("Mixed native content").build(),
-                            McpSchema.ImageContent.builder(PNG, "image/png").build(),
+                            McpSchema.ImageContent.builder(PNG, PNG_TYPE.value()).build(),
                             McpSchema.EmbeddedResource.builder(
                                     McpSchema.TextResourceContents.builder(
                                             "test://mixed-content-resource", "{\"test\":\"data\"}")
-                                        .mimeType("application/json")
+                                        .mimeType(MediaType.APPLICATION_JSON.value())
                                         .build())
                                 .build()))
                     .build()),
@@ -126,11 +142,11 @@ final class CompatibilityFixtures {
             "test_sampling",
             Map.of(
                 "type",
-                "object",
-                "properties",
-                Map.of("prompt", Map.of("type", "string")),
-                "required",
-                List.of("prompt")),
+                OBJECT,
+                PROPERTIES,
+                Map.of(PROMPT, Map.of("type", STRING)),
+                REQUIRED,
+                List.of(PROMPT)),
             (exchange, request) -> {
               // Sampling asks the MCP client to generate a message; this server supplies no LLM.
               var sampled =
@@ -140,7 +156,7 @@ final class CompatibilityFixtures {
                                   McpSchema.SamplingMessage.builder(
                                           McpSchema.Role.USER,
                                           McpSchema.TextContent.builder(
-                                                  stringArgument(request.arguments(), "prompt"))
+                                                  stringArgument(request.arguments(), PROMPT))
                                               .build())
                                       .build()),
                               100)
@@ -154,32 +170,33 @@ final class CompatibilityFixtures {
             "test_elicitation",
             Map.of(
                 "type",
-                "object",
-                "properties",
-                Map.of("message", Map.of("type", "string")),
-                "required",
-                List.of("message")),
+                OBJECT,
+                PROPERTIES,
+                Map.of(MESSAGE, Map.of("type", STRING)),
+                REQUIRED,
+                List.of(MESSAGE)),
             (exchange, request) -> {
               // Elicitation asks the MCP client to collect user input using this explicit form
               // schema.
               var result =
                   exchange.createElicitation(
                       McpSchema.ElicitFormRequest.builder(
-                              stringArgument(request.arguments(), "message"),
+                              stringArgument(request.arguments(), MESSAGE),
                               Map.of(
                                   "type",
-                                  "object",
-                                  "properties",
+                                  OBJECT,
+                                  PROPERTIES,
                                   Map.of(
                                       "username",
-                                      Map.of("type", "string"),
-                                      "email",
-                                      Map.of("type", "string")),
-                                  "required",
-                                  List.of("username", "email")))
+                                      Map.of("type", STRING),
+                                      EMAIL,
+                                      Map.of("type", STRING)),
+                                  REQUIRED,
+                                  List.of("username", EMAIL)))
                           .build());
               return McpSchema.CallToolResult.builder()
-                  .addTextContent("Action: " + result.action() + "; content: " + result.content())
+                  .addTextContent(
+                      ACTION_PREFIX + result.action() + CONTENT_SEPARATOR + result.content())
                   .build();
             }),
         tool(
@@ -191,7 +208,8 @@ final class CompatibilityFixtures {
                       McpSchema.ElicitFormRequest.builder("Complete the default values", defaults())
                           .build());
               return McpSchema.CallToolResult.builder()
-                  .addTextContent("Action: " + result.action() + "; content: " + result.content())
+                  .addTextContent(
+                      ACTION_PREFIX + result.action() + CONTENT_SEPARATOR + result.content())
                   .build();
             }),
         tool(
@@ -203,7 +221,8 @@ final class CompatibilityFixtures {
                       McpSchema.ElicitFormRequest.builder("Select your preferences", enums())
                           .build());
               return McpSchema.CallToolResult.builder()
-                  .addTextContent("Action: " + result.action() + "; content: " + result.content())
+                  .addTextContent(
+                      ACTION_PREFIX + result.action() + CONTENT_SEPARATOR + result.content())
                   .build();
             }),
         tool(
@@ -223,38 +242,38 @@ final class CompatibilityFixtures {
         new McpServerFeatures.SyncResourceSpecification(
             McpSchema.Resource.builder("test://static-text", "Static text")
                 .description("A text resource")
-                .mimeType("text/plain")
+                .mimeType(MediaType.TEXT_PLAIN.value())
                 .build(),
             (_, request) ->
                 McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.TextResourceContents.builder(
                                     request.uri(), "Static text content")
-                                .mimeType("text/plain")
+                                .mimeType(MediaType.TEXT_PLAIN.value())
                                 .build()))
                     .build()),
         new McpServerFeatures.SyncResourceSpecification(
             McpSchema.Resource.builder("test://static-binary", "Static image")
                 .description("A one-pixel image")
-                .mimeType("image/png")
+                .mimeType(PNG_TYPE.value())
                 .build(),
             (_, request) ->
                 McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.BlobResourceContents.builder(request.uri(), PNG)
-                                .mimeType("image/png")
+                                .mimeType(PNG_TYPE.value())
                                 .build()))
                     .build()),
         new McpServerFeatures.SyncResourceSpecification(
             McpSchema.Resource.builder("test://watched-resource", "Watched text")
                 .description("A subscribable resource")
-                .mimeType("text/plain")
+                .mimeType(MediaType.TEXT_PLAIN.value())
                 .build(),
             (_, request) ->
                 McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.TextResourceContents.builder(request.uri(), "Watched content")
-                                .mimeType("text/plain")
+                                .mimeType(MediaType.TEXT_PLAIN.value())
                                 .build()))
                     .build()));
   }
@@ -270,7 +289,7 @@ final class CompatibilityFixtures {
         new McpServerFeatures.SyncResourceTemplateSpecification(
             McpSchema.ResourceTemplate.builder("test://template/{id}/data", "Template data")
                 .description("JSON data for the requested ID")
-                .mimeType("application/json")
+                .mimeType(MediaType.APPLICATION_JSON.value())
                 .build(),
             (_, request) -> {
               var uri = request.uri();
@@ -284,7 +303,7 @@ final class CompatibilityFixtures {
                 return McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.TextResourceContents.builder(uri, json)
-                                .mimeType("application/json")
+                                .mimeType(MediaType.APPLICATION_JSON.value())
                                 .build()))
                     .build();
               } catch (IOException failure) {
@@ -348,7 +367,7 @@ final class CompatibilityFixtures {
                                                     stringArgument(
                                                         request.arguments(), "resourceUri"),
                                                     "Embedded prompt resource")
-                                                .mimeType("text/plain")
+                                                .mimeType(MediaType.TEXT_PLAIN.value())
                                                 .build())
                                         .build())
                                 .build()))
@@ -362,7 +381,7 @@ final class CompatibilityFixtures {
                         List.of(
                             McpSchema.PromptMessage.builder(
                                     McpSchema.Role.USER,
-                                    McpSchema.ImageContent.builder(PNG, "image/png").build())
+                                    McpSchema.ImageContent.builder(PNG, PNG_TYPE.value()).build())
                                 .build()))
                     .build()));
   }
@@ -413,23 +432,23 @@ final class CompatibilityFixtures {
   private static Map<String, Object> defaults() {
     return Map.of(
         "type",
-        "object",
-        "required",
+        OBJECT,
+        REQUIRED,
         List.of("name", "age", "score", "status", "verified"),
-        "properties",
+        PROPERTIES,
         Map.of(
-            "name", Map.of("type", "string", "default", "John Doe"),
-            "age", Map.of("type", "integer", "default", 30),
-            "score", Map.of("type", "number", "default", 95.5),
+            "name", Map.of("type", STRING, DEFAULT, "John Doe"),
+            "age", Map.of("type", "integer", DEFAULT, 30),
+            "score", Map.of("type", "number", DEFAULT, 95.5),
             "status",
                 Map.of(
                     "type",
-                    "string",
+                    STRING,
                     "enum",
                     List.of("active", "inactive", "pending"),
-                    "default",
+                    DEFAULT,
                     "active"),
-            "verified", Map.of("type", "boolean", "default", true)));
+            "verified", Map.of("type", "boolean", DEFAULT, true)));
   }
 
   /**
@@ -440,26 +459,26 @@ final class CompatibilityFixtures {
   private static Map<String, Object> enums() {
     return Map.of(
         "type",
-        "object",
-        "required",
+        OBJECT,
+        REQUIRED,
         List.of("untitledSingle", "titledSingle", "legacyEnum", "untitledMulti", "titledMulti"),
-        "properties",
+        PROPERTIES,
         Map.of(
             "untitledSingle",
-                Map.of("type", "string", "enum", List.of("option1", "option2", "option3")),
+                Map.of("type", STRING, "enum", List.of("option1", "option2", "option3")),
             "titledSingle",
                 Map.of(
                     "type",
-                    "string",
+                    STRING,
                     "oneOf",
                     List.of(
-                        Map.of("const", "value1", "title", "First Option"),
-                        Map.of("const", "value2", "title", "Second Option"),
-                        Map.of("const", "value3", "title", "Third Option"))),
+                        Map.of(CONST, "value1", TITLE, "First Option"),
+                        Map.of(CONST, "value2", TITLE, "Second Option"),
+                        Map.of(CONST, "value3", TITLE, "Third Option"))),
             "legacyEnum",
                 Map.of(
                     "type",
-                    "string",
+                    STRING,
                     "enum",
                     List.of("opt1", "opt2", "opt3"),
                     "enumNames",
@@ -469,7 +488,7 @@ final class CompatibilityFixtures {
                     "type",
                     "array",
                     "items",
-                    Map.of("type", "string", "enum", List.of("option1", "option2", "option3"))),
+                    Map.of("type", STRING, "enum", List.of("option1", "option2", "option3"))),
             "titledMulti",
                 Map.of(
                     "type",
@@ -478,9 +497,9 @@ final class CompatibilityFixtures {
                     Map.of(
                         "anyOf",
                         List.of(
-                            Map.of("const", "value1", "title", "First Choice"),
-                            Map.of("const", "value2", "title", "Second Choice"),
-                            Map.of("const", "value3", "title", "Third Choice"))))));
+                            Map.of(CONST, "value1", TITLE, "First Choice"),
+                            Map.of(CONST, "value2", TITLE, "Second Choice"),
+                            Map.of(CONST, "value3", TITLE, "Third Choice"))))));
   }
 
   /**
@@ -490,45 +509,48 @@ final class CompatibilityFixtures {
    */
   private static Map<String, Object> jsonSchema() {
     return Map.of(
-        "$schema", "https://json-schema.org/draft/2020-12/schema",
-        "type", "object",
+        "$schema",
+        "https://json-schema.org/draft/2020-12/schema",
+        "type",
+        OBJECT,
         "$defs",
+        Map.of(
+            "address",
             Map.of(
-                "address",
-                Map.of(
-                    "$anchor",
-                    "addressDef",
-                    "type",
-                    "object",
-                    "properties",
-                    Map.of("street", Map.of("type", "string"), "city", Map.of("type", "string")))),
-        "properties",
-            Map.of(
-                "name",
-                Map.of("type", "string"),
-                "address",
-                Map.of("$ref", "#/$defs/address"),
-                "contactMethod",
-                Map.of("type", "string", "enum", List.of("phone", "email")),
-                "phone",
-                Map.of("type", "string"),
-                "email",
-                Map.of("type", "string")),
+                "$anchor",
+                "addressDef",
+                "type",
+                OBJECT,
+                PROPERTIES,
+                Map.of("street", Map.of("type", STRING), "city", Map.of("type", STRING)))),
+        PROPERTIES,
+        Map.of(
+            "name",
+            Map.of("type", STRING),
+            "address",
+            Map.of("$ref", "#/$defs/address"),
+            CONTACT_METHOD,
+            Map.of("type", STRING, "enum", List.of(PHONE, EMAIL)),
+            PHONE,
+            Map.of("type", STRING),
+            EMAIL,
+            Map.of("type", STRING)),
         "allOf",
-            List.of(
-                Map.of(
-                    "anyOf",
-                    List.of(
-                        Map.of("required", List.of("phone")),
-                        Map.of("required", List.of("email"))))),
-        "if",
+        List.of(
             Map.of(
-                "properties",
-                Map.of("contactMethod", Map.of("const", "phone")),
-                "required",
-                List.of("contactMethod")),
-        "then", Map.of("required", List.of("phone")),
-        "else", Map.of("required", List.of("email")),
-        "additionalProperties", false);
+                "anyOf",
+                List.of(Map.of(REQUIRED, List.of(PHONE)), Map.of(REQUIRED, List.of(EMAIL))))),
+        "if",
+        Map.of(
+            PROPERTIES,
+            Map.of(CONTACT_METHOD, Map.of(CONST, PHONE)),
+            REQUIRED,
+            List.of(CONTACT_METHOD)),
+        "then",
+        Map.of(REQUIRED, List.of(PHONE)),
+        "else",
+        Map.of(REQUIRED, List.of(EMAIL)),
+        "additionalProperties",
+        false);
   }
 }

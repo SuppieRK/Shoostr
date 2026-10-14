@@ -1,5 +1,7 @@
 package io.github.suppierk.shoostr.example.openapi;
 
+import static io.github.suppierk.shoostr.example.openapi.OpenApiConfiguration.BASIC_SCHEME;
+
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
@@ -30,8 +32,12 @@ public final class OpenApiExample {
   /**
    * Builds an unstarted app with independently configured dependencies.
    *
+   * <p>S2095 is suppressed because the caller owns the returned app and its installed documents;
+   * closing it here would return an unusable app.
+   *
    * @return app owned by its caller
    */
+  @SuppressWarnings("java:S2095")
   public static Shoostr application() {
     // Example-local configuration creates two OpenApi extensions from Shoostr's openapi module.
     var configuration = new OpenApiConfiguration();
@@ -103,7 +109,7 @@ public final class OpenApiExample {
                         e.get(security).required();
                         e.get(docs)
                             .summary("Authenticated identity")
-                            .security("basic")
+                            .security(BASIC_SCHEME)
                             .response(200, "Identity", MediaType.TEXT_PLAIN);
                       });
                   // Include this operation only in the internal OpenAPI document.
@@ -115,7 +121,7 @@ public final class OpenApiExample {
                         e.get(security).required();
                         e.get(internal)
                             .summary("Internal ping")
-                            .security("basic")
+                            .security(BASIC_SCHEME)
                             .response(200, "Pong", MediaType.TEXT_PLAIN);
                       });
                   // when controls runtime availability; selected OpenAPI documents still include
@@ -149,7 +155,7 @@ public final class OpenApiExample {
                         e.get(security).required();
                         e.get(docs)
                             .summary("This generated specification")
-                            .security("basic")
+                            .security(BASIC_SCHEME)
                             .response(200, "OpenAPI document", MediaType.APPLICATION_JSON);
                       });
                   routes.get(
@@ -177,7 +183,7 @@ public final class OpenApiExample {
                         .summary("Create a user")
                         .operationId("createUser")
                         .tag("users")
-                        .security("basic")
+                        .security(BASIC_SCHEME)
                         .requestBody("User to create", MediaType.APPLICATION_JSON, user, true)
                         .response(201, "Created", MediaType.APPLICATION_JSON, user);
                   });

@@ -1,8 +1,8 @@
 package io.github.suppierk.shoostr.example.postgres;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import java.io.IOException;
@@ -38,29 +38,23 @@ class PostgresDockerTest {
 
     try {
       compose(false, "up", "-d");
-      for (var uri : List.of(APP.resolve("/health"))) {
-        var deadline = System.nanoTime() + Duration.ofMinutes(2).toNanos();
-        boolean ready = false;
-        while (System.nanoTime() < deadline) {
-          try {
-            var response =
-                client.send(
-                    HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(3)).GET().build(),
-                    HttpResponse.BodyHandlers.discarding());
-            ready = response.statusCode() == 200;
-          } catch (IOException unavailable) {
-            // Container listeners can refuse/reset connections while starting.
-          }
-
-          if (ready) {
-            break;
-          }
-
-          TimeUnit.MILLISECONDS.sleep(200);
-        }
-
-        assertTrue(ready, "Backend did not become ready: " + uri);
-      }
+      await("Backend readiness")
+          .atMost(Duration.ofMinutes(2))
+          .pollInterval(Duration.ofMillis(200))
+          .pollInSameThread()
+          .ignoreExceptionsInstanceOf(IOException.class)
+          .untilAsserted(
+              () ->
+                  assertEquals(
+                      200,
+                      client
+                          .send(
+                              HttpRequest.newBuilder(APP.resolve("/health"))
+                                  .timeout(Duration.ofSeconds(3))
+                                  .GET()
+                                  .build(),
+                              HttpResponse.BodyHandlers.discarding())
+                          .statusCode()));
     } catch (Exception | Error failure) {
       try {
         stopTheIsolatedStack();
@@ -116,29 +110,23 @@ class PostgresDockerTest {
         () -> assertEquals("Remember Flyway", found.body()));
 
     compose(false, "restart", "--timeout", "10", "app");
-    var deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos();
-    boolean ready = false;
-    while (System.nanoTime() < deadline && !ready) {
-      try {
-        ready =
-            client
-                    .send(
-                        HttpRequest.newBuilder(APP.resolve("/health"))
-                            .timeout(Duration.ofSeconds(3))
-                            .GET()
-                            .build(),
-                        HttpResponse.BodyHandlers.discarding())
-                    .statusCode()
-                == 200;
-      } catch (IOException unavailable) {
-        // Restart closes old connections and reruns migration validation before listener startup.
-      }
-
-      if (!ready) {
-        TimeUnit.MILLISECONDS.sleep(200);
-      }
-    }
-    assertTrue(ready, "Application must restart with the existing migrated database");
+    await("Application must restart with the existing migrated database")
+        .atMost(Duration.ofSeconds(60))
+        .pollInterval(Duration.ofMillis(200))
+        .pollInSameThread()
+        .ignoreExceptionsInstanceOf(IOException.class)
+        .untilAsserted(
+            () ->
+                assertEquals(
+                    200,
+                    client
+                        .send(
+                            HttpRequest.newBuilder(APP.resolve("/health"))
+                                .timeout(Duration.ofSeconds(3))
+                                .GET()
+                                .build(),
+                            HttpResponse.BodyHandlers.discarding())
+                        .statusCode()));
 
     var persisted =
         client.send(

@@ -4,6 +4,8 @@ services:
       - "127.0.0.1:9443:9443"
   app:
     image: shoostr/mcp-oauth-example:local
+    environment:
+      SHOOSTR_OAUTH_KEYSTORE_PASSWORD: ${SHOOSTR_OAUTH_KEYSTORE_PASSWORD:?Set the local keystore password}
     network_mode: service:keycloak
     depends_on:
       - keycloak

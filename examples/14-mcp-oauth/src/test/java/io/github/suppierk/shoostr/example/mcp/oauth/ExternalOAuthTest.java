@@ -1,6 +1,8 @@
 package io.github.suppierk.shoostr.example.mcp.oauth;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -24,12 +26,15 @@ class ExternalOAuthTest {
   @Test
   @Timeout(value = 4, unit = TimeUnit.MINUTES)
   void authorizesTheNativeMcpClientThroughExternalPkceAndScopeEscalation() throws Exception {
+    var password = System.getenv("SHOOSTR_OAUTH_KEYSTORE_PASSWORD");
+    assertNotNull(password, "Set SHOOSTR_OAUTH_KEYSTORE_PASSWORD for the external TLS fixture");
+    assertFalse(password.isBlank(), "SHOOSTR_OAUTH_KEYSTORE_PASSWORD must be nonblank");
     var directory = Path.of(System.getProperty("oauth.directory"));
     var certificate = directory.resolve(".local/fixture-ca.pem");
     assertTrue(Files.isRegularFile(certificate), "Create the example TLS fixture first");
     var keys =
         KeyStore.getInstance(
-            directory.resolve(".local/fixture.p12").toFile(), "changeit".toCharArray());
+            directory.resolve(".local/fixture.p12").toFile(), password.toCharArray());
     var managers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
     managers.init(keys);
     var trust = SSLContext.getInstance("TLS");
@@ -56,7 +61,7 @@ class ExternalOAuthTest {
             .tls(
                 tls -> {
                   tls.setKeyStore(keys);
-                  tls.setKeyStorePassword("changeit");
+                  tls.setKeyStorePassword(password);
                 });
 
     try (var test = TestServer.startOnPort(app, 9443, client -> client.sslContext(trust))) {

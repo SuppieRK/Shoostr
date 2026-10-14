@@ -191,10 +191,14 @@ public final class WebSocket {
     /**
      * Handles a message on a virtual thread, serialized with this connection's other callbacks.
      *
+     * <p>S112 is suppressed because application callbacks may propagate checked failures from their
+     * own dependencies without wrapping them or declaring a framework-specific exception.
+     *
      * @param connection opened connection
      * @param message owned application message
      * @throws Exception if application handling fails
      */
+    @SuppressWarnings("java:S112")
     void handle(WebSocketConnection connection, T message) throws Exception;
   }
 
@@ -204,9 +208,13 @@ public final class WebSocket {
     /**
      * Handles one opening or internal delivery operation.
      *
+     * <p>S112 is suppressed because application callbacks may propagate checked failures from their
+     * own dependencies without wrapping them or declaring a framework-specific exception.
+     *
      * @param connection opened connection
      * @throws Exception if application handling fails
      */
+    @SuppressWarnings("java:S112")
     void handle(WebSocketConnection connection) throws Exception;
   }
 
@@ -216,11 +224,15 @@ public final class WebSocket {
     /**
      * Observes termination without participating in native resource cleanup.
      *
+     * <p>S112 is suppressed because application observers may propagate checked failures from their
+     * own dependencies without wrapping them or declaring a framework-specific exception.
+     *
      * @param connection terminated connection
      * @param code native close code
      * @param reason native close reason
      * @throws Exception if observation fails; the failure is logged, not recursively delivered
      */
+    @SuppressWarnings("java:S112")
     void handle(WebSocketConnection connection, int code, String reason) throws Exception;
   }
 
@@ -234,9 +246,8 @@ public final class WebSocket {
      * @param response native upgrade output
      * @param runtime app-owned message dispatch and shutdown
      * @return per-connection listener
-     * @throws Exception if creation fails
      */
     Session.Listener create(
-        Request request, ServerUpgradeResponse response, WebSocketRuntime runtime) throws Exception;
+        Request request, ServerUpgradeResponse response, WebSocketRuntime runtime);
   }
 }

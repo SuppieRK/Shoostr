@@ -32,14 +32,14 @@ final class JdbcNotes {
     try (var connection = source.getConnection()) {
       var id = DSL.field("id", Long.class);
       var content = DSL.field("text", String.class);
-      var record =
+      var inserted =
           DSL.using(connection, SQLDialect.POSTGRES)
               .insertInto(DSL.table("notes"))
               .columns(content)
               .values(text)
               .returning(id, content)
               .fetchOne();
-      var stored = Objects.requireNonNull(record, "INSERT did not return its generated identity");
+      var stored = Objects.requireNonNull(inserted, "INSERT did not return its generated identity");
       return new Note(
           Objects.requireNonNull(stored.get(id)), Objects.requireNonNull(stored.get(content)));
     } catch (SQLException failure) {
@@ -64,10 +64,10 @@ final class JdbcNotes {
           .where(id.eq(identity))
           .fetchOptional()
           .map(
-              record ->
+              row ->
                   new Note(
-                      Objects.requireNonNull(record.get(id)),
-                      Objects.requireNonNull(record.get(content))));
+                      Objects.requireNonNull(row.get(id)),
+                      Objects.requireNonNull(row.get(content))));
     } catch (SQLException failure) {
       throw new IllegalStateException("Database connection failed", failure);
     }

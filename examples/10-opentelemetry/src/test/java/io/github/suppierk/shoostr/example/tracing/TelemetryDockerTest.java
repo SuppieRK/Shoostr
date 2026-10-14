@@ -1,10 +1,10 @@
 package io.github.suppierk.shoostr.example.tracing;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import java.io.IOException;
@@ -53,27 +53,23 @@ class TelemetryDockerTest {
       for (var uri :
           List.of(
               APP.resolve("/hello/Ready"), JAEGER.resolve("/"), GRAFANA.resolve("/api/health"))) {
-        var deadline = System.nanoTime() + Duration.ofMinutes(2).toNanos();
-        boolean ready = false;
-        while (System.nanoTime() < deadline) {
-          try {
-            var response =
-                client.send(
-                    HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(3)).GET().build(),
-                    HttpResponse.BodyHandlers.discarding());
-            ready = response.statusCode() == 200;
-          } catch (IOException unavailable) {
-            // Container listeners can refuse/reset connections while starting.
-          }
-
-          if (ready) {
-            break;
-          }
-
-          TimeUnit.MILLISECONDS.sleep(200);
-        }
-
-        assertTrue(ready, "Backend did not become ready: " + uri);
+        await("Backend readiness: " + uri)
+            .atMost(Duration.ofMinutes(2))
+            .pollInterval(Duration.ofMillis(200))
+            .pollInSameThread()
+            .ignoreExceptionsInstanceOf(IOException.class)
+            .untilAsserted(
+                () ->
+                    assertEquals(
+                        200,
+                        client
+                            .send(
+                                HttpRequest.newBuilder(uri)
+                                    .timeout(Duration.ofSeconds(3))
+                                    .GET()
+                                    .build(),
+                                HttpResponse.BodyHandlers.discarding())
+                            .statusCode()));
       }
     } catch (Exception | Error failure) {
       try {
@@ -115,24 +111,27 @@ class TelemetryDockerTest {
         () -> assertEquals("Hello, Ada!", response.body()),
         () -> assertEquals(traceId, response.headers().firstValue("X-Trace-Id").orElseThrow()));
 
-    var deadline = System.nanoTime() + Duration.ofSeconds(30).toNanos();
-    JsonNode trace = JSON.createObjectNode();
-    while (System.nanoTime() < deadline && trace.path("spans").isEmpty()) {
-      var backend =
-          client.send(
-              HttpRequest.newBuilder(JAEGER.resolve("/api/traces/" + traceId))
-                  .timeout(Duration.ofSeconds(5))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      if (backend.statusCode() == 200) {
-        trace = JSON.readTree(backend.body()).path("data").path(0);
-      }
+    var trace =
+        await("Jaeger must receive the actual server span")
+            .atMost(Duration.ofSeconds(30))
+            .pollInterval(Duration.ofMillis(200))
+            .pollInSameThread()
+            .until(
+                () -> {
+                  var backend =
+                      client.send(
+                          HttpRequest.newBuilder(JAEGER.resolve("/api/traces/" + traceId))
+                              .timeout(Duration.ofSeconds(5))
+                              .GET()
+                              .build(),
+                          HttpResponse.BodyHandlers.ofString());
+                  if (backend.statusCode() != 200) {
+                    return JSON.createObjectNode();
+                  }
 
-      if (trace.path("spans").isEmpty()) {
-        TimeUnit.MILLISECONDS.sleep(200);
-      }
-    }
+                  return JSON.readTree(backend.body()).path("data").path(0);
+                },
+                value -> !value.path("spans").isEmpty());
     assertEquals(1, trace.path("spans").size(), "Jaeger must receive the actual server span");
     var span = trace.path("spans").get(0);
     var process = trace.path("processes").path(span.path("processID").asText());

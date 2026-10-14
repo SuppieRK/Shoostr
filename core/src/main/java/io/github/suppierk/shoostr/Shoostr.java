@@ -46,7 +46,13 @@ import org.eclipse.jetty.websocket.core.WebSocketConstants;
 import org.eclipse.jetty.websocket.server.ServerWebSocketContainer;
 import org.jspecify.annotations.Nullable;
 
-/** HTTP application with explicit startup and automatic JVM shutdown cleanup. */
+/**
+ * HTTP application with explicit startup and automatic JVM shutdown cleanup.
+ *
+ * <p>S6539 is suppressed because this entry-point class composes the framework's modules and owns
+ * their application lifecycle; those dependencies are part of its responsibility.
+ */
+@SuppressWarnings("java:S6539")
 public final class Shoostr implements Closeable {
   private static final long DEFAULT_STOP_TIMEOUT_MILLIS = 5000;
   private static final int DEFAULT_WEBSOCKET_MAX_OUTGOING_FRAMES = 32;
@@ -775,13 +781,7 @@ public final class Shoostr implements Closeable {
     sessionConfiguration = null;
     tlsConfiguration = null;
 
-    if (managedWebSockets != null) {
-      try {
-        managedWebSockets.stop();
-      } catch (IOException | RuntimeException stopFailure) {
-        failure = appendCloseFailure(failure, "Could not signal managed WebSockets", stopFailure);
-      }
-    }
+    failure = signalManagedWebSocketsBeforeStop(failure);
 
     failure = signalExtensionsBeforeStop(failure);
 
@@ -830,6 +830,24 @@ public final class Shoostr implements Closeable {
     if (failure != null) {
       throw failure;
     }
+  }
+
+  /**
+   * Stops managed WebSocket work without skipping subsequent shutdown on signalling failure.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException signalManagedWebSocketsBeforeStop(@Nullable IOException failure) {
+    if (managedWebSockets != null) {
+      try {
+        managedWebSockets.stop();
+      } catch (IOException | RuntimeException stopFailure) {
+        return appendCloseFailure(failure, "Could not signal managed WebSockets", stopFailure);
+      }
+    }
+
+    return failure;
   }
 
   /**
@@ -1471,7 +1489,7 @@ public final class Shoostr implements Closeable {
     private final @Nullable CorsPolicy cors;
     private final @Nullable RadixRoutes websocketRoutes;
     private final @Nullable CompressionHandler compressionHandler;
-    private final @Nullable WebSocketRuntime managedWebSockets;
+    private final @Nullable WebSocketRuntime websocketRuntime;
 
     /**
      * Retains the immutable registration snapshot and startup policies for all requests.
@@ -1481,7 +1499,7 @@ public final class Shoostr implements Closeable {
      * @param cors cross-origin policy, or null
      * @param websocketRoutes compiled WebSocket routes, or null
      * @param compressionHandler native compression wrapper, or null
-     * @param managedWebSockets app-owned message dispatch, or null without WebSocket routes
+     * @param websocketRuntime app-owned message dispatch, or null without WebSocket routes
      */
     private ApplicationHandler(
         DispatchConfiguration dispatch,
@@ -1489,7 +1507,7 @@ public final class Shoostr implements Closeable {
         @Nullable CorsPolicy cors,
         @Nullable RadixRoutes websocketRoutes,
         @Nullable CompressionHandler compressionHandler,
-        @Nullable WebSocketRuntime managedWebSockets) {
+        @Nullable WebSocketRuntime websocketRuntime) {
       compiledRoutes = dispatch.router();
       errors = dispatch.errors();
       statuses = dispatch.statuses();
@@ -1506,7 +1524,7 @@ public final class Shoostr implements Closeable {
       this.cors = cors;
       this.websocketRoutes = websocketRoutes;
       this.compressionHandler = compressionHandler;
-      this.managedWebSockets = managedWebSockets;
+      this.websocketRuntime = websocketRuntime;
     }
 
     /**
@@ -2151,7 +2169,7 @@ public final class Shoostr implements Closeable {
           rawRequest,
           rawResponse,
           responseCallback,
-          Objects.requireNonNull(managedWebSockets))) {
+          Objects.requireNonNull(websocketRuntime))) {
         return true;
       }
 

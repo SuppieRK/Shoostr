@@ -15,6 +15,7 @@ import org.slf4j.LoggerFactory;
 /** Wires explicit dependencies and starts the request-input demonstration. */
 public final class RequestExample {
   private static final Logger LOGGER = LoggerFactory.getLogger(RequestExample.class);
+  private static final String THEME = "theme";
 
   /** Prevents construction of the launcher. */
   private RequestExample() {}
@@ -45,10 +46,14 @@ public final class RequestExample {
   /**
    * Configures request demonstrations with a live, caller-owned availability flag.
    *
+   * <p>S2095 is suppressed because the caller owns the returned app's lifecycle; closing it here
+   * would return an unusable app. The supplied functions remain caller-owned.
+   *
    * @param greeting concurrent-safe greeting operation, replaceable in tests
    * @param previewEnabled concurrent-safe flag evaluated for each matched preview request
    * @return app owned by its eventual caller
    */
+  @SuppressWarnings("java:S2095")
   public static Shoostr application(
       UnaryOperator<String> greeting, BooleanSupplier previewEnabled) {
     // These JDK functions are caller-supplied dependencies, not framework-managed services.
@@ -160,8 +165,8 @@ public final class RequestExample {
                   (request, response) ->
                       response
                           .setHeader("X-Request-Id", request.header("X-Request-Id").orElse("none"))
-                          .cookie("theme", request.queryParam("theme").orElse("light"))
-                          .text(request.cookie("theme").orElse("unset")));
+                          .cookie(THEME, request.queryParam(THEME).orElse("light"))
+                          .text(request.cookie(THEME).orElse("unset")));
 
               // Match a named segment only when it satisfies the numeric constraint.
               routes.get(

@@ -8,11 +8,18 @@ import java.util.Set;
 
 /** Owns explicit document metadata and schemas, not request handling. */
 final class OpenApiConfiguration {
+  static final String BASIC_SCHEME = "basic";
   private final OpenApi docs;
   private final OpenApi internal;
   private final JsonSchema user;
 
-  /** Defines the two independent documents and named user schema eagerly. */
+  /**
+   * Defines the two independent documents and named user schema eagerly.
+   *
+   * <p>S2095 is suppressed because the retained documents contain metadata, acquire no
+   * close-required resources, and use Extension's no-op close until installed in the application.
+   */
+  @SuppressWarnings("java:S2095")
   OpenApiConfiguration() {
     // Each OpenApi instance from Shoostr's openapi module owns an independent document.
     docs =
@@ -22,9 +29,9 @@ final class OpenApiConfiguration {
             .tag("users", "User operations");
     internal = new OpenApi("Operations API", "1.0");
     // Swagger's model types describe auth and JSON shapes; they do not enforce either at runtime.
-    var basic = new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme("basic");
-    docs.securityScheme("basic", basic);
-    internal.securityScheme("basic", basic);
+    var basic = new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme(BASIC_SCHEME);
+    docs.securityScheme(BASIC_SCHEME, basic);
+    internal.securityScheme(BASIC_SCHEME, basic);
     // Declare the User schema explicitly; neither the codec nor the Java record is scanned.
     var userSchema = new JsonSchema();
     userSchema.setTypes(Set.of("object"));

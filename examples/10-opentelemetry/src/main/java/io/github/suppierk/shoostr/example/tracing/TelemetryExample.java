@@ -18,8 +18,12 @@ public final class TelemetryExample {
   /**
    * Starts the standalone tracing example.
    *
+   * <p>S1181 is suppressed because failed startup must release the owned telemetry SDK even when an
+   * Error escapes; cleanup runs before the original failure is rethrown.
+   *
    * @throws Exception if startup fails
    */
+  @SuppressWarnings("java:S1181")
   static void main() throws Exception {
     var app = application();
 
@@ -41,8 +45,13 @@ public final class TelemetryExample {
   /**
    * Builds an unstarted app for explicit caller-owned lifecycle.
    *
+   * <p>S2095 is suppressed because the caller owns the returned app, which owns the SDK through
+   * TelemetryConfiguration; the tracing adapter borrows that SDK. S1181 is suppressed because
+   * failed assembly must also clean up after an Error before rethrowing the original failure.
+   *
    * @return unstarted tracing application
    */
+  @SuppressWarnings({"java:S2095", "java:S1181"})
   public static Shoostr application() {
     var app = new Shoostr();
 

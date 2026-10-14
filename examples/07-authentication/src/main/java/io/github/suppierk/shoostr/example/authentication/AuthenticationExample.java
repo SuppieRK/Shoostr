@@ -26,8 +26,12 @@ public final class AuthenticationExample {
   /**
    * Returns an unstarted app with explicit group protection.
    *
+   * <p>S2095 is suppressed because the caller owns the returned app and its installed
+   * authenticator; closing it here would return an unusable app.
+   *
    * @return app owned by its eventual caller
    */
+  @SuppressWarnings("java:S2095")
   public static Shoostr application() {
     // DemoAuthentication is this example's configuration, not a framework class.
     // It creates a Pac4j authentication extension from Shoostr's separate pac4j module.

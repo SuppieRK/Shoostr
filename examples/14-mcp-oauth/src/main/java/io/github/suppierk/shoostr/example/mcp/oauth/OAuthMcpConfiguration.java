@@ -4,6 +4,7 @@ import io.github.suppierk.shoostr.mcp.Mcp;
 import io.github.suppierk.shoostr.mcp.McpHttpSecurity;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
+import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.time.Duration;
 import java.util.Map;
@@ -20,7 +21,7 @@ final class OAuthMcpConfiguration {
    * @param security eager identity and operation-permission policy
    * @return MCP extension to install before registering its routes
    */
-  static Mcp<?> create(McpHttpSecurity security) {
+  static Mcp<McpSyncServer> create(McpHttpSecurity security) {
     // JDK atomic state belongs to this example; concurrent SDK tool calls share the counter.
     var calls = new AtomicInteger();
     // Shoostr provides HTTP transport/security; McpServer and feature descriptors are official SDK

@@ -30,6 +30,7 @@ import org.pac4j.core.profile.CommonProfile;
 
 /** Example-owned verification for one explicitly trusted Keycloak issuer and MCP resource. */
 final class KeycloakAuthenticator implements Authenticator, Closeable {
+  static final String SCOPE_CLAIM = "scope";
   private final ConfigurableJWTProcessor<SecurityContext> processor;
   private final Closeable keySource;
 
@@ -76,7 +77,7 @@ final class KeycloakAuthenticator implements Authenticator, Closeable {
         new DefaultJWTClaimsVerifier<>(
             resource.toString(),
             new JWTClaimsSet.Builder().issuer(issuer.toString()).claim("typ", "Bearer").build(),
-            Set.of("exp", "iat", "sub", "aud", "azp", "scope", "jti"));
+            Set.of("exp", "iat", "sub", "aud", "azp", SCOPE_CLAIM, "jti"));
     claims.setMaxClockSkew(30);
     processor.setJWTClaimsSetVerifier(claims);
   }
@@ -105,7 +106,7 @@ final class KeycloakAuthenticator implements Authenticator, Closeable {
         return Optional.empty();
       }
 
-      var scope = claims.getStringClaim("scope");
+      var scope = claims.getStringClaim(SCOPE_CLAIM);
       var client = claims.getStringClaim("azp");
       var tokenId = claims.getStringClaim("jti");
       if (claims.getExpirationTime() == null
@@ -126,7 +127,7 @@ final class KeycloakAuthenticator implements Authenticator, Closeable {
       profile.setId(subject);
       profile.addAttribute("iss", claims.getIssuer());
       profile.addAttribute("azp", client);
-      profile.addAttribute("scope", scope);
+      profile.addAttribute(SCOPE_CLAIM, scope);
       profile.addAttribute("expiresAt", claims.getExpirationTime().toInstant());
       credentials.setUserProfile(profile);
       return Optional.of(credentials);

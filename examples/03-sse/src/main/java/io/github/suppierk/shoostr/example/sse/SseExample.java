@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.example.sse;
 
+import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.SseEvent;
 import io.github.suppierk.shoostr.http.HttpHeaders;
@@ -45,10 +46,15 @@ public final class SseExample {
   /**
    * Configures the app with caller-supplied report work, not a framework-managed job.
    *
+   * <p>S2095 is suppressed because the returned app transfers to the caller, who owns its
+   * lifecycle; closing it here would return an unusable app. The report operation remains
+   * caller-owned.
+   *
    * @param report caller-owned, concurrent-safe operation returning nonnull text
    * @return unstarted app owned by the caller
    * @throws NullPointerException if the operation is absent
    */
+  @SuppressWarnings("java:S2095")
   public static Shoostr application(Supplier<String> report) {
     Objects.requireNonNull(report);
     return new Shoostr()
@@ -98,19 +104,7 @@ public final class SseExample {
                   (request, response) -> {
                     // Last-Event-ID comes from the reconnecting client; validate before committing
                     // output.
-                    int last;
-
-                    try {
-                      last =
-                          Integer.parseInt(
-                              request.header(HttpHeaders.LAST_EVENT_ID.value()).orElse("0"));
-                    } catch (NumberFormatException failure) {
-                      throw new BadRequestException("Invalid event ID", failure);
-                    }
-
-                    if (last < 0 || last > 3) {
-                      throw new BadRequestException("Event ID is outside this example's feed");
-                    }
+                    int last = lastEventId(request);
 
                     // HTTP 204 tells EventSource not to reconnect after this fixed feed is
                     // exhausted.
@@ -155,5 +149,28 @@ public final class SseExample {
                     events.send(SseEvent.of(result).withEvent("result"));
                   });
             });
+  }
+
+  /**
+   * Validates the client's replay position before committing the fixed three-entry feed.
+   *
+   * @param request reconnecting client's input
+   * @return last received event ID, or zero on the first connection
+   * @throws BadRequestException if the ID is not an integer within this feed
+   */
+  private static int lastEventId(Request request) {
+    int last;
+
+    try {
+      last = Integer.parseInt(request.header(HttpHeaders.LAST_EVENT_ID.value()).orElse("0"));
+    } catch (NumberFormatException failure) {
+      throw new BadRequestException("Invalid event ID", failure);
+    }
+
+    if (last < 0 || last > 3) {
+      throw new BadRequestException("Event ID is outside this example's feed");
+    }
+
+    return last;
   }
 }

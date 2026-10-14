@@ -7,6 +7,7 @@ import io.github.suppierk.shoostr.mcp.McpIdentity;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
+import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.time.Duration;
 import java.util.List;
@@ -23,7 +24,7 @@ final class McpConfiguration {
    * @param options listener settings supplying the local public URL's port
    * @return extension to install before mounting its routes
    */
-  static Mcp<?> create(Options options) {
+  static Mcp<McpSyncServer> create(Options options) {
     // Shoostr's mcp module provides Origin checks, request identity and pre-dispatch permissions.
     // This public demo uses a fixed identity without requiring HTTP authentication.
     var security =

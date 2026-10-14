@@ -10,6 +10,8 @@ the same application factory, not a mock authorization server or password grant.
 Run these commands from this directory with Docker Engine, Compose and OpenSSL installed:
 
 ```sh
+SHOOSTR_OAUTH_KEYSTORE_PASSWORD="$(cmdshape openssl rand -hex 24)"
+export SHOOSTR_OAUTH_KEYSTORE_PASSWORD
 cmdshape mkdir -p .local
 cmdshape openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
   -keyout .local/fixture-ca.key -out .local/fixture-ca.pem \
@@ -27,8 +29,15 @@ cmdshape openssl x509 -req -in .local/fixture.csr \
   -out .local/fixture-cert.pem -days 2 -sha256 -copy_extensions copy
 cmdshape openssl pkcs12 -export -in .local/fixture-cert.pem \
   -inkey .local/fixture-key.pem -certfile .local/fixture-ca.pem \
-  -out .local/fixture.p12 -name localhost -passout pass:changeit
+  -out .local/fixture.p12 -name localhost -passout env:SHOOSTR_OAUTH_KEYSTORE_PASSWORD
 ```
+
+Keep `SHOOSTR_OAUTH_KEYSTORE_PASSWORD` exported in the same shell for the application,
+Gradle OAuth verification and container commands below. It must match the password
+used to create `.local/fixture.p12`; the application rejects an absent or blank value
+without a fallback. If using another shell, supply that same value rather than generating
+a new one for an existing keystore. Do not commit or log it. This remains a disposable
+local fixture: the unencrypted PEM private keys also require the file permissions below.
 
 On Linux, the pinned Keycloak container runs as UID1000. After generating PKCS12,
 grant that process access to only its disposable server key, especially when your

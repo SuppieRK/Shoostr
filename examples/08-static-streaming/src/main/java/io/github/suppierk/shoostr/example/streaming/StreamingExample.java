@@ -25,8 +25,12 @@ public final class StreamingExample {
   /**
    * Returns an unstarted app whose lifecycle belongs to its caller.
    *
+   * <p>S2095 is suppressed because the caller owns the returned app and its installed resources;
+   * closing it here would return an unusable app.
+   *
    * @return app with file and stream handlers
    */
+  @SuppressWarnings("java:S2095")
   public static Shoostr application() {
     return new Shoostr()
         .routes(
