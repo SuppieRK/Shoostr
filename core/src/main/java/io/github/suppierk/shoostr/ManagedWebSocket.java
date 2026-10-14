@@ -355,16 +355,17 @@ public final class ManagedWebSocket implements Session.Listener {
    */
   private void terminate(Throwable failure) {
     Thread running;
-    WebSocketConnection opened;
     synchronized (events) {
       closing = true;
       message = null;
       running = worker;
-      opened = connection;
+      var opened = connection;
+      if (opened != null) {
+        // Mark the connection terminal before the worker can wake and attempt its fallback close.
+        opened.terminate(failure);
+      }
+
       events.notifyAll();
-    }
-    if (opened != null) {
-      opened.terminate(failure);
     }
 
     if (running != null && running != Thread.currentThread()) {

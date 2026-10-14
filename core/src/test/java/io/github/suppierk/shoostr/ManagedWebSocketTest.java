@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.websocket.server.ServerWebSocketContainer;
+import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -292,6 +293,36 @@ class ManagedWebSocketTest {
       try {
         socket.sendClose(1000, "Finished").get(3, TimeUnit.SECONDS);
         assertEquals("1000:Finished", observed.get(3, TimeUnit.SECONDS));
+      } finally {
+        socket.abort();
+      }
+    }
+  }
+
+  @RepeatedTest(20)
+  @Timeout(10)
+  void acknowledgesANormalPeerClose() throws Exception {
+    var ready = new CompletableFuture<Void>();
+    var app =
+        new Shoostr()
+            .routes(
+                routes ->
+                    routes.websocket("/close", events -> events.onOpen(_ -> ready.complete(null))));
+
+    try (var test = TestServer.start(app);
+        var client = HttpClient.newHttpClient()) {
+      var received = new Messages();
+      var socket =
+          client
+              .newWebSocketBuilder()
+              .buildAsync(
+                  new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null), received)
+              .get(3, TimeUnit.SECONDS);
+
+      try {
+        ready.get(3, TimeUnit.SECONDS);
+        socket.sendClose(1000, "Finished").get(3, TimeUnit.SECONDS);
+        assertEquals(1000, received.closeCode.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
       }
