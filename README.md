@@ -197,7 +197,41 @@ own event sources, bounded subscription queues, reconnection policy, and any rep
 incoming `Last-Event-ID` header. A timed source poll followed by a heartbeat write is the way to
 observe an idle disconnect; a buffered successful write does not prove the peer is still present.
 
-`Routes.websocket` composes under `path(...)` and takes a
+`Routes.websocket` offers ordinary callbacks configured once during registration:
+
+```java
+app.routes().websocket("/echo", websocket -> {
+    websocket.onText((connection, text) -> connection.send(text));
+    websocket.onBinary((connection, bytes) -> connection.send(bytes));
+});
+```
+
+Open, complete-message and terminal callbacks run sequentially per connection on managed
+virtual threads. `send(String)` and `send(byte[])` wait interruptibly for transport completion,
+not peer receipt. Concurrent retained-connection sends are serialized in write-lock admission
+order. Binary input is copied before releasing native buffers; output bytes are copied before
+transport ownership. No preview API is required; applications may open structured scopes inside
+their own handlers. Captured route variables are shared across connections, while `path()`,
+`pathParam(name)` and the initial `principal()` reference are captured before HTTP finalization.
+The principal object remains application-owned; identity is not automatically revalidated.
+
+Use `beforeUpgrade(Handler)` to validate HTTP admission, throwing to invoke ordinary route/app
+exception handling. Headers are allowed, but staging a body/status or committing output is not.
+After upgrade, recoverable failures belong inside `onText`/`onBinary`; unexpected failures close
+with 1011 and a fixed safe reason. `onError` and `onClose` are terminal observers, not recovery or
+required cleanup hooks. They run after active work unwinds and may not run during shutdown.
+`close()` initiates 1000 closure without waiting for peer acknowledgment. Interrupted sends may
+already have reached the transport and must not be retried automatically.
+
+Native demand advances after message handling, so busy handlers can delay reading peer close
+or ping frames. Immediate peer-disconnect cancellation is not promised. `app.close()` rejects
+managed work, signals 1001 and interrupts managed workers before native drain; it does not wait
+indefinitely for interruption-ignoring application code. The optional executor-second overload
+selects only the matched HTTP handshake, not subsequent managed WebSocket callbacks or their
+thread-local context. Optional final extension configuration applies to HTTP admission as usual.
+See [the executable WebSocket example](examples/04-websocket/README.md).
+
+For advanced native operations, `Routes.websocket` also composes under `path(...)` and takes a
 `BiFunction<Request, ServerUpgradeResponse, Session.Listener>`. The factory runs once per
 accepted upgrade attempt, after application and route admission. It can inspect the live
 framework request, read Jetty-parsed offers with `request.webSocketProtocols()`, set a

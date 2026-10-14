@@ -82,6 +82,7 @@ public final class Shoostr implements Closeable {
   private @Nullable RadixRoutes router;
   private @Nullable RadixRoutes websocketRouter;
   private @Nullable ExecutorService virtualThreads;
+  private @Nullable WebSocketRuntime managedWebSockets;
   private @Nullable Thread shutdownHook;
   private boolean started;
   private boolean closed;
@@ -774,6 +775,14 @@ public final class Shoostr implements Closeable {
     sessionConfiguration = null;
     tlsConfiguration = null;
 
+    if (managedWebSockets != null) {
+      try {
+        managedWebSockets.stop();
+      } catch (IOException | RuntimeException stopFailure) {
+        failure = appendCloseFailure(failure, "Could not signal managed WebSockets", stopFailure);
+      }
+    }
+
     failure = signalExtensionsBeforeStop(failure);
 
     try {
@@ -911,6 +920,10 @@ public final class Shoostr implements Closeable {
     var proxy = trustedProxy;
     var cors = corsPolicy;
     var websocketRoutes = websocketRouter;
+    managedWebSockets =
+        websocketRoutes == null
+            ? null
+            : new WebSocketRuntime(Objects.requireNonNull(virtualThreads));
     var http = configureHttp();
     connector = createConnector(Objects.requireNonNull(server), http);
     tlsConfiguration = null;
@@ -922,7 +935,8 @@ public final class Shoostr implements Closeable {
     server.setHandler(graceful);
     var compressionHandler = compression ? new CompressionHandler() : null;
     var applicationHandler =
-        new ApplicationHandler(dispatch, proxy, cors, websocketRoutes, compressionHandler);
+        new ApplicationHandler(
+            dispatch, proxy, cors, websocketRoutes, compressionHandler, managedWebSockets);
     var installedSessionHandler =
         installHandlers(
             Objects.requireNonNull(server),
@@ -1112,6 +1126,7 @@ public final class Shoostr implements Closeable {
    * @param rawRequest Jetty request
    * @param rawResponse Jetty response
    * @param callback HTTP response callback
+   * @param runtime app-owned WebSocket message dispatch
    * @return whether Jetty handled the exchange
    */
   @SuppressWarnings(
@@ -1125,14 +1140,15 @@ public final class Shoostr implements Closeable {
       @Nullable Completion observation,
       org.eclipse.jetty.server.Request rawRequest,
       org.eclipse.jetty.server.Response rawResponse,
-      Callback callback) {
+      Callback callback,
+      WebSocketRuntime runtime) {
     var factory = Objects.requireNonNull(endpoint.websocketFactory());
     return container.upgrade(
         (upgradeRequest, upgradeResponse, upgradeCallback) -> {
           try {
             request.webSocketProtocols(upgradeRequest.getSubProtocols());
-            return Objects.requireNonNull(factory.apply(request, upgradeResponse));
-          } catch (RuntimeException failure) {
+            return Objects.requireNonNull(factory.create(request, upgradeResponse, runtime));
+          } catch (Exception failure) {
             if (observation != null) {
               observation.recordApplicationFailure(failure);
             }
@@ -1455,6 +1471,7 @@ public final class Shoostr implements Closeable {
     private final @Nullable CorsPolicy cors;
     private final @Nullable RadixRoutes websocketRoutes;
     private final @Nullable CompressionHandler compressionHandler;
+    private final @Nullable WebSocketRuntime managedWebSockets;
 
     /**
      * Retains the immutable registration snapshot and startup policies for all requests.
@@ -1464,13 +1481,15 @@ public final class Shoostr implements Closeable {
      * @param cors cross-origin policy, or null
      * @param websocketRoutes compiled WebSocket routes, or null
      * @param compressionHandler native compression wrapper, or null
+     * @param managedWebSockets app-owned message dispatch, or null without WebSocket routes
      */
     private ApplicationHandler(
         DispatchConfiguration dispatch,
         @Nullable TrustedProxy proxy,
         @Nullable CorsPolicy cors,
         @Nullable RadixRoutes websocketRoutes,
-        @Nullable CompressionHandler compressionHandler) {
+        @Nullable CompressionHandler compressionHandler,
+        @Nullable WebSocketRuntime managedWebSockets) {
       compiledRoutes = dispatch.router();
       errors = dispatch.errors();
       statuses = dispatch.statuses();
@@ -1487,6 +1506,7 @@ public final class Shoostr implements Closeable {
       this.cors = cors;
       this.websocketRoutes = websocketRoutes;
       this.compressionHandler = compressionHandler;
+      this.managedWebSockets = managedWebSockets;
     }
 
     /**
@@ -2130,7 +2150,8 @@ public final class Shoostr implements Closeable {
           observation,
           rawRequest,
           rawResponse,
-          responseCallback)) {
+          responseCallback,
+          Objects.requireNonNull(managedWebSockets))) {
         return true;
       }
 

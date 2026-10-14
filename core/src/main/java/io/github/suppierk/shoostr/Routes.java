@@ -1373,15 +1373,167 @@ public final class Routes implements Closeable {
       @Nullable ExecutorService executor,
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
       @Nullable Consumer<Extensions> configure) {
+    Objects.requireNonNull(listenerFactory);
     RadixRoutes.Endpoint endpoint;
     synchronized (lock) {
       requireMutable();
       endpoint =
           RadixRoutes.websocketEndpoint(
-                  join(prefix, path), (_, _) -> {}, Objects.requireNonNull(listenerFactory))
+                  join(prefix, path),
+                  (_, _) -> {},
+                  (request, response, _) ->
+                      Objects.requireNonNull(listenerFactory).apply(request, response))
               .withExecutor(executor);
     }
     return registerEndpoint(endpoint, configure, true);
+  }
+
+  /**
+   * Registers complete-message callbacks configured once, running sequentially per connection on
+   * Shoostr-managed virtual threads. Existing native factories retain their own execution.
+   *
+   * @param path relative endpoint path
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public Routes websocket(String path, Consumer<WebSocket> configuration) {
+    return registerManagedWebsocket(path, null, configuration, null);
+  }
+
+  /**
+   * Registers managed callbacks at this group's own endpoint.
+   *
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public Routes websocket(Consumer<WebSocket> configuration) {
+    return websocket(EMPTY_PATH, configuration);
+  }
+
+  /**
+   * Registers managed callbacks with local extensions applying to HTTP admission only.
+   *
+   * @param path relative endpoint path
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extension configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      String path, Consumer<WebSocket> configuration, Consumer<Extensions> extensions) {
+    return registerManagedWebsocket(path, null, configuration, Objects.requireNonNull(extensions));
+  }
+
+  /**
+   * Registers managed callbacks and handshake extensions at this group's own endpoint.
+   *
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extension configuration
+   * @return this scope
+   */
+  public Routes websocket(Consumer<WebSocket> configuration, Consumer<Extensions> extensions) {
+    return websocket(EMPTY_PATH, configuration, extensions);
+  }
+
+  /**
+   * Runs the matched HTTP handshake on a borrowed executor. All subsequent WebSocket callbacks run
+   * on managed virtual threads; executor thread-local bindings are not propagated.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed handshake executor
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      String path, ExecutorService executor, Consumer<WebSocket> configuration) {
+    return registerManagedWebsocket(path, Objects.requireNonNull(executor), configuration, null);
+  }
+
+  /**
+   * Selects a borrowed HTTP handshake executor and local extensions. Subsequent WebSocket callbacks
+   * remain on managed virtual threads, without propagating arbitrary executor-local bindings.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed handshake executor
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extension configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      String path,
+      ExecutorService executor,
+      Consumer<WebSocket> configuration,
+      Consumer<Extensions> extensions) {
+    return registerManagedWebsocket(
+        path, Objects.requireNonNull(executor), configuration, Objects.requireNonNull(extensions));
+  }
+
+  /**
+   * Runs this group's HTTP handshake on a borrowed executor, not its managed WebSocket callbacks.
+   * Arbitrary executor-local bindings are not propagated after upgrade.
+   *
+   * @param executor asynchronous borrowed handshake executor
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public Routes websocket(ExecutorService executor, Consumer<WebSocket> configuration) {
+    return websocket(EMPTY_PATH, executor, configuration);
+  }
+
+  /**
+   * Configures this group's handshake on a borrowed executor with local HTTP extensions. Subsequent
+   * WebSocket callbacks remain on managed virtual threads without executor-local bindings.
+   *
+   * @param executor asynchronous borrowed handshake executor
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extension configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      ExecutorService executor,
+      Consumer<WebSocket> configuration,
+      Consumer<Extensions> extensions) {
+    return websocket(EMPTY_PATH, executor, configuration, extensions);
+  }
+
+  /**
+   * Reserves the route before configuring its managed callbacks and extensions.
+   *
+   * @param path relative endpoint path
+   * @param executor optional borrowed handshake executor
+   * @param configuration eager WebSocket callback configuration
+   * @param extensions optional local handshake extensions
+   * @return this scope
+   */
+  private Routes registerManagedWebsocket(
+      String path,
+      @Nullable ExecutorService executor,
+      Consumer<WebSocket> configuration,
+      @Nullable Consumer<Extensions> extensions) {
+    Objects.requireNonNull(configuration);
+    var callbacks = new WebSocket();
+    RadixRoutes.Endpoint endpoint;
+    synchronized (lock) {
+      requireMutable();
+      endpoint =
+          RadixRoutes.websocketEndpoint(
+                  join(prefix, path),
+                  callbacks::admit,
+                  (request, _, runtime) -> {
+                    request.response().requireWebSocketUpgrade();
+                    return new ManagedWebSocket(callbacks, request, runtime);
+                  })
+              .withExecutor(executor);
+    }
+    return registerEndpoint(
+        endpoint,
+        local -> {
+          configuration.accept(callbacks);
+          callbacks.freeze();
+          if (extensions != null) {
+            extensions.accept(local);
+          }
+        },
+        true);
   }
 
   /**

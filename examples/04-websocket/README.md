@@ -4,14 +4,15 @@ Run `./gradlew :websocket-example:run`, then open `http://127.0.0.1:8080/`. Use 
 for the snippets below. Run one example at a time, or choose the Compose port override below.
 
 [WebSocketExample](src/main/java/io/github/suppierk/shoostr/example/websocket/WebSocketExample.java)
-keeps route factories inline. Shoostr's `routes.websocket(...)` handles HTTP route matching and upgrade;
-`Session.Listener`, `Session`, `Callback` and WebSocket `StatusCode` come from Jetty's API, exposed transitively by
-core. No WebSocket annotations, extension or second HTTP server is needed.
+keeps route definitions inline. Shoostr's `routes.websocket(...)` handles HTTP route matching and upgrade;
+its configurator registers ordinary checked-exception-capable callbacks. Core's `WebSocketConnection`
+owns sends and detached connection data. No native listener, annotations, extension or second server is needed.
 
-The stateful listeners are separate example-local classes:
-[EchoSocket](src/main/java/io/github/suppierk/shoostr/example/websocket/EchoSocket.java)
-and [NumberSocket](src/main/java/io/github/suppierk/shoostr/example/websocket/NumberSocket.java). Each accepted
-connection receives a fresh listener, not one shared across clients.
+Configuration runs once during registration; captured mutable variables are shared across connections.
+Each connection has independent path/identity data and sequential callbacks on managed virtual threads.
+Sends wait for transport completion, not peer receipt. Binary inputs are owned `byte[]` values, safe to retain;
+binary output is copied before transport ownership. Concurrent external sends are serialized in write-lock
+admission order. The existing native-listener overload remains available for advanced Jetty operations.
 
 ## Endpoints
 
@@ -25,8 +26,8 @@ connection receives a fresh listener, not one shared across clients.
 | `/numbers`, text `fail`                   | Deliberate application failure; close 1011, reason `Processing failed` |
 | `/numbers`, binary                        | Close 1003, reason `Text messages required`                            |
 
-The room path demonstrates copied per-connection context, not a chat server or broadcast registry. Listeners retain only
-the copied prefix/native session, never Shoostr's handshake request or upgrade response. The `fail` command is explicit
+The room path demonstrates copied per-connection context, not a chat server or broadcast registry. Connections retain
+detached path parameters, never Shoostr's handshake request or upgrade response. The `fail` command is explicit
 demo fault injection, not a production operation.
 
 ## Try browser clients
@@ -87,17 +88,21 @@ established. Ordinary HTTP GET to a WebSocket-only path is not an upgrade and re
 ## Exceptions, callbacks and ownership
 
 During the handshake, Shoostr's normal route-group/app exception handlers can write HTTP error responses. After upgrade,
-message callbacks belong to Jetty and do not run those HTTP handlers. `NumberSocket` catches malformed numeric input and
+managed message callbacks do not run those HTTP handlers. The number callback catches malformed numeric input and
 replies safely; other processing failures close with a fixed reason and log private details through SLF4J. WebSocket
 close codes such as 1003/1011 are not HTTP status codes. Native protocol/transport errors are logged separately; Jetty
 owns their connection closure.
 
-Both listeners use explicit demand: the next message is requested after the previous asynchronous send succeeds. Binary
-echo acknowledges its receive callback only after the send completes, preserving Jetty's borrowed buffer; unsupported
-binary data is acknowledged before a policy close. Close-notification callbacks are completed as well.
-See [Jetty's callback/demand guidance](https://jetty.org/docs/jetty/12.1/programming-guide/client/websocket.html). No
-background producer, executor pool or shared listener registry is created. Core owns app shutdown; close your client
-connections explicitly while testing.
+Core admits the next application message after the previous callback returns. Native buffer/close acknowledgments
+never depend on application observers. `onError` observes terminal failures; recover inside `onText`/`onBinary` when
+the connection should remain usable. `onClose` runs after active work unwinds, but resource cleanup never depends
+on it and it may not run during shutdown. `close()` initiates 1000 closure without waiting for the peer.
+
+A busy callback can delay reading peer close or ping frames: immediate disconnect cancellation is not guaranteed.
+App shutdown signals 1001 and interrupts managed work before transport drain, without waiting indefinitely for
+code that ignores interruption. A supplied route executor controls only the HTTP handshake; subsequent callbacks
+remain on managed virtual threads. No preview APIs, background producer or example-owned executor is required.
+Core owns app shutdown; close your client connections explicitly while testing.
 
 ## Tests and Docker
 

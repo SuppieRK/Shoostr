@@ -1,12 +1,14 @@
 package io.github.suppierk.shoostr.example.websocket;
 
 import io.github.suppierk.shoostr.Shoostr;
+import io.github.suppierk.shoostr.WebSocketConnection;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
+import org.eclipse.jetty.websocket.api.StatusCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** Registers WebSocket routes inline and leaves connection behavior to separate listeners. */
+/** Registers ordinary WebSocket callbacks; core owns delivery, writes and connection state. */
 public final class WebSocketExample {
   private static final Logger LOGGER = LoggerFactory.getLogger(WebSocketExample.class);
 
@@ -44,26 +46,70 @@ public final class WebSocketExample {
                   "/",
                   (_, response) ->
                       response.text("WebSocket endpoints: /echo, /rooms/{room}, /numbers"));
-              // Shoostr registers the handshake; EchoSocket is our listener, not a framework class.
-              // Jetty's listener methods are available through core's transitive WebSocket
-              // dependency.
-              routes.websocket("/echo", (_, _) -> new EchoSocket(""));
-              // Copy the path value during the handshake; never retain its Request in a listener.
+              // WebSocketConnection comes from core: send waits for transport completion, and
+              // each connection's callbacks run sequentially on managed virtual threads.
+              routes.websocket(
+                  "/echo",
+                  websocket -> {
+                    websocket.onText(WebSocketConnection::send);
+                    websocket.onBinary(WebSocketConnection::send);
+                    // These notifications do not own transport cleanup; they only observe it.
+                    websocket.onOpen(connection -> LOGGER.debug("Opened {}", connection.path()));
+                    websocket.onClose(
+                        (connection, code, _) ->
+                            LOGGER.debug("Closed {} ({})", connection.path(), code));
+                    websocket.onError(
+                        (connection, failure) ->
+                            LOGGER.debug("WebSocket failed: {}", connection.path(), failure));
+                  });
+              // Core copies path values and the initial principal before the handshake ends.
               // Each connection gets its own prefix; this is contextual echo, not shared-room
               // broadcast.
               routes.websocket(
                   "/rooms/{room}",
-                  (request, _) -> {
-                    var room = request.pathParam("room").orElseThrow();
-                    if (room.length() > 32) {
-                      throw new BadRequestException("Room name exceeds this example's limit");
-                    }
-
-                    return new EchoSocket(room + ": ");
+                  websocket -> {
+                    // Throw during beforeUpgrade to use ordinary HTTP exception handling.
+                    websocket.beforeUpgrade(
+                        (request, _) -> {
+                          if (request.pathParam("room").orElseThrow().length() > 32) {
+                            throw new BadRequestException("Room name exceeds this example's limit");
+                          }
+                        });
+                    websocket.onText(
+                        (connection, text) ->
+                            connection.send(
+                                connection.pathParam("room").orElseThrow() + ": " + text));
+                    websocket.onBinary(WebSocketConnection::send);
                   });
-              // NumberSocket owns message processing after upgrade; HTTP exception handlers do not
-              // run here.
-              routes.websocket("/numbers", (_, _) -> new NumberSocket());
+              // Handle recoverable input errors in the message callback; HTTP renderers cannot
+              // replace a response after upgrade. Unexpected failures close safely with 1011.
+              routes.websocket(
+                  "/numbers",
+                  websocket -> {
+                    websocket.onText(
+                        (connection, text) -> {
+                          // An explicit demo command injects an unexpected application failure.
+                          if ("fail".equals(text)) {
+                            throw new IllegalStateException(
+                                "Example-only processing failure details");
+                          }
+
+                          int value;
+
+                          try {
+                            value = Integer.parseInt(text);
+                          } catch (NumberFormatException _) {
+                            connection.send("error: integer required");
+                            return;
+                          }
+
+                          connection.send("double=" + 2L * value);
+                        });
+                    // Jetty's StatusCode constants are WebSocket close codes, not HTTP statuses.
+                    websocket.onBinary(
+                        (connection, _) ->
+                            connection.close(StatusCode.BAD_DATA, "Text messages required"));
+                  });
             });
   }
 }
