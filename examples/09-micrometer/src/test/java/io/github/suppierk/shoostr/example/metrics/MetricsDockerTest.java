@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import java.io.IOException;
 import java.net.URI;
@@ -161,6 +162,43 @@ class MetricsDockerTest {
   }
 
   @Test
+  void opensTheRequestDashboardByDefault() throws Exception {
+    var response =
+        client.send(
+            HttpRequest.newBuilder(GRAFANA.resolve("/api/dashboards/home"))
+                .header(HttpHeaders.AUTHORIZATION.value(), AUTHORIZATION)
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, response.statusCode(), response.body());
+    assertEquals(
+        "/d/default-home-dashboard/shoostr-requests",
+        JSON.readTree(response.body()).path("redirectUri").asText(),
+        response.body());
+
+    var resolved =
+        client.send(
+            HttpRequest.newBuilder(GRAFANA.resolve("/api/dashboards/uid/default-home-dashboard"))
+                .header(HttpHeaders.AUTHORIZATION.value(), AUTHORIZATION)
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, resolved.statusCode(), resolved.body());
+    var dashboard = JSON.readTree(resolved.body()).path("dashboard");
+    assertAll(
+        () -> assertEquals("Shoostr requests", dashboard.path("title").asText()),
+        () -> assertEquals(5, dashboard.path("panels").size()),
+        () -> assertEquals("5s", dashboard.path("refresh").asText()),
+        () ->
+            assertEquals(
+                "shoostr-prometheus",
+                dashboard.path("panels").get(0).path("datasource").path("uid").asText()));
+  }
+
+  @Test
   void provisionsTheRequestDashboardAndExactDatasource() throws Exception {
     var response =
         client.send(
@@ -197,28 +235,26 @@ class MetricsDockerTest {
                     .build(),
                 HttpResponse.BodyHandlers.discarding())
             .statusCode());
+    var definition =
+        client.send(
+            HttpRequest.newBuilder(GRAFANA.resolve("/api/dashboards/uid/shoostr-requests"))
+                .header(HttpHeaders.AUTHORIZATION.value(), AUTHORIZATION)
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, definition.statusCode(), definition.body());
+    ObjectNode target =
+        JSON.readTree(definition.body())
+            .path("dashboard")
+            .path("panels")
+            .get(0)
+            .path("targets")
+            .get(0)
+            .deepCopy();
+    target.put("instant", true).put("range", false).put("format", "table");
     var body =
-        JSON.writeValueAsString(
-            Map.of(
-                "queries",
-                List.of(
-                    Map.of(
-                        "refId",
-                        "A",
-                        "datasource",
-                        Map.of("uid", "shoostr-prometheus", "type", "prometheus"),
-                        "expr",
-                        "http_server_requests_seconds_count{route=\"/hello/{name}\",status=\"200\"}",
-                        "instant",
-                        true,
-                        "range",
-                        false,
-                        "format",
-                        "table")),
-                "from",
-                "now-5m",
-                "to",
-                "now"));
+        JSON.writeValueAsString(Map.of("queries", List.of(target), "from", "now-5m", "to", "now"));
     await("Grafana must query actual backend samples, not just provision successfully")
         .atMost(Duration.ofSeconds(30))
         .pollInterval(Duration.ofMillis(200))

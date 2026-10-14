@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr.example.tracing;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -96,6 +97,100 @@ class TelemetryDockerTest {
   }
 
   @Test
+  void opensTheTraceDashboardByDefault() throws Exception {
+    var response =
+        client.send(
+            HttpRequest.newBuilder(GRAFANA.resolve("/api/dashboards/home"))
+                .header(HttpHeaders.AUTHORIZATION.value(), AUTHORIZATION)
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, response.statusCode(), response.body());
+    assertEquals(
+        "/d/default-home-dashboard/shoostr-traces",
+        JSON.readTree(response.body()).path("redirectUri").asText(),
+        response.body());
+
+    var resolved =
+        client.send(
+            HttpRequest.newBuilder(GRAFANA.resolve("/api/dashboards/uid/default-home-dashboard"))
+                .header(HttpHeaders.AUTHORIZATION.value(), AUTHORIZATION)
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, resolved.statusCode(), resolved.body());
+    var dashboard = JSON.readTree(resolved.body()).path("dashboard");
+    assertAll(
+        () -> assertEquals("Shoostr traces", dashboard.path("title").asText()),
+        () -> assertEquals("5s", dashboard.path("refresh").asText()),
+        () -> assertEquals(1, dashboard.path("panels").size()),
+        () -> assertEquals("table", dashboard.path("panels").get(0).path("type").asText()));
+  }
+
+  @Test
+  void discoversRecentServerTracesThroughTheDashboardQuery() throws Exception {
+    var definition =
+        client.send(
+            HttpRequest.newBuilder(GRAFANA.resolve("/api/dashboards/uid/shoostr-traces"))
+                .header(HttpHeaders.AUTHORIZATION.value(), AUTHORIZATION)
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, definition.statusCode(), definition.body());
+    var target =
+        JSON.readTree(definition.body())
+            .path("dashboard")
+            .path("panels")
+            .get(0)
+            .path("targets")
+            .get(0);
+    assertEquals("search", target.path("queryType").asText());
+
+    var traceId = UUID.randomUUID().toString().replace("-", "");
+    var request =
+        client.send(
+            HttpRequest.newBuilder(APP.resolve("/hello/Dashboard"))
+                .header("traceparent", "00-" + traceId + "-00f067aa0ba902b7-01")
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, request.statusCode());
+    var body =
+        JSON.writeValueAsString(Map.of("queries", List.of(target), "from", "now-15m", "to", "now"));
+
+    await("The dashboard search must discover the generated trace without its ID as a query")
+        .atMost(Duration.ofSeconds(30))
+        .pollInterval(Duration.ofMillis(200))
+        .pollInSameThread()
+        .untilAsserted(
+            () -> {
+              var response =
+                  client.send(
+                      HttpRequest.newBuilder(GRAFANA.resolve("/api/ds/query"))
+                          .header(HttpHeaders.AUTHORIZATION.value(), AUTHORIZATION)
+                          .header(HttpHeaders.CONTENT_TYPE.value(), "application/json")
+                          .timeout(Duration.ofSeconds(5))
+                          .POST(HttpRequest.BodyPublishers.ofString(body))
+                          .build(),
+                      HttpResponse.BodyHandlers.ofString());
+              assertEquals(200, response.statusCode(), response.body());
+              var frames = JSON.readTree(response.body()).path("results").path("A").path("frames");
+              assertFalse(frames.isEmpty(), "No recent traces have reached Grafana yet");
+              var frame = frames.get(0);
+              assertTrue(frame.path("data").path("values").get(0).toString().contains(traceId));
+              var field = frame.path("schema").path("fields").get(0);
+              assertEquals("traceID", field.path("name").asText());
+              var link = field.path("config").path("links").get(0).path("internal");
+              assertEquals("shoostr-jaeger", link.path("datasourceUid").asText());
+              assertEquals("${__value.raw}", link.path("query").path("query").asText());
+            });
+  }
+
+  @Test
   void displaysTheActualServerSpanThroughGrafana() throws Exception {
     var traceId = UUID.randomUUID().toString().replace("-", "");
     var response =
@@ -147,7 +242,7 @@ class TelemetryDockerTest {
     assertAll(
         () -> assertEquals("server", tags.get("span.kind")),
         () -> assertEquals("/hello/{name}", tags.get("http.route")),
-        () -> assertEquals("200", tags.get("http.status_code")));
+        () -> assertEquals("200", tags.get("http.response.status_code")));
 
     var body =
         JSON.writeValueAsString(

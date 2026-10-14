@@ -22,9 +22,12 @@ curl http://127.0.0.1:8080/hello/Grace
 curl http://127.0.0.1:8080/hello/Linus
 ```
 
-Open [Grafana's provisioned dashboard](http://127.0.0.1:3000/d/shoostr-requests),
-login **demo / local-only**. It shows completed requests, rate, mean duration, server errors
-and active requests. Prometheus scrapes every two seconds; rate panels need multiple samples.
+Open [Grafana](http://127.0.0.1:3000), login **demo / local-only**; the request dashboard
+opens automatically and refreshes every five seconds. The
+[direct dashboard link](http://127.0.0.1:3000/d/shoostr-requests) also works.
+It shows completed requests, rate, mean duration, server errors and active requests.
+Prometheus scrapes every two seconds; rate panels need multiple samples and return to zero
+when greeting traffic stops. Before any greeting requests, greeting panels can show no data.
 The bounded readiness requests above finish before generating the three greetings.
 The completed-request count advances by three, grouped by the route template, not user input:
 
@@ -48,7 +51,8 @@ are development fixtures, not a production monitoring security policy.
 docker compose -f examples/09-micrometer/compose.yaml down --volumes
 ```
 
-The Docker check builds with Jib, verifies actual Prometheus ingestion and Grafana queries,
+The Docker check builds with Jib, verifies default dashboard landing, actual Prometheus
+ingestion and the provisioned dashboard query through Grafana,
 then removes its uniquely named stack. Diagnostics: `examples/09-micrometer/build/docker/compose.log`
 and `build/test-results/dockerTest/`. Ordinary `build` excludes Docker checks. Running with
 `./gradlew :micrometer-example:run` exposes metrics without creating any backend.

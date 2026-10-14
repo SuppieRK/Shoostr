@@ -12,7 +12,7 @@ services:
     tmpfs:
       - /tmp
   jaeger:
-    image: cr.jaegertracing.io/jaegertracing/jaeger:2.22.0@sha256:836b967b5abcf1f7758066aa6b348619267a2f1459f72d472840570f9bd88a17
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.20.0@sha256:46a886260e04002d8f45e213fc39063fa11a50446048fdaa64786fc0840cb9f8
     ports:
       - "127.0.0.1:${JAEGER_PORT:-16686}:16686"
     mem_limit: 512m
@@ -25,6 +25,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: local-only
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/traces.json
       GF_PLUGINS_PREINSTALL_DISABLED: "false"
       GF_PLUGINS_PREINSTALL: ""
       GF_PLUGINS_PREINSTALL_SYNC: "jaeger@13.0.5"
@@ -32,4 +33,6 @@ services:
       GF_PLUGINS_DISABLE_PLUGINS: "prometheus,grafana-lokiexplore-app,grafana-pyroscope-app,grafana-exploretraces-app,grafana-metricsdrilldown-app,elasticsearch,tempo,zipkin,opentsdb,stackdriver,mssql,loki,mysql,influxdb,grafana-advisor-app,grafana-postgresql-datasource,grafana-pyroscope-datasource,grafana-pathfinder-app,grafana-assistant-app"
     volumes:
       - ./grafana/datasources.yaml:/etc/grafana/provisioning/datasources/shoostr.yaml:ro
+      - ./grafana/dashboards.yaml:/etc/grafana/provisioning/dashboards/shoostr.yaml:ro
+      - ./grafana/traces.json:/etc/grafana/dashboards/traces.json:ro
     mem_limit: 512m

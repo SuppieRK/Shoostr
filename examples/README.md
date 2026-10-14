@@ -28,8 +28,8 @@ framework modules do not select a provider or enable per-request logging by defa
 | Mix typed JSON/text and render scoped errors | [06-json-errors](06-json-errors/README.md) / `json-errors-example` | Explicit codec, validated payload, inline scoped JSON 400/500 rendering |
 | Authenticate a group and authorize an operation | [07-authentication](07-authentication/README.md) / `authentication-example` | Public route, Basic challenge, principal, reader/admin role policy |
 | Serve classpath assets and finite HTTP streams | [08-static-streaming](08-static-streaming/README.md) / `static-streaming-example` | Narrow asset mount and CSV chunks; SSE/WebSocket have dedicated tutorials |
-| Export request metrics to Prometheus and Grafana | [09-micrometer](09-micrometer/README.md) / `micrometer-example` | Real scrape samples and a provisioned request dashboard |
-| Export request traces to Jaeger and Grafana | [10-opentelemetry](10-opentelemetry/README.md) / `opentelemetry-example` | Explicit SDK/export, W3C parent continuation and Grafana Explore |
+| Export request metrics to Prometheus and Grafana | [09-micrometer](09-micrometer/README.md) / `micrometer-example` | Real scrape samples and a default request dashboard |
+| Export request traces to Jaeger and Grafana | [10-opentelemetry](10-opentelemetry/README.md) / `opentelemetry-example` | Explicit SDK/export, W3C parent continuation and a default recent-traces dashboard |
 | Persist a resource with PostgreSQL/Flyway/jOOQ | [11-postgres](11-postgres/README.md) / `postgres-example` | Startup migration, create/read and retained data across app restart |
 | Describe and try explicitly documented endpoints | [12-openapi](12-openapi/README.md) / `openapi-example` | Explicit schemas, two documents, codec, protected docs and Swagger authorization |
 | Mount a native SDK MCP extension | [13-mcp](13-mcp/README.md) / `mcp-example` | Separate native SDK configuration and official interoperability checks |

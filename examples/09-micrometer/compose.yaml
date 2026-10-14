@@ -24,6 +24,7 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: local-only
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/requests.json
       GF_PLUGINS_PREINSTALL_DISABLED: "false"
       GF_PLUGINS_PREINSTALL: ""
       GF_PLUGINS_PREINSTALL_SYNC: "prometheus@13.2.3"

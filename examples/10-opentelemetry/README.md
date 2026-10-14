@@ -18,16 +18,28 @@ curl --fail --retry 60 --retry-delay 2 --retry-connrefused --retry-all-errors \
 curl -i http://127.0.0.1:8080/hello/Ada
 ```
 
-The readiness request generates its own separate trace; use the ID from the subsequent
-`/hello/Ada` request for the demonstration.
+Open [Grafana](http://127.0.0.1:3001), login **demo / local-only**; the trace dashboard
+opens automatically. It lists up to 20 greeting traces from the last 15 minutes and
+refreshes every five seconds. Click a **Trace ID** to inspect its spans; no copying an ID
+or configuring a query is necessary. The
+[direct dashboard link](http://127.0.0.1:3001/d/shoostr-traces) also works.
+The readiness request generates a separate trace and appears in the same table.
+This example displays traces, not numeric request metrics; use
+[09-micrometer](../09-micrometer/README.md) for metrics.
 
-Copy the `X-Trace-Id` response header. Open [Grafana Explore](http://127.0.0.1:3001/explore),
-login **demo / local-only**, select **Shoostr Jaeger**, choose **Trace ID**, paste the ID
-and run the query. The trace shows a SERVER span named `GET /hello/{name}` for service
-`shoostr-tracing-example`, with `http.route` and response status (Jaeger's query API
-translates the exported `http.response.status_code` to `http.status_code`). The same ID is visible
-in [Jaeger](http://127.0.0.1:16686). Grafana's datasource is provisioned automatically;
-its pinned signed Jaeger plugin requires Internet access on first startup.
+The trace shows a SERVER span named `GET /hello/{name}` for service
+`shoostr-tracing-example`, with `http.route` and `http.response.status_code`. The same ID is visible
+in [Jaeger](http://127.0.0.1:16686). For a specific trace, you can still copy the
+`X-Trace-Id` response header into [Grafana Explore](http://127.0.0.1:3001/explore),
+select **Shoostr Jaeger** and choose **Trace ID**.
+Grafana's datasource and dashboard are provisioned automatically; its pinned signed
+Jaeger plugin requires Internet access on first startup.
+
+The example pins Jaeger to 2.20.0 because Grafana's Jaeger plugin 13.0.5 uses the legacy
+search API, [removed in Jaeger 2.21](https://github.com/jaegertracing/jaeger/releases/tag/v2.21.0).
+This compatibility pin excludes fixes from subsequent Jaeger releases; it is a disposable
+development fixture, not a production backend recommendation. Upgrade the pair together
+once the plugin supports Jaeger's current search API.
 
 To demonstrate continuation of a remote parent:
 
@@ -47,8 +59,10 @@ loopback-published ports. Fixture logins are not a production security policy.
 docker compose -f examples/10-opentelemetry/compose.yaml down --volumes
 ```
 
-The separately invoked Docker test sends a unique sampled W3C trace, checks its actual
-SERVER span in Jaeger, then retrieves that same trace through Grafana. It builds with
+The separately invoked Docker tests verify default dashboard landing, send unique sampled
+W3C traces, discover one through the provisioned search query without supplying its ID,
+and verify native trace links. They also check an actual SERVER span in Jaeger and retrieve
+that same trace through Grafana. The check builds with
 Jib and removes only its uniquely named stack. Logs are under `build/docker/compose.log`;
 JUnit XML is under `build/test-results/dockerTest/`. Ordinary `build` excludes Docker.
 
