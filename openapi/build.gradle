@@ -27,7 +27,7 @@ tasks.named('processResources') {
 	doFirst {
 		def artifact = configurations.swaggerUiAssets.singleFile
 		def digest = MessageDigest.getInstance('SHA-256').digest(artifact.bytes)
-		assert HexFormat.of().formatHex(digest) == '4467b0ebe95f45a5e7d66ff8a4f1cc892548a885db4d9063530a85e01ddb7086' : 'Pinned Swagger UI artifact checksum mismatch'
+		assert HexFormat.of().formatHex(digest) == 'f7816953f7df2c01757a89d73579596374d5bff1e85210eb98f1dca81e0cbf6d' : 'Pinned Swagger UI artifact checksum mismatch'
 	}
 	from({ zipTree(configurations.swaggerUiAssets.singleFile) }) {
 		include 'META-INF/resources/webjars/swagger-ui/5.33.2/swagger-ui.css'
@@ -35,8 +35,8 @@ tasks.named('processResources') {
 		include 'META-INF/resources/webjars/swagger-ui/5.33.2/swagger-ui-bundle.js.LICENSE.txt'
 		eachFile { details ->
 			details.path = details.name.endsWith('.LICENSE.txt') ?
-			"META-INF/licenses/swagger-ui-5.33.2/${details.name}" :
-			"io/github/suppierk/shoostr/openapi/ui/${details.name}"
+					"META-INF/licenses/swagger-ui-5.33.2/${details.name}" :
+					"io/github/suppierk/shoostr/openapi/ui/${details.name}"
 		}
 		includeEmptyDirs = false
 	}
