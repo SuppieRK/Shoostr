@@ -1,9 +1,10 @@
 # Runnable MCP example and official compatibility tests
 
-This public app uses Shoostr's MCP extension and the official Java SDK
-`2.0.1`, targeting protocol `2025-11-25`. Its fixed native tool/resource/prompt
-catalog is the fixture expected by the official suite, not a production business
-service. The Java integration has no Node runtime dependency. Inspector runs its
+This public app uses Shoostr's MCP extension and the official MCP Java SDK
+`2.0.1`, targeting protocol `2025-11-25`. Its native tool/resource/prompt catalog
+uses the names and behavior required by the official suite, with example-specific
+sample content rather than a production business service. The Java integration
+has no Node runtime dependency. Inspector runs its
 own Node backend in Docker; host Node is needed only for optional verification.
 
 From the repository root, with Java 25, run the app without Inspector:
@@ -23,6 +24,48 @@ independently closeable resource. `McpExample` defines HTTP routes inline;
 `McpConfiguration` owns extension setup, and `CompatibilityFixtures` contains native
 SDK callbacks for the official suite.
 
+## Example data
+
+Tool names, resource URIs and a few elicitation defaults follow the pinned official
+runner's interface. The other content is local demonstration data: a welcome message,
+an 8×8 blue/amber checkerboard, a short PCM pulse, prompts and a parcel-delivery schema.
+The schema shows a collection-point requirement for pickup and a postal-destination
+requirement for courier delivery. It does not book shipments or persist user data.
+
+The image and audio were generated once with JDK 25 APIs. The app serves their stored
+Base64 values; it does not generate media at startup or depend on another media library.
+To reproduce the samples, start `cmdshape jshell`, run `/set truncation 10000`
+so the Base64 values are not abbreviated, and paste:
+
+```jshell
+import java.awt.image.BufferedImage;
+import javax.imageio.ImageIO;
+import javax.sound.sampled.*;
+import java.io.*;
+import java.util.Base64;
+
+var badge = new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB);
+for (int y = 0; y < 8; y++)
+  for (int x = 0; x < 8; x++)
+    badge.setRGB(x, y, ((x / 2 + y / 2) % 2 == 0) ? 0x1d4ed8 : 0xffc857);
+var png = new ByteArrayOutputStream();
+ImageIO.write(badge, "png", png);
+Base64.getEncoder().encodeToString(png.toByteArray());
+
+var samples = new byte[128];
+for (int frame = 0; frame < 64; frame++) {
+  short sample = (short) (6000 * Math.sin(2 * Math.PI * 440 * frame / 8000));
+  samples[2 * frame] = (byte) sample;
+  samples[2 * frame + 1] = (byte) (sample >> 8);
+}
+var format = new AudioFormat(8000, 16, 1, true, false);
+var wav = new ByteArrayOutputStream();
+try (var audio = new AudioInputStream(new ByteArrayInputStream(samples), format, 64)) {
+  AudioSystem.write(audio, AudioFileFormat.Type.WAVE, wav);
+}
+Base64.getEncoder().encodeToString(wav.toByteArray());
+```
+
 ## Run the app and Inspector with Docker
 
 One Compose file starts both. From the repository root:
@@ -37,15 +80,15 @@ cmdshape curl --fail --retry 30 --retry-delay 1 --retry-connrefused --retry-all-
 Open **http://localhost:6274**, enable **shoostr-mcp**, and use:
 
 - **Tools:** select `test_simple_text`, then execute it. The result is
-  `This is a simple text response for testing.` Other tools demonstrate images,
-  audio, structured output, progress and recoverable errors.
-- **Resources:** select **Static text** to read its content; templates accept an explicit ID.
+  `Welcome to Shoostr's MCP example.` Other tools demonstrate images,
+  audio, embedded resources, progress and recoverable errors.
+- **Resources:** select **Example guide** to read its content; templates accept an explicit ID.
 - **Prompts:** select `test_simple_prompt` to retrieve its message.
 
 No login, certificates, host Node installation or OpenAPI document is needed.
 The checked-in `inspector.json` selects Streamable HTTP and the existing
 `2025-11-25` initialization protocol (`protocolEra: "legacy"`); it does not upgrade
-the Java SDK. The application is public: Origin validation is not authentication.
+the MCP Java SDK. The application is public: Origin validation is not authentication.
 
 Both images run nonroot. Host ports 8080 and 6274 publish on loopback only.
 `APP_PORT=8081` changes the app's published port and its allowed public Origin.
@@ -150,8 +193,10 @@ an exit code of zero alone does not mean every reported scenario passed.
 
 Running the suite against an arbitrary business server is not equivalent
 validation. This example supplies the required fixture through the native SDK
-and mounts Shoostr's adapter; no SDK Servlet server is used. See
-[fixture attribution and license](THIRD-PARTY-NOTICES.md).
+and mounts Shoostr's adapter; no SDK Servlet server is used. Required identifiers
+and fixed form values follow the runner's interface; sample bodies, generated
+media and the parcel schema are defined by this example. SDK and tooling
+dependencies retain their own licenses.
 
 SDK 2.0.1 does not implement SSE replay/polling. Keep that upstream limitation
 visible in reports, rather than adding a broad expected-failure baseline or a

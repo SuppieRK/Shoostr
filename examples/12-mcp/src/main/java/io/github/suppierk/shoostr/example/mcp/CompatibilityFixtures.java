@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.BiFunction;
 
-/** Native compatibility catalog; adapted fixture data is credited in THIRD-PARTY-NOTICES.md. */
+/** Native MCP examples using the names and fixed inputs required by the official test runner. */
 final class CompatibilityFixtures {
   private static final String OBJECT = "object";
   private static final String PROPERTIES = "properties";
@@ -20,19 +20,24 @@ final class CompatibilityFixtures {
   private static final String REQUIRED = "required";
   private static final String MESSAGE = "message";
   private static final String EMAIL = "email";
-  private static final String CONTENT_SEPARATOR = "; content: ";
-  private static final String ACTION_PREFIX = "Action: ";
+  private static final String CONTENT_SEPARATOR = "; supplied fields: ";
+  private static final String ACTION_PREFIX = "Form choice: ";
   private static final String DEFAULT = "default";
   private static final String CONST = "const";
   private static final String TITLE = "title";
-  private static final String CONTACT_METHOD = "contactMethod";
-  private static final String PHONE = "phone";
+  private static final String DELIVERY = "delivery";
+  private static final String DESTINATION = "destination";
+  private static final String COLLECTION_POINT = "collectionPoint";
+  private static final String MIN_LENGTH = "minLength";
   private static final MediaType PNG_TYPE = MediaType.of("image/png");
   private static final Map<String, Object> NO_ARGUMENTS =
       Map.of("type", OBJECT, PROPERTIES, Map.of());
   private static final String PNG =
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==";
-  private static final String WAV = "UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAAB9AAACABAAZGF0YQAAAAA=";
+      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAIklEQVR4XmOQ9bsBRP9PhAMRMpsBpwSmEISNWwJTiOp2AAA9XmwheCyshQAAAABJRU5ErkJggg==";
+  private static final String WAV =
+      "UklGRqQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YYAAAAAAAPAH8A4sFAUXJheJFH8PoAi8AML4"
+          + "o/E37CHpwOge6/XvsvaI/okGxg1iE7MWVRc0FZIQ+gk0Aiz61PIK7X/pnOh+6uvuXfUR/RwFjgyEEkoWbRf"
+          + "KFZQRSguqA5z7EvTx7fPpkOjz6fHtEvSc+6oDSguUEcoVbRdKFoQSjgwcBQ==";
 
   /** Prevents instantiation of the fixed catalog. */
   private CompatibilityFixtures() {}
@@ -51,7 +56,7 @@ final class CompatibilityFixtures {
             NO_ARGUMENTS,
             (_, _) ->
                 McpSchema.CallToolResult.builder()
-                    .addTextContent("This is a simple text response for testing.")
+                    .addTextContent("Welcome to Shoostr's MCP example.")
                     .build()),
         tool(
             "test_image_content",
@@ -76,7 +81,8 @@ final class CompatibilityFixtures {
                         List.of(
                             McpSchema.EmbeddedResource.builder(
                                     McpSchema.TextResourceContents.builder(
-                                            "test://embedded-resource", "Embedded resource content")
+                                            "shoostr://guide",
+                                            "This resource travels inside the tool result; it is not an HTTP download.")
                                         .mimeType(MediaType.TEXT_PLAIN.value())
                                         .build())
                                 .build()))
@@ -88,11 +94,13 @@ final class CompatibilityFixtures {
                 McpSchema.CallToolResult.builder()
                     .content(
                         List.of(
-                            McpSchema.TextContent.builder("Mixed native content").build(),
+                            McpSchema.TextContent.builder("A guide, a checkerboard and a JSON note")
+                                .build(),
                             McpSchema.ImageContent.builder(PNG, PNG_TYPE.value()).build(),
                             McpSchema.EmbeddedResource.builder(
                                     McpSchema.TextResourceContents.builder(
-                                            "test://mixed-content-resource", "{\"test\":\"data\"}")
+                                            "shoostr://delivery-note",
+                                            "{\"parcel\":\"P7\",\"delivery\":\"pickup\"}")
                                         .mimeType(MediaType.APPLICATION_JSON.value())
                                         .build())
                                 .build()))
@@ -103,14 +111,18 @@ final class CompatibilityFixtures {
             (_, _) ->
                 McpSchema.CallToolResult.builder()
                     .isError(true)
-                    .addTextContent("This tool intentionally returns an error for testing")
+                    .addTextContent("Demonstration rejected: no parcel was created or changed.")
                     .build()),
         tool(
             "test_tool_with_logging",
             NO_ARGUMENTS,
             (exchange, _) -> {
               // The SDK exchange sends protocol notifications to the connected MCP client.
-              for (var message : List.of("Started", "Processing", "Completed")) {
+              for (var message :
+                  List.of(
+                      "Opened example operation",
+                      "Selected demonstration data",
+                      "Closed example operation")) {
                 exchange.loggingNotification(
                     McpSchema.LoggingMessageNotification.builder(
                             McpSchema.LoggingLevel.INFO, message)
@@ -118,7 +130,7 @@ final class CompatibilityFixtures {
               }
 
               return McpSchema.CallToolResult.builder()
-                  .addTextContent("Logged three events")
+                  .addTextContent("Three example log messages were sent.")
                   .build();
             }),
         tool(
@@ -128,14 +140,14 @@ final class CompatibilityFixtures {
               var metadata = request.meta();
               var token = metadata == null ? null : metadata.get("progressToken");
               if (token != null) {
-                for (var progress : List.of(0.0, 50.0, 100.0)) {
+                for (var progress : List.of(0.0, 0.5, 1.0)) {
                   exchange.progressNotification(
-                      McpSchema.ProgressNotification.builder(token, progress).total(100.0).build());
+                      McpSchema.ProgressNotification.builder(token, progress).total(1.0).build());
                 }
               }
 
               return McpSchema.CallToolResult.builder()
-                  .addTextContent("Completed progress")
+                  .addTextContent("The example operation reached its final progress update.")
                   .build();
             }),
         tool(
@@ -159,11 +171,12 @@ final class CompatibilityFixtures {
                                                   stringArgument(request.arguments(), PROMPT))
                                               .build())
                                       .build()),
-                              100)
+                              128)
                           .build());
               return McpSchema.CallToolResult.builder()
                   .addTextContent(
-                      "LLM response: " + ((McpSchema.TextContent) sampled.content()).text())
+                      "Client-generated answer: "
+                          + ((McpSchema.TextContent) sampled.content()).text())
                   .build();
             }),
         tool(
@@ -188,9 +201,17 @@ final class CompatibilityFixtures {
                                   PROPERTIES,
                                   Map.of(
                                       "username",
-                                      Map.of("type", STRING),
+                                      Map.of(
+                                          "type",
+                                          STRING,
+                                          "description",
+                                          "Name to display in the delivery preview"),
                                       EMAIL,
-                                      Map.of("type", STRING)),
+                                      Map.of(
+                                          "type",
+                                          STRING,
+                                          "description",
+                                          "Example reply address; no email is sent")),
                                   REQUIRED,
                                   List.of("username", EMAIL)))
                           .build());
@@ -205,7 +226,8 @@ final class CompatibilityFixtures {
             (exchange, _) -> {
               var result =
                   exchange.createElicitation(
-                      McpSchema.ElicitFormRequest.builder("Complete the default values", defaults())
+                      McpSchema.ElicitFormRequest.builder(
+                              "Try each default type and submit your own values", defaults())
                           .build());
               return McpSchema.CallToolResult.builder()
                   .addTextContent(
@@ -218,7 +240,8 @@ final class CompatibilityFixtures {
             (exchange, _) -> {
               var result =
                   exchange.createElicitation(
-                      McpSchema.ElicitFormRequest.builder("Select your preferences", enums())
+                      McpSchema.ElicitFormRequest.builder(
+                              "Choose from the single- and multi-select delivery examples", enums())
                           .build());
               return McpSchema.CallToolResult.builder()
                   .addTextContent(
@@ -228,7 +251,10 @@ final class CompatibilityFixtures {
         tool(
             "json_schema_2020_12_tool",
             jsonSchema(),
-            (_, _) -> McpSchema.CallToolResult.builder().addTextContent("ok").build()));
+            (_, _) ->
+                McpSchema.CallToolResult.builder()
+                    .addTextContent("Parcel delivery schema example; no shipment was created.")
+                    .build()));
   }
 
   /**
@@ -240,21 +266,22 @@ final class CompatibilityFixtures {
     // SDK resources expose content addressed by MCP URIs, not files served at HTTP URL paths.
     return List.of(
         new McpServerFeatures.SyncResourceSpecification(
-            McpSchema.Resource.builder("test://static-text", "Static text")
-                .description("A text resource")
+            McpSchema.Resource.builder("test://static-text", "Example guide")
+                .description("A short guide to the three MCP feature types")
                 .mimeType(MediaType.TEXT_PLAIN.value())
                 .build(),
             (_, request) ->
                 McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.TextResourceContents.builder(
-                                    request.uri(), "Static text content")
+                                    request.uri(),
+                                    "Call tools to run operations, read resources for data, and request prompts for messages.")
                                 .mimeType(MediaType.TEXT_PLAIN.value())
                                 .build()))
                     .build()),
         new McpServerFeatures.SyncResourceSpecification(
-            McpSchema.Resource.builder("test://static-binary", "Static image")
-                .description("A one-pixel image")
+            McpSchema.Resource.builder("test://static-binary", "Example checkerboard")
+                .description("An eight-by-eight blue and amber image generated for this example")
                 .mimeType(PNG_TYPE.value())
                 .build(),
             (_, request) ->
@@ -265,14 +292,15 @@ final class CompatibilityFixtures {
                                 .build()))
                     .build()),
         new McpServerFeatures.SyncResourceSpecification(
-            McpSchema.Resource.builder("test://watched-resource", "Watched text")
-                .description("A subscribable resource")
+            McpSchema.Resource.builder("test://watched-resource", "Example status")
+                .description("A fixed status resource that accepts subscriptions")
                 .mimeType(MediaType.TEXT_PLAIN.value())
                 .build(),
             (_, request) ->
                 McpSchema.ReadResourceResult.builder(
                         List.of(
-                            McpSchema.TextResourceContents.builder(request.uri(), "Watched content")
+                            McpSchema.TextResourceContents.builder(
+                                    request.uri(), "The MCP example is ready.")
                                 .mimeType(MediaType.TEXT_PLAIN.value())
                                 .build()))
                     .build()));
@@ -287,8 +315,8 @@ final class CompatibilityFixtures {
     // An SDK resource template resolves parameterized MCP URIs; Shoostr does not match these paths.
     return List.of(
         new McpServerFeatures.SyncResourceTemplateSpecification(
-            McpSchema.ResourceTemplate.builder("test://template/{id}/data", "Template data")
-                .description("JSON data for the requested ID")
+            McpSchema.ResourceTemplate.builder("test://template/{id}/data", "Parcel preview")
+                .description("An illustrative parcel record containing the supplied identifier")
                 .mimeType(MediaType.APPLICATION_JSON.value())
                 .build(),
             (_, request) -> {
@@ -299,7 +327,7 @@ final class CompatibilityFixtures {
                 var json =
                     McpJsonDefaults.getMapper()
                         .writeValueAsString(
-                            Map.of("id", id, "templateTest", true, "data", "Data for " + id));
+                            Map.of("parcelId", id, DELIVERY, "pickup", COLLECTION_POINT, "P7"));
                 return McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.TextResourceContents.builder(uri, json)
@@ -321,18 +349,23 @@ final class CompatibilityFixtures {
     // SDK prompts return reusable message templates with arguments supplied by the MCP client.
     return List.of(
         new McpServerFeatures.SyncPromptSpecification(
-            McpSchema.Prompt.builder("test_simple_prompt").description("A text prompt").build(),
+            McpSchema.Prompt.builder("test_simple_prompt")
+                .description("Ask the client to explain the MCP feature types")
+                .build(),
             (_, _) ->
                 McpSchema.GetPromptResult.builder(
                         List.of(
                             McpSchema.PromptMessage.builder(
                                     McpSchema.Role.USER,
-                                    McpSchema.TextContent.builder("A simple prompt").build())
+                                    McpSchema.TextContent.builder(
+                                            "Explain how Shoostr exposes MCP tools, resources and prompts over HTTP.")
+                                        .build())
                                 .build()))
                     .build()),
         new McpServerFeatures.SyncPromptSpecification(
             McpSchema.Prompt.builder("test_prompt_with_arguments")
-                .description("A prompt with two explicit substitutions")
+                .description(
+                    "Compare two supplied parcel identifiers in a client-side conversation")
                 .arguments(
                     List.of(
                         McpSchema.PromptArgument.builder("arg1").required(true).build(),
@@ -344,16 +377,17 @@ final class CompatibilityFixtures {
                             McpSchema.PromptMessage.builder(
                                     McpSchema.Role.USER,
                                     McpSchema.TextContent.builder(
-                                            "Arguments: "
+                                            "Compare parcel "
                                                 + request.arguments().get("arg1")
-                                                + "; "
-                                                + request.arguments().get("arg2"))
+                                                + " with parcel "
+                                                + request.arguments().get("arg2")
+                                                + " using the delivery preview.")
                                         .build())
                                 .build()))
                     .build()),
         new McpServerFeatures.SyncPromptSpecification(
             McpSchema.Prompt.builder("test_prompt_with_embedded_resource")
-                .description("A prompt containing the supplied resource URI")
+                .description("Attach example delivery guidance at the supplied resource URI")
                 .arguments(
                     List.of(McpSchema.PromptArgument.builder("resourceUri").required(true).build()))
                 .build(),
@@ -366,7 +400,7 @@ final class CompatibilityFixtures {
                                             McpSchema.TextResourceContents.builder(
                                                     stringArgument(
                                                         request.arguments(), "resourceUri"),
-                                                    "Embedded prompt resource")
+                                                    "Review the delivery guidance attached to this message.")
                                                 .mimeType(MediaType.TEXT_PLAIN.value())
                                                 .build())
                                         .build())
@@ -374,7 +408,7 @@ final class CompatibilityFixtures {
                     .build()),
         new McpServerFeatures.SyncPromptSpecification(
             McpSchema.Prompt.builder("test_prompt_with_image")
-                .description("A prompt containing an image")
+                .description("Present the example's generated checkerboard to the client")
                 .build(),
             (_, _) ->
                 McpSchema.GetPromptResult.builder(
@@ -402,7 +436,7 @@ final class CompatibilityFixtures {
     return McpServerFeatures.SyncToolSpecification.builder()
         .tool(
             McpSchema.Tool.builder(name, schema)
-                .description("Conformance fixture: " + name)
+                .description("Shoostr MCP example: " + name)
                 .build())
         .callHandler(handler)
         .build();
@@ -441,13 +475,7 @@ final class CompatibilityFixtures {
             "age", Map.of("type", "integer", DEFAULT, 30),
             "score", Map.of("type", "number", DEFAULT, 95.5),
             "status",
-                Map.of(
-                    "type",
-                    STRING,
-                    "enum",
-                    List.of("active", "inactive", "pending"),
-                    DEFAULT,
-                    "active"),
+                Map.of("type", STRING, "enum", List.of("active", "inactive"), DEFAULT, "active"),
             "verified", Map.of("type", "boolean", DEFAULT, true)));
   }
 
@@ -464,31 +492,29 @@ final class CompatibilityFixtures {
         List.of("untitledSingle", "titledSingle", "legacyEnum", "untitledMulti", "titledMulti"),
         PROPERTIES,
         Map.of(
-            "untitledSingle",
-                Map.of("type", STRING, "enum", List.of("option1", "option2", "option3")),
+            "untitledSingle", Map.of("type", STRING, "enum", List.of("option1", "option2")),
             "titledSingle",
                 Map.of(
                     "type",
                     STRING,
                     "oneOf",
                     List.of(
-                        Map.of(CONST, "value1", TITLE, "First Option"),
-                        Map.of(CONST, "value2", TITLE, "Second Option"),
-                        Map.of(CONST, "value3", TITLE, "Third Option"))),
+                        Map.of(CONST, "value1", TITLE, "Collect at the counter"),
+                        Map.of(CONST, "value2", TITLE, "Deliver to the destination"))),
             "legacyEnum",
                 Map.of(
                     "type",
                     STRING,
                     "enum",
-                    List.of("opt1", "opt2", "opt3"),
+                    List.of("opt1", "opt2"),
                     "enumNames",
-                    List.of("Option One", "Option Two", "Option Three")),
+                    List.of("Normal handling", "Fragile handling")),
             "untitledMulti",
                 Map.of(
                     "type",
                     "array",
                     "items",
-                    Map.of("type", STRING, "enum", List.of("option1", "option2", "option3"))),
+                    Map.of("type", STRING, "enum", List.of("option1", "option2"))),
             "titledMulti",
                 Map.of(
                     "type",
@@ -497,13 +523,12 @@ final class CompatibilityFixtures {
                     Map.of(
                         "anyOf",
                         List.of(
-                            Map.of(CONST, "value1", TITLE, "First Choice"),
-                            Map.of(CONST, "value2", TITLE, "Second Choice"),
-                            Map.of(CONST, "value3", TITLE, "Third Choice"))))));
+                            Map.of(CONST, "value1", TITLE, "Add collection instructions"),
+                            Map.of(CONST, "value2", TITLE, "Add delivery instructions"))))));
   }
 
   /**
-   * Keeps the raw JSON Schema dialect, references and applicators intact on the wire.
+   * Describes pickup and courier alternatives while demonstrating raw JSON Schema preservation.
    *
    * @return explicit JSON Schema 2020-12 input schema
    */
@@ -518,38 +543,42 @@ final class CompatibilityFixtures {
             "address",
             Map.of(
                 "$anchor",
-                "addressDef",
+                "parcelDestination",
                 "type",
                 OBJECT,
                 PROPERTIES,
-                Map.of("street", Map.of("type", STRING), "city", Map.of("type", STRING)))),
+                Map.of(
+                    "postalCode", Map.of("type", STRING, MIN_LENGTH, 1),
+                    "countryCode", Map.of("type", STRING, "pattern", "^[A-Z]{2}$")),
+                REQUIRED,
+                List.of("postalCode", "countryCode"),
+                "additionalProperties",
+                false)),
         PROPERTIES,
         Map.of(
-            "name",
-            Map.of("type", STRING),
-            "address",
-            Map.of("$ref", "#/$defs/address"),
-            CONTACT_METHOD,
-            Map.of("type", STRING, "enum", List.of(PHONE, EMAIL)),
-            PHONE,
-            Map.of("type", STRING),
-            EMAIL,
-            Map.of("type", STRING)),
+            "recipient",
+            Map.of("type", STRING, MIN_LENGTH, 1),
+            DELIVERY,
+            Map.of("type", STRING, "enum", List.of("pickup", "courier")),
+            DESTINATION,
+            Map.of("$ref", "#parcelDestination"),
+            COLLECTION_POINT,
+            Map.of("type", STRING, MIN_LENGTH, 1)),
+        REQUIRED,
+        List.of("recipient", DELIVERY),
         "allOf",
         List.of(
             Map.of(
                 "anyOf",
-                List.of(Map.of(REQUIRED, List.of(PHONE)), Map.of(REQUIRED, List.of(EMAIL))))),
+                List.of(
+                    Map.of(REQUIRED, List.of(DESTINATION)),
+                    Map.of(REQUIRED, List.of(COLLECTION_POINT))))),
         "if",
-        Map.of(
-            PROPERTIES,
-            Map.of(CONTACT_METHOD, Map.of(CONST, PHONE)),
-            REQUIRED,
-            List.of(CONTACT_METHOD)),
+        Map.of(PROPERTIES, Map.of(DELIVERY, Map.of(CONST, "pickup")), REQUIRED, List.of(DELIVERY)),
         "then",
-        Map.of(REQUIRED, List.of(PHONE)),
+        Map.of(REQUIRED, List.of(COLLECTION_POINT)),
         "else",
-        Map.of(REQUIRED, List.of(EMAIL)),
+        Map.of(REQUIRED, List.of(DESTINATION)),
         "additionalProperties",
         false);
   }

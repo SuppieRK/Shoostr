@@ -13,10 +13,6 @@ application {
 }
 apply from: rootProject.file('config/gradle/example-container.gradle')
 
-tasks.named('jar') {
-	from('THIRD-PARTY-NOTICES.md') { into 'META-INF' }
-}
-
 tasks.named('test') {
 	useJUnitPlatform { excludeTags 'conformance' }
 }

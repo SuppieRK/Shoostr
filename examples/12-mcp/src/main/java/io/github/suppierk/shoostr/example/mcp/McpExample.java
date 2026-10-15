@@ -46,7 +46,7 @@ public final class McpExample {
     // Options comes from Shoostr core and configures the listener, not the SDK's MCP features.
     var app = new Shoostr(options);
 
-    // This example-local factory builds Shoostr's mcp extension using the official Java SDK.
+    // This example-local factory builds Shoostr's mcp extension using the official MCP Java SDK.
     var mcp = McpConfiguration.create(options);
     // Install it for lifecycle management; installation alone does not register HTTP endpoints.
     return app.extensions(mcp)

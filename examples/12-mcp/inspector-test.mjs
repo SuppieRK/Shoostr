@@ -21,25 +21,27 @@ test('invokes a native MCP tool through Inspector', { timeout: 60_000 }, async (
   await page.locator('label[for$="-Tools"]').first().click();
   await page.getByRole('button', { name: 'test_simple_text', exact: true }).click();
   await page.getByRole('button', { name: 'Execute Tool', exact: true }).click();
-  const result = page.getByText('This is a simple text response for testing.', { exact: true });
+  const result = page.getByText("Welcome to Shoostr's MCP example.", { exact: true });
   await result.waitFor();
-  assert.equal(await result.innerText(), 'This is a simple text response for testing.');
+  assert.equal(await result.innerText(), "Welcome to Shoostr's MCP example.");
 });
 
 test('reads native MCP resource content through Inspector', { timeout: 60_000 }, async () => {
   await page.locator('label[for$="-Resources"]').first().click();
   const uris = page.getByRole('button', { name: /^URIs/ });
   if ((await uris.getAttribute('aria-expanded')) !== 'true') await uris.click();
-  await page.getByRole('button', { name: 'Static text', exact: true }).click();
-  const result = page.getByText('Static text content', { exact: true });
+  await page.getByRole('button', { name: 'Example guide', exact: true }).click();
+  const content = 'Call tools to run operations, read resources for data, and request prompts for messages.';
+  const result = page.getByText(content, { exact: true });
   await result.waitFor();
-  assert.equal(await result.innerText(), 'Static text content');
+  assert.equal(await result.innerText(), content);
 });
 
 test('retrieves a native MCP prompt through Inspector', { timeout: 60_000 }, async () => {
   await page.locator('label[for$="-Prompts"]').first().click();
   await page.getByRole('button', { name: /^test_simple_prompt/ }).click();
-  const result = page.getByText('A simple prompt', { exact: true });
+  const content = 'Explain how Shoostr exposes MCP tools, resources and prompts over HTTP.';
+  const result = page.getByText(content, { exact: true });
   await result.waitFor();
-  assert.equal(await result.innerText(), 'A simple prompt');
+  assert.equal(await result.innerText(), content);
 });
