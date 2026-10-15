@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import org.jspecify.annotations.Nullable;
 
@@ -28,6 +29,7 @@ public final class Extensions {
   private final List<Handler> beforeFlush;
   private final List<Handler> afterFlush;
   private final List<Consumer<RequestOutcome>> observers;
+  private final List<Function<Request, RequestObservation>> instrumentation;
   private final Map<Integer, Handler> statuses;
   private final List<Consumer<RouteInfo>> routeConsumers;
   private @Nullable Handler authentication;
@@ -50,6 +52,7 @@ public final class Extensions {
     beforeFlush = new ArrayList<>();
     afterFlush = new ArrayList<>();
     observers = new ArrayList<>();
+    instrumentation = new ArrayList<>();
     statuses = new LinkedHashMap<>();
     routeConsumers = new ArrayList<>();
     if (inherited != null) {
@@ -204,6 +207,25 @@ public final class Extensions {
   }
 
   /**
+   * Adds matched-request instrumentation before executor handoff and local match hooks. The same
+   * factory instance contributes once per endpoint, including inherited selections. Scopes follow
+   * the application instrumentation's handoff, cleanup and failure-isolation contract. Unmatched
+   * requests and pre-routing short circuits do not invoke local factories.
+   *
+   * @param factory creates one observation without retaining live input
+   * @return this scope
+   */
+  public Extensions observe(Function<Request, RequestObservation> factory) {
+    requireMutable();
+    Objects.requireNonNull(factory);
+    if (instrumentation.stream().noneMatch(existing -> existing == factory)) {
+      instrumentation.add(factory);
+    }
+
+    return this;
+  }
+
+  /**
    * Adds a generated-status renderer; a local match suppresses the app renderer.
    *
    * @param status HTTP status from 100 through 599
@@ -273,6 +295,7 @@ public final class Extensions {
         && combined.beforeFlush.isEmpty()
         && combined.afterFlush.isEmpty()
         && combined.observers.isEmpty()
+        && combined.instrumentation.isEmpty()
         && combined.statuses.isEmpty()) {
       return null;
     }
@@ -285,6 +308,7 @@ public final class Extensions {
         combined.beforeFlush,
         combined.afterFlush,
         combined.observers,
+        combined.instrumentation,
         Map.of(),
         combined.statuses,
         conditions);
@@ -345,6 +369,7 @@ public final class Extensions {
     beforeFlush.addAll(source.beforeFlush);
     afterFlush.addAll(source.afterFlush);
     observers.addAll(source.observers);
+    source.instrumentation.forEach(this::observe);
     statuses.putAll(source.statuses);
     routeConsumers.addAll(source.routeConsumers);
   }

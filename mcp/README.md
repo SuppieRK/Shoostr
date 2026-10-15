@@ -30,8 +30,9 @@ var app = new Shoostr()
 
 This example deliberately makes the endpoint public. Origin validation is not
 authentication. For a protected deployment, select a managed authenticator on
-the enclosing group and derive the identity from its verified claims, as shown
-in [the external OAuth example](../examples/mcp-oauth/README.md).
+the enclosing group and derive the identity from its verified claims. Authentication
+and token verification remain application-owned; the adapter does not supply an
+authorization server.
 
 ## Configuration and ownership
 
@@ -134,13 +135,15 @@ The current verification boundary is explicit:
 | Roots changes, URL elicitation and parallel bidirectional correlation | Java clients |
 | Prompt/resource argument completion and URL-elicitation completion notifications | Java clients, including completion after the tool response ends |
 | Sessions, fresh identity, permission denial and token-expiry termination | Live HTTP and Java clients |
-| External OAuth discovery, browser PKCE and scope escalation | Official TypeScript client against real Keycloak |
+| External OAuth discovery, browser PKCE and scope escalation | No maintained external-provider end-to-end fixture |
 | Startup ownership, explicit deletion and application shutdown | Live registration/client/lifecycle tests |
 
-The [runnable public example](../examples/mcp/README.md) configures the official
+The [runnable public example](../examples/12-mcp/README.md) configures the official
 suite's native catalog and runs the pinned dated requirements, session lifecycle
-and JSON Schema checks. The OAuth example adds the official TypeScript client,
-a real external Keycloak authorization server, browser PKCE and scope escalation.
+and JSON Schema checks. Its single Compose file also starts MCP Inspector for native
+tool, resource and prompt interaction. External OAuth-provider login and browser PKCE
+are not part of the maintained end-to-end fixtures; library authentication and transport
+tests do not replace that external-provider verification.
 
 Java SDK 2.0.1 does not implement SSE replay/resume despite its API placeholders.
 The official polling scenario currently warns without exercising reconnect/replay;

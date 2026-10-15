@@ -1,0 +1,15 @@
+apply plugin: 'com.google.cloud.tools.jib'
+
+jib {
+	from {
+		image = 'eclipse-temurin:25-jre@sha256:fcd7fd7b387f94bb2ac461478a7436ad8e349924c374ea8313919624dceae636'
+	}
+	to { image = "shoostr/${project.name}:local" }
+	container {
+		user = '1000:1000'
+		ports = ['8080']
+		jvmFlags = [
+			'-XX:MaxRAMPercentage=75.0'
+		]
+	}
+}

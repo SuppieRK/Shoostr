@@ -101,12 +101,12 @@ public record Options(
   }
 
   /**
-   * Creates the initial server configuration.
+   * Creates the initial server configuration bound to all IPv4 interfaces.
    *
-   * @return loopback defaults with bounded input, finite output and stream buffering
+   * @return defaults with bounded input, finite output and stream buffering
    */
   public static Options defaults() {
-    return new Options("127.0.0.1", 8080, 1_048_576, 1_048_576, 8192, 30_000);
+    return new Options("0.0.0.0", 8080, 1_048_576, 1_048_576, 8192, 30_000);
   }
 
   /**

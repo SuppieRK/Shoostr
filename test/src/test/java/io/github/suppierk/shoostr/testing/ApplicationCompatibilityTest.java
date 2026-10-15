@@ -40,7 +40,7 @@ class ApplicationCompatibilityTest {
         .path(
             "/api",
             routes -> routes.get("/value", (_, response) -> response.text("existing")),
-            extensions -> extensions.get(authentication).required());
+            extensions -> extensions.get(authentication).enabled());
     app.routes().get("/plain", (_, response) -> response.text("plain"));
 
     try (var test = TestServer.start(app)) {

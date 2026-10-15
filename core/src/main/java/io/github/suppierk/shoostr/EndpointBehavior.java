@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.function.Predicate;
 import org.jspecify.annotations.Nullable;
 
@@ -23,6 +24,7 @@ record EndpointBehavior(
     List<Handler> beforeFlush,
     List<Handler> afterFlush,
     List<Consumer<RequestOutcome>> observers,
+    List<Function<Request, RequestObservation>> instrumentation,
     Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors,
     Map<Integer, Handler> statuses,
     List<Predicate<Request>> conditions) {
@@ -36,6 +38,7 @@ record EndpointBehavior(
    * @param beforeFlush local pre-flush hooks
    * @param afterFlush local post-flush hooks
    * @param observers terminal observers
+   * @param instrumentation matched-request observation factories
    * @param errors local exception renderers
    * @param statuses local generated-status renderers
    * @param conditions runtime availability checks
@@ -47,6 +50,7 @@ record EndpointBehavior(
     beforeFlush = List.copyOf(beforeFlush);
     afterFlush = List.copyOf(afterFlush);
     observers = List.copyOf(observers);
+    instrumentation = List.copyOf(instrumentation);
     errors = Map.copyOf(errors);
     statuses = Map.copyOf(statuses);
     conditions = List.copyOf(conditions);
@@ -68,8 +72,8 @@ record EndpointBehavior(
 
     return behavior == null
         ? new EndpointBehavior(
-            null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), errors,
-            Map.of(), List.of())
+            null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+            errors, Map.of(), List.of())
         : new EndpointBehavior(
             behavior.authentication,
             behavior.matched,
@@ -78,6 +82,7 @@ record EndpointBehavior(
             behavior.beforeFlush,
             behavior.afterFlush,
             behavior.observers,
+            behavior.instrumentation,
             errors,
             behavior.statuses,
             behavior.conditions);

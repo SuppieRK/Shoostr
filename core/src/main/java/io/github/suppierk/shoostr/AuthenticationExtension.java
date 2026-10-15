@@ -4,7 +4,7 @@ import java.util.Objects;
 import org.jspecify.annotations.Nullable;
 
 /**
- * A managed identity source. Install through Shoostr.authentication and select required() on routes
+ * A managed identity source. Install through Shoostr.authentication and select enabled() on routes
  * or groups. Several instances may coexist in an application, but each endpoint may require only
  * one distinct instance. Authentication runs before extension/local/app gates.
  */
@@ -18,7 +18,7 @@ public abstract class AuthenticationExtension
   public final Requirement configure(Extensions endpoint, @Nullable Requirement inherited) {
     var requirement = new Requirement(endpoint, this);
     if (inherited != null && inherited.required) {
-      requirement.required();
+      requirement.enabled();
     }
 
     return requirement;
@@ -47,7 +47,7 @@ public abstract class AuthenticationExtension
      *
      * @return this configuration
      */
-    public Requirement required() {
+    public Requirement enabled() {
       endpoint.authentication(authentication);
       required = true;
       return this;

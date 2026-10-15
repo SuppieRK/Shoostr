@@ -1,0 +1,68 @@
+# Executable examples
+
+Pick one task and read its app factory, where route definitions appear inline,
+then run the matching live HTTP test. There is no DI container, annotation routing,
+multi-app demonstration or shared example runtime. Java 25 and the repository Gradle
+wrapper are required. Docker Engine and Compose are needed only for containers/backends.
+
+Direct runs use Shoostr's default `0.0.0.0` listener: all IPv4 interfaces, not only
+localhost. Demonstration credentials and public endpoints are not production security;
+run examples only in a trusted development environment. `TestServer` always binds
+loopback, and the supplied Compose recipes publish user-facing ports on host loopback.
+Choose an explicit `Options` host of `127.0.0.1` for a loopback-only application.
+
+Each example uses SLF4J with an application-owned Logback backend. Its local
+`src/main/resources/logback.xml` sends INFO and higher levels to stderr. The runtime
+`slf4j-jdk-platform-logging` bridge routes Shoostr's JDK logger into that same backend;
+framework modules do not select a provider or enable per-request logging by default.
+
+## Learning path
+
+| Task | Example / Gradle project | Observable lesson |
+| --- | --- | --- |
+| Start/stop a server and return text | [01-hello](01-hello/README.md) / `hello-example` | `GET /hello`, plain response and deterministic test ownership |
+| Route HTTP methods, read inputs and vary availability | [02-requests](02-requests/README.md) / `requests-example` | Seven verbs, generic route, path groups/patterns, both `when` forms, query/form/body/header/cookie inputs, supplied unary operation |
+| Send server-sent events and resume a finite feed | [03-sse](03-sse/README.md) / `sse-example` | Data/named events, IDs/retry, heartbeats, replay/204 and errors before/after commitment |
+| Exchange WebSocket messages and handle failures | [04-websocket](04-websocket/README.md) / `websocket-example` | Text/binary echo, per-connection context, handshake rejection, recoverable input and safe close codes |
+| Handle exceptions and generated HTTP statuses | [05-exceptions](05-exceptions/README.md) / `exceptions-example` | Built-in errors, local recovery, app fallback, route/group overrides and inheritance, generated versus thrown 404 |
+| Mix typed JSON/text and render scoped errors | [06-json-errors](06-json-errors/README.md) / `json-errors-example` | Explicit codec, validated payload, inline scoped JSON 400/500 rendering |
+| Authenticate a group and authorize an operation | [07-authentication](07-authentication/README.md) / `authentication-example` | Public route, Basic challenge, principal, reader/admin role policy |
+| Serve classpath assets and finite HTTP streams | [08-static-streaming](08-static-streaming/README.md) / `static-streaming-example` | Narrow asset mount and CSV chunks; SSE/WebSocket have dedicated tutorials |
+| Export request metrics to Prometheus and Grafana | [09-micrometer](09-micrometer/README.md) / `micrometer-example` | Real scrape samples and a default request dashboard |
+| Export request traces to Jaeger and Grafana | [10-opentelemetry](10-opentelemetry/README.md) / `opentelemetry-example` | Explicit SDK/export, W3C parent continuation and a default recent-traces dashboard |
+| Describe and try explicitly documented endpoints | [11-openapi](11-openapi/README.md) / `openapi-example` | Explicit schemas, two documents, codec, protected docs and Swagger authorization |
+| Mount a native SDK MCP extension | [12-mcp](12-mcp/README.md) / `mcp-example` | Native SDK configuration, bundled MCP Inspector and official interoperability checks |
+
+Every server example remains independently runnable and understandable. Ordinary
+`./gradlew build` compiles examples and runs Docker-free JUnit HTTP/WebSocket tests through
+`shoostr-test`; that fixture owns only the app, not supplied dependencies. Fetch each
+response with `test.send(request -> ...)`, then use ordinary JUnit assertions.
+WebSocket tests use a separately owned JDK client against the fixture's public
+`baseUri()`, observing messages and close frames rather than listener internals.
+
+Jib's `jibDockerBuild` creates the local image without a Dockerfile or registry push.
+Each Compose recipe publishes user-facing ports only on loopback. Run one example
+at a time on 8080, or override its documented port. Ctrl+C/app stop uses Shoostr's
+existing shutdown hook. Compose cleanup removes only that example's resources.
+
+Telemetry checks belong to a separately invoked Docker lane: backend readiness,
+actual requests, backend ingestion, Grafana provisioning and bounded cleanup.
+These are not mocked data, console-only exporters or load/performance benchmarks.
+
+From the repository root:
+
+```sh
+./gradlew :hello-example:run
+./gradlew :requests-example:test
+./gradlew :micrometer-example:dockerTest :opentelemetry-example:dockerTest
+```
+
+Use each README's exact requests, ports and cleanup commands. Backend fixtures use unique
+Compose project names and remove their own disposable resources; do not run a second copy
+on their test ports. CI builds all example images, runs the two real-backend test suites and
+verifies MCP tools, resources and prompts through Inspector's public browser UI. Ordinary
+`build` needs neither Docker nor external metrics, trace or identity services.
+
+Topic selection follows the focused [Javalin tutorials](https://javalin.io/tutorials/),
+[Jooby manual](https://jooby.io/) and [Spring guides](https://spring.io/guides/).
+Those catalogs demonstrate common teaching topics, not measured popularity.

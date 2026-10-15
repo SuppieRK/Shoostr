@@ -52,7 +52,7 @@ class ExtensionCompositionTest {
                 },
                 e -> {
                   groupCalls.incrementAndGet();
-                  e.get(auth).required();
+                  e.get(auth).enabled();
                   e.get(docs).tag("users").summary("Users");
                   e.get(otherDocs).tag("public").summary("Other document");
                 });
@@ -60,7 +60,7 @@ class ExtensionCompositionTest {
                 "/openapi.json",
                 docs.handler(),
                 e -> {
-                  e.get(auth).required();
+                  e.get(auth).enabled();
                   e.get(docs).summary("API description");
                 });
           });

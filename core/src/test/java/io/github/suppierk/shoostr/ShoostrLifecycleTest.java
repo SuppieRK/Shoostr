@@ -20,8 +20,10 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.channels.ServerSocketChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
@@ -30,6 +32,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.stream.Stream;
@@ -53,6 +56,42 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(20)
 class ShoostrLifecycleTest {
   @TempDir private Path temporary;
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void bindsWildcardByDefaultAndPreservesExplicitLoopback(boolean loopback) throws Exception {
+    var options =
+        loopback
+            ? new Options("127.0.0.1", 0, 1_048_576, 1_048_576, 8192, 30_000)
+            : Options.defaults().withPort(0);
+    var listener = new AtomicReference<ServerConnector>();
+
+    try (var app = new Shoostr(options);
+        var client = HttpClient.newHttpClient()) {
+      app.modifyServer(
+          server ->
+              listener.set(assertInstanceOf(ServerConnector.class, server.getConnectors()[0])));
+      app.routes().get("/", (_, response) -> response.text("configured listener"));
+      app.start();
+
+      var address =
+          assertInstanceOf(ServerSocketChannel.class, listener.get().getTransport())
+              .socket()
+              .getInetAddress();
+      assertEquals(loopback, address.isLoopbackAddress());
+      assertEquals(!loopback, address.isAnyLocalAddress());
+
+      // TestServer intentionally replaces the binding, so this transport check owns its client.
+      var reply =
+          client.send(
+              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
+                  .timeout(Duration.ofSeconds(3))
+                  .build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, reply.statusCode());
+      assertEquals("configured listener", reply.body());
+    }
+  }
 
   @Test
   void usesAnUnlimitedVirtualPoolForNativeRequestProduction() throws Exception {
@@ -715,6 +754,10 @@ class ShoostrLifecycleTest {
   @Test
   void concurrentCloseCallsCompleteWithoutDuplicatingShutdown() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
+      var before = new AtomicInteger();
+      var after = new AtomicInteger();
+      app.beforeClose(before::incrementAndGet);
+      app.afterClose(after::incrementAndGet);
       app.start();
       var failure = new AtomicReference<Throwable>();
       Runnable close =
@@ -732,11 +775,14 @@ class ShoostrLifecycleTest {
       assertFalse(first.isAlive());
       assertFalse(second.isAlive());
       assertNull(failure.get());
+      assertEquals(1, before.get());
+      assertEquals(1, after.get());
     }
   }
 
-  @Test
-  void jvmShutdownClosesTheAppWithoutAnExplicitCloseCall() throws Exception {
+  @ParameterizedTest
+  @ValueSource(strings = {"started", "unstarted", "explicit-close"})
+  void jvmShutdownCompletesApplicationCleanupExactlyOnce(String lifecycle) throws Exception {
     var marker = temporary.resolve("closed");
     var log = temporary.resolve("child.log");
     var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
@@ -746,7 +792,8 @@ class ShoostrLifecycleTest {
                 "-cp",
                 System.getProperty("java.class.path"),
                 ShutdownFixture.class.getName(),
-                marker.toString())
+                marker.toString(),
+                lifecycle)
             .redirectErrorStream(true)
             .redirectOutput(log.toFile())
             .start();
@@ -754,7 +801,7 @@ class ShoostrLifecycleTest {
     try {
       assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Shutdown child JVM did not exit");
       assertEquals(0, process.exitValue(), Files.readString(log));
-      assertEquals("closed", Files.readString(marker));
+      assertEquals("closed\n", Files.readString(marker));
     } finally {
       if (process.isAlive()) {
         process.destroyForcibly();
@@ -765,25 +812,30 @@ class ShoostrLifecycleTest {
 
   public static final class ShutdownFixture {
     // test-source-policy: subprocess-main; ShoostrLifecycleTest forks this JVM to verify its hook.
-    public static void main(String[] args) throws Exception {
+    static void main(String[] args) throws Exception {
       var app = new Shoostr(Options.defaults().withPort(0));
-      app.start();
-      Runtime.getRuntime()
-          .addShutdownHook(
-              new Thread(
-                  () -> {
-                    await()
-                        .pollInterval(Duration.ofMillis(10))
-                        .atMost(Duration.ofSeconds(5))
-                        .untilAsserted(() -> assertThrows(IllegalStateException.class, app::port));
+      app.afterClose(
+          () -> {
+            assertThrows(IllegalStateException.class, app::port);
 
-                    try {
-                      Files.writeString(Path.of(args[0]), "closed");
-                    } catch (IOException failure) {
-                      throw new IllegalStateException(failure);
-                    }
-                  },
-                  "shutdown-observer"));
+            try {
+              Files.writeString(
+                  Path.of(args[0]),
+                  "closed\n",
+                  StandardOpenOption.CREATE,
+                  StandardOpenOption.APPEND);
+            } catch (IOException failure) {
+              throw new IllegalStateException(failure);
+            }
+          });
+      if (!"unstarted".equals(args[1])) {
+        app.start();
+      }
+
+      if ("explicit-close".equals(args[1])) {
+        app.close();
+      }
+
       System.exit(0);
     }
   }

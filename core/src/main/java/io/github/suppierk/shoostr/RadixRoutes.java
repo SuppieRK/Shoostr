@@ -16,10 +16,7 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ThreadPoolExecutor;
-import java.util.function.BiFunction;
 import java.util.regex.Pattern;
-import org.eclipse.jetty.websocket.api.Session;
-import org.eclipse.jetty.websocket.server.ServerUpgradeResponse;
 import org.jspecify.annotations.Nullable;
 
 /** Frozen compressed path patterns with literal, constrained, parameter and catch-all branches. */
@@ -205,10 +202,7 @@ class RadixRoutes {
    * @param factory creates one listener from the handshake request and response
    * @return compiled WebSocket endpoint metadata
    */
-  static Endpoint websocketEndpoint(
-      String path,
-      Handler admission,
-      BiFunction<Request, ServerUpgradeResponse, Session.Listener> factory) {
+  static Endpoint websocketEndpoint(String path, Handler admission, WebSocket.Factory factory) {
     var endpoint = endpoint(HttpMethods.GET, path, admission);
     return new Endpoint(
         endpoint.method(),
@@ -1357,7 +1351,7 @@ class RadixRoutes {
       Map<String, Integer> parameters,
       int firstParameterOffset,
       int firstParameterSegment,
-      @Nullable BiFunction<Request, ServerUpgradeResponse, Session.Listener> websocketFactory,
+      WebSocket.@Nullable Factory websocketFactory,
       @Nullable EndpointBehavior behavior,
       @Nullable ExecutorService executor) {
     /**
@@ -1380,7 +1374,7 @@ class RadixRoutes {
         Map<String, Integer> parameters,
         int firstParameterOffset,
         int firstParameterSegment,
-        @Nullable BiFunction<Request, ServerUpgradeResponse, Session.Listener> websocketFactory) {
+        WebSocket.@Nullable Factory websocketFactory) {
       this(
           method,
           pattern,

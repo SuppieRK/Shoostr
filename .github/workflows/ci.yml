@@ -34,49 +34,13 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: |
-            examples/mcp/package-lock.json
-            examples/mcp-oauth/package-lock.json
+          cache-dependency-path: examples/12-mcp/package-lock.json
 
-      - name: Install pinned MCP compatibility tests
-        working-directory: examples/mcp
-        run: npm ci --ignore-scripts
-
-      - name: Install pinned MCP OAuth client and browser
-        working-directory: examples/mcp-oauth
+      - name: Install pinned MCP compatibility tests and browser
+        working-directory: examples/12-mcp
         run: |
           npm ci --ignore-scripts
           node node_modules/playwright/cli.js install --with-deps firefox
-
-      - name: Start isolated HTTPS OAuth fixture
-        working-directory: examples/mcp-oauth
-        run: |
-          mkdir -p .local
-          openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 2 \
-            -keyout .local/fixture-ca.key -out .local/fixture-ca.pem \
-            -subj '/CN=Shoostr local fixture CA' \
-            -addext 'basicConstraints=critical,CA:TRUE' \
-            -addext 'keyUsage=critical,keyCertSign,cRLSign'
-          openssl req -new -newkey rsa:2048 -sha256 -nodes \
-            -keyout .local/fixture-key.pem -out .local/fixture.csr \
-            -subj '/CN=localhost' -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' \
-            -addext 'basicConstraints=critical,CA:FALSE' \
-            -addext 'keyUsage=critical,digitalSignature,keyEncipherment' \
-            -addext 'extendedKeyUsage=serverAuth'
-          openssl x509 -req -in .local/fixture.csr \
-            -CA .local/fixture-ca.pem -CAkey .local/fixture-ca.key -CAcreateserial \
-            -out .local/fixture-cert.pem -days 2 -sha256 -copy_extensions copy
-          openssl pkcs12 -export -in .local/fixture-cert.pem \
-            -inkey .local/fixture-key.pem -certfile .local/fixture-ca.pem \
-            -out .local/fixture.p12 -name localhost -passout pass:changeit
-          # The pinned image runs as UID1000; the hosted runner owns files as UID1001.
-          # Transfer only this disposable server key, without making it world-readable.
-          sudo chown 1000 .local/fixture-key.pem
-          docker compose -p shoostr-mcp-oauth-ci up -d keycloak
-          curl --fail --retry 60 --retry-delay 2 --retry-connrefused --retry-all-errors \
-            --max-time 5 --retry-max-time 180 http://127.0.0.1:9000/health/ready
-          curl --fail --cacert .local/fixture-ca.pem \
-            https://localhost:8443/realms/shoostr-mcp/.well-known/openid-configuration
 
       - name: Build and test
         run: ./gradlew clean build --console=plain
@@ -84,26 +48,38 @@ jobs:
       - name: Verify MCP interoperability with the official suite
         run: ./gradlew :mcp-example:conformanceTest --console=plain
 
-      - name: Verify MCP authorization through the official client and Keycloak
-        run: ./gradlew :mcp-oauth-example:oauthTest --console=plain
+      - name: Build focused example container images with Jib
+        run: >-
+          ./gradlew :hello-example:jibDockerBuild :requests-example:jibDockerBuild
+          :sse-example:jibDockerBuild :websocket-example:jibDockerBuild
+          :exceptions-example:jibDockerBuild :json-errors-example:jibDockerBuild
+          :authentication-example:jibDockerBuild
+          :static-streaming-example:jibDockerBuild :openapi-example:jibDockerBuild
+          :mcp-example:jibDockerBuild --console=plain
 
-      - name: Stop OAuth fixture and preserve diagnostics
-        if: always()
-        working-directory: examples/mcp-oauth
+      - name: Verify real observability examples
+        run: >-
+          ./gradlew :micrometer-example:dockerTest :opentelemetry-example:dockerTest
+          --console=plain
+
+      - name: Verify public MCP tools, resources and prompts through Inspector
+        working-directory: examples/12-mcp
         run: |
-          mkdir -p build/oauth
-          docker compose -p shoostr-mcp-oauth-ci logs --no-color keycloak > build/oauth/keycloak.log
-          docker compose -p shoostr-mcp-oauth-ci down --timeout 20
+          compose=(docker compose -p shoostr-mcp-inspector-ci -f compose.yaml)
+          trap '"${compose[@]}" down --timeout 20' EXIT
+          "${compose[@]}" up -d --wait --wait-timeout 90
+          node --test inspector-test.mjs
 
-      - name: Preserve MCP OAuth reports
+      - name: Preserve real-backend example results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: mcp-oauth-results
+          name: example-backend-results
           path: |
-            examples/mcp-oauth/build/oauth/runner.log
-            examples/mcp-oauth/build/oauth/keycloak.log
-            examples/mcp-oauth/build/test-results/oauthTest/
+            examples/09-micrometer/build/docker/
+            examples/09-micrometer/build/test-results/dockerTest/
+            examples/10-opentelemetry/build/docker/
+            examples/10-opentelemetry/build/test-results/dockerTest/
           if-no-files-found: warn
 
       - name: Preserve MCP compatibility reports
@@ -112,8 +88,8 @@ jobs:
         with:
           name: mcp-conformance-results
           path: |
-            examples/mcp/build/conformance/
-            examples/mcp/build/test-results/conformanceTest/
+            examples/12-mcp/build/conformance/
+            examples/12-mcp/build/test-results/conformanceTest/
           if-no-files-found: warn
 
       - name: Check benchmark reporting and resource enforcement

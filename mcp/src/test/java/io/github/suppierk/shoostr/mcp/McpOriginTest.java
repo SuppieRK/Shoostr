@@ -46,7 +46,7 @@ class McpOriginTest {
         .routes(
             routes ->
                 routes.path(
-                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).required()));
+                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).enabled()));
 
     try (var test = TestServer.start(app)) {
       assertEquals(
@@ -73,7 +73,7 @@ class McpOriginTest {
         .routes(
             routes ->
                 routes.path(
-                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).required()));
+                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).enabled()));
 
     try (var test = TestServer.start(app)) {
       assertEquals(
@@ -105,7 +105,7 @@ class McpOriginTest {
         .routes(
             routes ->
                 routes.path(
-                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).required()));
+                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).enabled()));
 
     try (var test = TestServer.start(app)) {
       assertEquals(
@@ -131,7 +131,7 @@ class McpOriginTest {
         .routes(
             routes ->
                 routes.path(
-                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).required()));
+                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).enabled()));
 
     try (var test = TestServer.start(app)) {
       assertEquals(401, test.send(request -> request.path("/mcp").method("POST")).statusCode());
@@ -154,7 +154,7 @@ class McpOriginTest {
         .routes(
             routes ->
                 routes.path(
-                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).required()));
+                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).enabled()));
 
     try (var test = TestServer.start(app)) {
       assertEquals(
@@ -219,7 +219,7 @@ class McpOriginTest {
         .routes(
             routes ->
                 routes.path(
-                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).required()));
+                    "/mcp", mcp::routes, extensions -> extensions.get(authentication).enabled()));
 
     try (var test = TestServer.start(app)) {
       assertEquals(

@@ -46,7 +46,13 @@ import org.eclipse.jetty.websocket.core.WebSocketConstants;
 import org.eclipse.jetty.websocket.server.ServerWebSocketContainer;
 import org.jspecify.annotations.Nullable;
 
-/** HTTP application with explicit startup and automatic JVM shutdown cleanup. */
+/**
+ * HTTP application with explicit startup and automatic JVM shutdown cleanup.
+ *
+ * <p>S6539 is suppressed because this entry-point class composes the framework's modules and owns
+ * their application lifecycle; those dependencies are part of its responsibility.
+ */
+@SuppressWarnings("java:S6539")
 public final class Shoostr implements Closeable {
   private static final long DEFAULT_STOP_TIMEOUT_MILLIS = 5000;
   private static final int DEFAULT_WEBSOCKET_MAX_OUTGOING_FRAMES = 32;
@@ -71,6 +77,8 @@ public final class Shoostr implements Closeable {
   private final List<Function<Request, RequestObservation>> observationFactories;
   private final List<Consumer<Server>> serverConfigurations;
   private final List<Consumer<HttpConfiguration>> httpConfigurations;
+  private final List<Runnable> beforeCloseCallbacks;
+  private final List<Runnable> afterCloseCallbacks;
   private @Nullable TrustedProxy trustedProxy;
   private @Nullable CorsPolicy corsPolicy;
   private @Nullable Consumer<SessionHandler> sessionConfiguration;
@@ -82,19 +90,27 @@ public final class Shoostr implements Closeable {
   private @Nullable RadixRoutes router;
   private @Nullable RadixRoutes websocketRouter;
   private @Nullable ExecutorService virtualThreads;
+  private @Nullable WebSocketRuntime managedWebSockets;
   private @Nullable Thread shutdownHook;
   private boolean started;
   private boolean closed;
 
-  /** Creates an application with the default bind address and resource limits. */
+  /**
+   * Creates an application with default limits and one JVM shutdown hook, even before startup.
+   *
+   * @throws IllegalStateException if JVM shutdown has begun
+   */
   public Shoostr() {
     this(Options.defaults());
   }
 
   /**
-   * Creates an application with explicit server limits.
+   * Creates an application with explicit server limits. Its unstarted JVM hook retains the
+   * application until explicit close or JVM shutdown.
    *
    * @param options server configuration
+   * @throws NullPointerException if options is null
+   * @throws IllegalStateException if JVM shutdown has begun
    */
   public Shoostr(Options options) {
     this.options = Objects.requireNonNull(options);
@@ -113,6 +129,10 @@ public final class Shoostr implements Closeable {
     observationFactories = new ArrayList<>();
     serverConfigurations = new ArrayList<>();
     httpConfigurations = new ArrayList<>();
+    beforeCloseCallbacks = new ArrayList<>();
+    afterCloseCallbacks = new ArrayList<>();
+    shutdownHook = new Thread(this::shutdown, "web-shutdown");
+    Runtime.getRuntime().addShutdownHook(shutdownHook);
   }
 
   /**
@@ -270,7 +290,7 @@ public final class Shoostr implements Closeable {
 
   /**
    * Installs one managed identity source. Routes/groups explicitly require it using
-   * extensions.get(instance).required(); installation itself leaves routes public.
+   * extensions.get(instance).enabled(); installation itself leaves routes public.
    *
    * @param extension identity source
    * @return this application
@@ -378,6 +398,13 @@ public final class Shoostr implements Closeable {
       try {
         close();
       } catch (IOException cleanup) {
+        failure.addSuppressed(cleanup);
+      }
+
+      var cleanup =
+          runCloseCallbacks(
+              afterCloseCallbacks.reversed(), null, "Could not run afterClose callback");
+      if (cleanup != null) {
         failure.addSuppressed(cleanup);
       }
 
@@ -679,12 +706,59 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Compiles and closes route registration, starts the HTTP listener, and registers a JVM shutdown
-   * hook. Failure after compilation closes acquired resources and prevents restart. Rejected
-   * compilation leaves registration open for retry once the problem is corrected.
+   * Registers prompt application-work signalling before framework shutdown, once per registration
+   * in written order. The application is already marked closed and matched admission has stopped.
+   * Callbacks execute synchronously on the closing thread, including close before startup. Do not
+   * wait for handlers or dispose dependencies used by draining requests; use {@link
+   * #afterClose(Runnable)} for final cleanup. Register before startup. Runtime callback failures
+   * are collected as {@link IOException} by {@link #close()} without skipping subsequent callbacks
+   * or ordinary shutdown.
+   *
+   * @param callback prompt application shutdown signal
+   * @return this application
+   * @throws NullPointerException if callback is null
+   * @throws IllegalStateException if startup has begun or the application is closed
+   */
+  public synchronized Shoostr beforeClose(Runnable callback) {
+    if (started || closed) {
+      throw new IllegalStateException("Shutdown callbacks must be registered before startup");
+    }
+
+    beforeCloseCallbacks.add(Objects.requireNonNull(callback));
+    return this;
+  }
+
+  /**
+   * Registers application-owned resource cleanup after framework shutdown and extension cleanup.
+   * Callbacks execute synchronously on the closing thread in reverse registration order, once per
+   * registration, including when the application never started. Repeated registrations are not
+   * deduplicated. Running caller-owned tasks may outlive shutdown; coordinate their completion
+   * before releasing dependencies they still use. Register before startup. Runtime callback
+   * failures are collected as {@link IOException} by {@link #close()} without skipping subsequent
+   * callbacks. If provider setup closes the app reentrantly, final callbacks wait until setup
+   * unwinds and cleanup of any successfully claimed provider has finished.
+   *
+   * @param callback final application cleanup
+   * @return this application
+   * @throws NullPointerException if callback is null
+   * @throws IllegalStateException if startup has begun or the application is closed
+   */
+  public synchronized Shoostr afterClose(Runnable callback) {
+    if (started || closed) {
+      throw new IllegalStateException("Cleanup callbacks must be registered before startup");
+    }
+
+    afterCloseCallbacks.add(Objects.requireNonNull(callback));
+    return this;
+  }
+
+  /**
+   * Compiles and closes route registration and starts the HTTP listener without adding another
+   * shutdown hook. Failure after compilation closes acquired resources and prevents restart.
+   * Rejected compilation leaves registration open for retry once the problem is corrected.
    *
    * @return this application
-   * @throws Exception if startup or shutdown-hook registration fails
+   * @throws Exception if startup fails
    * @throws IllegalStateException if started, closed, or a route registration callback is active
    */
   @SuppressWarnings(
@@ -704,9 +778,6 @@ public final class Shoostr implements Closeable {
         extension.beforeStart();
       }
       startServer();
-      var boundConnector = Objects.requireNonNull(connector);
-      shutdownHook = new Thread(this::shutdown, "web-shutdown-" + boundConnector.getLocalPort());
-      Runtime.getRuntime().addShutdownHook(shutdownHook);
     } catch (Exception | Error failure) {
       try {
         close();
@@ -745,6 +816,14 @@ public final class Shoostr implements Closeable {
    * native drain; ordinary signalling failures are collected without skipping subsequent shutdown
    * or cleanup.
    *
+   * <p>Application beforeClose callbacks run in written order after closure guards are established
+   * and before framework resource disposal. Application afterClose callbacks run in reverse order
+   * after extension cleanup. Both run synchronously while this method holds the application
+   * monitor; do not wait on another thread that needs a synchronized application operation. Runtime
+   * callback failures join the collected IOException without skipping remaining callbacks.
+   * Reentrant closure during provider setup defers final callbacks until that setup unwinds and
+   * completes provider cleanup.
+   *
    * @throws IOException if resources cannot be closed
    */
   @Override
@@ -757,6 +836,9 @@ public final class Shoostr implements Closeable {
     synchronized (pendingMatches) {
       stoppingMatches = true;
     }
+    routes.endRegistration();
+    IOException failure =
+        runCloseCallbacks(beforeCloseCallbacks, null, "Could not run beforeClose callback");
     exceptionHandlers.clear();
     statusHandlers.clear();
     requestHeaderHandlers.clear();
@@ -767,12 +849,14 @@ public final class Shoostr implements Closeable {
     afterFlushHandlers.clear();
     afterHandlers.clear();
     observationFactories.clear();
-    IOException failure = closeRouteResources();
+    failure = closeRouteResources(failure);
 
     serverConfigurations.clear();
     httpConfigurations.clear();
     sessionConfiguration = null;
     tlsConfiguration = null;
+
+    failure = signalManagedWebSocketsBeforeStop(failure);
 
     failure = signalExtensionsBeforeStop(failure);
 
@@ -808,19 +892,59 @@ public final class Shoostr implements Closeable {
       failure = cancelPendingMatches(failure);
 
       removeShutdownHook();
-      for (int index = extensions.size() - 1; index >= 0; index--) {
-        try {
-          extensions.get(index).close();
-        } catch (IOException | RuntimeException closeFailure) {
-          failure = appendCloseFailure(failure, "Could not close extension", closeFailure);
-        }
+      failure = closeExtensions(failure);
+      if (!installing) {
+        failure =
+            runCloseCallbacks(
+                afterCloseCallbacks.reversed(), failure, "Could not run afterClose callback");
       }
-      extensions.clear();
     }
 
     if (failure != null) {
       throw failure;
     }
+  }
+
+  /**
+   * Runs and releases ordered application callbacks, collecting ordinary failures independently.
+   *
+   * @param callbacks callbacks in invocation order, owned by this shutdown operation
+   * @param failure previously collected shutdown failure, or null
+   * @param message context for a callback failure
+   * @return aggregated failure, or null if shutdown has not failed
+   */
+  private static @Nullable IOException runCloseCallbacks(
+      List<Runnable> callbacks, @Nullable IOException failure, String message) {
+    try {
+      for (var callback : callbacks) {
+        try {
+          callback.run();
+        } catch (RuntimeException callbackFailure) {
+          failure = appendCloseFailure(failure, message, callbackFailure);
+        }
+      }
+      return failure;
+    } finally {
+      callbacks.clear();
+    }
+  }
+
+  /**
+   * Stops managed WebSocket work without skipping subsequent shutdown on signalling failure.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException signalManagedWebSocketsBeforeStop(@Nullable IOException failure) {
+    if (managedWebSockets != null) {
+      try {
+        managedWebSockets.stop();
+      } catch (IOException | RuntimeException stopFailure) {
+        return appendCloseFailure(failure, "Could not signal managed WebSockets", stopFailure);
+      }
+    }
+
+    return failure;
   }
 
   /**
@@ -837,6 +961,24 @@ public final class Shoostr implements Closeable {
         failure = appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
       }
     }
+    return failure;
+  }
+
+  /**
+   * Closes and releases owned extensions in reverse order without skipping ordinary failures.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException closeExtensions(@Nullable IOException failure) {
+    for (int index = extensions.size() - 1; index >= 0; index--) {
+      try {
+        extensions.get(index).close();
+      } catch (IOException | RuntimeException closeFailure) {
+        failure = appendCloseFailure(failure, "Could not close extension", closeFailure);
+      }
+    }
+    extensions.clear();
     return failure;
   }
 
@@ -865,14 +1007,15 @@ public final class Shoostr implements Closeable {
   /**
    * Releases pending route resources without skipping subsequent shutdown phases on failure.
    *
-   * @return cleanup failure, or null if pending resources were closed
+   * @param failure previously collected shutdown failure, or null
+   * @return aggregated failure, or null if shutdown has not failed
    */
-  private @Nullable IOException closeRouteResources() {
+  private @Nullable IOException closeRouteResources(@Nullable IOException failure) {
     try {
       routes.close();
-      return null;
+      return failure;
     } catch (RuntimeException closeFailure) {
-      return appendCloseFailure(null, "Could not close route resources", closeFailure);
+      return appendCloseFailure(failure, "Could not close route resources", closeFailure);
     }
   }
 
@@ -911,6 +1054,10 @@ public final class Shoostr implements Closeable {
     var proxy = trustedProxy;
     var cors = corsPolicy;
     var websocketRoutes = websocketRouter;
+    managedWebSockets =
+        websocketRoutes == null
+            ? null
+            : new WebSocketRuntime(Objects.requireNonNull(virtualThreads));
     var http = configureHttp();
     connector = createConnector(Objects.requireNonNull(server), http);
     tlsConfiguration = null;
@@ -922,7 +1069,8 @@ public final class Shoostr implements Closeable {
     server.setHandler(graceful);
     var compressionHandler = compression ? new CompressionHandler() : null;
     var applicationHandler =
-        new ApplicationHandler(dispatch, proxy, cors, websocketRoutes, compressionHandler);
+        new ApplicationHandler(
+            dispatch, proxy, cors, websocketRoutes, compressionHandler, managedWebSockets);
     var installedSessionHandler =
         installHandlers(
             Objects.requireNonNull(server),
@@ -1112,6 +1260,7 @@ public final class Shoostr implements Closeable {
    * @param rawRequest Jetty request
    * @param rawResponse Jetty response
    * @param callback HTTP response callback
+   * @param runtime app-owned WebSocket message dispatch
    * @return whether Jetty handled the exchange
    */
   @SuppressWarnings(
@@ -1125,14 +1274,15 @@ public final class Shoostr implements Closeable {
       @Nullable Completion observation,
       org.eclipse.jetty.server.Request rawRequest,
       org.eclipse.jetty.server.Response rawResponse,
-      Callback callback) {
+      Callback callback,
+      WebSocketRuntime runtime) {
     var factory = Objects.requireNonNull(endpoint.websocketFactory());
     return container.upgrade(
         (upgradeRequest, upgradeResponse, upgradeCallback) -> {
           try {
             request.webSocketProtocols(upgradeRequest.getSubProtocols());
-            return Objects.requireNonNull(factory.apply(request, upgradeResponse));
-          } catch (RuntimeException failure) {
+            return Objects.requireNonNull(factory.create(request, upgradeResponse, runtime));
+          } catch (Exception failure) {
             if (observation != null) {
               observation.recordApplicationFailure(failure);
             }
@@ -1455,6 +1605,7 @@ public final class Shoostr implements Closeable {
     private final @Nullable CorsPolicy cors;
     private final @Nullable RadixRoutes websocketRoutes;
     private final @Nullable CompressionHandler compressionHandler;
+    private final @Nullable WebSocketRuntime websocketRuntime;
 
     /**
      * Retains the immutable registration snapshot and startup policies for all requests.
@@ -1464,13 +1615,15 @@ public final class Shoostr implements Closeable {
      * @param cors cross-origin policy, or null
      * @param websocketRoutes compiled WebSocket routes, or null
      * @param compressionHandler native compression wrapper, or null
+     * @param websocketRuntime app-owned message dispatch, or null without WebSocket routes
      */
     private ApplicationHandler(
         DispatchConfiguration dispatch,
         @Nullable TrustedProxy proxy,
         @Nullable CorsPolicy cors,
         @Nullable RadixRoutes websocketRoutes,
-        @Nullable CompressionHandler compressionHandler) {
+        @Nullable CompressionHandler compressionHandler,
+        @Nullable WebSocketRuntime websocketRuntime) {
       compiledRoutes = dispatch.router();
       errors = dispatch.errors();
       statuses = dispatch.statuses();
@@ -1487,6 +1640,7 @@ public final class Shoostr implements Closeable {
       this.cors = cors;
       this.websocketRoutes = websocketRoutes;
       this.compressionHandler = compressionHandler;
+      this.websocketRuntime = websocketRuntime;
     }
 
     /**
@@ -1722,6 +1876,11 @@ public final class Shoostr implements Closeable {
       }
 
       var endpoint = matchEndpoint(rawRequest, request);
+      if (endpoint != null && observation != null && endpoint.behavior() != null) {
+        request.route(endpoint);
+        observation.begin(request, endpoint.behavior().instrumentation());
+      }
+
       if (endpoint == null) {
         handleUnmatched(request, response);
       } else if (endpoint.executor() != null) {
@@ -2130,7 +2289,8 @@ public final class Shoostr implements Closeable {
           observation,
           rawRequest,
           rawResponse,
-          responseCallback)) {
+          responseCallback,
+          Objects.requireNonNull(websocketRuntime))) {
         return true;
       }
 
@@ -2358,7 +2518,8 @@ public final class Shoostr implements Closeable {
     }
 
     /**
-     * Creates scopes before any application work; a faulty observer cannot reject traffic.
+     * Creates scopes before their app-wide or matched phase; a faulty observer cannot reject
+     * traffic.
      *
      * @param request invocation input, not retained
      * @param factories instrumentation snapshot

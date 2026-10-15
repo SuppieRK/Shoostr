@@ -1208,6 +1208,23 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   }
 
   /**
+   * Rejects staged HTTP output before a managed WebSocket upgrade.
+   *
+   * @throws IllegalStateException if response output or a non-default status was selected
+   */
+  void requireWebSocketUpgrade() {
+    require(State.OPEN);
+    if (delegate.isCommitted()
+        || body.length != 0
+        || fileSelected
+        || status() != HttpStatusCodes.OK.value()
+        || delegate.getHeaders().contains(HttpHeaders.CONTENT_TYPE.value())) {
+      throw new IllegalStateException(
+          "Reject WebSocket admission by throwing, not by staging HTTP output");
+    }
+  }
+
+  /**
    * Revokes application access and drops staged finite output without flushing pending stream
    * bytes.
    */

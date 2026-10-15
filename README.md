@@ -1,5 +1,8 @@
 # Shoostr
 
+For runnable, task-focused tutorials and container recipes, start with the
+[executable examples](examples/README.md).
+
 [Shoostr](https://github.com/SuppieRK/Shoostr) is a small experimental Java 25 HTTP framework with separate request/response arguments. The public API lives in `io.github.suppierk.shoostr`; public signatures are provisional. Register routes through `app.routes(routes -> { ... })`.
 
 ```java
@@ -14,7 +17,34 @@ app.routes(routes -> {
 }).start();
 ```
 
-`Shoostr` implements `java.io.Closeable`. `start()` registers its JVM shutdown hook after starting the listener, so standalone servers need no application-managed hook. `close()` stops the listener and executor and removes that hook; repeated and concurrent close calls are harmless. A listener startup failure after route compilation cleans up acquired resources and prevents restart. A rejected route compilation leaves registration open for retry, including when a path callback is still active. Closing before startup ends registration and prevents startup. Shutdown failures from explicit `close()` are reported as `IOException`, and failures in the JVM hook are logged with the JDK logger.
+`Shoostr` implements `java.io.Closeable`. Each successfully constructed instance registers one
+JVM shutdown hook, including applications that never start; standalone servers need no
+application-managed hook. `start()` does not add another hook. `close()` stops the listener and
+owned executor and removes that hook; repeated and concurrent close calls are harmless. The
+unstarted hook does not keep the JVM alive, but retains an unclosed application until JVM
+shutdown. Explicitly close abandoned instances rather than relying on garbage collection.
+A listener startup failure after route compilation cleans up acquired resources and prevents
+restart. A rejected route compilation leaves registration open for retry, including when a
+path callback is still active. Closing before startup ends registration and prevents startup.
+Shutdown failures from explicit `close()` are reported as `IOException`, and failures in the
+JVM hook are logged with the JDK logger.
+
+Register `beforeClose(Runnable)` for prompt application-work signalling and
+`afterClose(Runnable)` for final application resource cleanup. Both return the same app and
+must be configured before startup. Before callbacks run in written order after the app and
+route registration are marked closed, but before resource disposal and native drain. After
+callbacks run in reverse order after framework and extension cleanup.
+If provider setup calls `close()` reentrantly, final callbacks wait until setup unwinds and
+cleanup of successfully claimed providers finishes. Each registration runs
+once, including explicit close before startup, try-with-resources, failed startup and JVM
+shutdown; repeated registrations are not deduplicated. Ordinary callback failures are collected
+as `IOException` without skipping remaining callbacks or ordinary shutdown. Callbacks execute
+synchronously on the closing thread while holding the app monitor: do not wait for another
+thread that needs a synchronized app operation. Early callbacks must not wait for handlers or
+close dependencies still used by draining requests. Caller-owned executor tasks and code that
+ignores interruption may outlive shutdown; coordinate that work before disposing its dependencies.
+The JVM hook is an exit fallback, not immediate rollback: if assembly fails and the JVM continues
+running, explicitly close the partially configured app.
 
 `Closeable` also extends `AutoCloseable`: try-with-resources still closes the app when its block ends. Use it for scoped lifetimes such as tests; normal server setup can use the unscoped example above. Registration is thread-safe across the root and every nested scope and must finish before `start()`. No builder is involved.
 
@@ -50,18 +80,7 @@ Each fixture owns its supplied app and listener lifetime, not user dependencies 
 Startup failures propagate
 after cleanup; `close()` reports Jetty stop failures as `IOException`. For lifecycle
 notifications, register Jetty's `LifeCycle.Listener` through `Shoostr.modifyServer` before
-startup. No framework-specific lifecycle annotation is required. Run
-`./gradlew consumerSmoke` to publish `http`, `core`, `test`, `pac4j`,
-`micrometer`, `opentelemetry`, `openapi` and `mcp` into `build/consumer-repository` and execute
-the independent Java 25 consumer under `examples/consumer-smoke`; this does not
-publish to Maven Local or a remote repository. Its JUnit 5 tests exercise the
-published optional integrations over HTTP. The separate base-runtime check
-rejects optional integration, JUnit, JSpecify and common codec dependencies
-from `core`; the original smoke checks native configuration, start/stop
-notifications and error propagation. The example is also the `:consumer-smoke`
-Gradle module: `./gradlew :consumer-smoke:test` and the root `build` run its
-tests against project dependencies, while `consumerSmoke` verifies published
-artifacts from the independent build.
+startup. No framework-specific lifecycle annotation is required.
 
 Configure outgoing requests through the single `send(request -> ...)` interface:
 `path`, `method`, repeated `header`, raw `body(byte[])` and `timeout(Duration)`.
@@ -194,7 +213,41 @@ own event sources, bounded subscription queues, reconnection policy, and any rep
 incoming `Last-Event-ID` header. A timed source poll followed by a heartbeat write is the way to
 observe an idle disconnect; a buffered successful write does not prove the peer is still present.
 
-`Routes.websocket` composes under `path(...)` and takes a
+`Routes.websocket` offers ordinary callbacks configured once during registration:
+
+```java
+app.routes().websocket("/echo", websocket -> {
+    websocket.onText((connection, text) -> connection.send(text));
+    websocket.onBinary((connection, bytes) -> connection.send(bytes));
+});
+```
+
+Open, complete-message and terminal callbacks run sequentially per connection on managed
+virtual threads. `send(String)` and `send(byte[])` wait interruptibly for transport completion,
+not peer receipt. Concurrent retained-connection sends are serialized in write-lock admission
+order. Binary input is copied before releasing native buffers; output bytes are copied before
+transport ownership. No preview API is required; applications may open structured scopes inside
+their own handlers. Captured route variables are shared across connections, while `path()`,
+`pathParam(name)` and the initial `principal()` reference are captured before HTTP finalization.
+The principal object remains application-owned; identity is not automatically revalidated.
+
+Use `beforeUpgrade(Handler)` to validate HTTP admission, throwing to invoke ordinary route/app
+exception handling. Headers are allowed, but staging a body/status or committing output is not.
+After upgrade, recoverable failures belong inside `onText`/`onBinary`; unexpected failures close
+with 1011 and a fixed safe reason. `onError` and `onClose` are terminal observers, not recovery or
+required cleanup hooks. They run after active work unwinds and may not run during shutdown.
+`close()` initiates 1000 closure without waiting for peer acknowledgment. Interrupted sends may
+already have reached the transport and must not be retried automatically.
+
+Native demand advances after message handling, so busy handlers can delay reading peer close
+or ping frames. Immediate peer-disconnect cancellation is not promised. `app.close()` rejects
+managed work, signals 1001 and interrupts managed workers before native drain; it does not wait
+indefinitely for interruption-ignoring application code. The optional executor-second overload
+selects only the matched HTTP handshake, not subsequent managed WebSocket callbacks or their
+thread-local context. Optional final extension configuration applies to HTTP admission as usual.
+See [the executable WebSocket example](examples/04-websocket/README.md).
+
+For advanced native operations, `Routes.websocket` also composes under `path(...)` and takes a
 `BiFunction<Request, ServerUpgradeResponse, Session.Listener>`. The factory runs once per
 accepted upgrade attempt, after application and route admission. It can inspect the live
 framework request, read Jetty-parsed offers with `request.webSocketProtocols()`, set a
@@ -303,10 +356,10 @@ app.authentication(security).extensions(devDocs, publicDocs).routes(routes -> {
     users.get("/{id}", getUser, e -> e.get(publicDocs).summary("Find one user"));
     users.get("/search", searchUsers);
   }, e -> {
-    e.get(security).required();
+    e.get(security).enabled();
     e.get(publicDocs).tag("users").summary("Users");
   });
-  routes.get("/openapi.json", publicDocs.handler(), e -> e.get(security).required());
+  routes.get("/openapi.json", publicDocs.handler(), e -> e.get(security).enabled());
 });
 ```
 
@@ -322,15 +375,17 @@ receives independent provider configuration, including inherited fields that a l
 not override. Reusing a Handler across paths does not merge those endpoint definitions.
 
 Route callbacks may register `onRouteMatched`, `beforeRouteHandler`, `afterRouteHandler`,
-`beforeResponseFlush`, `afterResponseFlush`, `afterRequest` and `status` directly on
+`beforeResponseFlush`, `afterResponseFlush`, `afterRequest`, `observe` and `status` directly on
 `Extensions`. Match and ordinary lifecycle hooks run local first, then app; a thrown exception
 stops the ordinary phase. After matched hooks and known-length body validation, admission runs
 managed authentication, inherited/selected extension contributions in first-selection order,
 direct local gates, app gates, then availability.
 The endpoint follows only on success. Matching local exception/status renderers handle the response
 alone; app rendering applies when no local match exists. Terminal observers remain failure-isolated
-and run local before app after application cleanup and transport completion. Header admission and
-instrumentation stay app-wide because they precede route lookup. Handshake callbacks apply to HTTP
+and run local before app after application cleanup and transport completion. Header admission stays
+app-wide because it precedes route lookup. App-wide observations begin before header callbacks;
+local observations begin after matching, before executor handoff and matched callbacks.
+Handshake callbacks apply to HTTP
 admission, not later WebSocket messages; static mounts and SSE inherit group callbacks too.
 
 Extensions with long-lived streams can implement `beforeStop()` to reject new work and
@@ -340,8 +395,8 @@ runs after the drain, so telemetry and other resources remain available to finis
 
 The optional [`mcp` module](mcp/README.md) composes the official Java SDK with explicit
 Streamable HTTP routes, per-request identity and pre-dispatch permissions. It installs
-no automatic endpoint or authenticator. See the [public compatibility example](examples/mcp/README.md)
-and [external OAuth example](examples/mcp-oauth/README.md) for runnable native SDK configuration.
+no automatic endpoint or authenticator. See the [public compatibility example](examples/12-mcp/README.md)
+for runnable native SDK configuration and its bundled MCP Inspector.
 
 Use runtime conditions for feature flags or authenticated request decisions:
 
@@ -360,7 +415,7 @@ deployment-specific absence: `if (development) routes.get("/debug", debugHandler
 The optional [`openapi` module](openapi/README.md) generates startup-frozen OpenAPI 3.1.1 JSON
 from instance-selected explicit operation/schema configuration, with an explicitly registered,
 locally bundled Swagger UI. It adds no OpenAPI dependencies or runtime hooks to core-only apps.
-The [runnable authenticated example](examples/openapi/README.md) covers typed and byte handlers,
+The [runnable authenticated example](examples/11-openapi/README.md) covers typed and byte handlers,
 group defaults, independent documents and conditional exclusions.
 
 Extension authors implement `Extension<C>`. Its `configure(Extensions, C inherited)` method returns
@@ -453,7 +508,7 @@ var client = new HeaderClient("Authorization", "Bearer ", jwtAuthenticator);
 var security = new Pac4j(client, "Bearer", authorizer);
 app.authentication(security).routes(routes ->
     routes.get("/me", (request, response) -> response.text(request.principal().orElseThrow().getName()),
-        extensions -> extensions.get(security).required()));
+        extensions -> extensions.get(security).enabled()));
 ```
 
 Import `io.github.suppierk.shoostr.pac4j.Pac4j`. Configure the client, authenticator, and authorizer
@@ -521,7 +576,10 @@ Buffered request-body reads close their input adapter on success or failure. Ove
 
 Finite completion hands the owned body buffer to Jetty's asynchronous write callback after closing application access. The HTTP request completes when that write succeeds or fails; the handler thread does not wait through a blocking adapter. Streaming writes still wait for transport completion before reusing their bounded buffer. The defensive copy of caller-supplied finite bodies remains in place.
 
-The default listener uses Jetty 12.1.11 HTTP/1.1 and virtual-thread handlers. Routes match literal and single-segment parameter patterns against Jetty's canonically encoded path, with 404/405 handling. Defaults bind loopback:8080, cap request reads and finite response bodies at 1 MiB, limit each decoded query or form to 1,000 pairs, buffer streaming output in 8 KiB, and use a 30-second connection idle timeout. Override these through `Options` or native Jetty callbacks for transport settings. Idle timeouts do not interrupt arbitrary application work. Shutdown requests interruption after native draining; this slice does not provide per-handler deadlines or global concurrency admission limits.
+The default listener uses Jetty 12.1.11 HTTP/1.1 and virtual-thread handlers. Routes match literal and single-segment parameter patterns against Jetty's canonically encoded path, with 404/405 handling. Defaults bind all IPv4 interfaces at `0.0.0.0:8080` (not loopback), cap request reads and finite response bodies at 1 MiB, limit each decoded query or form to 1,000 pairs, buffer streaming output in 8 KiB, and use a 30-second connection idle timeout. Override these through `Options` or native Jetty callbacks for transport settings. Idle timeouts do not interrupt arbitrary application work. Shutdown requests interruption after native draining; this slice does not provide per-handler deadlines or global concurrency admission limits.
+
+Set `Options.host` explicitly to `127.0.0.1` for a loopback-only listener. The test
+harness always restricts its listeners to loopback regardless of application defaults.
 
 Applications own serialization/deserialization, either explicitly through bytes and UTF-8 strings or through the opt-in codec handlers below. `Request.input()` is one-shot and mutually exclusive with cached `bodyBytes()` and multipart access; it counts bytes as they are consumed, including chunked input, and the framework closes it at handler completion. `Response.body(MediaType, byte[])` and `startStream(MediaType)` accept the immutable [`MediaType` primitive](http/README.md#media-types), while String overloads remain available for other parameters. Media types label bytes without converting them; `text(String)` and `Stream.write(String)` always encode UTF-8. Built-in serializers and template rendering are outside the current scope. Catch-all paths and wildcard patterns remain deferred. Production code and examples use only standard Java annotations; test sources additionally use JUnit 5 annotations, and the isolated `microbenchmarks` module uses JMH annotations. Minimize custom classes, apply YAGNI/KISS, and order methods from high-level operations down to their helpers.
 
@@ -959,8 +1017,34 @@ Import `io.github.suppierk.shoostr.micrometer.MicrometerMetrics`,
 `io.github.suppierk.shoostr.AccessLog`. Register before `start()`. Supply an OpenTelemetry
 instance with your chosen propagators (for example W3C trace context) and exporters;
 no global provider is installed. Business code sees the server span through `Span.current()`.
-Bare extension installation leaves request instrumentation inactive; call `allRequests()` before
-installing. Existing `observe(adapter)` registration remains supported. Distinct activated instances
+Bare metrics installation records no requests; bare tracing installation creates no SERVER spans.
+For app-wide coverage, call `allRequests()` before installing. Tracing also supports route/group selection:
+
+```java
+var tracing = new OpenTelemetryTracing(openTelemetry);
+app.extensions(tracing);
+app.routes(routes -> {
+  routes.get("/health", healthHandler);
+  routes.path("/api", api -> {
+    api.get("/orders", ordersHandler);
+  }, extensions -> extensions.get(tracing).enabled());
+});
+```
+
+`get()` retrieves independent scope configuration; `enabled()` activates inherited tracing.
+Repeated activation contributes once. App-wide activation subsumes local activation of the same
+instance. Local tracing starts after matching, before executor submission and matched callbacks,
+including authentication. It covers queueing and rejection, but not earlier header hooks, preflight
+short circuits, unmatched paths or method mismatches without an endpoint. Unselected routes create
+no framework SERVER spans; application-created spans remain controlled by the SDK. Selecting any
+local observation enables completion bookkeeping for that app's unselected requests as well.
+Selective tracing also carries admission SDK context across every executor handoff, even for bare
+installation or unselected routes. This adds observation bookkeeping but no SERVER spans or remote
+parent extraction on those routes. It temporarily replaces unrelated worker/executor context, then
+restores that exact context after invocation; admission context is preserved rather than cleared.
+An app without observations or the tracing extension retains the uninstrumented fast path.
+
+Existing `observe(adapter)` registration remains supported. Distinct activated instances
 both run, even when sharing a registry or SDK: metrics may record twice and the last tracing scope
 is current until scopes close in reverse order. Do not install duplicates accidentally.
 For explicit downstream clients, inject `Context.current()` with your configured propagator.
@@ -989,7 +1073,10 @@ Access logs contain normalized method, registered template, status, duration and
 They omit raw paths, query strings, headers, credentials, bodies and exception messages. Custom
 sinks may execute concurrently on completion threads and must not block; sink failures are isolated.
 
-Custom instrumentation can use `Shoostr.observe(request -> observation)`. `RequestObservation.close()`
+Custom instrumentation can use `Shoostr.observe(request -> observation)` app-wide or
+`Extensions.observe(request -> observation)` on routes/groups. Local registration deduplicates
+the same factory instance across inheritance; app-wide registration keeps its existing semantics.
+`RequestObservation.close()`
 restores invocation-local resources on the admission thread, in reverse registration order;
 `complete(RequestOutcome)` runs once after terminal transport completion and cleanup, potentially
 on a transport thread. Never retain live Request/Response objects. Factory failures must clean up

@@ -60,7 +60,7 @@ class ExtensionNativeRoutesTest {
                                 conditional.classpathResources("/files", "/");
                               }),
                       e -> {
-                        e.get(auth).required();
+                        e.get(auth).enabled();
                         e.beforeRouteHandler(
                             (request, response) ->
                                 response.setHeader(

@@ -35,22 +35,27 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class EndpointTracingTest {
-  @ParameterizedTest(name = "{0}")
-  @ValueSource(
-      strings = {
-        "platform",
-        "virtual",
-        "fork-join",
-        "fork-join-2",
-        "wrapped-fork-join",
-        "context-wrapped-fork-join"
-      })
-  void preservesServerSpanAndRemoteParentAcrossExecutorHandoff(String executorType)
+  @ParameterizedTest(name = "{0}, appWide={1}")
+  @CsvSource({
+    "platform,false",
+    "platform,true",
+    "virtual,false",
+    "virtual,true",
+    "fork-join,false",
+    "fork-join,true",
+    "fork-join-2,false",
+    "fork-join-2,true",
+    "wrapped-fork-join,false",
+    "wrapped-fork-join,true",
+    "context-wrapped-fork-join,false",
+    "context-wrapped-fork-join,true"
+  })
+  void preservesServerSpanAndRemoteParentAcrossExecutorHandoff(String executorType, boolean appWide)
       throws Exception {
     var owned = ConcurrentHashMap.<Thread>newKeySet();
     var handled = new CompletableFuture<Thread>();
@@ -77,9 +82,10 @@ class EndpointTracingTest {
 
       try (workers;
           var app = new Shoostr(Options.defaults().withPort(0))) {
-        app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
+        var tracing = new OpenTelemetryTracing(telemetry);
+        app.extensions(appWide ? tracing.allRequests() : tracing);
         app.afterRequest(_ -> completed.complete(null));
-        app.routes().get("/trace", workers, endpoint);
+        app.routes().get("/trace", workers, endpoint, e -> e.get(tracing).enabled());
 
         try (var test = TestServer.start(app)) {
           var response =
@@ -119,8 +125,9 @@ class EndpointTracingTest {
   }
 
   @ParameterizedTest
-  @ValueSource(ints = {1, 2})
-  void keepsConcurrentForkJoinRequestTracesSeparate(int parallelism) throws Exception {
+  @CsvSource({"1,false", "1,true", "2,false", "2,true"})
+  void keepsConcurrentForkJoinRequestTracesSeparate(int parallelism, boolean appWide)
+      throws Exception {
     var exporter = InMemorySpanExporter.create();
     var completed = new CountDownLatch(20);
 
@@ -136,13 +143,15 @@ class EndpointTracingTest {
               .setTracerProvider(provider)
               .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
               .build();
-      app.extensions(new OpenTelemetryTracing(telemetry).allRequests())
+      var tracing = new OpenTelemetryTracing(telemetry);
+      app.extensions(appWide ? tracing.allRequests() : tracing)
           .afterRequest(_ -> completed.countDown());
       app.routes()
           .get(
               "/trace",
               workers,
-              (_, response) -> response.text(Span.current().getSpanContext().getTraceId()));
+              (_, response) -> response.text(Span.current().getSpanContext().getTraceId()),
+              e -> e.get(tracing).enabled());
 
       try (var test = TestServer.start(app)) {
         var sent = new ArrayList<Future<HttpResponse<String>>>();
@@ -174,8 +183,10 @@ class EndpointTracingTest {
     }
   }
 
-  @Test
-  void restoresOuterRequestTraceAfterHelpingAnotherMatchedRequest() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void restoresOuterRequestTraceAfterHelpingAnotherMatchedRequest(boolean appWide)
+      throws Exception {
     var entered = new CountDownLatch(1);
     var allowHelping = new CountDownLatch(1);
     var completed = new CountDownLatch(2);
@@ -193,7 +204,8 @@ class EndpointTracingTest {
               .setTracerProvider(provider)
               .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
               .build();
-      app.extensions(new OpenTelemetryTracing(telemetry).allRequests())
+      var tracing = new OpenTelemetryTracing(telemetry);
+      app.extensions(appWide ? tracing.allRequests() : tracing)
           .afterRequest(_ -> completed.countDown());
       app.routes()
           .get(
@@ -207,11 +219,13 @@ class EndpointTracingTest {
 
                 assertTrue(workers.awaitQuiescence(5, TimeUnit.SECONDS));
                 response.text(Span.current().getSpanContext().getTraceId());
-              })
+              },
+              e -> e.get(tracing).enabled())
           .get(
               "/inner",
               workers,
-              (_, response) -> response.text(Span.current().getSpanContext().getTraceId()));
+              (_, response) -> response.text(Span.current().getSpanContext().getTraceId()),
+              e -> e.get(tracing).enabled());
 
       try (var test = TestServer.start(app)) {
         var outer =
@@ -256,8 +270,9 @@ class EndpointTracingTest {
     }
   }
 
-  @Test
-  void closesForkJoinTraceOnceAfterMappedHandlerFailure() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void closesForkJoinTraceOnceAfterMappedHandlerFailure(boolean appWide) throws Exception {
     var exporter = InMemorySpanExporter.create();
     var completed = new CompletableFuture<RequestOutcome>();
 
@@ -272,8 +287,8 @@ class EndpointTracingTest {
               .setTracerProvider(provider)
               .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
               .build();
-      app.extensions(new OpenTelemetryTracing(telemetry).allRequests())
-          .afterRequest(completed::complete);
+      var tracing = new OpenTelemetryTracing(telemetry);
+      app.extensions(appWide ? tracing.allRequests() : tracing).afterRequest(completed::complete);
       app.routes()
           .path(
               "/failure",
@@ -287,7 +302,8 @@ class EndpointTracingTest {
                     (_, _) -> {
                       throw new IllegalArgumentException("failed");
                     });
-              });
+              },
+              e -> e.get(tracing).enabled());
 
       try (var test = TestServer.start(app)) {
         var response =
@@ -313,8 +329,10 @@ class EndpointTracingTest {
     }
   }
 
-  @Test
-  void reattachesServerSpanForRejectedSubmissionAndCompletesItOnce() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void reattachesServerSpanForRejectedSubmissionAndCompletesItOnce(boolean appWide)
+      throws Exception {
     var exporter = InMemorySpanExporter.create();
     var completed = new CompletableFuture<RequestOutcome>();
     var invoked = new AtomicBoolean();
@@ -330,8 +348,8 @@ class EndpointTracingTest {
               .setTracerProvider(provider)
               .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
               .build();
-      app.extensions(new OpenTelemetryTracing(telemetry).allRequests())
-          .afterRequest(completed::complete);
+      var tracing = new OpenTelemetryTracing(telemetry);
+      app.extensions(appWide ? tracing.allRequests() : tracing).afterRequest(completed::complete);
       app.routes()
           .path(
               "/rejected",
@@ -341,7 +359,8 @@ class EndpointTracingTest {
                     (_, _, response) ->
                         response.status(503).text(Span.current().getSpanContext().getTraceId()));
                 routes.get(workers, (_, _) -> invoked.set(true));
-              });
+              },
+              e -> e.get(tracing).enabled());
 
       try (var test = TestServer.start(app)) {
         workers.shutdown();
@@ -369,9 +388,9 @@ class EndpointTracingTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void completesForkJoinTraceExactlyOnceWhenClosingWithQueuedOrRunningRequest(boolean queued)
-      throws Exception {
+  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  void completesForkJoinTraceExactlyOnceWhenClosingWithQueuedOrRunningRequest(
+      boolean queued, boolean appWide) throws Exception {
     var exporter = InMemorySpanExporter.create();
     var blocked = new CountDownLatch(1);
     var entered = new CountDownLatch(1);
@@ -394,7 +413,8 @@ class EndpointTracingTest {
               .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
               .build();
       app.modifyServer(server -> server.setStopTimeout(0));
-      app.extensions(new OpenTelemetryTracing(telemetry).allRequests())
+      var tracing = new OpenTelemetryTracing(telemetry);
+      app.extensions(appWide ? tracing.allRequests() : tracing)
           .afterRequest(
               outcome -> {
                 completions.incrementAndGet();
@@ -412,7 +432,8 @@ class EndpointTracingTest {
                 }
 
                 restoredTrace.complete(Span.current().getSpanContext().getTraceId());
-              });
+              },
+              e -> e.get(tracing).enabled());
       Future<Boolean> blocker = null;
       if (queued) {
         blocker =

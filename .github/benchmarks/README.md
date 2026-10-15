@@ -1,8 +1,8 @@
 # Shoostr diagnostics in Actions
 
 Run **Shoostr benchmarks** manually from the Actions tab. Select the branch,
-`steady` or `overload`, and artifact retention (1–14 days, default 7).
-Set the JVM's logical CPU count (default 1) and total memory cap in MiB (default
+`steady`, `overload` or `tracing`, and artifact retention (1–14 days, default 7).
+For HTTP modes, set the JVM's logical CPU count (default 1) and total memory cap in MiB (default
 1024). The heap remains fixed at 256 MiB; raising the total cap does not raise it.
 CPU counts must leave at least one permitted CPU for k6. Memory must exceed the
 256 MiB heap and cannot exceed host RAM. Invalid settings fail, never clamp.
@@ -94,6 +94,34 @@ the native data before attributing a change to Shoostr.
 The fixture remains the `:benchmarks` Gradle module, now located in this directory.
 Normal builds compile and check it; they do not execute timed campaigns. Targeted
 JMH diagnostics remain in the separate `microbenchmarks` module.
+
+## Paired tracing JMH
+
+Select `tracing` and supply `baseline_sha` as an immutable full 40-character commit SHA.
+The candidate is the selected workflow branch's exact commit. One Ubuntu runner builds the
+candidate fixture and baseline adapters serially, then uses the same fixture and dependency jars
+for both revisions, substituting only the project's core and OpenTelemetry adapter jars. Classpaths,
+checksums, source revisions, hardware, JVM flags, CPU/memory visibility and OS limits are retained.
+An incompatible baseline fails smoke validation rather than producing a comparison.
+
+The bounded matrix covers `plain`, SDK-installed/no-routes-enabled, selected GET, unselected GET
+with selected sibling POST, and app-wide SDK tracing, each with default, single-platform-worker
+and single-ForkJoin-worker execution. The SDK records spans but has no exporter. Fifteen paired
+cells alternate which revision runs first. Each side uses three fresh JVM forks, three two-second
+warmup iterations and five two-second measurement iterations, with JMH's GC profiler. Inspect
+native iteration trends for JIT drift; this duration is not a stabilization guarantee. Expect
+roughly 30–45 minutes including builds, smoke checks and JVM startup; the job has a 60-minute cap.
+
+JMH's native result tables appear in the Actions summary: average time/error and allocated bytes/op
+are not replaced by custom statistics. Separate candidate JFR recordings cover selected/unselected
+ForkJoin cases, with native allocation and hot-method views. Artifacts preserve complete logs,
+JSON and profiles, including failed/partial runs. These LocalConnector exchanges include parsing,
+dispatch and serialization, not network throughput, exporter work or how often ForkJoin helping
+occurs. Hosted-runner uncertainty remains; this is diagnostic evidence, not a regression threshold.
+
+Unlike HTTP campaigns, tracing JMH uses a fixed 512 MiB G1 heap per fork and no extra CPU affinity
+or total-process RAM cap. HTTP-mode CPU/RAM inputs do not apply. Runner/container limits and
+effective JVM settings are recorded explicitly; heap size is not a total-memory limit.
 
 References: [manual workflow execution](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow),
 [k6 native dashboard](https://grafana.com/docs/k6/latest/results-output/web-dashboard/),

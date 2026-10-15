@@ -1,0 +1,9 @@
+services:
+  app:
+    image: shoostr/sse-example:local
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    mem_limit: 256m
+    read_only: true
+    tmpfs:
+      - /tmp

@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.mcp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Request;
@@ -24,6 +25,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -119,18 +121,23 @@ class McpExpiryChallengeTest {
   void includesDiscoveryMetadataWhenAnArmedTokenExpiresBeforeTheFirstFlush(boolean forkJoin)
       throws Exception {
     ExecutorService selected = forkJoin ? new ForkJoinPool(1) : Executors.newSingleThreadExecutor();
-    var deadlineInterrupted = new AtomicBoolean();
+    var verifiedExpiry = new AtomicReference<Instant>();
+    var interruptedAt = new AtomicReference<Instant>();
     var mcp =
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                request ->
-                    new McpIdentity(
-                        "alice:client",
-                        McpTransportContext.EMPTY,
-                        request.header("X-Expiring").isPresent()
-                            ? Instant.now().plusSeconds(2)
-                            : null),
+                request -> {
+                  var expiry =
+                      request.header("X-Expiring").isPresent()
+                          ? Instant.now().plusSeconds(2)
+                          : null;
+                  if (expiry != null) {
+                    verifiedExpiry.set(expiry);
+                  }
+
+                  return new McpIdentity("alice:client", McpTransportContext.EMPTY, expiry);
+                },
                 (_, _) -> {},
                 URI.create("https://example.com/.well-known/oauth-protected-resource/mcp")),
             transport -> McpServer.sync(transport).build());
@@ -149,7 +156,7 @@ class McpExpiryChallengeTest {
                                   assertFalse(new CountDownLatch(1).await(4, TimeUnit.SECONDS));
                                 } catch (InterruptedException _) {
                                   // Let the following MCP flush guard render the expired token.
-                                  deadlineInterrupted.set(true);
+                                  interruptedAt.set(Instant.now());
                                 }
                               }
                             })));
@@ -186,11 +193,21 @@ class McpExpiryChallengeTest {
                           "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}"
                               .getBytes(StandardCharsets.UTF_8)));
 
-      assertTrue(deadlineInterrupted.get(), "Exercise the armed lifetime's first flush guard");
+      var observedInterruption = interruptedAt.get();
+      assertNotNull(observedInterruption, "Exercise the armed lifetime's first flush guard");
+      assertFalse(
+          observedInterruption.isBefore(verifiedExpiry.get()),
+          "The deadline must not interrupt an identity that is still valid");
       assertEquals(HttpStatusCodes.UNAUTHORIZED.value(), rejected.statusCode());
       assertEquals(
           "Bearer error=\"invalid_token\", resource_metadata=\"https://example.com/.well-known/oauth-protected-resource/mcp\"",
           rejected.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).orElseThrow());
+      assertFalse(
+          rejected
+              .headers()
+              .firstValue(HttpHeaders.CONTENT_TYPE.value())
+              .orElse("")
+              .contains("text/event-stream"));
     }
   }
 

@@ -17,17 +17,22 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Function;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class RequestObservationTest {
-  @Test
-  void keepsTheObservationOpenAfterInvocationUntilTheSlowTransportTerminates() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void keepsTheObservationOpenAfterInvocationUntilTheSlowTransportTerminates(boolean local)
+      throws Exception {
     var scopeClosed = new CountDownLatch(1);
     var terminal = new CompletableFuture<RequestOutcome>();
 
     try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 16 * 1024 * 1024, 1024, 10000));
         var socket = new Socket()) {
-      app.observe(
+      Function<Request, RequestObservation> factory =
           _ ->
               new RequestObservation() {
                 @Override
@@ -39,12 +44,21 @@ class RequestObservationTest {
                 public void complete(RequestOutcome outcome) {
                   terminal.complete(outcome);
                 }
-              });
+              };
+      if (!local) {
+        app.observe(factory);
+      }
+
       app.routes()
           .get(
               "/large",
               (_, response) ->
-                  response.body("application/octet-stream", new byte[16 * 1024 * 1024]));
+                  response.body("application/octet-stream", new byte[16 * 1024 * 1024]),
+              e -> {
+                if (local) {
+                  e.observe(factory);
+                }
+              });
       app.start();
       socket.setReceiveBufferSize(1024);
       socket.setSoTimeout(5000);

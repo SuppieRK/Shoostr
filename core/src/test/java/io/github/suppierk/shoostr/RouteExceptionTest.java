@@ -359,7 +359,7 @@ class RouteExceptionTest {
                     AuthorizationDeniedException.class,
                     (_, _, response) -> response.text("denied"));
               },
-              extensions -> extensions.get(authentication).required());
+              extensions -> extensions.get(authentication).enabled());
 
       try (var test = TestServer.start(app)) {
         var result =

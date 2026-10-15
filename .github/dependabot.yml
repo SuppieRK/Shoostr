@@ -13,8 +13,7 @@ updates:
       - /openapi
       - /.github/benchmarks
       - /microbenchmarks
-      - /examples/consumer-smoke
-      - /examples/openapi
+      - /examples/11-openapi
     schedule:
       interval: weekly
       day: monday

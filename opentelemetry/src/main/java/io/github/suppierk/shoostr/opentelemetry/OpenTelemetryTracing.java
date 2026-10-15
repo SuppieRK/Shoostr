@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.opentelemetry;
 
 import io.github.suppierk.shoostr.ApplicationCallbacks;
 import io.github.suppierk.shoostr.Extension;
+import io.github.suppierk.shoostr.Extensions;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestObservation;
 import io.github.suppierk.shoostr.RequestOutcome;
@@ -19,7 +20,8 @@ import org.jspecify.annotations.Nullable;
 
 /** Optional SERVER spans with application-owned SDK, exporters and propagation configuration. */
 public final class OpenTelemetryTracing
-    implements Extension<Void>, Function<Request, RequestObservation> {
+    implements Extension<OpenTelemetryTracing.Configuration>,
+        Function<Request, RequestObservation> {
   private static final TextMapGetter<Request> HEADERS =
       new TextMapGetter<>() {
         /** {@inheritDoc} */
@@ -48,6 +50,23 @@ public final class OpenTelemetryTracing
   public OpenTelemetryTracing(OpenTelemetry telemetry) {
     this.telemetry = Objects.requireNonNull(telemetry);
     tracer = telemetry.getTracer("io.github.suppierk.shoostr");
+  }
+
+  /**
+   * Creates independent route/group activation without changing application SDK configuration.
+   *
+   * @param endpoint registration scope receiving observations
+   * @param inherited enclosing configuration, or null
+   * @return this scope's configuration; selection alone does not enable tracing
+   */
+  @Override
+  public Configuration configure(Extensions endpoint, @Nullable Configuration inherited) {
+    var configuration = new Configuration(endpoint, this);
+    if (inherited != null && inherited.enabled) {
+      configuration.enabled();
+    }
+
+    return configuration;
   }
 
   /**
@@ -152,7 +171,9 @@ public final class OpenTelemetryTracing
   }
 
   /**
-   * Installs configured observation without owning borrowed dependencies.
+   * Installs configured observation without owning borrowed dependencies. Selective mode carries
+   * admission context across every request handoff, including unselected endpoints, without
+   * creating SERVER spans there.
    *
    * @param callbacks registration-only application callbacks
    */
@@ -161,6 +182,80 @@ public final class OpenTelemetryTracing
     installed = true;
     if (allRequests) {
       callbacks.observe(this);
+    } else {
+      callbacks.observe(_ -> admissionContext());
+    }
+  }
+
+  /**
+   * Captures admission context without changing it or creating a span.
+   *
+   * @return observation restoring the worker's exact previous context after attachment
+   */
+  private static RequestObservation admissionContext() {
+    var captured = Context.current();
+    return new RequestObservation() {
+      /**
+       * Replaces unrelated worker context for this invocation only.
+       *
+       * <p>The returned SDK scope is owned and closed by Shoostr on the attaching thread;
+       * MustBeClosedChecker cannot follow that ownership transfer.
+       *
+       * @return scope restoring the worker's previous context on close
+       */
+      @Override
+      @SuppressWarnings("MustBeClosedChecker")
+      public AutoCloseable attach() {
+        return captured.makeCurrent();
+      }
+
+      /**
+       * Carries context only; there is no SERVER span to record or end.
+       *
+       * @param outcome terminal snapshot
+       */
+      @Override
+      public void complete(RequestOutcome outcome) {
+        // This observation carries context only and owns no span to complete.
+      }
+    };
+  }
+
+  /** Registration-only activation of SERVER spans on one route or group. */
+  public static final class Configuration {
+    private final Extensions endpoint;
+    private final OpenTelemetryTracing tracing;
+    private boolean enabled;
+
+    /**
+     * Creates configuration belonging to one registration scope.
+     *
+     * @param endpoint receiving scope
+     * @param tracing installed tracing instance
+     */
+    private Configuration(Extensions endpoint, OpenTelemetryTracing tracing) {
+      this.endpoint = Objects.requireNonNull(endpoint);
+      this.tracing = Objects.requireNonNull(tracing);
+    }
+
+    /**
+     * Enables SERVER spans on this route and inherited children. Repeated activation contributes
+     * once; app-wide instrumentation of this instance already covers the endpoint. Application
+     * spans remain controlled by the supplied SDK, including on unselected endpoints.
+     *
+     * @return this configuration
+     * @throws IllegalArgumentException if the tracing instance is not installed
+     * @throws IllegalStateException if registration has finished
+     */
+    public Configuration enabled() {
+      endpoint.requireInstalled(tracing);
+      synchronized (tracing) {
+        if (!enabled && !tracing.allRequests) {
+          endpoint.observe(tracing);
+        }
+      }
+      enabled = true;
+      return this;
     }
   }
 }

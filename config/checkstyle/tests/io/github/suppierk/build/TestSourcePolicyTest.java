@@ -144,7 +144,6 @@ class TestSourcePolicyTest {
     }
 
     scan(Path.of("config/checkstyle/tests"), failures);
-    scan(Path.of("examples/consumer-smoke/src/test/java"), failures);
     assertTrue(failures.isEmpty(), String.join("\n", failures));
   }
 

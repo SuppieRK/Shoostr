@@ -1,0 +1,29 @@
+plugins { id 'application' }
+
+dependencies {
+	implementation project(':mcp')
+	implementation 'org.slf4j:slf4j-api:2.0.20'
+	runtimeOnly 'ch.qos.logback:logback-classic:1.6.5'
+	runtimeOnly 'org.slf4j:slf4j-jdk-platform-logging:2.0.20'
+	testImplementation project(':test')
+}
+
+application {
+	mainClass = 'io.github.suppierk.shoostr.example.mcp.McpExample'
+}
+apply from: rootProject.file('config/gradle/example-container.gradle')
+
+tasks.named('test') {
+	useJUnitPlatform { excludeTags 'conformance' }
+}
+
+tasks.register('conformanceTest', Test) {
+	group = 'verification'
+	description = 'Runs the pinned official MCP server suite against the runnable Shoostr example.'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	useJUnitPlatform { includeTags 'conformance' }
+	systemProperty 'conformance.directory', projectDir.absolutePath
+	systemProperty 'conformance.port', providers.gradleProperty('conformancePort').getOrElse('8766')
+	outputs.upToDateWhen { false }
+}

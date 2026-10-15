@@ -1,0 +1,17 @@
+plugins { id 'application' }
+dependencies {
+	implementation project(':opentelemetry')
+	implementation 'io.opentelemetry:opentelemetry-sdk:1.66.0'
+	implementation 'io.opentelemetry:opentelemetry-exporter-otlp:1.66.0'
+	implementation 'org.slf4j:slf4j-api:2.0.20'
+	runtimeOnly 'ch.qos.logback:logback-classic:1.6.5'
+	runtimeOnly 'org.slf4j:slf4j-jdk-platform-logging:2.0.20'
+	testImplementation project(':test')
+	testImplementation 'org.awaitility:awaitility:4.3.0'
+	testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.22.3'
+}
+application {
+	mainClass = 'io.github.suppierk.shoostr.example.tracing.TelemetryExample'
+}
+apply from: rootProject.file('config/gradle/example-container.gradle')
+apply from: rootProject.file('config/gradle/example-docker-test.gradle')

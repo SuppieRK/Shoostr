@@ -191,7 +191,7 @@ class CorsTest {
           .path(
               "/",
               routes -> routes.get("/data", (_, _) -> executions.incrementAndGet()),
-              e -> e.get(admission).required());
+              e -> e.get(admission).enabled());
 
       try (var test = TestServer.start(app)) {
         var preflight =

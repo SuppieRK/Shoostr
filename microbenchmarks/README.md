@@ -1,5 +1,20 @@
 # JVM microbenchmarks
 
+`ExtensionRequestBenchmark` includes local and app-wide no-op instrumentation. Its
+`unselectedInstrumentation` mode observes POST endpoints but measures GET endpoints in the same
+table, exposing completion-bookkeeping overhead on unselected requests. Compare `plain`,
+`localInstrumentation`, `unselectedInstrumentation` and `appInstrumentation` with `-prof gc`
+for dispatch time and allocated bytes/op; these fixtures do not measure exporter or SDK costs.
+
+The separate `otelInstalled`, `otelSelected`, `otelUnselected` and `otelAppWide` modes use a
+recording OpenTelemetry SDK without an exporter. `otelUnselected` enables the sibling POST route
+while measuring GET; `otelInstalled` enables no routes. `execution=default,platform,forkJoin`
+selects normal virtual-thread dispatch or a fixture-owned single-worker executor for matched
+handling. Compare all four modes with `plain` under the same execution setting. SDK work is
+included in these modes; export/network costs and ForkJoin helping frequency are not.
+The manually dispatched [tracing JMH mode](../.github/benchmarks/README.md#paired-tracing-jmh)
+runs these pairs remotely with native GC measurements and separate JFR recordings.
+
 Targeted JMH experiments remain available locally. Historical recordings are
 retired during the migration of end-to-end diagnostics to
 [GitHub Actions](../.github/benchmarks/README.md). New JMH results are ignored by

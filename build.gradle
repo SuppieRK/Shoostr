@@ -8,6 +8,7 @@ plugins {
 	id 'net.ltgt.nullaway' version '3.3.0' apply false
 	id 'org.sonarqube' version '7.5.0.8588'
 	id 'info.solidsoft.pitest' version '1.19.0' apply false
+	id 'com.google.cloud.tools.jib' version '3.5.4' apply false
 }
 
 allprojects {
@@ -132,8 +133,13 @@ def frameworkModules = [
 	'openapi',
 	'mcp'
 ]
-configure(frameworkModules.collect { project(":${it}") }) {
-	apply plugin: 'jacoco'
+def frameworkProjects = frameworkModules.collect { project(":${it}") }
+def exampleProjects = subprojects.findAll {
+	it.projectDir.parentFile == file('examples')
+}
+def sonarProjects = frameworkProjects + exampleProjects
+
+configure(frameworkProjects) {
 	apply plugin: 'info.solidsoft.pitest'
 
 	pitest {
@@ -146,10 +152,17 @@ configure(frameworkModules.collect { project(":${it}") }) {
 		outputFormats = ['HTML', 'XML']
 		timestampedReports = true
 	}
+}
 
+configure(sonarProjects) {
+	apply plugin: 'jacoco'
 	jacoco { toolVersion = '0.8.15' }
 	tasks.named('jacocoTestReport', JacocoReport) {
 		dependsOn tasks.named('test')
+		mustRunAfter tasks.withType(Test)
+		executionData.setFrom(fileTree(layout.buildDirectory.dir('jacoco')) {
+			include '*.exec'
+		})
 		reports {
 			xml.required = true
 			html.required = true
@@ -164,7 +177,7 @@ tasks.register('mutationTest') {
 	dependsOn frameworkModules.collect { ":${it}:pitest" }
 }
 
-configure(subprojects.findAll { !(it.name in frameworkModules) }) {
+configure(subprojects.findAll { !(it in sonarProjects) }) {
 	sonar { skipProject = true }
 }
 
@@ -175,16 +188,15 @@ sonar {
 		property 'sonar.host.url', 'https://sonarcloud.io'
 		property 'sonar.gradle.skipCompile', 'true'
 		property 'sonar.qualitygate.wait', 'true'
-		// The relocated, skipped fixture module must not be indexed again by the root scan.
 		property 'sonar.exclusions', '.github/benchmarks/**'
-		property 'sonar.coverage.jacoco.xmlReportPaths', frameworkModules.collect {
-			"${it}/build/reports/jacoco/test/jacocoTestReport.xml"
+		property 'sonar.coverage.jacoco.xmlReportPaths', sonarProjects.collect {
+			it.layout.buildDirectory.file('reports/jacoco/test/jacocoTestReport.xml').get().asFile.absolutePath
 		}.join(',')
 	}
 }
 
 tasks.named('sonar') {
-	dependsOn frameworkModules.collect { ":${it}:jacocoTestReport" }
+	dependsOn sonarProjects.collect { it.tasks.named('jacocoTestReport') }
 }
 
 configure([
@@ -215,29 +227,5 @@ configure([
 				}
 			}
 		}
-		repositories {
-			maven {
-				name = 'consumer'
-				url = rootProject.layout.buildDirectory.dir('consumer-repository')
-			}
-		}
 	}
-}
-
-tasks.register('consumerSmoke', Exec) {
-	group = 'verification'
-	description = 'Publishes locally and runs the independent consumer smoke build.'
-	dependsOn ':http:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':core:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':test:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':pac4j:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':micrometer:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':opentelemetry:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':openapi:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':mcp:publishMavenJavaPublicationToConsumerRepository'
-	commandLine rootProject.file('gradlew').absolutePath,
-			'-p', rootProject.file('examples/consumer-smoke').absolutePath,
-			'runSmoke',
-			"-PframeworkRepository=${rootProject.layout.buildDirectory.dir('consumer-repository').get().asFile.absolutePath}",
-			'--console=plain'
 }

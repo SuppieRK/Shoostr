@@ -69,7 +69,7 @@ class Pac4jTest {
                 assertTrue(request.session(false).isEmpty());
                 response.text(request.principal().orElseThrow().getName());
               },
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test =
           TestServer.start(
@@ -113,7 +113,7 @@ class Pac4jTest {
                   response.text(identity + ":created");
                 }
               },
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test =
           TestServer.start(
@@ -175,7 +175,7 @@ class Pac4jTest {
                   routes.get(
                       "/me",
                       (_, response) -> response.text("authenticated"),
-                      e -> e.get(security).required()));
+                      e -> e.get(security).enabled()));
 
       try (var test =
           TestServer.start(
@@ -229,7 +229,7 @@ class Pac4jTest {
           .path(
               "/",
               routes -> routes.get("/me", (_, response) -> response.text("authenticated")),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
         expectedPort.set(app.port());
@@ -282,7 +282,7 @@ class Pac4jTest {
           .path(
               "/",
               routes -> routes.get("/me", (_, response) -> response.text("private")),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
 
@@ -317,7 +317,7 @@ class Pac4jTest {
           .path(
               "/",
               routes -> routes.get("/me", (_, response) -> response.text("private")),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
 
@@ -356,7 +356,7 @@ class Pac4jTest {
           .path(
               "/",
               routes -> routes.get("/me", (_, response) -> response.text("private")),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
 
@@ -400,7 +400,7 @@ class Pac4jTest {
           .path(
               "/",
               routes -> routes.post("/me", (_, response) -> response.text("authenticated")),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
         var encoded =
@@ -443,7 +443,7 @@ class Pac4jTest {
               "/",
               routes ->
                   routes.post("/me", (request, response) -> response.text(request.bodyText())),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
         var encoded =
@@ -488,7 +488,7 @@ class Pac4jTest {
           .path(
               "/",
               routes -> routes.get("/me", (_, response) -> response.text("authenticated")),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
         var encoded =
@@ -536,7 +536,7 @@ class Pac4jTest {
               "/",
               routes ->
                   routes.post("/me", (request, response) -> response.text(request.bodyText())),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -581,7 +581,7 @@ class Pac4jTest {
               "/",
               routes ->
                   routes.post("/upload", (request, response) -> response.text(request.bodyText())),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
       app.start();
 
       try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
@@ -625,7 +625,7 @@ class Pac4jTest {
           .path(
               "/",
               routes -> routes.get("/secure", (_, response) -> response.text("private")),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
       app.start();
 
       var encoded =
@@ -691,7 +691,7 @@ class Pac4jTest {
           .path(
               "/",
               routes -> routes.get("/secure", (_, response) -> response.text("private")),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app, client -> client.sslContext(tls))) {
 
@@ -739,7 +739,7 @@ class Pac4jTest {
                       "/me",
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName())),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
       app.routes()
           .get(
               "/public",
@@ -812,7 +812,7 @@ class Pac4jTest {
                       "/me",
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName())),
-              e -> e.get(auth).required());
+              e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
 
@@ -866,7 +866,7 @@ class Pac4jTest {
           .path(
               "/",
               routes -> routes.get("/private", (_, response) -> response.text("secret")),
-              e -> e.get(security).required());
+              e -> e.get(security).enabled());
 
       try (var test = TestServer.start(app)) {
 
@@ -924,7 +924,7 @@ class Pac4jTest {
                       "/me",
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName())),
-              e -> e.get(security).required());
+              e -> e.get(security).enabled());
 
       try (var test = TestServer.start(app)) {
 
