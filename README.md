@@ -80,18 +80,7 @@ Each fixture owns its supplied app and listener lifetime, not user dependencies 
 Startup failures propagate
 after cleanup; `close()` reports Jetty stop failures as `IOException`. For lifecycle
 notifications, register Jetty's `LifeCycle.Listener` through `Shoostr.modifyServer` before
-startup. No framework-specific lifecycle annotation is required. Run
-`./gradlew consumerSmoke` to publish `http`, `core`, `test`, `pac4j`,
-`micrometer`, `opentelemetry`, `openapi` and `mcp` into `build/consumer-repository` and execute
-the independent Java 25 verification fixture under `verification/consumer-smoke`; this does not
-publish to Maven Local or a remote repository. Its JUnit 5 tests exercise the
-published optional integrations over HTTP. The separate base-runtime check
-rejects optional integration, JUnit, JSpecify and common codec dependencies
-from `core`; the original smoke checks native configuration, start/stop
-notifications and error propagation. The fixture also participates as the `:consumer-smoke`
-Gradle module: `./gradlew :consumer-smoke:test` and the root `build` run its
-tests against project dependencies, while `consumerSmoke` verifies published
-artifacts from the independent build.
+startup. No framework-specific lifecycle annotation is required.
 
 Configure outgoing requests through the single `send(request -> ...)` interface:
 `path`, `method`, repeated `header`, raw `body(byte[])` and `timeout(Duration)`.

@@ -46,7 +46,8 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": [
-        "http://localhost:8765/callback"
+        "http://localhost:8765/callback",
+        "http://localhost:6274/oauth/callback"
       ],
       "webOrigins": [],
       "defaultClientScopes": [],

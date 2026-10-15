@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "shoostr-mcp-oauth": {
+      "type": "http",
+      "url": "https://localhost:9443/mcp",
+      "protocolEra": "legacy",
+      "oauth": {
+        "clientId": "shoostr-mcp-example-client",
+        "scopes": "mcp:read mcp:tools",
+        "requestRefreshToken": false
+      }
+    }
+  }
+}

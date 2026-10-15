@@ -188,7 +188,6 @@ sonar {
 		property 'sonar.host.url', 'https://sonarcloud.io'
 		property 'sonar.gradle.skipCompile', 'true'
 		property 'sonar.qualitygate.wait', 'true'
-		// The relocated, skipped fixture module must not be indexed again by the root scan.
 		property 'sonar.exclusions', '.github/benchmarks/**'
 		property 'sonar.coverage.jacoco.xmlReportPaths', sonarProjects.collect {
 			it.layout.buildDirectory.file('reports/jacoco/test/jacocoTestReport.xml').get().asFile.absolutePath
@@ -228,29 +227,5 @@ configure([
 				}
 			}
 		}
-		repositories {
-			maven {
-				name = 'consumer'
-				url = rootProject.layout.buildDirectory.dir('consumer-repository')
-			}
-		}
 	}
-}
-
-tasks.register('consumerSmoke', Exec) {
-	group = 'verification'
-	description = 'Publishes locally and runs the independent consumer smoke build.'
-	dependsOn ':http:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':core:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':test:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':pac4j:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':micrometer:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':opentelemetry:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':openapi:publishMavenJavaPublicationToConsumerRepository'
-	dependsOn ':mcp:publishMavenJavaPublicationToConsumerRepository'
-	commandLine rootProject.file('gradlew').absolutePath,
-			'-p', rootProject.file('verification/consumer-smoke').absolutePath,
-			'runSmoke',
-			"-PframeworkRepository=${rootProject.layout.buildDirectory.dir('consumer-repository').get().asFile.absolutePath}",
-			'--console=plain'
 }

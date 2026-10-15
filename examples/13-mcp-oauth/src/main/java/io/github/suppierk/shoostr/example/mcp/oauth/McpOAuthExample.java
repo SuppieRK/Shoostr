@@ -22,13 +22,9 @@ public final class McpOAuthExample {
   /**
    * Starts the local HTTPS example; core owns the installed resources and JVM shutdown.
    *
-   * <p>S1181 is suppressed because failed startup must release the owned verifier and MCP server
-   * even when an Error escapes; cleanup runs before the original failure is rethrown.
-   *
    * @throws IllegalStateException if SHOOSTR_OAUTH_KEYSTORE_PASSWORD is absent or blank
    * @throws Exception if fixture TLS material cannot be loaded or startup fails
    */
-  @SuppressWarnings("java:S1181")
   static void main() throws Exception {
     var password = System.getenv("SHOOSTR_OAUTH_KEYSTORE_PASSWORD");
     if (password == null || password.isBlank()) {
@@ -57,17 +53,7 @@ public final class McpOAuthExample {
                   tls.setKeyStorePassword(password);
                 });
 
-    try {
-      app.start();
-    } catch (Exception | Error failure) {
-      try {
-        app.close();
-      } catch (IOException cleanup) {
-        failure.addSuppressed(cleanup);
-      }
-
-      throw failure;
-    }
+    app.start();
 
     LOGGER.info("MCP endpoint: https://localhost:{}/mcp", app.port());
     LOGGER.info("Keycloak demo login: mcp-demo / mcp-demo-local-only");
@@ -81,7 +67,7 @@ public final class McpOAuthExample {
    * @param resource canonical HTTPS MCP resource audience
    * @param issuerTrust explicit issuer TLS trust
    * @return application owned by its caller
-   * @throws IOException if verifier configuration or failure cleanup fails
+   * @throws IOException if verifier configuration fails
    */
   public static Shoostr application(URI issuer, URI resource, SSLContext issuerTrust)
       throws IOException {
@@ -92,66 +78,54 @@ public final class McpOAuthExample {
    * Creates an unstarted app that owns its security configuration and native MCP server.
    *
    * <p>S2095 is suppressed because the caller owns the returned app, which owns the installed
-   * verifier and MCP extension. S1181 is suppressed because failed assembly must also clean up
-   * after an Error before rethrowing the original failure.
+   * verifier and MCP extension.
    *
    * @param options listener settings
    * @param issuer exact trusted HTTPS authorization server
    * @param resource canonical HTTPS MCP resource audience
    * @param issuerTrust explicit issuer TLS trust
    * @return app owned by its caller
-   * @throws IOException if verifier configuration or failure cleanup fails
+   * @throws IOException if verifier configuration fails
    */
-  @SuppressWarnings({"java:S2095", "java:S1181"})
+  @SuppressWarnings("java:S2095")
   public static Shoostr application(
       Options options, URI issuer, URI resource, SSLContext issuerTrust) throws IOException {
     var app = new Shoostr(options);
 
-    try {
-      // Example-local configuration combines Nimbus token verification and Shoostr's Pac4j adapter.
-      var configuration = new OAuthConfiguration(issuer, resource, issuerTrust);
-      // This local class implements core's Extension so app.close() releases its issuer-key source.
-      app.extensions(configuration);
-      // The local factory creates Shoostr's mcp extension with the official SDK's tool definitions.
-      var mcp = OAuthMcpConfiguration.create(configuration.security());
-      // Install both authenticators; each protected group selects one, not a chained requirement.
-      return app.authentication(configuration.authentication(), configuration.restAuthentication())
-          .extensions(mcp)
-          .routes(
-              routes -> {
-                var metadata = configuration.metadata();
-                var document = configuration.document();
-                var authentication = configuration.authentication();
-                var restAuthentication = configuration.restAuthentication();
-                // Publish OAuth discovery metadata explicitly; it must be accessible without a
-                // token.
-                routes.get(
-                    metadata.getPath(),
-                    (_, response) -> response.body(MediaType.APPLICATION_JSON, document));
-                // REST selects the installed Basic authenticator for this group only.
-                routes.path(
-                    "/api",
-                    api ->
-                        api.get(
-                            "/profile",
-                            (request, response) ->
-                                response.text(request.principal().orElseThrow().getName())),
-                    extensions -> extensions.get(restAuthentication).enabled());
-                // MCP selects the Bearer authenticator; mcp::routes adds the protocol's HTTP
-                // handlers.
-                routes.path(
-                    resource.getPath(),
-                    mcp::routes,
-                    extensions -> extensions.get(authentication).enabled());
-              });
-    } catch (IOException | RuntimeException | Error failure) {
-      try {
-        app.close();
-      } catch (IOException | RuntimeException cleanup) {
-        failure.addSuppressed(cleanup);
-      }
-
-      throw failure;
-    }
+    // Example-local configuration combines Nimbus token verification and Shoostr's Pac4j adapter.
+    var configuration = new OAuthConfiguration(issuer, resource, issuerTrust);
+    // This local class implements core's Extension so app.close() releases its issuer-key source.
+    app.extensions(configuration);
+    // The local factory creates Shoostr's mcp extension with the official SDK's tool definitions.
+    var mcp = OAuthMcpConfiguration.create(configuration.security());
+    // Install both authenticators; each protected group selects one, not a chained requirement.
+    return app.authentication(configuration.authentication(), configuration.restAuthentication())
+        .extensions(mcp)
+        .routes(
+            routes -> {
+              var metadata = configuration.metadata();
+              var document = configuration.document();
+              var authentication = configuration.authentication();
+              var restAuthentication = configuration.restAuthentication();
+              // Publish OAuth discovery metadata explicitly; it must be accessible without a token.
+              routes.get(
+                  metadata.getPath(),
+                  (_, response) -> response.body(MediaType.APPLICATION_JSON, document));
+              // REST selects the installed Basic authenticator for this group only.
+              routes.path(
+                  "/api",
+                  api ->
+                      api.get(
+                          "/profile",
+                          (request, response) ->
+                              response.text(request.principal().orElseThrow().getName())),
+                  extensions -> extensions.get(restAuthentication).enabled());
+              // MCP selects the Bearer authenticator; mcp::routes adds the protocol's HTTP
+              // handlers.
+              routes.path(
+                  resource.getPath(),
+                  mcp::routes,
+                  extensions -> extensions.get(authentication).enabled());
+            });
   }
 }

@@ -31,8 +31,8 @@ framework modules do not select a provider or enable per-request logging by defa
 | Export request metrics to Prometheus and Grafana | [09-micrometer](09-micrometer/README.md) / `micrometer-example` | Real scrape samples and a default request dashboard |
 | Export request traces to Jaeger and Grafana | [10-opentelemetry](10-opentelemetry/README.md) / `opentelemetry-example` | Explicit SDK/export, W3C parent continuation and a default recent-traces dashboard |
 | Describe and try explicitly documented endpoints | [11-openapi](11-openapi/README.md) / `openapi-example` | Explicit schemas, two documents, codec, protected docs and Swagger authorization |
-| Mount a native SDK MCP extension | [12-mcp](12-mcp/README.md) / `mcp-example` | Separate native SDK configuration and official interoperability checks |
-| Use an external OAuth authorization server | [13-mcp-oauth](13-mcp-oauth/README.md) / `mcp-oauth-example` | Real TLS/Keycloak, PKCE/scope escalation and distinct REST/MCP authentication |
+| Mount a native SDK MCP extension | [12-mcp](12-mcp/README.md) / `mcp-example` | Native SDK configuration, optional MCP Inspector and official interoperability checks |
+| Use an external OAuth authorization server | [13-mcp-oauth](13-mcp-oauth/README.md) / `mcp-oauth-example` | Real TLS/Keycloak, optional Inspector login, PKCE/scopes and distinct REST/MCP authentication |
 
 Every server example remains independently runnable and understandable. Ordinary
 `./gradlew build` compiles examples and runs Docker-free JUnit HTTP/WebSocket tests through

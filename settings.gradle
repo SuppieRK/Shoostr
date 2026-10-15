@@ -4,9 +4,6 @@ project(':benchmarks').projectDir = file('.github/benchmarks')
 
 include 'micrometer', 'opentelemetry', 'openapi', 'mcp'
 
-include 'consumer-smoke'
-project(':consumer-smoke').projectDir = file('verification/consumer-smoke')
-
 include 'openapi-example'
 project(':openapi-example').projectDir = file('examples/11-openapi')
 

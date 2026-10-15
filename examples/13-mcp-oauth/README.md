@@ -67,7 +67,8 @@ material, ignored by Git. Do not disable TLS verification or use this configurat
 in production. Recreating a certificate requires restarting Keycloak and reloading
 the certificate in clients. The server certificate is a distinct CA-signed leaf:
 do not serve the CA certificate itself, which the strict Firefox test rejected.
-Never import this fixture CA into the user's browser or system-wide trust store.
+Never import this fixture CA into an ordinary browser profile or system-wide trust store.
+The Inspector walkthrough below uses only a disposable, dedicated browser profile.
 
 Demo login: **`mcp-demo` / `mcp-demo-local-only`**. This account is only for the
 isolated test realm. No bootstrap administrator, client secret, password grant or
@@ -77,6 +78,7 @@ dynamic client registration is configured.
 - MCP resource: `https://localhost:9443/mcp`.
 - Pre-registered public client: `shoostr-mcp-example-client`.
 - Callback: `http://localhost:8765/callback`.
+- Inspector callback: `http://localhost:6274/oauth/callback` (the same preregistered public client).
 - Authorization code flow requires S256 PKCE; optional grants are `mcp:read` and
   `mcp:tools`. All MCP requests require `mcp:read`; `increment` additionally requires
   `mcp:tools`, checked before native dispatch. The challenge carries the complete
@@ -197,6 +199,92 @@ The base recipe remains for a host-run app or Gradle `oauthTest`; stop the conta
 app before running that test, since both need port9443. The container image uses Java25,
 nonroot UID1000 and a read-only keystore mount; no real secrets are built into the image.
 The rest of `.local`, including private keys, is never uploaded as CI diagnostics.
+
+## Explore authenticated MCP with the bundled Inspector
+
+The optional Inspector overlay adds a development tool, not an OpenAPI document or
+Java dependency. Generate the TLS fixture and export its keystore password as above,
+then build the application image from the repository root:
+
+```sh
+cmdshape ./gradlew :mcp-oauth-example:jibDockerBuild
+```
+
+From this example directory, start the app, Keycloak and Inspector together:
+
+```sh
+cmdshape docker compose -p shoostr-mcp-oauth \
+  -f compose.yaml -f compose.app.yaml -f compose.inspector.yaml \
+  up -d --wait --wait-timeout 90
+```
+
+This first run may recreate the disposable Keycloak fixture to publish Inspector's
+port and import the additional exact callback. Existing fixture sessions are then lost;
+no named database volume is used. If reusing an older realm configuration, recreate the
+complete stack with the same files rather than assuming a running Keycloak reloads imports.
+The Linux PKCS12 ownership requirement from the container instructions still applies.
+
+Use a **dedicated disposable Firefox profile** for the interactive login:
+
+1. Open Firefox's `about:profiles`, create a profile named `Shoostr MCP fixture`, and
+   launch that profile in a new browser. Do not set it as your default profile.
+2. In that profile only, open Settings → Privacy & Security → Certificates → View
+   Certificates → Authorities → Import. Select this example's `.local/fixture-ca.pem`
+   and trust it to identify websites. Import the public CA, never a private key.
+3. Open **http://localhost:6274**, enable the connection for **shoostr-mcp-oauth**, and
+   complete the Keycloak login using **mcp-demo / mcp-demo-local-only**. Use `localhost`,
+   not `127.0.0.1`: OAuth requires the exact registered callback origin.
+4. In **Tools**, select **increment** and execute it. Its result begins with
+   `Tool invocation` and identifies the authenticated subject. The configured grants
+   are `mcp:read mcp:tools`; REST's Basic credentials do not authenticate MCP.
+5. When finished, close that profile and remove only the `Shoostr MCP fixture` profile
+   through `about:profiles`. Do not delete an existing profile or change system trust.
+
+The profile is needed because the browser visits Keycloak's local HTTPS login page.
+Inspector separately trusts the same public CA through `NODE_EXTRA_CA_CERTS`. Neither
+path disables TLS validation. Do not bypass certificate warnings; regenerate expired
+fixture certificates and recreate the containers instead. No host Node installation
+is required for this manual walkthrough.
+
+Inspector's checked-in configuration uses Streamable HTTP and the existing legacy
+initialization protocol, the preregistered public client and required scopes. Dynamic
+client registration remains disabled, PKCE remains required, and the original test
+callback is retained. Inspector shares Keycloak's network namespace with the app, so
+the exact `localhost` issuer/resource URLs work without hostname or audience rewriting.
+
+The overlay pins official Inspector 2.11.0 by multiarchitecture digest, publishes only
+host-loopback port 6274 and retains Inspector authentication. It mounts only the server
+configuration and public CA, read-only; secrets are process-memory only and runtime
+files use temporary filesystems. No repository, Docker socket, private key or persistent
+Inspector state is mounted. This process-capable development tool must not be exposed
+publicly. Run only one Inspector example at a time; both walkthroughs use port 6274.
+
+Stop all three services with the same overlays:
+
+```sh
+cmdshape docker compose -p shoostr-mcp-oauth \
+  -f compose.yaml -f compose.app.yaml -f compose.inspector.yaml down --timeout 20
+```
+
+To restart this bundle, use the same combined `up` command with `--force-recreate --wait`.
+Do not use `docker compose restart`: the shared network namespace can leave Inspector
+attached to an old listener. Recreate Keycloak, the app and Inspector together. Changing
+the realm JSON alone does not update an already-running realm.
+See the [official Inspector guide](https://modelcontextprotocol.io/docs/tools/inspector).
+
+For the optional browser check against this running stack, use the existing Node22
+tooling and pinned Playwright Firefox installation from the OAuth-test instructions:
+
+```sh
+MCP_INSPECTOR_EXAMPLE=oauth NODE_EXTRA_CA_CERTS="$PWD/.local/fixture-ca.pem" \
+  cmdshape node --test inspector-test.mjs
+```
+
+The check creates a fresh temporary browser profile that trusts only the public fixture
+CA in addition to Firefox's normal roots. It logs in and invokes `increment` through
+Inspector's public UI, then removes its temporary trust configuration. It does not
+change your ordinary browser or system trust. CI runs this check as well as the native
+OAuth client check and never uploads Inspector's token-bearing startup logs.
 
 ## Token-verification tests
 

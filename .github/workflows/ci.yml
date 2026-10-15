@@ -75,12 +75,23 @@ jobs:
           ./gradlew :micrometer-example:dockerTest :opentelemetry-example:dockerTest
           --console=plain
 
-      - name: Verify the containerized HTTPS OAuth example
+      - name: Verify public MCP tools, resources and prompts through Inspector
+        working-directory: examples/13-mcp-oauth
+        run: |
+          compose=(docker compose -p shoostr-mcp-inspector-ci
+            -f ../12-mcp/compose.yaml -f ../12-mcp/compose.inspector.yaml)
+          trap '"${compose[@]}" down --timeout 20' EXIT
+          "${compose[@]}" up -d --wait --wait-timeout 90
+          node --test inspector-test.mjs
+
+      - name: Verify the containerized HTTPS OAuth example and Inspector
         working-directory: examples/13-mcp-oauth
         run: |
           # The Jib app runs as UID1000; transfer only this disposable server keystore.
           sudo chown 1000 .local/fixture.p12
-          docker compose -p shoostr-mcp-oauth-ci -f compose.yaml -f compose.app.yaml up -d
+          docker compose -p shoostr-mcp-oauth-ci \
+            -f compose.yaml -f compose.app.yaml -f compose.inspector.yaml \
+            up -d --wait --wait-timeout 90
           curl --fail --cacert .local/fixture-ca.pem \
             --retry 60 --retry-delay 2 --retry-connrefused --retry-all-errors \
             --max-time 5 --retry-max-time 180 \
@@ -90,6 +101,8 @@ jobs:
             --max-time 5 --retry-max-time 90 \
             https://localhost:9443/.well-known/oauth-protected-resource/mcp
           NODE_EXTRA_CA_CERTS="$PWD/.local/fixture-ca.pem" node --test oauth-test.mjs
+          MCP_INSPECTOR_EXAMPLE=oauth NODE_EXTRA_CA_CERTS="$PWD/.local/fixture-ca.pem" \
+            node --test inspector-test.mjs
 
       - name: Stop OAuth fixture and preserve diagnostics
         if: always()
@@ -97,11 +110,14 @@ jobs:
         run: |
           mkdir -p build/oauth
           compose_files=(-f compose.yaml)
+          log_services=(keycloak)
           if [[ -n "${SHOOSTR_OAUTH_KEYSTORE_PASSWORD:-}" ]]; then
-            compose_files+=(-f compose.app.yaml)
+            compose_files+=(-f compose.app.yaml -f compose.inspector.yaml)
+            log_services+=(app)
           fi
+          # Inspector's startup banner contains its backend token; never upload its logs.
           docker compose -p shoostr-mcp-oauth-ci "${compose_files[@]}" \
-            logs --no-color > build/oauth/keycloak.log
+            logs --no-color "${log_services[@]}" > build/oauth/keycloak.log
           docker compose -p shoostr-mcp-oauth-ci "${compose_files[@]}" down --timeout 20
 
       - name: Preserve real-backend example results
