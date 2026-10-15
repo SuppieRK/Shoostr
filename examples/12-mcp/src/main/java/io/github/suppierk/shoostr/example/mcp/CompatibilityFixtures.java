@@ -26,6 +26,7 @@ final class CompatibilityFixtures {
   private static final String CONST = "const";
   private static final String TITLE = "title";
   private static final String DELIVERY = "delivery";
+  private static final String PICKUP = "pickup";
   private static final String DESTINATION = "destination";
   private static final String COLLECTION_POINT = "collectionPoint";
   private static final String MIN_LENGTH = "minLength";
@@ -327,7 +328,7 @@ final class CompatibilityFixtures {
                 var json =
                     McpJsonDefaults.getMapper()
                         .writeValueAsString(
-                            Map.of("parcelId", id, DELIVERY, "pickup", COLLECTION_POINT, "P7"));
+                            Map.of("parcelId", id, DELIVERY, PICKUP, COLLECTION_POINT, "P7"));
                 return McpSchema.ReadResourceResult.builder(
                         List.of(
                             McpSchema.TextResourceContents.builder(uri, json)
@@ -559,7 +560,7 @@ final class CompatibilityFixtures {
             "recipient",
             Map.of("type", STRING, MIN_LENGTH, 1),
             DELIVERY,
-            Map.of("type", STRING, "enum", List.of("pickup", "courier")),
+            Map.of("type", STRING, "enum", List.of(PICKUP, "courier")),
             DESTINATION,
             Map.of("$ref", "#parcelDestination"),
             COLLECTION_POINT,
@@ -574,7 +575,7 @@ final class CompatibilityFixtures {
                     Map.of(REQUIRED, List.of(DESTINATION)),
                     Map.of(REQUIRED, List.of(COLLECTION_POINT))))),
         "if",
-        Map.of(PROPERTIES, Map.of(DELIVERY, Map.of(CONST, "pickup")), REQUIRED, List.of(DELIVERY)),
+        Map.of(PROPERTIES, Map.of(DELIVERY, Map.of(CONST, PICKUP)), REQUIRED, List.of(DELIVERY)),
         "then",
         Map.of(REQUIRED, List.of(COLLECTION_POINT)),
         "else",
