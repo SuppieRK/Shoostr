@@ -269,7 +269,7 @@ class ExtensionLifecycleTest {
                   response.text(request.attribute("identity").orElseThrow().toString()),
               e -> {
                 e.get(admission);
-                e.get(auth).required();
+                e.get(auth).enabled();
               });
 
       try (var test = TestServer.start(app)) {
@@ -295,8 +295,8 @@ class ExtensionLifecycleTest {
                   routes.get(
                       "/identity",
                       (_, response) -> response.text("ok"),
-                      e -> e.get(auth).required().required()),
-              e -> e.get(auth).required());
+                      e -> e.get(auth).enabled().enabled()),
+              e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -351,7 +351,7 @@ class ExtensionLifecycleTest {
                   routes.get(
                       "/identity",
                       (_, response) -> response.text("ok"),
-                      e -> e.get(auth).required()));
+                      e -> e.get(auth).enabled()));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -654,7 +654,7 @@ class ExtensionLifecycleTest {
         new Extension<>() {
           @Override
           public Object configure(Extensions endpoint, Object inherited) {
-            endpoint.get(auth).required();
+            endpoint.get(auth).enabled();
             return new Object();
           }
         };

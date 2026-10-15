@@ -367,10 +367,10 @@ app.authentication(security).extensions(devDocs, publicDocs).routes(routes -> {
     users.get("/{id}", getUser, e -> e.get(publicDocs).summary("Find one user"));
     users.get("/search", searchUsers);
   }, e -> {
-    e.get(security).required();
+    e.get(security).enabled();
     e.get(publicDocs).tag("users").summary("Users");
   });
-  routes.get("/openapi.json", publicDocs.handler(), e -> e.get(security).required());
+  routes.get("/openapi.json", publicDocs.handler(), e -> e.get(security).enabled());
 });
 ```
 
@@ -386,15 +386,17 @@ receives independent provider configuration, including inherited fields that a l
 not override. Reusing a Handler across paths does not merge those endpoint definitions.
 
 Route callbacks may register `onRouteMatched`, `beforeRouteHandler`, `afterRouteHandler`,
-`beforeResponseFlush`, `afterResponseFlush`, `afterRequest` and `status` directly on
+`beforeResponseFlush`, `afterResponseFlush`, `afterRequest`, `observe` and `status` directly on
 `Extensions`. Match and ordinary lifecycle hooks run local first, then app; a thrown exception
 stops the ordinary phase. After matched hooks and known-length body validation, admission runs
 managed authentication, inherited/selected extension contributions in first-selection order,
 direct local gates, app gates, then availability.
 The endpoint follows only on success. Matching local exception/status renderers handle the response
 alone; app rendering applies when no local match exists. Terminal observers remain failure-isolated
-and run local before app after application cleanup and transport completion. Header admission and
-instrumentation stay app-wide because they precede route lookup. Handshake callbacks apply to HTTP
+and run local before app after application cleanup and transport completion. Header admission stays
+app-wide because it precedes route lookup. App-wide observations begin before header callbacks;
+local observations begin after matching, before executor handoff and matched callbacks.
+Handshake callbacks apply to HTTP
 admission, not later WebSocket messages; static mounts and SSE inherit group callbacks too.
 
 Extensions with long-lived streams can implement `beforeStop()` to reject new work and
@@ -517,7 +519,7 @@ var client = new HeaderClient("Authorization", "Bearer ", jwtAuthenticator);
 var security = new Pac4j(client, "Bearer", authorizer);
 app.authentication(security).routes(routes ->
     routes.get("/me", (request, response) -> response.text(request.principal().orElseThrow().getName()),
-        extensions -> extensions.get(security).required()));
+        extensions -> extensions.get(security).enabled()));
 ```
 
 Import `io.github.suppierk.shoostr.pac4j.Pac4j`. Configure the client, authenticator, and authorizer
@@ -1026,8 +1028,30 @@ Import `io.github.suppierk.shoostr.micrometer.MicrometerMetrics`,
 `io.github.suppierk.shoostr.AccessLog`. Register before `start()`. Supply an OpenTelemetry
 instance with your chosen propagators (for example W3C trace context) and exporters;
 no global provider is installed. Business code sees the server span through `Span.current()`.
-Bare extension installation leaves request instrumentation inactive; call `allRequests()` before
-installing. Existing `observe(adapter)` registration remains supported. Distinct activated instances
+Bare extension installation leaves request instrumentation inactive. For app-wide coverage, call
+`allRequests()` before installing. Tracing also supports route/group selection:
+
+```java
+var tracing = new OpenTelemetryTracing(openTelemetry);
+app.extensions(tracing);
+app.routes(routes -> {
+  routes.get("/health", healthHandler);
+  routes.path("/api", api -> {
+    api.get("/orders", ordersHandler);
+  }, extensions -> extensions.get(tracing).enabled());
+});
+```
+
+`get()` retrieves independent scope configuration; `enabled()` activates inherited tracing.
+Repeated activation contributes once. App-wide activation subsumes local activation of the same
+instance. Local tracing starts after matching, before executor submission and matched callbacks,
+including authentication. It covers queueing and rejection, but not earlier header hooks, preflight
+short circuits, unmatched paths or method mismatches without an endpoint. Unselected routes create
+no framework SERVER spans; application-created spans remain controlled by the SDK. Selecting any
+local observation enables completion bookkeeping for that app's unselected requests as well.
+An app with no observations retains the uninstrumented fast path.
+
+Existing `observe(adapter)` registration remains supported. Distinct activated instances
 both run, even when sharing a registry or SDK: metrics may record twice and the last tracing scope
 is current until scopes close in reverse order. Do not install duplicates accidentally.
 For explicit downstream clients, inject `Context.current()` with your configured propagator.
@@ -1056,7 +1080,10 @@ Access logs contain normalized method, registered template, status, duration and
 They omit raw paths, query strings, headers, credentials, bodies and exception messages. Custom
 sinks may execute concurrently on completion threads and must not block; sink failures are isolated.
 
-Custom instrumentation can use `Shoostr.observe(request -> observation)`. `RequestObservation.close()`
+Custom instrumentation can use `Shoostr.observe(request -> observation)` app-wide or
+`Extensions.observe(request -> observation)` on routes/groups. Local registration deduplicates
+the same factory instance across inheritance; app-wide registration keeps its existing semantics.
+`RequestObservation.close()`
 restores invocation-local resources on the admission thread, in reverse registration order;
 `complete(RequestOutcome)` runs once after terminal transport completion and cleanup, potentially
 on a transport thread. Never retain live Request/Response objects. Factory failures must clean up

@@ -76,10 +76,10 @@ app.authentication(security).extensions(docs).routes(routes -> {
     group.get("/", ui);
     group.get("/{*resource}", ui);
   }, e -> {
-    e.get(security).required();
+    e.get(security).enabled();
     e.get(docs).hidden(); // Also opts out if documentation defaults are inherited.
   });
-  routes.get("/openapi.json", docs.handler(), e -> e.get(security).required());
+  routes.get("/openapi.json", docs.handler(), e -> e.get(security).enabled());
 });
 ```
 

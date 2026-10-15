@@ -3,8 +3,16 @@
 [TelemetryExample](src/main/java/io/github/suppierk/shoostr/example/tracing/TelemetryExample.java)
 composes one app with inline routes. `TelemetryConfiguration` owns an explicit SDK,
 OTLP HTTP exporter, batch processor and W3C propagation. The installed
-`OpenTelemetryTracing(...).allRequests()` borrows the SDK. No global SDK, Java agent,
-Collector or second Shoostr app is needed.
+`OpenTelemetryTracing(...)` borrows the SDK. `TelemetryConfiguration`
+is an ordinary `AutoCloseable`, not an extension; `app.afterClose(configuration::close)`
+flushes and closes its SDK after framework and extension cleanup. No global SDK,
+Java agent, Collector or second Shoostr app is needed.
+
+Installation alone leaves tracing inactive. The greeting route selects
+`extensions.get(tracing).enabled()`; `/health` stays untraced. The same selection can be
+attached to `routes.path(...)` to enable a whole group. Repeated activation adds no
+duplicate SERVER span. Alternatively, configure `.allRequests()` before installation
+to include all requests, including unmatched paths and pre-routing work.
 
 ```sh
 ./gradlew :opentelemetry-example:jibDockerBuild
@@ -28,10 +36,29 @@ This example displays traces, not numeric request metrics; use
 [09-micrometer](../09-micrometer/README.md) for metrics.
 
 The trace shows a SERVER span named `GET /hello/{name}` for service
-`shoostr-tracing-example`, with `http.route` and `http.response.status_code`. The same ID is visible
-in [Jaeger](http://127.0.0.1:16686). For a specific trace, you can still copy the
-`X-Trace-Id` response header into [Grafana Explore](http://127.0.0.1:3001/explore),
-select **Shoostr Jaeger** and choose **Trace ID**.
+`shoostr-tracing-example`, with `http.route` and `http.response.status_code`. The same trace
+is visible in [Jaeger](http://127.0.0.1:16686). The extension extracts incoming W3C
+`traceparent`/`tracestate` context automatically; the handler adds no trace response header.
+
+The handler calls the ordinary
+[GreetingService](src/main/java/io/github/suppierk/shoostr/example/tracing/GreetingService.java).
+Its `greet()` method creates one application operation beneath the current request span;
+the nested `formatGreeting()` method accesses that child through `Span.current()` and
+adds the **Greeting formatted** event. No method receives propagation headers or trace IDs:
+
+```text
+GET /hello/{name}                 SERVER span, created by the Shoostr extension
+└── greeting                     INTERNAL span, created by the application SDK
+    └── Greeting formatted       event from the nested formatting method, not another span
+```
+
+Ordinary synchronous calls keep the current context but do not automatically create spans.
+The SDK's `makeCurrent()` activates the child and its returned scope restores the parent;
+`end()` separately finishes the child, including when a method throws. This is resource
+management, not the removed application-assembly cleanup guards. Shoostr also reattaches
+request context when handing matched execution to a configured endpoint executor.
+Application-created asynchronous tasks need explicit SDK context wrapping or client
+instrumentation; this example keeps its internal calls synchronous.
 Grafana's datasource and dashboard are provisioned automatically; its pinned signed
 Jaeger plugin requires Internet access on first startup.
 
@@ -61,8 +88,9 @@ docker compose -f examples/10-opentelemetry/compose.yaml down --volumes
 
 The separately invoked Docker tests verify default dashboard landing, send unique sampled
 W3C traces, discover one through the provisioned search query without supplying its ID,
-and verify native trace links. They also check an actual SERVER span in Jaeger and retrieve
-that same trace through Grafana. The check builds with
+and verify native trace links. They also check the SERVER span, its internal greeting child
+and the nested formatting event in Jaeger, then retrieve the trace hierarchy through Grafana.
+The check builds with
 Jib and removes only its uniquely named stack. Logs are under `build/docker/compose.log`;
 JUnit XML is under `build/test-results/dockerTest/`. Ordinary `build` excludes Docker.
 

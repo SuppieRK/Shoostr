@@ -51,8 +51,8 @@ class AuthenticationCompositionTest {
                   (_, response) -> response.text("private"),
                   e -> {
                     e.onRoute((_, path) -> facts.add(path));
-                    e.get(reverse ? second : first).required();
-                    e.get(reverse ? first : second).required();
+                    e.get(reverse ? second : first).enabled();
+                    e.get(reverse ? first : second).enabled();
                   }));
 
       app.routes()
@@ -60,7 +60,7 @@ class AuthenticationCompositionTest {
               "/private",
               (_, response) -> response.text("corrected"),
               e -> {
-                e.get(second).required();
+                e.get(second).enabled();
                 e.onRoute((_, path) -> facts.add(path));
               });
 
@@ -88,8 +88,8 @@ class AuthenticationCompositionTest {
           () ->
               routes.path(
                   "/private",
-                  child -> child.get("/child", (_, _) -> {}, e -> e.get(second).required()),
-                  e -> e.get(first).required()));
+                  child -> child.get("/child", (_, _) -> {}, e -> e.get(second).enabled()),
+                  e -> e.get(first).enabled()));
 
       app.routes().get("/private/child", (_, response) -> response.text("corrected"));
 
@@ -118,7 +118,7 @@ class AuthenticationCompositionTest {
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName()),
                       e -> e.get(second)),
-              e -> e.get(first).required());
+              e -> e.get(first).enabled());
       app.routes()
           .path(
               "/second",
@@ -126,7 +126,7 @@ class AuthenticationCompositionTest {
                   child.get(
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName())),
-              e -> e.get(second).required());
+              e -> e.get(second).enabled());
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -154,8 +154,8 @@ class AuthenticationCompositionTest {
                   child.get(
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName()),
-                      e -> e.get(source).required()),
-              e -> e.get(source).required());
+                      e -> e.get(source).enabled()),
+              e -> e.get(source).enabled());
 
       try (var test = TestServer.start(app)) {
         assertEquals(

@@ -156,7 +156,7 @@ class RoutePolicyTest {
           };
       app.authentication(auth)
           .routes()
-          .get("/private", (_, response) -> response.text("secret"), e -> e.get(auth).required());
+          .get("/private", (_, response) -> response.text("secret"), e -> e.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
 

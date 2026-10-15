@@ -136,13 +136,13 @@ public final class McpOAuthExample {
                             "/profile",
                             (request, response) ->
                                 response.text(request.principal().orElseThrow().getName())),
-                    extensions -> extensions.get(restAuthentication).required());
+                    extensions -> extensions.get(restAuthentication).enabled());
                 // MCP selects the Bearer authenticator; mcp::routes adds the protocol's HTTP
                 // handlers.
                 routes.path(
                     resource.getPath(),
                     mcp::routes,
-                    extensions -> extensions.get(authentication).required());
+                    extensions -> extensions.get(authentication).enabled());
               });
     } catch (IOException | RuntimeException | Error failure) {
       try {

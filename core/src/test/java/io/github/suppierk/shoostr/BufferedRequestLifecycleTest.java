@@ -83,7 +83,7 @@ class BufferedRequestLifecycleTest {
           .post(
               "/body",
               (_, response) -> response.text("unexpected"),
-              extensions -> extensions.get(authentication).required());
+              extensions -> extensions.get(authentication).enabled());
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -118,7 +118,7 @@ class BufferedRequestLifecycleTest {
           .post(
               "/body",
               (_, response) -> response.text("unexpected"),
-              extensions -> extensions.get(authentication).required());
+              extensions -> extensions.get(authentication).enabled());
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -153,7 +153,7 @@ class BufferedRequestLifecycleTest {
           .post(
               "/body",
               (request, response) -> response.text(request.bodyText()),
-              extensions -> extensions.get(authentication).required());
+              extensions -> extensions.get(authentication).enabled());
       app.start();
 
       try (var socket = new Socket()) {
@@ -210,7 +210,7 @@ class BufferedRequestLifecycleTest {
           .post(
               "/body",
               (_, response) -> response.text("unexpected"),
-              extensions -> extensions.get(authentication).required());
+              extensions -> extensions.get(authentication).enabled());
       app.start();
 
       try (var socket = new Socket()) {

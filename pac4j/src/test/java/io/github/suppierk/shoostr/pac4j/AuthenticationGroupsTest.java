@@ -91,14 +91,14 @@ class AuthenticationGroupsTest {
                       child.get(
                           (request, response) ->
                               response.text(request.principal().orElseThrow().getName())),
-                  extensions -> extensions.get(basic).required());
+                  extensions -> extensions.get(basic).enabled());
               routes.path(
                   "/mcp",
                   child ->
                       child.get(
                           (request, response) ->
                               response.text(request.principal().orElseThrow().getName())),
-                  extensions -> extensions.get(bearer).required());
+                  extensions -> extensions.get(bearer).enabled());
             });
   }
 }

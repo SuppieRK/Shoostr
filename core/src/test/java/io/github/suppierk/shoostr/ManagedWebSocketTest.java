@@ -567,7 +567,7 @@ class ManagedWebSocketTest {
                     routes.websocket(
                         "/secure",
                         _ -> {},
-                        extensions -> extensions.get(authentication).required()));
+                        extensions -> extensions.get(authentication).enabled()));
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
@@ -607,7 +607,7 @@ class ManagedWebSocketTest {
                                         (connection, _) ->
                                             connection.send(
                                                 connection.principal().orElseThrow().getName())),
-                                extensions -> extensions.get(authentication).required())));
+                                extensions -> extensions.get(authentication).enabled())));
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {

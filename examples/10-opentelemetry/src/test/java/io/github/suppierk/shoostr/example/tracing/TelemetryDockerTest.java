@@ -4,6 +4,7 @@ import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -25,6 +26,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Tag;
@@ -204,7 +206,7 @@ class TelemetryDockerTest {
     assertAll(
         () -> assertEquals(200, response.statusCode()),
         () -> assertEquals("Hello, Ada!", response.body()),
-        () -> assertEquals(traceId, response.headers().firstValue("X-Trace-Id").orElseThrow()));
+        () -> assertTrue(response.headers().firstValue("X-Trace-Id").isEmpty()));
 
     var trace =
         await("Jaeger must receive the actual server span")
@@ -226,9 +228,16 @@ class TelemetryDockerTest {
 
                   return JSON.readTree(backend.body()).path("data").path(0);
                 },
-                value -> !value.path("spans").isEmpty());
-    assertEquals(1, trace.path("spans").size(), "Jaeger must receive the actual server span");
-    var span = trace.path("spans").get(0);
+                value ->
+                    StreamSupport.stream(value.path("spans").spliterator(), false)
+                        .anyMatch(
+                            span ->
+                                "GET /hello/{name}".equals(span.path("operationName").asText())));
+    var span =
+        StreamSupport.stream(trace.path("spans").spliterator(), false)
+            .filter(value -> "GET /hello/{name}".equals(value.path("operationName").asText()))
+            .findFirst()
+            .orElseThrow();
     var process = trace.path("processes").path(span.path("processID").asText());
     assertAll(
         () -> assertEquals("GET /hello/{name}", span.path("operationName").asText()),
@@ -278,6 +287,66 @@ class TelemetryDockerTest {
     assertTrue(
         result.path("frames").toString().contains("GET /hello/{name}"),
         "Grafana must display the route span");
+    assertTrue(
+        result.path("frames").toString().contains("greeting"),
+        "Grafana must display the internal operation in the same trace");
+  }
+
+  @Test
+  void retainsTheGreetingSpanContextAcrossInternalMethodCalls() throws Exception {
+    var traceId = UUID.randomUUID().toString().replace("-", "");
+    var response =
+        client.send(
+            HttpRequest.newBuilder(APP.resolve("/hello/Methods"))
+                .header("traceparent", "00-" + traceId + "-00f067aa0ba902b7-01")
+                .timeout(Duration.ofSeconds(5))
+                .GET()
+                .build(),
+            HttpResponse.BodyHandlers.discarding());
+    assertEquals(200, response.statusCode());
+
+    await("The internal greeting and formatting call must belong to the same server trace")
+        .atMost(Duration.ofSeconds(30))
+        .pollInterval(Duration.ofMillis(200))
+        .pollInSameThread()
+        .untilAsserted(
+            () -> {
+              var backend =
+                  client.send(
+                      HttpRequest.newBuilder(JAEGER.resolve("/api/traces/" + traceId))
+                          .timeout(Duration.ofSeconds(5))
+                          .GET()
+                          .build(),
+                      HttpResponse.BodyHandlers.ofString());
+              assertEquals(200, backend.statusCode(), backend.body());
+              var spans = JSON.readTree(backend.body()).path("data").get(0).path("spans");
+              assertEquals(2, spans.size(), "Expected SERVER and greeting spans");
+              var server =
+                  StreamSupport.stream(spans.spliterator(), false)
+                      .filter(
+                          span -> "GET /hello/{name}".equals(span.path("operationName").asText()))
+                      .findFirst()
+                      .orElseThrow();
+              var greeting =
+                  StreamSupport.stream(spans.spliterator(), false)
+                      .filter(span -> "greeting".equals(span.path("operationName").asText()))
+                      .findFirst()
+                      .orElseThrow();
+              assertAll(
+                  () -> assertEquals(traceId, server.path("traceID").asText()),
+                  () -> assertEquals(traceId, greeting.path("traceID").asText()),
+                  () ->
+                      assertNotEquals(
+                          server.path("spanID").asText(), greeting.path("spanID").asText()),
+                  () ->
+                      assertEquals(
+                          server.path("spanID").asText(),
+                          greeting.path("references").get(0).path("spanID").asText()),
+                  () ->
+                      assertTrue(
+                          greeting.path("logs").toString().contains("Greeting formatted"),
+                          "The formatting method must add its event to the current greeting span"));
+            });
   }
 
   private static void compose(boolean diagnostics, String... arguments) throws Exception {

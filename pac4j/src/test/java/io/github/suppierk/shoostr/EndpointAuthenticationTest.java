@@ -71,7 +71,7 @@ class EndpointAuthenticationTest {
                 invoked.set(true);
                 response.text("wrong");
               },
-              extensions -> extensions.get(auth).required());
+              extensions -> extensions.get(auth).enabled());
       var credentials =
           "wrong".equals(rejection) ? "Basic YWxpY2U6d3Jvbmc=" : "Basic YWxpY2U6Y29ycmVjdA==";
 
@@ -135,7 +135,7 @@ class EndpointAuthenticationTest {
                 handled.complete(Thread.currentThread());
                 response.text(request.principal().orElseThrow().getName());
               },
-              extensions -> extensions.get(auth).required());
+              extensions -> extensions.get(auth).enabled());
 
       try (var test = TestServer.start(app)) {
         var result =

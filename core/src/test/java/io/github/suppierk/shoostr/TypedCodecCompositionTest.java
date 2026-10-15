@@ -179,7 +179,7 @@ class TypedCodecCompositionTest {
                 response.body(
                     MediaType.APPLICATION_JSON, request.principal().orElseThrow().getName());
               },
-              extensions -> extensions.get(authentication).required());
+              extensions -> extensions.get(authentication).enabled());
 
       try (var test = TestServer.start(app)) {
         var result =

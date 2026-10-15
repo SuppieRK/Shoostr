@@ -1,6 +1,5 @@
 package io.github.suppierk.shoostr.example.tracing;
 
-import io.github.suppierk.shoostr.Extension;
 import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.propagation.W3CTraceContextPropagator;
 import io.opentelemetry.context.propagation.ContextPropagators;
@@ -12,7 +11,7 @@ import io.opentelemetry.sdk.trace.export.BatchSpanProcessor;
 import java.time.Duration;
 
 /** Owns the SDK and exporter; Shoostr's tracing adapter only borrows them. */
-final class TelemetryConfiguration implements Extension<Void> {
+final class TelemetryConfiguration implements AutoCloseable {
   private final OpenTelemetrySdk sdk;
 
   /** Configures OTLP export and propagation eagerly without installing a global SDK. */

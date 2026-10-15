@@ -106,7 +106,7 @@ public final class OpenApiExample {
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName()),
                       e -> {
-                        e.get(security).required();
+                        e.get(security).enabled();
                         e.get(docs)
                             .summary("Authenticated identity")
                             .security(BASIC_SCHEME)
@@ -118,7 +118,7 @@ public final class OpenApiExample {
                       "/admin/ping",
                       (_, response) -> response.text("pong"),
                       e -> {
-                        e.get(security).required();
+                        e.get(security).enabled();
                         e.get(internal)
                             .summary("Internal ping")
                             .security(BASIC_SCHEME)
@@ -144,7 +144,7 @@ public final class OpenApiExample {
                         group.get("/{*resource}", ui);
                       },
                       e -> {
-                        e.get(security).required();
+                        e.get(security).enabled();
                         e.get(docs).hidden();
                       });
                   // handler() serves the specification generated once during application startup.
@@ -152,16 +152,14 @@ public final class OpenApiExample {
                       "/openapi.json",
                       docs.handler(),
                       e -> {
-                        e.get(security).required();
+                        e.get(security).enabled();
                         e.get(docs)
                             .summary("This generated specification")
                             .security(BASIC_SCHEME)
                             .response(200, "OpenAPI document", MediaType.APPLICATION_JSON);
                       });
                   routes.get(
-                      "/internal-openapi.json",
-                      internal.handler(),
-                      e -> e.get(security).required());
+                      "/internal-openapi.json", internal.handler(), e -> e.get(security).enabled());
                 });
     // UserCodec is example-local and implements core's Codec using Swagger's Jackson mapper.
     // Only this typed route registration uses the codec; earlier byte/text routes remain untyped.
@@ -178,7 +176,7 @@ public final class OpenApiExample {
                     response.body(MediaType.APPLICATION_JSON, value);
                   },
                   e -> {
-                    e.get(security).required();
+                    e.get(security).enabled();
                     e.get(docs)
                         .summary("Create a user")
                         .operationId("createUser")

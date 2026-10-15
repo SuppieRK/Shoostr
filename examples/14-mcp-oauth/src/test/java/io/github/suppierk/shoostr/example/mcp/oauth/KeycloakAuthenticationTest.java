@@ -385,7 +385,7 @@ class KeycloakAuthenticationTest {
                         "/identity",
                         (request, response) ->
                             response.text(request.principal().orElseThrow().getName()),
-                        extensions -> extensions.get(authentication).required()));
+                        extensions -> extensions.get(authentication).enabled()));
 
         try (var test = TestServer.start(app)) {
           var result =
@@ -783,7 +783,7 @@ class KeycloakAuthenticationTest {
                     "/identity",
                     (request, response) ->
                         response.text(request.principal().orElseThrow().getName()),
-                    extensions -> extensions.get(authentication).required()));
+                    extensions -> extensions.get(authentication).enabled()));
     return app;
   }
 

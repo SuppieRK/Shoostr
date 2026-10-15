@@ -27,7 +27,17 @@ import org.openjdk.jmh.annotations.Warmup;
     jvmArgsAppend = {"-Xms512m", "-Xmx512m", "-XX:+UseG1GC"})
 @Threads(1)
 public class ExtensionRequestBenchmark {
-  @Param({"plain", "inactive", "callbacks", "authentication", "localObserver", "appObserver"})
+  @Param({
+    "plain",
+    "inactive",
+    "callbacks",
+    "authentication",
+    "localObserver",
+    "appObserver",
+    "localInstrumentation",
+    "unselectedInstrumentation",
+    "appInstrumentation"
+  })
   public String configuration;
 
   @Param({"1", "1000"})
@@ -126,16 +136,25 @@ public class ExtensionRequestBenchmark {
      * @param benchmark owning trial
      */
     public static void register(ExtensionRequestBenchmark benchmark) {
-      if ("inactive".equals(benchmark.configuration)) {
-        benchmark.app.extensions(new Inactive());
-        benchmark.registerPlain();
-        return;
-      }
-
-      if ("appObserver".equals(benchmark.configuration)) {
-        benchmark.app.afterRequest(_ -> {});
-        benchmark.registerPlain();
-        return;
+      switch (benchmark.configuration) {
+        case "inactive" -> {
+          benchmark.app.extensions(new Inactive());
+          benchmark.registerPlain();
+          return;
+        }
+        case "appObserver" -> {
+          benchmark.app.afterRequest(_ -> {});
+          benchmark.registerPlain();
+          return;
+        }
+        case "appInstrumentation" -> {
+          benchmark.app.observe(_ -> _ -> {});
+          benchmark.registerPlain();
+          return;
+        }
+        default -> {
+          /* Remaining modes configure individual endpoints below. */
+        }
       }
 
       var authentication = new Identity();
@@ -149,7 +168,14 @@ public class ExtensionRequestBenchmark {
         benchmark
             .app
             .routes()
-            .get(path, handler, e -> configure(e, authentication, benchmark.configuration));
+            .get(
+                path,
+                handler,
+                e -> {
+                  if (!"unselectedInstrumentation".equals(benchmark.configuration)) {
+                    configure(e, authentication, benchmark.configuration);
+                  }
+                });
         benchmark
             .app
             .routes()
@@ -166,13 +192,14 @@ public class ExtensionRequestBenchmark {
      */
     private static void configure(
         Extensions endpoint, Identity authentication, String configuration) {
-      if ("authentication".equals(configuration)) {
-        endpoint.get(authentication).required();
-      } else if ("localObserver".equals(configuration)) {
-        endpoint.afterRequest(_ -> {});
-      } else {
-        endpoint.beforeRouteHandler((request, _) -> request.attribute("admitted", Boolean.TRUE));
-        endpoint.afterRouteHandler((request, _) -> request.attribute("admitted", null));
+      switch (configuration) {
+        case "authentication" -> endpoint.get(authentication).enabled();
+        case "localObserver" -> endpoint.afterRequest(_ -> {});
+        case "localInstrumentation", "unselectedInstrumentation" -> endpoint.observe(_ -> _ -> {});
+        default -> {
+          endpoint.beforeRouteHandler((request, _) -> request.attribute("admitted", Boolean.TRUE));
+          endpoint.afterRouteHandler((request, _) -> request.attribute("admitted", null));
+        }
       }
     }
   }

@@ -229,7 +229,7 @@ public class WebSocketRoutesTest {
                 factories.incrementAndGet();
                 return new EchoListener();
               },
-              extensions -> extensions.get(authentication).required());
+              extensions -> extensions.get(authentication).enabled());
       app.start();
       var connection = connectHttp2(client, app);
       var fields = HttpFields.build().put("Sec-WebSocket-Version", "13");
@@ -908,7 +908,7 @@ public class WebSocketRoutesTest {
                       "/authenticated",
                       (request, _) ->
                           new EchoListener(request.principal().orElseThrow().getName() + ":")),
-              e -> e.get(admission).required());
+              e -> e.get(admission).enabled());
       app.start();
 
       var rejected =

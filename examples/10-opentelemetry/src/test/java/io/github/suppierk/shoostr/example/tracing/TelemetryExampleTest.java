@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.example.tracing;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
@@ -9,10 +10,11 @@ import org.junit.jupiter.api.Test;
 
 class TelemetryExampleTest {
   @Test
-  void continuesTheIncomingW3cTraceInTheHandler() throws Exception {
+  void servesTheGreetingWithoutADiagnosticTraceHeader() throws Exception {
     try (var test = TestServer.start(TelemetryExample.application())) {
       var response =
           test.send(
+              // An unsampled parent keeps this HTTP-only check independent of a trace backend.
               request ->
                   request
                       .path("/hello/Ada")
@@ -22,10 +24,7 @@ class TelemetryExampleTest {
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("Hello, Ada!", response.body()),
-          () ->
-              assertEquals(
-                  "4bf92f3577b34da6a3ce929d0e0e4736",
-                  response.headers().firstValue("X-Trace-Id").orElseThrow()));
+          () -> assertTrue(response.headers().firstValue("X-Trace-Id").isEmpty()));
     }
   }
 }

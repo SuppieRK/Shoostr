@@ -290,7 +290,7 @@ public final class Shoostr implements Closeable {
 
   /**
    * Installs one managed identity source. Routes/groups explicitly require it using
-   * extensions.get(instance).required(); installation itself leaves routes public.
+   * extensions.get(instance).enabled(); installation itself leaves routes public.
    *
    * @param extension identity source
    * @return this application
@@ -1876,6 +1876,11 @@ public final class Shoostr implements Closeable {
       }
 
       var endpoint = matchEndpoint(rawRequest, request);
+      if (endpoint != null && observation != null && endpoint.behavior() != null) {
+        request.route(endpoint);
+        observation.begin(request, endpoint.behavior().instrumentation());
+      }
+
       if (endpoint == null) {
         handleUnmatched(request, response);
       } else if (endpoint.executor() != null) {
@@ -2513,7 +2518,8 @@ public final class Shoostr implements Closeable {
     }
 
     /**
-     * Creates scopes before any application work; a faulty observer cannot reject traffic.
+     * Creates scopes before their app-wide or matched phase; a faulty observer cannot reject
+     * traffic.
      *
      * @param request invocation input, not retained
      * @param factories instrumentation snapshot

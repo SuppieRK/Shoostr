@@ -45,7 +45,7 @@ class PublishedIntegrationsTest {
         .get(
             "/secure",
             (request, response) -> response.text(request.principal().orElseThrow().getName()),
-            e -> e.get(auth).required());
+            e -> e.get(auth).enabled());
 
     try (var server = TestServer.start(app)) {
       var missing = server.send(request -> request.path("/secure"));

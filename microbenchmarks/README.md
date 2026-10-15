@@ -1,5 +1,11 @@
 # JVM microbenchmarks
 
+`ExtensionRequestBenchmark` includes local and app-wide no-op instrumentation. Its
+`unselectedInstrumentation` mode observes POST endpoints but measures GET endpoints in the same
+table, exposing completion-bookkeeping overhead on unselected requests. Compare `plain`,
+`localInstrumentation`, `unselectedInstrumentation` and `appInstrumentation` with `-prof gc`
+for dispatch time and allocated bytes/op; these fixtures do not measure exporter or SDK costs.
+
 Targeted JMH experiments remain available locally. Historical recordings are
 retired during the migration of end-to-end diagnostics to
 [GitHub Actions](../.github/benchmarks/README.md). New JMH results are ignored by

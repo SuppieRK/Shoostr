@@ -2163,7 +2163,7 @@ public final class Routes implements Closeable {
   /**
    * Reports whether selected routes require terminal observation even without app observers.
    *
-   * @return whether any bound endpoint has a local observer
+   * @return whether any bound endpoint has a terminal observer or observation factory
    */
   boolean localObservers() {
     return root.localObservers;
@@ -2201,14 +2201,15 @@ public final class Routes implements Closeable {
   }
 
   /**
-   * Publishes cold notifications and terminal-observer requirements while holding the root lock.
+   * Publishes cold notifications and completion requirements while holding the root lock.
    *
    * @param behavior immutable local behavior
    * @param facts pending HTTP metadata notifications
    */
   private void publish(@Nullable EndpointBehavior behavior, List<Runnable> facts) {
     notifications.addAll(facts);
-    if (behavior != null && !behavior.observers().isEmpty()) {
+    if (behavior != null
+        && (!behavior.observers().isEmpty() || !behavior.instrumentation().isEmpty())) {
       root.localObservers = true;
     }
   }

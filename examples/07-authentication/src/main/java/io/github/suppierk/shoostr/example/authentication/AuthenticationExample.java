@@ -52,7 +52,7 @@ public final class AuthenticationExample {
                             response.text(request.principal().orElseThrow().getName()));
                     group.get("/admin", (_, response) -> response.text("admin operation allowed"));
                   },
-                  extensions -> extensions.get(auth).required());
+                  extensions -> extensions.get(auth).enabled());
             });
   }
 }
