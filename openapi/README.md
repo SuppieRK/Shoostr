@@ -100,7 +100,7 @@ are embedded or persisted in shared
 resources; the online validator is disabled. UI initialization uses fixed same-origin paths,
 not a request's Host header.
 
-See the [runnable example](../examples/12-openapi/README.md) for Pac4j Basic authentication,
+See the [runnable example](../examples/11-openapi/README.md) for Pac4j Basic authentication,
 typed JSON, ordinary text, group overrides and independent documents.
 
 ## Provenance

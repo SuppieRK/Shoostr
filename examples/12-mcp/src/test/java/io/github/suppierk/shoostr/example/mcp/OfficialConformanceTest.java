@@ -23,7 +23,7 @@ class OfficialConformanceTest {
   void satisfiesTheOfficialServerContract(String selection) throws Exception {
     var directory = Path.of(System.getProperty("conformance.directory"));
     var cli = directory.resolve("node_modules/@modelcontextprotocol/conformance/dist/index.js");
-    assertTrue(Files.isRegularFile(cli), "Run npm ci --ignore-scripts in examples/13-mcp first");
+    assertTrue(Files.isRegularFile(cli), "Run npm ci --ignore-scripts in examples/12-mcp first");
     var output = directory.resolve("build/conformance/" + selection);
     Files.createDirectories(output);
     var log = output.resolve("runner.log");

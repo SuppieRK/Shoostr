@@ -34,10 +34,10 @@ callbacks required by the official suite.
 
 ```sh
 cmdshape ./gradlew :mcp-example:jibDockerBuild
-cmdshape docker compose -f examples/13-mcp/compose.yaml up -d
+cmdshape docker compose -f examples/12-mcp/compose.yaml up -d
 cmdshape curl --fail --retry 30 --retry-delay 1 --retry-connrefused --retry-all-errors \
   --max-time 3 --retry-max-time 60 http://127.0.0.1:8080/health
-cmdshape docker compose -f examples/13-mcp/compose.yaml down
+cmdshape docker compose -f examples/12-mcp/compose.yaml down
 ```
 
 The Java25 image is nonroot. Compose publishes loopback only and sets `MCP_PUBLIC_ORIGIN`
@@ -46,7 +46,7 @@ port and allowed origin. For host-run execution the origin defaults to
 `http://127.0.0.1:<Options.port()>`, independently of the bind address; override
 `MCP_PUBLIC_ORIGIN` only when you intentionally expose a different canonical origin.
 
-Use Node 22. Run commands below from `examples/13-mcp`:
+Use Node 22. Run commands below from `examples/12-mcp`:
 
 ```bash
 cmdshape npm ci --ignore-scripts
@@ -63,7 +63,7 @@ The task starts and closes the same application through `TestServer`, invokes th
 installed official CLI directly, and gates all three selections below. It uses
 fixed loopback port `8766`; override with `-PconformancePort=8767` if needed. It
 does not contact or leave running a separately started app. Reports and runner
-logs are retained under `examples/13-mcp/build/conformance/`; the normal `build`
+logs are retained under `examples/12-mcp/build/conformance/`; the normal `build`
 runs the live Java smoke test without requiring Node. CI runs the official task
 separately and preserves its reports even on failure.
 

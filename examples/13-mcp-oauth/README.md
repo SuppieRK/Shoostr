@@ -129,8 +129,8 @@ The test owns the Shoostr app on loopback port 9443 and the temporary browser an
 callback listener on port 8765. It leaves the separately started Keycloak container
 running. It trusts only the local fixture CA for its Node process and temporary
 Firefox profile; it does not change browser/system trust or disable HTTPS checks.
-Reports are under `examples/14-mcp-oauth/build/test-results/oauthTest/` and the
-sanitized driver output is `examples/14-mcp-oauth/build/oauth/runner.log`.
+Reports are under `examples/13-mcp-oauth/build/test-results/oauthTest/` and the
+sanitized driver output is `examples/13-mcp-oauth/build/oauth/runner.log`.
 
 To run the example manually, build and start its installed script from this directory:
 

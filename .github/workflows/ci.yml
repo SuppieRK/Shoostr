@@ -35,21 +35,21 @@ jobs:
           node-version: '22'
           cache: npm
           cache-dependency-path: |
-            examples/13-mcp/package-lock.json
-            examples/14-mcp-oauth/package-lock.json
+            examples/12-mcp/package-lock.json
+            examples/13-mcp-oauth/package-lock.json
 
       - name: Install pinned MCP compatibility tests
-        working-directory: examples/13-mcp
+        working-directory: examples/12-mcp
         run: npm ci --ignore-scripts
 
       - name: Install pinned MCP OAuth client and browser
-        working-directory: examples/14-mcp-oauth
+        working-directory: examples/13-mcp-oauth
         run: |
           npm ci --ignore-scripts
           node node_modules/playwright/cli.js install --with-deps firefox
 
       - name: Start isolated HTTPS OAuth fixture
-        working-directory: examples/14-mcp-oauth
+        working-directory: examples/13-mcp-oauth
         run: bash ../../.github/scripts/start-oauth-fixture.sh
 
       - name: Build and test
@@ -70,13 +70,13 @@ jobs:
           :static-streaming-example:jibDockerBuild :openapi-example:jibDockerBuild
           :mcp-example:jibDockerBuild :mcp-oauth-example:jibDockerBuild --console=plain
 
-      - name: Verify real observability and persistence examples
+      - name: Verify real observability examples
         run: >-
           ./gradlew :micrometer-example:dockerTest :opentelemetry-example:dockerTest
-          :postgres-example:dockerTest --console=plain
+          --console=plain
 
       - name: Verify the containerized HTTPS OAuth example
-        working-directory: examples/14-mcp-oauth
+        working-directory: examples/13-mcp-oauth
         run: |
           # The Jib app runs as UID1000; transfer only this disposable server keystore.
           sudo chown 1000 .local/fixture.p12
@@ -93,7 +93,7 @@ jobs:
 
       - name: Stop OAuth fixture and preserve diagnostics
         if: always()
-        working-directory: examples/14-mcp-oauth
+        working-directory: examples/13-mcp-oauth
         run: |
           mkdir -p build/oauth
           compose_files=(-f compose.yaml)
@@ -114,8 +114,6 @@ jobs:
             examples/09-micrometer/build/test-results/dockerTest/
             examples/10-opentelemetry/build/docker/
             examples/10-opentelemetry/build/test-results/dockerTest/
-            examples/11-postgres/build/docker/
-            examples/11-postgres/build/test-results/dockerTest/
           if-no-files-found: warn
 
       - name: Preserve MCP OAuth reports
@@ -124,9 +122,9 @@ jobs:
         with:
           name: mcp-oauth-results
           path: |
-            examples/14-mcp-oauth/build/oauth/runner.log
-            examples/14-mcp-oauth/build/oauth/keycloak.log
-            examples/14-mcp-oauth/build/test-results/oauthTest/
+            examples/13-mcp-oauth/build/oauth/runner.log
+            examples/13-mcp-oauth/build/oauth/keycloak.log
+            examples/13-mcp-oauth/build/test-results/oauthTest/
           if-no-files-found: warn
 
       - name: Preserve MCP compatibility reports
@@ -135,8 +133,8 @@ jobs:
         with:
           name: mcp-conformance-results
           path: |
-            examples/13-mcp/build/conformance/
-            examples/13-mcp/build/test-results/conformanceTest/
+            examples/12-mcp/build/conformance/
+            examples/12-mcp/build/test-results/conformanceTest/
           if-no-files-found: warn
 
       - name: Check benchmark reporting and resource enforcement

@@ -28,7 +28,7 @@ Installation alone does not protect any endpoint. No wrapper around each handler
 global authentication chain or exception-handling extension is necessary.
 
 Run live checks with `./gradlew :authentication-example:test`.
-For real external OAuth rather than fixed credentials, see [MCP OAuth](../14-mcp-oauth/README.md).
+For real external OAuth rather than fixed credentials, see [MCP OAuth](../13-mcp-oauth/README.md).
 
 Docker: `./gradlew :authentication-example:jibDockerBuild`, then
 `docker compose -f examples/07-authentication/compose.yaml up -d`.

@@ -406,8 +406,8 @@ runs after the drain, so telemetry and other resources remain available to finis
 
 The optional [`mcp` module](mcp/README.md) composes the official Java SDK with explicit
 Streamable HTTP routes, per-request identity and pre-dispatch permissions. It installs
-no automatic endpoint or authenticator. See the [public compatibility example](examples/13-mcp/README.md)
-and [external OAuth example](examples/14-mcp-oauth/README.md) for runnable native SDK configuration.
+no automatic endpoint or authenticator. See the [public compatibility example](examples/12-mcp/README.md)
+and [external OAuth example](examples/13-mcp-oauth/README.md) for runnable native SDK configuration.
 
 Use runtime conditions for feature flags or authenticated request decisions:
 
@@ -426,7 +426,7 @@ deployment-specific absence: `if (development) routes.get("/debug", debugHandler
 The optional [`openapi` module](openapi/README.md) generates startup-frozen OpenAPI 3.1.1 JSON
 from instance-selected explicit operation/schema configuration, with an explicitly registered,
 locally bundled Swagger UI. It adds no OpenAPI dependencies or runtime hooks to core-only apps.
-The [runnable authenticated example](examples/12-openapi/README.md) covers typed and byte handlers,
+The [runnable authenticated example](examples/11-openapi/README.md) covers typed and byte handlers,
 group defaults, independent documents and conditional exclusions.
 
 Extension authors implement `Extension<C>`. Its `configure(Extensions, C inherited)` method returns

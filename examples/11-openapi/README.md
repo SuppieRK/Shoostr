@@ -51,8 +51,8 @@ For a Dockerfile-free local container:
 
 ```sh
 cmdshape ./gradlew :openapi-example:jibDockerBuild
-cmdshape docker compose -f examples/12-openapi/compose.yaml up -d
-cmdshape docker compose -f examples/12-openapi/compose.yaml down
+cmdshape docker compose -f examples/11-openapi/compose.yaml up -d
+cmdshape docker compose -f examples/11-openapi/compose.yaml down
 ```
 
 Open the same `/docs/` URL and use the same fixture credentials. Java25 runs as a nonroot

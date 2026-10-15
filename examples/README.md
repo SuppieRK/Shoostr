@@ -30,10 +30,9 @@ framework modules do not select a provider or enable per-request logging by defa
 | Serve classpath assets and finite HTTP streams | [08-static-streaming](08-static-streaming/README.md) / `static-streaming-example` | Narrow asset mount and CSV chunks; SSE/WebSocket have dedicated tutorials |
 | Export request metrics to Prometheus and Grafana | [09-micrometer](09-micrometer/README.md) / `micrometer-example` | Real scrape samples and a default request dashboard |
 | Export request traces to Jaeger and Grafana | [10-opentelemetry](10-opentelemetry/README.md) / `opentelemetry-example` | Explicit SDK/export, W3C parent continuation and a default recent-traces dashboard |
-| Persist a resource with PostgreSQL/Flyway/jOOQ | [11-postgres](11-postgres/README.md) / `postgres-example` | Startup migration, create/read and retained data across app restart |
-| Describe and try explicitly documented endpoints | [12-openapi](12-openapi/README.md) / `openapi-example` | Explicit schemas, two documents, codec, protected docs and Swagger authorization |
-| Mount a native SDK MCP extension | [13-mcp](13-mcp/README.md) / `mcp-example` | Separate native SDK configuration and official interoperability checks |
-| Use an external OAuth authorization server | [14-mcp-oauth](14-mcp-oauth/README.md) / `mcp-oauth-example` | Real TLS/Keycloak, PKCE/scope escalation and distinct REST/MCP authentication |
+| Describe and try explicitly documented endpoints | [11-openapi](11-openapi/README.md) / `openapi-example` | Explicit schemas, two documents, codec, protected docs and Swagger authorization |
+| Mount a native SDK MCP extension | [12-mcp](12-mcp/README.md) / `mcp-example` | Separate native SDK configuration and official interoperability checks |
+| Use an external OAuth authorization server | [13-mcp-oauth](13-mcp-oauth/README.md) / `mcp-oauth-example` | Real TLS/Keycloak, PKCE/scope escalation and distinct REST/MCP authentication |
 
 Every server example remains independently runnable and understandable. Ordinary
 `./gradlew build` compiles examples and runs Docker-free JUnit HTTP/WebSocket tests through
@@ -47,8 +46,8 @@ Each Compose recipe publishes user-facing ports only on loopback. Run one exampl
 at a time on 8080, or override its documented port. Ctrl+C/app stop uses Shoostr's
 existing shutdown hook. Compose cleanup removes only that example's resources.
 
-Telemetry/database checks belong to a separately invoked Docker lane: backend readiness,
-actual requests, backend ingestion/persistence, Grafana provisioning and bounded cleanup.
+Telemetry checks belong to a separately invoked Docker lane: backend readiness,
+actual requests, backend ingestion, Grafana provisioning and bounded cleanup.
 These are not mocked data, console-only exporters or load/performance benchmarks.
 
 From the repository root:
@@ -56,14 +55,14 @@ From the repository root:
 ```sh
 ./gradlew :hello-example:run
 ./gradlew :requests-example:test
-./gradlew :micrometer-example:dockerTest :opentelemetry-example:dockerTest :postgres-example:dockerTest
+./gradlew :micrometer-example:dockerTest :opentelemetry-example:dockerTest
 ```
 
 Use each README's exact requests, ports and cleanup commands. Backend fixtures use unique
 Compose project names and remove their own disposable resources; do not run a second copy
-on their test ports. CI builds all example images, runs the three real-backend tests and
+on their test ports. CI builds all example images, runs the two real-backend test suites and
 verifies the OAuth container with the same official browser/client driver. Ordinary
-`build` needs neither Docker nor external metrics, trace, database or identity services.
+`build` needs neither Docker nor external metrics, trace or identity services.
 
 Topic selection follows the focused [Javalin tutorials](https://javalin.io/tutorials/),
 [Jooby manual](https://jooby.io/) and [Spring guides](https://spring.io/guides/).

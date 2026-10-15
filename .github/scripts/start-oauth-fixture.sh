@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# CI-only: run from examples/14-mcp-oauth on the Ubuntu GitHub Actions runner.
+# CI-only: run from examples/13-mcp-oauth on the Ubuntu GitHub Actions runner.
 # GITHUB_ENV carries the generated password to subsequent workflow steps.
 : "${GITHUB_ENV:?This script requires the GitHub Actions environment}"
 SHOOSTR_OAUTH_KEYSTORE_PASSWORD="$(openssl rand -hex 24)"

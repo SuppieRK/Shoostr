@@ -1,4 +1,0 @@
-CREATE TABLE notes (
-    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    text TEXT NOT NULL CHECK (length(trim(text)) > 0)
-);
