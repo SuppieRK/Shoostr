@@ -1002,7 +1002,7 @@ owns registries, SDKs, exporters and their shutdown:
 
 ```groovy
 implementation project(':micrometer')   // Micrometer 1.17.1
-implementation project(':opentelemetry') // OpenTelemetry API 1.66.0; configure your SDK separately
+implementation project(':opentelemetry') // OpenTelemetry API 1.67.0; configure your SDK separately
 ```
 
 ```java
