@@ -1,7 +1,6 @@
 package io.github.suppierk.shoostr.http;
 
 import java.net.URI;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
@@ -177,12 +176,7 @@ public final class ProblemDetails {
       enterContainer(list, ancestors);
 
       try {
-        var copy = new ArrayList<@Nullable Object>(list.size());
-        for (var nested : list) {
-          copy.add(copyValue(nested, ancestors));
-        }
-
-        return Collections.unmodifiableList(copy);
+        return list.stream().map(nested -> copyValue(nested, ancestors)).toList();
       } finally {
         ancestors.remove(list);
       }
