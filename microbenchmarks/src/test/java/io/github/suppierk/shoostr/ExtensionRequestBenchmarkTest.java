@@ -9,6 +9,24 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 class ExtensionRequestBenchmarkTest {
   @ParameterizedTest
+  @MethodSource("tracingCases")
+  void dispatchesSdkTracingModesAcrossExecutorTypes(String configuration, String execution)
+      throws Exception {
+    var benchmark = new ExtensionRequestBenchmark();
+    benchmark.configuration = configuration;
+    benchmark.execution = execution;
+    benchmark.groups = 1;
+    benchmark.outcome = "matched";
+
+    try {
+      benchmark.setup();
+      assertTrue(benchmark.request().startsWith("HTTP/1.1 200"));
+    } finally {
+      benchmark.close();
+    }
+  }
+
+  @ParameterizedTest
   @MethodSource("cases")
   void dispatchesEachConfigurationTableAndOutcome(String configuration, int groups, String outcome)
       throws Exception {
@@ -45,5 +63,13 @@ class ExtensionRequestBenchmarkTest {
                         groups ->
                             Stream.of("matched", "missed", "wrongMethod")
                                 .map(outcome -> Arguments.of(configuration, groups, outcome))));
+  }
+
+  private static Stream<Arguments> tracingCases() {
+    return Stream.of("plain", "otelInstalled", "otelSelected", "otelUnselected", "otelAppWide")
+        .flatMap(
+            configuration ->
+                Stream.of("default", "platform", "forkJoin")
+                    .map(execution -> Arguments.of(configuration, execution)));
   }
 }

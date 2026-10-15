@@ -8,7 +8,7 @@ is an ordinary `AutoCloseable`, not an extension; `app.afterClose(configuration:
 flushes and closes its SDK after framework and extension cleanup. No global SDK,
 Java agent, Collector or second Shoostr app is needed.
 
-Installation alone leaves tracing inactive. The greeting route selects
+Installation alone creates no SERVER spans. The greeting route selects
 `extensions.get(tracing).enabled()`; `/health` stays untraced. The same selection can be
 attached to `routes.path(...)` to enable a whole group. Repeated activation adds no
 duplicate SERVER span. Alternatively, configure `.allRequests()` before installation
@@ -57,6 +57,10 @@ The SDK's `makeCurrent()` activates the child and its returned scope restores th
 `end()` separately finishes the child, including when a method throws. This is resource
 management, not the removed application-assembly cleanup guards. Shoostr also reattaches
 request context when handing matched execution to a configured endpoint executor.
+Selective tracing captures admission SDK context for unselected routes too. Reattaching it prevents
+a helping ForkJoin worker from leaking another request's span into an unselected handler, and
+cleanup restores the worker's exact previous context. This costs observation bookkeeping even when
+no route enables SERVER spans; it does not clear ambient admission context to root.
 Application-created asynchronous tasks need explicit SDK context wrapping or client
 instrumentation; this example keeps its internal calls synchronous.
 Grafana's datasource and dashboard are provisioned automatically; its pinned signed

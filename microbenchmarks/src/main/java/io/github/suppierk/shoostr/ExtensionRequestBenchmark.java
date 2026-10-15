@@ -1,7 +1,17 @@
 package io.github.suppierk.shoostr;
 
+import io.github.suppierk.shoostr.opentelemetry.OpenTelemetryTracing;
+import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.eclipse.jetty.server.LocalConnector;
+import org.jspecify.annotations.Nullable;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -36,7 +46,11 @@ public class ExtensionRequestBenchmark {
     "appObserver",
     "localInstrumentation",
     "unselectedInstrumentation",
-    "appInstrumentation"
+    "appInstrumentation",
+    "otelInstalled",
+    "otelSelected",
+    "otelUnselected",
+    "otelAppWide"
   })
   public String configuration;
 
@@ -46,9 +60,22 @@ public class ExtensionRequestBenchmark {
   @Param({"matched", "missed", "wrongMethod"})
   public String outcome;
 
+  @Param({"default", "platform", "forkJoin"})
+  public String execution;
+
+  private final List<AutoCloseable> resources;
   private Shoostr app;
   private LocalConnector connector;
   private String request;
+  private @Nullable ExecutorService executor;
+
+  /**
+   * Initializes fixture-owned resources and the execution default used by existing fixture tests.
+   */
+  public ExtensionRequestBenchmark() {
+    resources = new ArrayList<>();
+    execution = "default";
+  }
 
   /**
    * Runs one HTTP exchange through the production dispatcher; no network/client is involved.
@@ -65,11 +92,23 @@ public class ExtensionRequestBenchmark {
    * Starts one app and prepares an independent request corpus outside the timed operation.
    *
    * @throws Exception if the application cannot start
+   * @throws IllegalArgumentException if the execution mode is unknown
    * @throws IllegalStateException if the prepared exchange has the wrong status
    */
   @Setup
   public void setup() throws Exception {
     app = new Shoostr(Options.defaults().withPort(0));
+    executor =
+        switch (execution) {
+          case "default" -> null;
+          case "platform" -> Executors.newFixedThreadPool(1);
+          case "forkJoin" -> new ForkJoinPool(1);
+          default -> throw new IllegalArgumentException("Unknown execution: " + execution);
+        };
+    if (executor != null) {
+      resources.add(executor);
+    }
+
     app.modifyServer(
         server -> {
           connector = new LocalConnector(server);
@@ -100,6 +139,9 @@ public class ExtensionRequestBenchmark {
   @TearDown
   public void close() throws Exception {
     app.close();
+    for (var resource : resources) {
+      resource.close();
+    }
   }
 
   /**
@@ -108,8 +150,13 @@ public class ExtensionRequestBenchmark {
   private void registerPlain() {
     for (int group = 0; group < groups; group++) {
       var path = "/api/" + group + "/users/{id}";
-      app.routes().get(path, (_, response) -> response.text("ok"));
-      app.routes().post(path, (_, response) -> response.text("ok"));
+      if (executor == null) {
+        app.routes().get(path, (_, response) -> response.text("ok"));
+        app.routes().post(path, (_, response) -> response.text("ok"));
+      } else {
+        app.routes().get(path, executor, (_, response) -> response.text("ok"));
+        app.routes().post(path, executor, (_, response) -> response.text("ok"));
+      }
     }
   }
 
@@ -137,6 +184,10 @@ public class ExtensionRequestBenchmark {
      */
     public static void register(ExtensionRequestBenchmark benchmark) {
       switch (benchmark.configuration) {
+        case "otelInstalled", "otelSelected", "otelUnselected", "otelAppWide" -> {
+          registerTracing(benchmark);
+          return;
+        }
         case "inactive" -> {
           benchmark.app.extensions(new Inactive());
           benchmark.registerPlain();
@@ -165,21 +216,53 @@ public class ExtensionRequestBenchmark {
       for (int group = 0; group < benchmark.groups; group++) {
         var path = "/api/" + group + "/users/{id}";
         Handler handler = (_, response) -> response.text("ok");
-        benchmark
-            .app
-            .routes()
-            .get(
-                path,
-                handler,
-                e -> {
-                  if (!"unselectedInstrumentation".equals(benchmark.configuration)) {
-                    configure(e, authentication, benchmark.configuration);
-                  }
-                });
-        benchmark
-            .app
-            .routes()
-            .post(path, handler, e -> configure(e, authentication, benchmark.configuration));
+        Consumer<Extensions> get =
+            e -> {
+              if (!"unselectedInstrumentation".equals(benchmark.configuration)) {
+                configure(e, authentication, benchmark.configuration);
+              }
+            };
+        Consumer<Extensions> post = e -> configure(e, authentication, benchmark.configuration);
+        if (benchmark.executor == null) {
+          benchmark.app.routes().get(path, handler, get);
+          benchmark.app.routes().post(path, handler, post);
+        } else {
+          benchmark.app.routes().get(path, benchmark.executor, handler, get);
+          benchmark.app.routes().post(path, benchmark.executor, handler, post);
+        }
+      }
+    }
+
+    /**
+     * Installs a real recording SDK without an exporter; all allocations are SDK/dispatch work.
+     *
+     * @param benchmark owning trial
+     */
+    private static void registerTracing(ExtensionRequestBenchmark benchmark) {
+      var provider = SdkTracerProvider.builder().build();
+      benchmark.resources.add(provider);
+      var tracing =
+          new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build());
+      benchmark.app.extensions(
+          "otelAppWide".equals(benchmark.configuration) ? tracing.allRequests() : tracing);
+      for (int group = 0; group < benchmark.groups; group++) {
+        var path = "/api/" + group + "/users/{id}";
+        for (var method : List.of("GET", "POST")) {
+          Consumer<Extensions> configure =
+              e -> {
+                if ("otelSelected".equals(benchmark.configuration)
+                    || ("otelUnselected".equals(benchmark.configuration)
+                        && "POST".equals(method))) {
+                  e.get(tracing).enabled();
+                }
+              };
+          Handler handler = (_, response) -> response.text("ok");
+          if (benchmark.executor == null) {
+            benchmark.app.routes().route(method, path, handler, configure);
+          } else {
+            benchmark.app.routes().route(method, path, benchmark.executor, handler, configure);
+          }
+        }
       }
     }
 

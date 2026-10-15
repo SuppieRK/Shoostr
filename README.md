@@ -1028,8 +1028,8 @@ Import `io.github.suppierk.shoostr.micrometer.MicrometerMetrics`,
 `io.github.suppierk.shoostr.AccessLog`. Register before `start()`. Supply an OpenTelemetry
 instance with your chosen propagators (for example W3C trace context) and exporters;
 no global provider is installed. Business code sees the server span through `Span.current()`.
-Bare extension installation leaves request instrumentation inactive. For app-wide coverage, call
-`allRequests()` before installing. Tracing also supports route/group selection:
+Bare metrics installation records no requests; bare tracing installation creates no SERVER spans.
+For app-wide coverage, call `allRequests()` before installing. Tracing also supports route/group selection:
 
 ```java
 var tracing = new OpenTelemetryTracing(openTelemetry);
@@ -1049,7 +1049,11 @@ including authentication. It covers queueing and rejection, but not earlier head
 short circuits, unmatched paths or method mismatches without an endpoint. Unselected routes create
 no framework SERVER spans; application-created spans remain controlled by the SDK. Selecting any
 local observation enables completion bookkeeping for that app's unselected requests as well.
-An app with no observations retains the uninstrumented fast path.
+Selective tracing also carries admission SDK context across every executor handoff, even for bare
+installation or unselected routes. This adds observation bookkeeping but no SERVER spans or remote
+parent extraction on those routes. It temporarily replaces unrelated worker/executor context, then
+restores that exact context after invocation; admission context is preserved rather than cleared.
+An app without observations or the tracing extension retains the uninstrumented fast path.
 
 Existing `observe(adapter)` registration remains supported. Distinct activated instances
 both run, even when sharing a registry or SDK: metrics may record twice and the last tracing scope

@@ -171,7 +171,9 @@ public final class OpenTelemetryTracing
   }
 
   /**
-   * Installs configured observation without owning borrowed dependencies.
+   * Installs configured observation without owning borrowed dependencies. Selective mode carries
+   * admission context across every request handoff, including unselected endpoints, without
+   * creating SERVER spans there.
    *
    * @param callbacks registration-only application callbacks
    */
@@ -180,7 +182,43 @@ public final class OpenTelemetryTracing
     installed = true;
     if (allRequests) {
       callbacks.observe(this);
+    } else {
+      callbacks.observe(_ -> admissionContext());
     }
+  }
+
+  /**
+   * Captures admission context without changing it or creating a span.
+   *
+   * @return observation restoring the worker's exact previous context after attachment
+   */
+  private static RequestObservation admissionContext() {
+    var captured = Context.current();
+    return new RequestObservation() {
+      /**
+       * Replaces unrelated worker context for this invocation only.
+       *
+       * <p>The returned SDK scope is owned and closed by Shoostr on the attaching thread;
+       * MustBeClosedChecker cannot follow that ownership transfer.
+       *
+       * @return scope restoring the worker's previous context on close
+       */
+      @Override
+      @SuppressWarnings("MustBeClosedChecker")
+      public AutoCloseable attach() {
+        return captured.makeCurrent();
+      }
+
+      /**
+       * Carries context only; there is no SERVER span to record or end.
+       *
+       * @param outcome terminal snapshot
+       */
+      @Override
+      public void complete(RequestOutcome outcome) {
+        // This observation carries context only and owns no span to complete.
+      }
+    };
   }
 
   /** Registration-only activation of SERVER spans on one route or group. */
