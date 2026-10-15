@@ -117,7 +117,8 @@ class LocalRequestObservationTest {
 
     try (var app = new Shoostr()) {
       app.routes().get("/ok", (_, _) -> {}, retained::set);
-      assertThrows(IllegalStateException.class, () -> retained.get().observe(_ -> _ -> {}));
+      var configuration = retained.get();
+      assertThrows(IllegalStateException.class, () -> configuration.observe(_ -> _ -> {}));
     }
   }
 }

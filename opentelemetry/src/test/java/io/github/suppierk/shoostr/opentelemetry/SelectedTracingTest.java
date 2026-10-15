@@ -176,14 +176,17 @@ class SelectedTracingTest {
     app.extensions(appWide ? tracing.allRequests() : tracing);
     var retained = new AtomicReference<OpenTelemetryTracing.Configuration>();
     app.routes().get("/selected", (_, _) -> {}, e -> retained.set(e.get(tracing).enabled()));
-    assertThrows(IllegalStateException.class, () -> retained.get().enabled());
+    var configuration = retained.get();
+    assertThrows(IllegalStateException.class, configuration::enabled);
   }
 
   @Test
   void rejectsSelectionOfAnUninstalledInstance() {
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> app.routes().get("/selected", (_, _) -> {}, e -> e.get(tracing).enabled()));
+    app.routes()
+        .get(
+            "/selected",
+            (_, _) -> {},
+            e -> assertThrows(IllegalArgumentException.class, () -> e.get(tracing)));
   }
 
   @Test
