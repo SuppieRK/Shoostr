@@ -6,6 +6,7 @@
     "node": "22.x"
   },
   "devDependencies": {
-    "@modelcontextprotocol/conformance": "0.2.0-alpha.12"
+    "@modelcontextprotocol/conformance": "0.2.0-alpha.12",
+    "playwright": "1.64.0"
   }
 }

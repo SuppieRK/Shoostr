@@ -396,7 +396,7 @@ runs after the drain, so telemetry and other resources remain available to finis
 The optional [`mcp` module](mcp/README.md) composes the official Java SDK with explicit
 Streamable HTTP routes, per-request identity and pre-dispatch permissions. It installs
 no automatic endpoint or authenticator. See the [public compatibility example](examples/12-mcp/README.md)
-and [external OAuth example](examples/13-mcp-oauth/README.md) for runnable native SDK configuration.
+for runnable native SDK configuration and its bundled MCP Inspector.
 
 Use runtime conditions for feature flags or authenticated request decisions:
 

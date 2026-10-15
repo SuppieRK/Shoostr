@@ -3,102 +3,94 @@
 This public app uses Shoostr's MCP extension and the official Java SDK
 `2.0.1`, targeting protocol `2025-11-25`. Its fixed native tool/resource/prompt
 catalog is the fixture expected by the official suite, not a production business
-service. The protected OAuth example is separate. Node is test tooling only,
-not a runtime dependency of the Java integration.
+service. The Java integration has no Node runtime dependency. Inspector runs its
+own Node backend in Docker; host Node is needed only for optional verification.
 
-From the repository root, with Java 25:
+From the repository root, with Java 25, run the app without Inspector:
 
-```bash
+```sh
 cmdshape ./gradlew :mcp-example:run
 ```
 
-Connect an MCP client to `http://127.0.0.1:8080/mcp`. `/health` is a finite readiness
-route. Core owns JVM shutdown cleanup; the example does not install another hook.
-`McpExample.application()` also returns the same app unstarted for live tests.
-Pass explicit `Options` only when selecting custom listener settings; its port determines
-the default allowed browser Origin.
-The listener binds all IPv4 interfaces. The separately configured public URL is the
-only allowed present browser Origin; absent
-Origin is allowed for non-browser clients. Use the exact `127.0.0.1` URL printed
-by the example, rather than a different browser-origin alias.
+The MCP endpoint is `http://127.0.0.1:8080/mcp`; `/health` is a finite readiness
+route. Core owns JVM shutdown cleanup. `McpExample.application()` returns the same
+app unstarted for live tests. Pass explicit `Options` only for custom listener settings.
 
 Configuration stays native: `Mcp.sync(security, transport -> McpServer.sync(transport)
 ...build())`, then `app.extensions(mcp)` and `routes.path("/mcp", mcp::routes)`.
-The app owns the native server; `mcp.server()` is borrowed management access, not
-an independently closeable resource. Fixture callbacks use native SDK content,
-sampling, elicitation, logging, progress and resource-template descriptors.
+The app owns the native server; `mcp.server()` is borrowed management access, not an
+independently closeable resource. `McpExample` defines HTTP routes inline;
+`McpConfiguration` owns extension setup, and `CompatibilityFixtures` contains native
+SDK callbacks for the official suite.
 
-`McpExample` defines HTTP routes inline and owns startup; `McpConfiguration` owns native extension
-setup, and `CompatibilityFixtures` contains the SDK
-callbacks required by the official suite.
+## Run the app and Inspector with Docker
+
+One Compose file starts both. From the repository root:
 
 ```sh
 cmdshape ./gradlew :mcp-example:jibDockerBuild
-cmdshape docker compose -f examples/12-mcp/compose.yaml up -d
+cmdshape docker compose -f examples/12-mcp/compose.yaml up -d --wait --wait-timeout 90
 cmdshape curl --fail --retry 30 --retry-delay 1 --retry-connrefused --retry-all-errors \
   --max-time 3 --retry-max-time 60 http://127.0.0.1:8080/health
-cmdshape docker compose -f examples/12-mcp/compose.yaml down
 ```
 
-The Java25 image is nonroot. Compose publishes loopback only and sets `MCP_PUBLIC_ORIGIN`
-to that public URL, not the container listener address. `APP_PORT=8081` changes both published
-port and allowed origin. For host-run execution the origin defaults to
-`http://127.0.0.1:<Options.port()>`, independently of the bind address; override
-`MCP_PUBLIC_ORIGIN` only when you intentionally expose a different canonical origin.
-
-## Explore MCP with the bundled Inspector
-
-The optional Compose overlay runs the official MCP Inspector as a separate development
-tool. It needs no OpenAPI document or host Node installation. Build the app image first,
-then run these commands from the repository root:
-
-```sh
-cmdshape ./gradlew :mcp-example:jibDockerBuild
-cmdshape docker compose -p shoostr-mcp-inspector \
-  -f examples/12-mcp/compose.yaml -f examples/12-mcp/compose.inspector.yaml \
-  up -d --wait --wait-timeout 90
-```
-
-Open **http://localhost:6274**, enable the connection for **shoostr-mcp**, and use:
+Open **http://localhost:6274**, enable **shoostr-mcp**, and use:
 
 - **Tools:** select `test_simple_text`, then execute it. The result is
-  `This is a simple text response for testing.` Other tools demonstrate images, audio,
-  structured output, progress and recoverable errors.
-- **Resources:** select a resource and read its content; templates accept an explicit ID.
-- **Prompts:** select `test_simple_prompt` and retrieve its message. Other prompts accept arguments.
+  `This is a simple text response for testing.` Other tools demonstrate images,
+  audio, structured output, progress and recoverable errors.
+- **Resources:** select **Static text** to read its content; templates accept an explicit ID.
+- **Prompts:** select `test_simple_prompt` to retrieve its message.
 
-The checked-in `inspector.json` selects Streamable HTTP and the existing `2025-11-25`
-initialization protocol (`protocolEra: "legacy"`); it does not upgrade the Java SDK.
-Inspector shares the app's network namespace, so its configured loopback URL reaches
-the app even when `APP_PORT` changes the host's published port. This does not bypass
-MCP authentication or Origin checks.
+No login, certificates, host Node installation or OpenAPI document is needed.
+The checked-in `inspector.json` selects Streamable HTTP and the existing
+`2025-11-25` initialization protocol (`protocolEra: "legacy"`); it does not upgrade
+the Java SDK. The application is public: Origin validation is not authentication.
 
-Inspector is pinned to version 2.11.0 and its multiarchitecture image digest. Its Node
-backend is not a static resource bundled into Shoostr's Java artifacts. The overlay
-publishes Inspector only on host loopback, retains its backend authentication and exact
-browser origin, keeps secrets in process memory, and mounts only its read-only server
-configuration. Runtime files are temporary; there is no persistent Inspector volume.
-Do not expose this process-capable development tool publicly or mount your repository,
-Docker socket or private keys into it. Run only one Inspector example at a time: both
-walkthroughs use port 6274.
+Both images run nonroot. Host ports 8080 and 6274 publish on loopback only.
+`APP_PORT=8081` changes the app's published port and its allowed public Origin.
+Inspector shares the app's network namespace, so its internal loopback target
+remains unchanged. The default Java listener binds all IPv4 interfaces; the public
+Origin is configured separately, never inferred from the wildcard bind address.
+Absent Origin is allowed for non-browser clients; present Origin must match the
+configured allowlist.
 
-Stop the complete stack with the same files:
+Inspector is pinned to 2.11.0 and its multiarchitecture digest. Its backend authentication
+and exact browser origin remain enabled. Server configuration is read-only; the backend
+uses a memory secret store and temporary runtime filesystems, not a persistent volume.
+Do not expose this process-capable development tool publicly or mount a repository,
+Docker socket or private keys into it.
+
+Stop both services with the same file:
 
 ```sh
-cmdshape docker compose -p shoostr-mcp-inspector \
-  -f examples/12-mcp/compose.yaml -f examples/12-mcp/compose.inspector.yaml down --timeout 20
+cmdshape docker compose -f examples/12-mcp/compose.yaml down --timeout 20
 ```
 
-To restart this bundle, use the same combined `up` command with `--force-recreate --wait`.
-Do not use `docker compose restart`: the shared network namespace can leave Inspector
-attached to the old listener. Always recreate the app and Inspector together.
+To restart, recreate both services rather than using `docker compose restart`:
 
-See the [official Inspector guide](https://modelcontextprotocol.io/docs/tools/inspector)
+```sh
+cmdshape docker compose -f examples/12-mcp/compose.yaml \
+  up -d --force-recreate --wait --wait-timeout 90
+```
+
+The shared network namespace can leave Inspector attached to an old listener if its
+owner is restarted alone. Keep the same `APP_PORT` override when recreating the stack.
+
+CI uses this directory's pinned Playwright tooling to exercise actual tool, resource
+and prompt results through Inspector's public UI. With the stack running, use Node 22
+and run these commands from `examples/12-mcp`:
+
+```sh
+cmdshape npm ci --ignore-scripts
+cmdshape node node_modules/playwright/cli.js install --with-deps firefox
+cmdshape node --test inspector-test.mjs
+```
+
+This verification tooling is not required for manual Inspector use. CI does not upload
+Inspector's token-bearing startup logs. See the
+[official Inspector guide](https://modelcontextprotocol.io/docs/tools/inspector)
 and [pinned container instructions](https://github.com/modelcontextprotocol/inspector/blob/2.11.0/docs/docker.md).
-
-CI drives these same public browser controls through `inspector-test.mjs` in the OAuth
-example's existing Playwright tooling; it checks rendered tool, resource and prompt
-results. This tooling is not required to run the Inspector bundle manually.
 
 ## Official compatibility tests
 
@@ -179,10 +171,9 @@ private state; native operations remain supported, and session deletion/shutdown
 ends adapter ownership. Do not infer bounded native per-exchange retention from
 successful compatibility tests.
 
-The public compatibility fixture must remain separate from the protected OAuth
-example. The official runner's OAuth client suite grades clients, not Shoostr's
-resource-server token verification or HTTP challenges. Those need separate live
-OAuth tests.
+No external-provider OAuth example or end-to-end fixture is maintained. The official
+runner's OAuth client suite grades clients, not Shoostr's resource-server token
+verification or HTTP challenges; it does not replace live resource-server OAuth tests.
 
 Sources: [published runner](https://registry.npmjs.org/@modelcontextprotocol/conformance/0.2.0-alpha.12),
 [dated requirements](https://github.com/modelcontextprotocol/conformance/blob/f44482ba17df816d3176962a11cdf36aec9bda00/requirements/2025-11-25.yaml),

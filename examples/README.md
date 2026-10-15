@@ -31,8 +31,7 @@ framework modules do not select a provider or enable per-request logging by defa
 | Export request metrics to Prometheus and Grafana | [09-micrometer](09-micrometer/README.md) / `micrometer-example` | Real scrape samples and a default request dashboard |
 | Export request traces to Jaeger and Grafana | [10-opentelemetry](10-opentelemetry/README.md) / `opentelemetry-example` | Explicit SDK/export, W3C parent continuation and a default recent-traces dashboard |
 | Describe and try explicitly documented endpoints | [11-openapi](11-openapi/README.md) / `openapi-example` | Explicit schemas, two documents, codec, protected docs and Swagger authorization |
-| Mount a native SDK MCP extension | [12-mcp](12-mcp/README.md) / `mcp-example` | Native SDK configuration, optional MCP Inspector and official interoperability checks |
-| Use an external OAuth authorization server | [13-mcp-oauth](13-mcp-oauth/README.md) / `mcp-oauth-example` | Real TLS/Keycloak, optional Inspector login, PKCE/scopes and distinct REST/MCP authentication |
+| Mount a native SDK MCP extension | [12-mcp](12-mcp/README.md) / `mcp-example` | Native SDK configuration, bundled MCP Inspector and official interoperability checks |
 
 Every server example remains independently runnable and understandable. Ordinary
 `./gradlew build` compiles examples and runs Docker-free JUnit HTTP/WebSocket tests through
@@ -61,7 +60,7 @@ From the repository root:
 Use each README's exact requests, ports and cleanup commands. Backend fixtures use unique
 Compose project names and remove their own disposable resources; do not run a second copy
 on their test ports. CI builds all example images, runs the two real-backend test suites and
-verifies the OAuth container with the same official browser/client driver. Ordinary
+verifies MCP tools, resources and prompts through Inspector's public browser UI. Ordinary
 `build` needs neither Docker nor external metrics, trace or identity services.
 
 Topic selection follows the focused [Javalin tutorials](https://javalin.io/tutorials/),

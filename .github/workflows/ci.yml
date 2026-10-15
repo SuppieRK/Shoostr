@@ -34,32 +34,19 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: |
-            examples/12-mcp/package-lock.json
-            examples/13-mcp-oauth/package-lock.json
+          cache-dependency-path: examples/12-mcp/package-lock.json
 
-      - name: Install pinned MCP compatibility tests
+      - name: Install pinned MCP compatibility tests and browser
         working-directory: examples/12-mcp
-        run: npm ci --ignore-scripts
-
-      - name: Install pinned MCP OAuth client and browser
-        working-directory: examples/13-mcp-oauth
         run: |
           npm ci --ignore-scripts
           node node_modules/playwright/cli.js install --with-deps firefox
-
-      - name: Start isolated HTTPS OAuth fixture
-        working-directory: examples/13-mcp-oauth
-        run: bash ../../.github/scripts/start-oauth-fixture.sh
 
       - name: Build and test
         run: ./gradlew clean build --console=plain
 
       - name: Verify MCP interoperability with the official suite
         run: ./gradlew :mcp-example:conformanceTest --console=plain
-
-      - name: Verify MCP authorization through the official client and Keycloak
-        run: ./gradlew :mcp-oauth-example:oauthTest --console=plain
 
       - name: Build focused example container images with Jib
         run: >-
@@ -68,7 +55,7 @@ jobs:
           :exceptions-example:jibDockerBuild :json-errors-example:jibDockerBuild
           :authentication-example:jibDockerBuild
           :static-streaming-example:jibDockerBuild :openapi-example:jibDockerBuild
-          :mcp-example:jibDockerBuild :mcp-oauth-example:jibDockerBuild --console=plain
+          :mcp-example:jibDockerBuild --console=plain
 
       - name: Verify real observability examples
         run: >-
@@ -76,49 +63,12 @@ jobs:
           --console=plain
 
       - name: Verify public MCP tools, resources and prompts through Inspector
-        working-directory: examples/13-mcp-oauth
+        working-directory: examples/12-mcp
         run: |
-          compose=(docker compose -p shoostr-mcp-inspector-ci
-            -f ../12-mcp/compose.yaml -f ../12-mcp/compose.inspector.yaml)
+          compose=(docker compose -p shoostr-mcp-inspector-ci -f compose.yaml)
           trap '"${compose[@]}" down --timeout 20' EXIT
           "${compose[@]}" up -d --wait --wait-timeout 90
           node --test inspector-test.mjs
-
-      - name: Verify the containerized HTTPS OAuth example and Inspector
-        working-directory: examples/13-mcp-oauth
-        run: |
-          # The Jib app runs as UID1000; transfer only this disposable server keystore.
-          sudo chown 1000 .local/fixture.p12
-          docker compose -p shoostr-mcp-oauth-ci \
-            -f compose.yaml -f compose.app.yaml -f compose.inspector.yaml \
-            up -d --wait --wait-timeout 90
-          curl --fail --cacert .local/fixture-ca.pem \
-            --retry 60 --retry-delay 2 --retry-connrefused --retry-all-errors \
-            --max-time 5 --retry-max-time 180 \
-            https://localhost:8443/realms/shoostr-mcp/.well-known/openid-configuration
-          curl --fail --cacert .local/fixture-ca.pem \
-            --retry 30 --retry-delay 2 --retry-connrefused --retry-all-errors \
-            --max-time 5 --retry-max-time 90 \
-            https://localhost:9443/.well-known/oauth-protected-resource/mcp
-          NODE_EXTRA_CA_CERTS="$PWD/.local/fixture-ca.pem" node --test oauth-test.mjs
-          MCP_INSPECTOR_EXAMPLE=oauth NODE_EXTRA_CA_CERTS="$PWD/.local/fixture-ca.pem" \
-            node --test inspector-test.mjs
-
-      - name: Stop OAuth fixture and preserve diagnostics
-        if: always()
-        working-directory: examples/13-mcp-oauth
-        run: |
-          mkdir -p build/oauth
-          compose_files=(-f compose.yaml)
-          log_services=(keycloak)
-          if [[ -n "${SHOOSTR_OAUTH_KEYSTORE_PASSWORD:-}" ]]; then
-            compose_files+=(-f compose.app.yaml -f compose.inspector.yaml)
-            log_services+=(app)
-          fi
-          # Inspector's startup banner contains its backend token; never upload its logs.
-          docker compose -p shoostr-mcp-oauth-ci "${compose_files[@]}" \
-            logs --no-color "${log_services[@]}" > build/oauth/keycloak.log
-          docker compose -p shoostr-mcp-oauth-ci "${compose_files[@]}" down --timeout 20
 
       - name: Preserve real-backend example results
         if: always()
@@ -130,17 +80,6 @@ jobs:
             examples/09-micrometer/build/test-results/dockerTest/
             examples/10-opentelemetry/build/docker/
             examples/10-opentelemetry/build/test-results/dockerTest/
-          if-no-files-found: warn
-
-      - name: Preserve MCP OAuth reports
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: mcp-oauth-results
-          path: |
-            examples/13-mcp-oauth/build/oauth/runner.log
-            examples/13-mcp-oauth/build/oauth/keycloak.log
-            examples/13-mcp-oauth/build/test-results/oauthTest/
           if-no-files-found: warn
 
       - name: Preserve MCP compatibility reports
