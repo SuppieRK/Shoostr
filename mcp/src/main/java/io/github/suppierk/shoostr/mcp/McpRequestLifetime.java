@@ -26,6 +26,7 @@ final class McpRequestLifetime implements RequestObservation {
   private @Nullable McpStream stream;
   private boolean interruptedOwner;
   private boolean completed;
+  private boolean expired;
 
   /**
    * Creates detached state before routing without retaining a live request or response.
@@ -58,14 +59,7 @@ final class McpRequestLifetime implements RequestObservation {
     expiresAt = expiry;
     owner = Thread.currentThread();
     if (expiry != null) {
-      var remaining = Duration.between(Instant.now(), expiry);
-      deadline =
-          deadlines.schedule(
-              this::expire,
-              remaining.compareTo(Duration.ofNanos(Long.MAX_VALUE)) > 0
-                  ? Long.MAX_VALUE
-                  : remaining.toNanos(),
-              TimeUnit.NANOSECONDS);
+      scheduleExpiry(Duration.between(Instant.now(), expiry));
     }
   }
 
@@ -86,7 +80,7 @@ final class McpRequestLifetime implements RequestObservation {
    * @throws AuthenticationRequiredException if the verified deadline has elapsed
    */
   private void requireFresh(@Nullable Instant expiry) {
-    if (expiry != null && !expiry.isAfter(Instant.now())) {
+    if (expired || (expiry != null && !expiry.isAfter(Instant.now()))) {
       throw new AuthenticationRequiredException(expiredTokenChallenge);
     }
   }
@@ -135,12 +129,20 @@ final class McpRequestLifetime implements RequestObservation {
     }
   }
 
-  /** Signals expiry without invoking a native continuation or touching live HTTP objects. */
+  /** Rechecks the verified expiry before signaling the mailbox and interrupting its owner. */
   private synchronized void expire() {
     if (completed || owner == null) {
       return;
     }
 
+    var remaining = Duration.between(Instant.now(), Objects.requireNonNull(expiresAt));
+    if (remaining.isPositive()) {
+      // Relative timer delays and wall-clock token expiry can diverge after a clock adjustment.
+      scheduleExpiry(remaining);
+      return;
+    }
+
+    expired = true;
     if (stream != null) {
       stream.fail(new IOException("The MCP HTTP token expired"));
     }
@@ -149,5 +151,20 @@ final class McpRequestLifetime implements RequestObservation {
       interruptedOwner = true;
       owner.interrupt();
     }
+  }
+
+  /**
+   * Retains the current timer so completion also cancels a rescheduled early wake-up.
+   *
+   * @param remaining delay until the verified expiry, capped to the scheduler's nanosecond range
+   */
+  private void scheduleExpiry(Duration remaining) {
+    deadline =
+        deadlines.schedule(
+            this::expire,
+            remaining.compareTo(Duration.ofNanos(Long.MAX_VALUE)) > 0
+                ? Long.MAX_VALUE
+                : remaining.toNanos(),
+            TimeUnit.NANOSECONDS);
   }
 }
