@@ -13,6 +13,7 @@ import org.openjdk.jmh.annotations.Fork;
 import org.openjdk.jmh.annotations.Measurement;
 import org.openjdk.jmh.annotations.Mode;
 import org.openjdk.jmh.annotations.OutputTimeUnit;
+import org.openjdk.jmh.annotations.Param;
 import org.openjdk.jmh.annotations.Scope;
 import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
@@ -35,6 +36,8 @@ public class StreamBufferBenchmark {
   private static final String CONTENT_TYPE = "application/octet-stream";
   private static final int CHUNKS = 16;
   private static final int GROWTH_BYTES = 300;
+  private static final int FIXED_TOTAL_BYTES = 16384;
+
   private byte[] small;
   private byte[] kilobyte;
   private byte[] large;
@@ -185,6 +188,28 @@ public class StreamBufferBenchmark {
   }
 
   /**
+   * Writes one fixed 16 KiB response while varying chunking, buffer capacity and flush strategy.
+   *
+   * @param fixedTotal configured chunking, buffer capacity and flush strategy
+   * @return total bytes accepted by the transport
+   * @throws IOException if the transport fails
+   */
+  @Benchmark
+  public int fixedTotalWriteMatrix(FixedTotalWriteState fixedTotal) throws IOException {
+    var response = freshResponse(fixedTotal.options);
+    var stream = response.startStream(CONTENT_TYPE);
+    for (int index = 0; index < FIXED_TOTAL_BYTES / fixedTotal.chunkBytes; index++) {
+      stream.write(fixedTotal.chunk);
+      if (fixedTotal.explicitFlush) {
+        stream.flush();
+      }
+    }
+
+    response.complete();
+    return bytesWritten;
+  }
+
+  /**
    * Resets the fixed transport and constructs exactly the peer pair used by this operation.
    *
    * @param selected configured application limits for this operation
@@ -215,5 +240,64 @@ public class StreamBufferBenchmark {
    */
   ByteBuffer submitted() {
     return submitted;
+  }
+
+  /** Holds the parameters used only by {@link #fixedTotalWriteMatrix(FixedTotalWriteState)}. */
+  @State(Scope.Thread)
+  public static class FixedTotalWriteState {
+    @Param({"128", "1024", "16384"})
+    private int chunkBytes;
+
+    @Param({"1024", "8192", "16384"})
+    private int bufferBytes;
+
+    @Param({"true", "false"})
+    private boolean explicitFlush;
+
+    private byte[] chunk;
+    private Options options;
+
+    /** Initializes the direct-fixture defaults before JMH injects a matrix case. */
+    public FixedTotalWriteState() {
+      chunkBytes = 1024;
+      bufferBytes = 8192;
+      explicitFlush = true;
+    }
+
+    /**
+     * Initializes one matrix case outside measured work.
+     *
+     * @throws IllegalStateException if the configured chunk or buffer capacity is invalid
+     */
+    @Setup
+    public void setupTrial() {
+      if (chunkBytes <= 0 || bufferBytes <= 0 || FIXED_TOTAL_BYTES % chunkBytes != 0) {
+        throw new IllegalStateException("Invalid fixed-total stream matrix parameters");
+      }
+
+      var defaults = Options.defaults();
+      chunk = new byte[chunkBytes];
+      options =
+          new Options(
+              defaults.host(),
+              defaults.port(),
+              defaults.maxRequestBytes(),
+              defaults.maxResponseBytes(),
+              bufferBytes,
+              defaults.idleTimeoutMillis());
+    }
+
+    /**
+     * Configures one matrix case for a direct fixture test.
+     *
+     * @param selectedChunkBytes bytes in each application write
+     * @param selectedBufferBytes maximum buffered response bytes before automatic flush
+     * @param selectedExplicitFlush whether every application write explicitly flushes
+     */
+    void configure(int selectedChunkBytes, int selectedBufferBytes, boolean selectedExplicitFlush) {
+      chunkBytes = selectedChunkBytes;
+      bufferBytes = selectedBufferBytes;
+      explicitFlush = selectedExplicitFlush;
+    }
   }
 }
