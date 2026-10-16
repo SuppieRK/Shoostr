@@ -1,6 +1,33 @@
 # HTTP primitives
 
-A dependency-free Java library containing HTTP headers, methods, media types, cookies, URL punctuation, and status codes in `io.github.suppierk.shoostr.http`, with error exceptions in `io.github.suppierk.shoostr.http.exceptions`.
+A dependency-free Java library containing HTTP headers, methods, media types, cookies, Problem Details, URL punctuation, and status codes in `io.github.suppierk.shoostr.http`, with error exceptions in `io.github.suppierk.shoostr.http.exceptions`.
+
+## Problem Details
+
+`ProblemDetails` describes [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html) problems without rendering a response or choosing an encoder:
+
+```java
+var problem = ProblemDetails.builder()
+    .type(URI.create("https://example.com/problems/invalid-order"))
+    .title("Invalid order")
+    .status(HttpStatusCodes.UNPROCESSABLE_CONTENT.value())
+    .detail("Quantity must be positive.")
+    .instance(URI.create("/orders/123"))
+    .extension("errors", List.of(
+        Map.of("field", "quantity", "message", "Must be positive")))
+    .build();
+
+var document = problem.toMap();
+// Encode the map using your application's JSON encoder.
+```
+
+All five standard fields are optional. Unset accessors return null and `toMap()` omits their members. An omitted `type` means `about:blank` under the RFC, without inserting that default into the object; no status or title is invented. `type` and `instance` accept JDK `URI`, including relative references, and are projected with `toASCIIString()`. A supplied status must be between 100 and 599. When sending it, the application must use that same actual HTTP response status. Text is preserved without trimming, including Unicode and empty strings; do not include private exception diagnostics.
+
+`extension(name, value)` retains custom members and `toMap()` places them at the top level, not inside an `extensions` member. Null values are allowed. Null names and the five standard member names are rejected; repeated names replace earlier values.
+
+Supplying an extension snapshots its nested maps and lists recursively, preserving nulls and making the copied containers unmodifiable. Cyclic map/list values are rejected. Shared acyclic containers are allowed. Copied maps use ordinary key equality; inputs whose distinct entries would collapse during copying are rejected rather than silently losing data. Later changes to the supplied containers or to the builder do not change the built object's containers. Other objects, including map keys, arrays and sets, remain caller-owned references: this is structural defensive copying, not generic cloning or a guarantee that every value is JSON-encodable. Do not mutate supplied containers concurrently while they are being copied. Builders are not thread-safe.
+
+`extensions()` exposes the unmodifiable extension map. Each `toMap()` returns a fresh mutable top-level map; nested copied containers remain unmodifiable. Editing that top-level map cannot change the object's members. JSON encoding, content negotiation, exception mapping and response headers remain application-owned. To label encoded bytes, use `MediaType.of("application/problem+json")`; the primitive neither installs a codec nor changes core's default errors.
 
 ## Media types
 
