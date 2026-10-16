@@ -2,7 +2,7 @@
   "plaintext": {"script":"http.js", "selected":"plaintext", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
   "json-bytes": {"script":"http.js", "selected":"json-bytes", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
   "echo": {"script":"http.js", "selected":"echo", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
-  "stream": {"script":"http.js", "selected":"stream", "rate":1000, "vus":512, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
+  "stream": {"script":"http.js", "selected":"stream", "rate":1000, "vus":1024, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
   "route-literal": {"script":"http.js", "selected":"route-literal", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
   "route-parameter": {"script":"http.js", "selected":"route-parameter", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
   "not-found": {"script":"http.js", "selected":"not-found", "rate":1000, "vus":256, "kind":"http", "metric":"http_req_duration{scenario:requests}", "latency":"HTTP request"},
