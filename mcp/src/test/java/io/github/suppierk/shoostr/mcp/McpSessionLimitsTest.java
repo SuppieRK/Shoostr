@@ -174,7 +174,11 @@ class McpSessionLimitsTest {
       try (var input = response.body()) {
         assertEquals(200, response.statusCode());
         assertTrue(started.await(3, TimeUnit.SECONDS));
-        Thread.sleep(900);
+
+        try (var timer = Executors.newSingleThreadScheduledExecutor()) {
+          timer.schedule(() -> true, 900, TimeUnit.MILLISECONDS).get(3, TimeUnit.SECONDS);
+        }
+
         var ping =
             test.send(
                 request ->
@@ -237,13 +241,12 @@ class McpSessionLimitsTest {
 
   @Test
   void rejectsNonPositiveSessionPolicyInputs() {
-    assertThrows(
-        IllegalArgumentException.class, () -> new McpSessionLimits(0, 1, Duration.ofMinutes(1)));
-    assertThrows(
-        IllegalArgumentException.class, () -> new McpSessionLimits(1, 0, Duration.ofMinutes(1)));
+    var idle = Duration.ofMinutes(1);
+    var negativeIdle = Duration.ofSeconds(-1);
+    assertThrows(IllegalArgumentException.class, () -> new McpSessionLimits(0, 1, idle));
+    assertThrows(IllegalArgumentException.class, () -> new McpSessionLimits(1, 0, idle));
     assertThrows(IllegalArgumentException.class, () -> new McpSessionLimits(1, 1, Duration.ZERO));
-    assertThrows(
-        IllegalArgumentException.class, () -> new McpSessionLimits(1, 1, Duration.ofSeconds(-1)));
+    assertThrows(IllegalArgumentException.class, () -> new McpSessionLimits(1, 1, negativeIdle));
     assertThrows(NullPointerException.class, () -> new McpSessionLimits(1, 1, null));
   }
 

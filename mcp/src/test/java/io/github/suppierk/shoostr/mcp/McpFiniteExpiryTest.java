@@ -11,10 +11,12 @@ import io.modelcontextprotocol.server.McpServer;
 import java.net.Socket;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -99,8 +101,14 @@ class McpFiniteExpiryTest {
         socket.getOutputStream().flush();
         assertTrue(extracted.await(5, TimeUnit.SECONDS));
         assertTrue(expiry.get().isAfter(Instant.now()));
-        while (Instant.now().isBefore(expiry.get().plusMillis(100))) {
-          Thread.sleep(10);
+
+        try (var timer = Executors.newSingleThreadScheduledExecutor()) {
+          timer
+              .schedule(
+                  () -> true,
+                  Duration.between(Instant.now(), expiry.get().plusMillis(100)).toNanos(),
+                  TimeUnit.NANOSECONDS)
+              .get(5, TimeUnit.SECONDS);
         }
 
         socket.getOutputStream().write(body);

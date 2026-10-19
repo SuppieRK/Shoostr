@@ -22,7 +22,7 @@ try {
     throw new Error('Full-project analysis does not match the current proposed revision');
   }
   console.log(`CI validation and full-project analysis succeeded for ${expected}`);
-} catch (failure) {
-  console.error(failure.message);
+} catch (error_) {
+  console.error(error_.message);
   process.exitCode = 1;
 }

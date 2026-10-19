@@ -18,7 +18,7 @@ try {
     throw new Error('Sonar full-project audit requires zero open issues');
   }
   console.log(`Sonar full-project audit passed for ${revision}`);
-} catch (failure) {
-  console.error(failure.message);
+} catch (error_) {
+  console.error(error_.message);
   process.exitCode = 1;
 }

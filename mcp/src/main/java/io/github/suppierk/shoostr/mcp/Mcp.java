@@ -474,18 +474,20 @@ public final class Mcp<S> implements Extension<Void> {
     provider.reserve(identity.sessionOwner());
     McpStreamableServerSession.McpStreamableServerSessionInit initialized;
     Session session;
+    boolean constructed = false;
 
     try {
       initialized =
           Objects.requireNonNull(Objects.requireNonNull(provider.factory).startSession(parameters));
       session = new Session(initialized.session(), identity.sessionOwner());
-    } catch (Error failure) {
-      provider.release(identity.sessionOwner());
-      throw failure;
+      constructed = true;
     } catch (RuntimeException failure) {
-      provider.release(identity.sessionOwner());
       lifetime.requireFresh();
       throw failure;
+    } finally {
+      if (!constructed) {
+        provider.release(identity.sessionOwner());
+      }
     }
 
     boolean staged = false;

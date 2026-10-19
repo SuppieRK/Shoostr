@@ -7,7 +7,7 @@ try {
     throw new Error('Promotion must preserve the exact reviewed commit and tree; review changed source again');
   }
   console.log(`Promotion matches reviewed revision ${process.env.REVIEWED_REVISION}`);
-} catch (failure) {
-  console.error(failure.message);
+} catch (error_) {
+  console.error(error_.message);
   process.exitCode = 1;
 }

@@ -224,15 +224,13 @@ class McpInitializationCleanupTest {
     var mcp = trackedMcp(closes, closed, sessionId, Mono::just, release::asMono);
     var app = new Shoostr();
     var closingExtensions = new CountDownLatch(1);
-    app.extensions(
-            mcp,
-            new Extension<Void>() {
-              @Override
-              public void close() {
-                closingExtensions.countDown();
-              }
-            })
-        .routes(routes -> routes.path("/mcp", mcp::routes));
+    class ClosingSignal implements Extension<Void> {
+      @Override
+      public void close() {
+        closingExtensions.countDown();
+      }
+    }
+    app.extensions(mcp, new ClosingSignal()).routes(routes -> routes.path("/mcp", mcp::routes));
     var fail = new AtomicBoolean(true);
     app.beforeResponseFlush(
         (_, _) -> {

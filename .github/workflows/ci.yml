@@ -52,11 +52,16 @@ jobs:
           npm ci --ignore-scripts
           node node_modules/playwright/cli.js install --with-deps firefox
 
-      - name: Verify CI and promotion gates
-        run: node --test .github/ci/*.test.mjs
-
       - name: Build and test
         run: ./gradlew clean build --console=plain
+
+      - name: Verify CI and promotion gates with coverage
+        run: |
+          mkdir -p build/reports/ci
+          node --test --experimental-test-coverage \
+            --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=lcov --test-reporter-destination=build/reports/ci/lcov.info \
+            .github/ci/*.test.mjs
 
       - name: Verify MCP interoperability with the official suite
         run: ./gradlew :mcp-example:conformanceTest --console=plain
@@ -131,6 +136,7 @@ jobs:
             echo '::error::Trusted analysis requires SONAR_TOKEN'
             exit 1
           fi
+          test -s build/reports/ci/lcov.info
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF_NAME" != "main" ]]; then
             ./gradlew sonar -Dsonar.branch.name="$GITHUB_REF_NAME" \
               -Dsonar.scm.revision="$EXPECTED_REVISION" \
