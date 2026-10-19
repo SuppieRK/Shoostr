@@ -427,11 +427,12 @@ public final class Mcp<S> implements Extension<Void> {
     if (message instanceof McpSchema.JSONRPCRequest rpc) {
       var stream = new McpStream(provider.mapper, identity.expiresAt());
       lifetime(request).stream(stream);
-      provider.dispatch(session, stream, rpc, identity.context());
+      var nativeStream = provider.dispatch(session, stream, rpc, identity.context());
 
       try {
         stream.pump(response);
       } finally {
+        nativeStream.releaseTransport();
         stream.finish();
         provider.streams.remove(stream);
       }
@@ -648,7 +649,7 @@ public final class Mcp<S> implements Extension<Void> {
     try {
       stream.pump(response);
     } finally {
-      listening.closeGracefully().block();
+      listening.releaseTransport();
       provider.streams.remove(stream);
     }
   }
@@ -1093,8 +1094,9 @@ public final class Mcp<S> implements Extension<Void> {
 
     /**
      * Admits and attaches a GET atomically against session deletion and application shutdown.
-     * Native attachment only creates its detached stream and publishes an atomic reference;
-     * transport I/O, native callbacks and handle cleanup run outside this registry monitor.
+     * Native attachment creates its detached stream, publishes an atomic reference and finishes the
+     * previous detached transport, if any. That closure only signals its mailbox; transport I/O and
+     * native callbacks run outside this registry monitor.
      *
      * @param session freshly authenticated native session
      * @param stream detached transport
@@ -1121,10 +1123,11 @@ public final class Mcp<S> implements Extension<Void> {
      * @param stream detached HTTP transport
      * @param request native request
      * @param context detached authenticated context
+     * @return native stream handle whose HTTP owner releases its transport
      * @throws ServiceUnavailableException if application shutdown has begun
      * @throws NotFoundException if the session was deleted before dispatch admission
      */
-    private void dispatch(
+    private McpStreamableServerSession.McpStreamableServerSessionStream dispatch(
         Session session,
         McpStream stream,
         McpSchema.JSONRPCRequest request,
@@ -1152,11 +1155,11 @@ public final class Mcp<S> implements Extension<Void> {
               dispatchComplete(session, this);
             }
           };
+      McpStreamableServerSession.McpStreamableServerSessionStream nativeStream;
       synchronized (this) {
         requireActive(session);
-        if (!session.dispatches().add(dispatch)) {
-          throw new NotFoundException();
-        }
+        nativeStream = session.sdk().responseStream(stream);
+        session.dispatches().add(dispatch);
 
         session.activity().set(System.nanoTime());
 
@@ -1166,16 +1169,17 @@ public final class Mcp<S> implements Extension<Void> {
       boolean subscribed = false;
 
       try {
-        session
-            .sdk()
-            .responseStream(request, stream)
+        nativeStream
+            .handle(request)
             .contextWrite(current -> current.put(McpTransportContext.KEY, context))
             .subscribeOn(Schedulers.boundedElastic())
             .subscribe(dispatch);
         subscribed = true;
+        return nativeStream;
       } finally {
         if (!subscribed) {
           dispatch.dispose();
+          nativeStream.releaseTransport();
           streams.remove(stream);
           stream.finish();
         }
