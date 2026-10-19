@@ -4,7 +4,7 @@ plugins {
 
 dependencies {
 	api project(':core')
-	api platform('io.modelcontextprotocol.sdk:mcp-bom:2.0.1')
+	api platform('io.modelcontextprotocol.sdk:mcp-bom:2.1.0')
 	api 'io.modelcontextprotocol.sdk:mcp-core'
 	api platform('com.fasterxml.jackson:jackson-bom:2.22.3')
 	implementation 'io.modelcontextprotocol.sdk:mcp-json-jackson2'

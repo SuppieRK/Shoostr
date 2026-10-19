@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr.mcp;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -16,26 +15,32 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 class McpRefreshTest {
   @Test
   @Timeout(20)
-  void expiringAnOldGetLeavesTheRefreshedSessionListeningStreamUsable() throws Exception {
+  void replacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener() throws Exception {
+    var oldExpiry = new AtomicReference<Instant>();
     var security =
         new McpHttpSecurity(
             Set.of(),
-            request ->
-                new McpIdentity(
-                    "alice:client",
-                    McpTransportContext.EMPTY,
-                    Instant.now().plusSeconds(request.header("X-Old-Token").isPresent() ? 2 : 10)),
+            request -> {
+              var expiry =
+                  Instant.now().plusSeconds(request.header("X-Old-Token").isPresent() ? 2 : 10);
+              if (request.header("X-Old-Token").isPresent()) {
+                oldExpiry.set(expiry);
+              }
+
+              return new McpIdentity("alice:client", McpTransportContext.EMPTY, expiry);
+            },
             (_, _) -> {});
     var mcp =
         Mcp.sync(
@@ -48,6 +53,7 @@ class McpRefreshTest {
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var readers = Executors.newVirtualThreadPerTaskExecutor();
+        var deadlines = Executors.newSingleThreadScheduledExecutor();
         var test = TestServer.start(app)) {
       var initialized =
           test.send(
@@ -103,8 +109,11 @@ class McpRefreshTest {
 
                     return null;
                   });
-          assertThrows(TimeoutException.class, () -> oldEnded.get(100, TimeUnit.MILLISECONDS));
-          oldEnded.get(5, TimeUnit.SECONDS);
+          oldEnded.get(1, TimeUnit.SECONDS);
+          var untilOldExpiry = Duration.between(Instant.now(), oldExpiry.get()).plusMillis(100);
+          deadlines
+              .schedule(() -> true, Math.max(0, untilOldExpiry.toNanos()), TimeUnit.NANOSECONDS)
+              .get(5, TimeUnit.SECONDS);
           mcp.server().notifyToolsListChanged();
           var received =
               readers.submit(

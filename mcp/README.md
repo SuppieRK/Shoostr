@@ -1,7 +1,7 @@
 # MCP
 
 `io.github.suppierk:shoostr-mcp` is an optional Streamable HTTP adapter for the
-official Java MCP SDK 2.0.1. Its selected protocol is 2025-11-25. Configure native
+official Java MCP SDK 2.1.0. Its selected protocol is 2025-11-25. Configure native
 tools, resources, prompts, schemas, completion and client interactions through
 the SDK; Shoostr supplies explicit routes, HTTP security and owned transport
 lifetime. The SDK is not included in `shoostr-core`.
@@ -184,20 +184,22 @@ tool, resource and prompt interaction. External OAuth-provider login and browser
 are not part of the maintained end-to-end fixtures; library authentication and transport
 tests do not replace that external-provider verification.
 
-Java SDK 2.0.1 does not implement SSE replay/resume despite its API placeholders.
+Java SDK 2.1.0 does not implement SSE replay/resume despite its API placeholders.
 The official polling scenario currently warns without exercising reconnect/replay;
 that is not evidence of resume support. Do not rely on Last-Event-ID recovery.
 
-The selected release also retains completed server-to-client exchanges until the
-session ends, including successful ping, sampling, elicitation and roots requests.
-The adapter does not fork or reach into private SDK state to remove them. Explicit
-session deletion/app closure ends ownership; repeated bidirectional use of a
-long-lived session can accumulate retained SDK state. See the
-[released session implementation](https://github.com/modelcontextprotocol/java-sdk/blob/v2.0.1/mcp-core/src/main/java/io/modelcontextprotocol/spec/McpStreamableServerSession.java).
-This limitation was accepted
-for the pinned release, not fixed or measured away by compatibility tests.
-Session-count limits and quiescent expiry reclaim abandoned sessions; they do not
-bound completed-exchange retention inside a continuously active session.
+Attaching a replacement GET closes the previous listening connection. The adapter
+releases native HTTP transport handles without cancelling outstanding session-owned
+requests: a freshly authenticated POST can still answer a request issued over the
+old GET or POST after its HTTP response ends. Explicit session deletion and application
+shutdown remain responsible for cancelling owned work.
+
+The [released session implementation](https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/mcp-core/src/main/java/io/modelcontextprotocol/spec/McpStreamableServerSession.java)
+removes pending correlations on replies and terminal signals, including cancellation
+and timeout. The completed-correlation retention limitation of 2.0.1 no longer applies;
+the adapter does not fork or modify private SDK state. Session-count limits and quiescent
+expiry still reclaim abandoned sessions, but do not impose an absolute heap or pending-work
+budget on one continuously active session.
 
 Newer protocol revisions, Tasks, built-in pagination and sampling-with-tools are
 not promised merely because newer specifications or schema types mention them.

@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr.mcp;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -13,6 +14,8 @@ import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpStreamableServerSession;
+import io.modelcontextprotocol.spec.McpStreamableServerTransportProvider;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -20,15 +23,19 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import reactor.core.publisher.Mono;
 
 class McpPostExpiryTest {
   @Test
@@ -37,6 +44,7 @@ class McpPostExpiryTest {
     var httpEnded = new CountDownLatch(1);
     var nativeCompleted = new CountDownLatch(1);
     var cancellations = new AtomicInteger();
+    var nativeSession = new AtomicReference<McpStreamableServerSession>();
     var security =
         new McpHttpSecurity(
             Set.of(),
@@ -51,7 +59,7 @@ class McpPostExpiryTest {
         Mcp.async(
             security,
             transport ->
-                McpServer.async(transport)
+                McpServer.async(captureSession(transport, nativeSession))
                     .requestTimeout(Duration.ofSeconds(10))
                     .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
                     .tools(
@@ -146,6 +154,9 @@ class McpPostExpiryTest {
         ended.get(5, TimeUnit.SECONDS);
         assertTrue(httpEnded.await(5, TimeUnit.SECONDS));
         assertEquals(0, cancellations.get());
+        assertFalse(
+            Objects.requireNonNull(nativeSession.get()).hasOpenStream(),
+            "Ended HTTP must release its SDK stream while the native request stays pending");
         var replyBody =
             mapper.writeValueAsBytes(McpSchema.JSONRPCResponse.result(ping.id(), Map.of()));
         var reply =
@@ -164,5 +175,36 @@ class McpPostExpiryTest {
         assertEquals(0, cancellations.get());
       }
     }
+  }
+
+  private static McpStreamableServerTransportProvider captureSession(
+      McpStreamableServerTransportProvider transport,
+      AtomicReference<McpStreamableServerSession> session) {
+    return new McpStreamableServerTransportProvider() {
+      @Override
+      public void setSessionFactory(McpStreamableServerSession.Factory factory) {
+        transport.setSessionFactory(
+            parameters -> {
+              var initialized = factory.startSession(parameters);
+              session.set(initialized.session());
+              return initialized;
+            });
+      }
+
+      @Override
+      public Mono<Void> notifyClients(String method, Object parameters) {
+        return transport.notifyClients(method, parameters);
+      }
+
+      @Override
+      public Mono<Void> closeGracefully() {
+        return transport.closeGracefully();
+      }
+
+      @Override
+      public List<String> protocolVersions() {
+        return transport.protocolVersions();
+      }
+    };
   }
 }
