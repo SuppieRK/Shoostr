@@ -141,7 +141,7 @@ class McpGetLifetimeTest {
                         .header("MCP-Protocol-Version", "2025-11-25"),
                 HttpResponse.BodyHandlers.ofInputStream());
 
-        try (var refreshedBody = refreshed.body()) {
+        try (var _ = refreshed.body()) {
           assertEquals(200, refreshed.statusCode());
           oldEnded.get(5, TimeUnit.SECONDS);
           var expected = new McpSchema.Root("file:///workspace/refreshed", "refreshed");
