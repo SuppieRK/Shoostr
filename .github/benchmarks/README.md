@@ -1,7 +1,7 @@
 # Shoostr diagnostics in Actions
 
 Run **Shoostr benchmarks** manually from the Actions tab. Select the branch,
-`steady`, `overload` or `tracing`, and artifact retention (1–14 days, default 7).
+`steady`, `overload`, `slow-client` or `tracing`, and artifact retention (1–14 days, default 7).
 For HTTP modes, set the JVM's logical CPU count (default 1) and total memory cap in MiB (default
 1024). The heap remains fixed at 256 MiB; raising the total cap does not raise it.
 CPU counts must leave at least one permitted CPU for k6. Memory must exceed the
@@ -94,6 +94,72 @@ the native data before attributing a change to Shoostr.
 The fixture remains the `:benchmarks` Gradle module, now located in this directory.
 Normal builds compile and check it; they do not execute timed campaigns. Targeted
 JMH diagnostics remain in the separate `microbenchmarks` module.
+
+## Finite slow-client diagnostic
+
+Select `slow-client` with exactly one JVM CPU and 1024 MiB total memory. This
+manual-only path is a bounded resource-safety investigation, not deployment
+capacity certification, a weekly campaign or a new PR merge gate. It requires
+cgroup v2 and passwordless sudo; missing enforcement fails rather than silently
+substituting heap-only limits. The heap stays 256 MiB G1 and cgroup swap is disabled.
+
+One loopback-only `SlowClientServer` JVM stays alive across all eight cycles:
+slow bodies and cooperative blocked handlers, each at 32 and 128 clients, twice.
+The fixture preserves default request-size and native idle/rate policies and
+records them through public native configuration. `slowhttptest` 1.9.0 maintains
+incomplete 65536-byte POST bodies, admitting up to the selected count per second
+and sending randomized follow-up pairs (`-x 8`) each second. Raw CSV must show
+all selected connections from seconds 5 through 59, no early closures, and a
+sample at or after second 60. Its one-second stop granularity can extend the
+nominal 60 seconds; exact wall-clock phase times remain evidence, not rounded
+claims. k6 supplies constant-VU blocked requests for 60 seconds; each handler
+waits at most five seconds on a cooperative gate so the fixture does not require
+cancellation of arbitrary application code. Ending load disconnects those clients,
+and the control route releases the gate before a full 30-second recovery window.
+
+Blocked raw metrics must also show the selected active VUs throughout the nominal
+load (after five seconds of startup), with no missing one-second gauge series
+interval beyond 1.5 seconds. Each selected VU's successful native request-duration
+intervals must span seconds 5–55, with at most one second between calls; the final
+five-second batch can be interrupted at termination. A historical peak or one
+successful batch is insufficient. These are exposure-validity bounds, not requests/
+second targets. The checker uses k6's optional native `vu` tag and
+[end-of-response duration timestamps](https://grafana.com/docs/k6/latest/using-k6/metrics/reference/),
+not synthetic server throughput estimates.
+
+A separate k6 process schedules 100 complete healthy requests at one per second,
+covering load and recovery plus bounded tool-start/output margin. Every status,
+body and complete-call duration must pass; no response may exceed one second and
+no probe may be missing or dropped. Native raw timestamps must span both phases.
+The campaign stops on an observed probe/OOM failure; failed or partial runs are
+retained as FAILED, never converted into successful reduced-load measurements.
+
+Public matched/terminal callbacks distinguish active handlers from unfinished
+exchanges. Recovery requires zero workload handlers/exchanges, balanced admitted
+and terminal counts, the exact selected peak concurrency, and only the current
+state-control connection. A qualifying recovery sample must fall within 30 seconds,
+not merely after the 100-probe process exits. Native connected endpoints include
+live control/probe connections; short overlaps are recorded rather than subtracted
+by an invented constant. A quiet recovered observation contains one current control
+connection. All cycles reuse the same listener and JVM to expose accumulation.
+
+The `slow-client-data` artifact retains k6 compressed time series/summaries/logs,
+slowhttptest CSV/HTML/logs, actual tool arguments/versions/hashes and revision,
+effective CPU/cgroup/heap configuration, per-process native CPU/RSS observations,
+FD inventories, work/connection samples, baseline/load/recovered heap and JSON
+thread dumps, and bounded JFR recordings with virtual-thread lifecycle and Java
+error events. k6, slowhttptest and profiler overhead stay outside the server cgroup;
+their affinity, membership and `/usr/bin/time` reports remain identifiable. The
+runner owns its process groups, stops them on exit, and removes only its empty
+cgroup after preserving final OOM evidence. Results are never overwritten.
+
+The executable checker validates deterministic timing, exposure, health, work,
+connection and OOM invariants. Passing it alone is **not** a leak verdict: inspect
+FDs, heap, RSS/cgroup and virtual/platform thread traces across repeats for retained
+request resources versus expected native pools/JIT/cache warmup. No byte-exact GC
+baseline is required. Classify any failure as fixture, native/configuration,
+application or Shoostr adapter before proposing a patch. No quota, scheduler,
+absolute deadline or admission feature is installed by this diagnostic.
 
 ## Paired tracing JMH
 

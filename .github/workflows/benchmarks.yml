@@ -6,7 +6,7 @@ on:
       mode:
         description: Benchmark mode
         type: choice
-        options: [steady, overload, tracing]
+        options: [steady, overload, slow-client, tracing]
         default: steady
       baseline_sha:
         description: Full baseline commit SHA (required only for tracing JMH)
@@ -109,7 +109,10 @@ jobs:
           JVM_MEMORY_MIB: ${{ inputs.jvm_memory_mib }}
         run: |
           [[ "$RETENTION_DAYS" =~ ^([1-9]|1[0-4])$ ]]
-          [[ "$MODE" == steady || "$MODE" == overload ]]
+          [[ "$MODE" == steady || "$MODE" == overload || "$MODE" == slow-client ]]
+          if [[ "$MODE" == slow-client ]]; then
+            [[ "$JVM_CPUS" == 1 && "$JVM_MEMORY_MIB" == 1024 ]]
+          fi
           source .github/benchmarks/resources.sh
           configure_resources
           matrix=$(jq -c --arg mode "$MODE" '{workload:[to_entries[] | select($mode == "steady" or .value.kind == "http") | .key]}' .github/benchmarks/workloads.json)
@@ -139,6 +142,8 @@ jobs:
             "$GOBIN/k6" inspect -e WORKLOAD="$selected" -e ROUTE_GROUPS=1000 ".github/benchmarks/$script" > /dev/null
           done < <(jq -r '.[] | [.script,.selected] | @tsv' .github/benchmarks/workloads.json)
           "$GOBIN/k6" inspect -e WORKLOAD=plaintext -e ROUTE_GROUPS=1000 .github/benchmarks/overload.js > /dev/null
+          "$GOBIN/k6" inspect -e ROLE=health .github/benchmarks/slow-client.js > /dev/null
+          "$GOBIN/k6" inspect -e ROLE=blocked -e CLIENTS=128 .github/benchmarks/slow-client.js > /dev/null
           rm "$GOBIN/xk6"
           (cd "$GOBIN" && sha256sum k6 lib/*.jar > checksums.txt)
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -149,7 +154,7 @@ jobs:
           if-no-files-found: error
 
   benchmark:
-    if: github.event_name == 'workflow_dispatch' && inputs.mode != 'tracing'
+    if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'steady' || inputs.mode == 'overload')
     permissions:
       contents: read
       actions: read
@@ -244,8 +249,66 @@ jobs:
         run: |
           [[ "$MEASURE" == success && "$DATA" == success && "$REPORT" == success && "$SUMMARY" == success ]]
 
+  slow-client:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'slow-client'
+    permissions:
+      contents: read
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      JVM_CPUS: ${{ inputs.jvm_cpus }}
+      JVM_MEMORY_MIB: ${{ inputs.jvm_memory_mib }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+      - name: Set result paths
+        run: |
+          echo "RESULT_DIR=$RUNNER_TEMP/slow-client-results" >> "$GITHUB_ENV"
+          echo "TOOL_DIR=$RUNNER_TEMP/benchmark-tools" >> "$GITHUB_ENV"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: benchmark-tools
+          path: ${{ env.TOOL_DIR }}
+      - name: Install native slow-body tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y slowhttptest
+          dpkg-query -W slowhttptest
+      - name: Run finite resource-safety diagnostic
+        id: measure
+        continue-on-error: true
+        run: |
+          chmod +x "$TOOL_DIR/k6"
+          (cd "$TOOL_DIR" && sha256sum -c checksums.txt)
+          bash .github/benchmarks/slow-client.sh "$RESULT_DIR" "$TOOL_DIR"
+      - name: Upload native diagnostic evidence
+        id: data
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: slow-client-data
+          path: ${{ runner.temp }}/slow-client-results/
+          retention-days: ${{ inputs.retention_days }}
+          if-no-files-found: error
+      - name: Preserve diagnostic and publication status
+        if: always()
+        env:
+          MEASUREMENT_OUTCOME: ${{ steps.measure.outcome }}
+          DATA_OUTCOME: ${{ steps.data.outcome }}
+          ARTIFACT_URL: ${{ steps.data.outputs.artifact-url }}
+        run: |
+          echo "Slow-client measurement: **$MEASUREMENT_OUTCOME**; artifact upload: **$DATA_OUTCOME**. [Native evidence]($ARTIFACT_URL)." >> "$GITHUB_STEP_SUMMARY"
+          echo 'One finite diagnostic, not capacity certification or a PR performance gate. Inspect recovery/resource traces before concluding there are no leaks.' >> "$GITHUB_STEP_SUMMARY"
+          [[ "$MEASUREMENT_OUTCOME" == success && "$DATA_OUTCOME" == success ]]
+
   report:
-    if: always() && github.event_name == 'workflow_dispatch' && inputs.mode != 'tracing'
+    if: always() && github.event_name == 'workflow_dispatch' && (inputs.mode == 'steady' || inputs.mode == 'overload')
     permissions:
       contents: read
       actions: read
