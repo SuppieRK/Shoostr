@@ -10,6 +10,7 @@ import java.util.Objects;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 import org.jspecify.annotations.Nullable;
 
 /**
@@ -27,6 +28,8 @@ final class McpRequestLifetime implements RequestObservation {
   private boolean interruptedOwner;
   private boolean completed;
   private boolean expired;
+  private boolean expiryRejected;
+  private @Nullable Consumer<RequestOutcome> initialization;
 
   /**
    * Creates detached state before routing without retaining a live request or response.
@@ -40,27 +43,54 @@ final class McpRequestLifetime implements RequestObservation {
   }
 
   /**
-   * Arms the verified deadline on the actual handler owner before stream admission or commitment. A
+   * Arms the verified deadline on the actual handler owner before body reads or native admission. A
    * public/non-token identity has no deadline. Failed scheduling rejects the HTTP exchange.
    *
-   * @param transport detached HTTP mailbox
    * @param expiry verified token expiry, or null for a public/non-token identity
    * @throws IllegalStateException if this exchange was already armed or completed
    * @throws AuthenticationRequiredException if the token has already expired
    */
-  synchronized void arm(McpStream transport, @Nullable Instant expiry) {
+  synchronized void arm(@Nullable Instant expiry) {
     if (completed || owner != null) {
       throw new IllegalStateException("The MCP HTTP lifetime cannot be armed again");
     }
 
-    Objects.requireNonNull(transport);
     requireFresh(expiry);
-    stream = transport;
     expiresAt = expiry;
     owner = Thread.currentThread();
     if (expiry != null) {
       scheduleExpiry(Duration.between(Instant.now(), expiry));
     }
+  }
+
+  /**
+   * Attaches a streaming mailbox to the already authenticated HTTP lifetime.
+   *
+   * @param transport detached HTTP mailbox
+   * @throws IllegalStateException if this handler does not own an unattached lifetime
+   * @throws AuthenticationRequiredException if the token has expired
+   */
+  synchronized void stream(McpStream transport) {
+    if (completed || owner != Thread.currentThread() || stream != null) {
+      throw new IllegalStateException("The MCP HTTP lifetime cannot attach this stream");
+    }
+
+    requireFresh();
+    stream = Objects.requireNonNull(transport);
+  }
+
+  /**
+   * Permits rendering the authentication rejection produced by this lifetime.
+   *
+   * @param authenticationResponse whether the staged status is401
+   * @throws AuthenticationRequiredException if expired output is not its authentication rejection
+   */
+  synchronized void beforeFlush(boolean authenticationResponse) {
+    if (authenticationResponse && expiryRejected) {
+      return;
+    }
+
+    requireFresh();
   }
 
   /**
@@ -81,6 +111,8 @@ final class McpRequestLifetime implements RequestObservation {
    */
   private void requireFresh(@Nullable Instant expiry) {
     if (expired || (expiry != null && !expiry.isAfter(Instant.now()))) {
+      expiryRejected = true;
+      clearOwnedInterruption();
       throw new AuthenticationRequiredException(expiredTokenChallenge);
     }
   }
@@ -107,6 +139,11 @@ final class McpRequestLifetime implements RequestObservation {
 
     owner = null;
     stream = null;
+    clearOwnedInterruption();
+  }
+
+  /** Clears only the interruption introduced by this lifetime on its current handler. */
+  private void clearOwnedInterruption() {
     if (interruptedOwner) {
       // Clearing the deadline interruption is intentional; this JDK call also returns its old
       // state.
@@ -116,16 +153,39 @@ final class McpRequestLifetime implements RequestObservation {
   }
 
   /**
+   * Owns detached initialization cleanup until final transport completion.
+   *
+   * @param completion nonblocking terminal initialization callback
+   * @throws IllegalStateException if initialization ownership was already assigned or completed
+   */
+  synchronized void initialization(Consumer<RequestOutcome> completion) {
+    if (completed || initialization != null) {
+      throw new IllegalStateException("The MCP initialization lifetime cannot be assigned again");
+    }
+
+    initialization = Objects.requireNonNull(completion);
+  }
+
+  /**
    * Cancels the retained deadline after both invocation cleanup and transport termination.
    *
    * @param outcome immutable completion, not retained
    */
   @Override
-  public synchronized void complete(RequestOutcome outcome) {
-    completed = true;
-    if (deadline != null) {
-      deadline.cancel(false);
-      deadline = null;
+  public void complete(RequestOutcome outcome) {
+    Consumer<RequestOutcome> terminal;
+    synchronized (this) {
+      completed = true;
+      if (deadline != null) {
+        deadline.cancel(false);
+        deadline = null;
+      }
+
+      terminal = initialization;
+      initialization = null;
+    }
+    if (terminal != null) {
+      terminal.accept(outcome);
     }
   }
 
