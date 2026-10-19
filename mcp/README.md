@@ -61,6 +61,37 @@ authorization server.
   bounded 64-frame mailbox and acknowledge only after their frame is flushed.
   Failed or full mailboxes fail delivery rather than silently dropping frames.
 
+Session ownership is bounded per `Mcp` instance. Existing `sync` and `async` factories
+use defaults of 1,024 simultaneous allocations, 32 per verified session-owner key,
+and a 30-minute quiescent timeout. These are configurable operational defaults, not
+measured capacity guarantees:
+
+```java
+var mcp = Mcp.sync(security,
+    new McpSessionLimits(1024, 32, Duration.ofMinutes(30)),
+    transport -> McpServer.sync(transport).build());
+```
+
+Capacity includes initialization and native cleanup. An exhausted owner receives
+HTTP 429; exhausted instance capacity receives HTTP 503. Deletion, failed initialization,
+idle expiry and shutdown release capacity after native cleanup. An initialization
+whose response cannot be delivered is rolled back, including a disconnected client.
+Shutdown also cancels a pending initialization result and awaits native cleanup. Native
+factories must cooperate with cancellation: a factory blocked on a caller-owned executor
+can outlive HTTP drain, but a native handle it returns afterward is closed without
+publishing a session or subscribing to its result.
+
+Accepted activity renews the idle interval. Pending adapter-owned native work prevents
+idle eviction, including work that outlives its HTTP connection; its completion starts
+a fresh idle interval. An open, quiet GET listener alone does not prevent expiry.
+Expired sessions close their streams and return HTTP 404 on later requests. Rejected,
+malformed and foreign-owner requests do not renew activity. Applications must keep
+ownership of any additional SDK work they start independently.
+
+Clients returning the same verified owner key share its quota. In particular, the
+public example's shared owner aggregates anonymous clients. Applications that need
+one larger anonymous pool can explicitly select matching total and owner capacities.
+
 ## HTTP security
 
 `McpHttpSecurity` has three required inputs: allowed origins, current verified
@@ -94,9 +125,17 @@ asynchronous failures are logged. Deleting the session or closing the app cancel
 its pending native processing, including roots-change callbacks.
 
 For a verified access token, supply its exact expiry in `McpIdentity`. The adapter
-actively ends open streams at that time and rejects expired output before flush.
+records it before reading the request body, rejects expired initialization and finite
+notification/reply admission, and checks freshness around operation authorization.
+The deadline interrupts the still-owned handler and actively ends open streams;
+expired output is rejected before flush, including finite responses.
 This does not detect immediate revocation. A null expiry is for public/non-token
 identities, not a way to bypass token lifetime validation.
+
+Deadline interruption is cooperative, as with streaming handlers. A later application
+flush hook that propagates its interruption follows the normal failure/abort path;
+adapter-generated expiry rejection before commitment returns HTTP 401. Application
+callbacks must not suppress cancellation and continue writing after expiry.
 
 With metadata configured, adapter-generated expiry failures before commitment
 return `Bearer error="invalid_token", resource_metadata="..."` through the shared
@@ -157,6 +196,8 @@ long-lived session can accumulate retained SDK state. See the
 [released session implementation](https://github.com/modelcontextprotocol/java-sdk/blob/v2.0.1/mcp-core/src/main/java/io/modelcontextprotocol/spec/McpStreamableServerSession.java).
 This limitation was accepted
 for the pinned release, not fixed or measured away by compatibility tests.
+Session-count limits and quiescent expiry reclaim abandoned sessions; they do not
+bound completed-exchange retention inside a continuously active session.
 
 Newer protocol revisions, Tasks, built-in pagination and sampling-with-tools are
 not promised merely because newer specifications or schema types mention them.

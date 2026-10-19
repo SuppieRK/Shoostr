@@ -11,12 +11,22 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  validation:
     runs-on: ubuntu-latest
+    outputs:
+      analysis_completed: ${{ steps.audit.outputs.analysis_completed }}
+      analyzed_revision: ${{ steps.audit.outputs.analyzed_revision }}
+    env:
+      EXPECTED_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      SONAR_AUDIT_BRANCH: branch-${{ github.event.pull_request.head.sha || github.sha }}-audit
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Verify the proposed revision
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
 
       - name: Set up Java 25
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
@@ -41,6 +51,9 @@ jobs:
         run: |
           npm ci --ignore-scripts
           node node_modules/playwright/cli.js install --with-deps firefox
+
+      - name: Verify CI and promotion gates
+        run: node --test .github/ci/*.test.mjs
 
       - name: Build and test
         run: ./gradlew clean build --console=plain
@@ -106,73 +119,95 @@ jobs:
           if-no-files-found: warn
 
       - name: Analyze with SonarQube Cloud
+        if: >-
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
+          if [[ -z "$SONAR_TOKEN" ]]; then
+            echo '::error::Trusted analysis requires SONAR_TOKEN'
+            exit 1
+          fi
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF_NAME" != "main" ]]; then
-            ./gradlew sonar -Dsonar.branch.name="$GITHUB_REF_NAME" --console=plain
+            ./gradlew sonar -Dsonar.branch.name="$GITHUB_REF_NAME" \
+              -Dsonar.scm.revision="$EXPECTED_REVISION" \
+              -Dsonar.scanner.metadataFilePath="$RUNNER_TEMP/sonar-audit-task.txt" --console=plain
           else
-            ./gradlew sonar --console=plain
+            ./gradlew sonar -Dsonar.scm.revision="$EXPECTED_REVISION" \
+              -Dsonar.scanner.metadataFilePath="$RUNNER_TEMP/sonar-audit-task.txt" --console=plain
           fi
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            audit_branch="branch-pr-${PR_NUMBER}-audit"
-          elif [[ "$GITHUB_REF_NAME" != "main" ]]; then
-            audit_branch="branch-${GITHUB_REF_NAME//\//-}-audit"
-          fi
-          if [[ -n "${audit_branch:-}" ]]; then
-            # PR and short-lived branch gates cover new code only; audit the whole project.
-            # A newly created long-lived branch has no computed quality gate on its first scan.
-            ./gradlew sonar -Dsonar.branch.name="$audit_branch" \
-              -Dsonar.qualitygate.wait=false \
-              -Dsonar.scanner.metadataFilePath="$RUNNER_TEMP/sonar-audit-task.txt" \
-              --console=plain
-          fi
+          # Keep issue counts isolated from concurrent scans, including main pushes.
+          # A new long-lived branch has no computed quality gate on its first scan.
+          ./gradlew sonar -Dsonar.branch.name="$SONAR_AUDIT_BRANCH" \
+            -Dsonar.scm.revision="$EXPECTED_REVISION" \
+            -Dsonar.qualitygate.wait=false \
+            -Dsonar.scanner.metadataFilePath="$RUNNER_TEMP/sonar-audit-task.txt" \
+            --console=plain
 
       - name: Require zero open Sonar issues
+        id: audit
+        if: >-
+          github.event_name != 'pull_request' ||
+          (github.event.pull_request.head.repo.full_name == github.repository &&
+          github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SONAR_TASK_FILE: ${{ runner.temp }}/sonar-task.json
+          SONAR_ANALYSES_FILE: ${{ runner.temp }}/sonar-analyses.json
+          SONAR_ISSUES_FILE: ${{ runner.temp }}/sonar-issues.json
         run: |
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            audit_branch="branch-pr-${PR_NUMBER}-audit"
-          elif [[ "$GITHUB_REF_NAME" != "main" ]]; then
-            audit_branch="branch-${GITHUB_REF_NAME//\//-}-audit"
-          else
-            audit_branch="main"
+          task_id=$(sed -n 's/^ceTaskId=//p' "$RUNNER_TEMP/sonar-audit-task.txt")
+          if [[ -z "$task_id" ]]; then
+            echo '::error::Sonar audit scan did not write a CE task ID'
+            exit 1
           fi
-          if [[ "$audit_branch" != "main" ]]; then
-            task_id=$(sed -n 's/^ceTaskId=//p' "$RUNNER_TEMP/sonar-audit-task.txt")
-            if [[ -z "$task_id" ]]; then
-              echo '::error::Sonar audit scan did not write a CE task ID'
-              exit 1
-            fi
-            for (( attempt=0; attempt<60; attempt++ )); do
-              task_status=$(curl -fsS -H "Authorization: Bearer $SONAR_TOKEN" --get \
-                --data-urlencode "id=$task_id" \
-                'https://sonarcloud.io/api/ce/task' | jq -er '.task.status')
-              case "$task_status" in
-                SUCCESS) break ;;
-                FAILED|CANCELED)
-                  echo "::error::Sonar audit processing $task_status"
-                  exit 1
-                  ;;
-              esac
-              sleep 5
-            done
-            if [[ "$task_status" != "SUCCESS" ]]; then
-              echo '::error::Sonar audit processing timed out'
-              exit 1
-            fi
+          for (( attempt=0; attempt<60; attempt++ )); do
+            curl -fsS -H "Authorization: Bearer $SONAR_TOKEN" --get \
+              --data-urlencode "id=$task_id" \
+              --output "$SONAR_TASK_FILE" 'https://sonarcloud.io/api/ce/task'
+            task_status=$(jq -er '.task.status' "$SONAR_TASK_FILE")
+            case "$task_status" in
+              SUCCESS) break ;;
+              FAILED|CANCELED)
+                echo "::error::Sonar audit processing $task_status"
+                exit 1
+                ;;
+            esac
+            sleep 5
+          done
+          if [[ "$task_status" != "SUCCESS" ]]; then
+            echo '::error::Sonar audit processing timed out'
+            exit 1
           fi
-          issue_count=$(curl -fsS -H "Authorization: Bearer $SONAR_TOKEN" --get \
+          curl -fsS -H "Authorization: Bearer $SONAR_TOKEN" --get \
+            --data-urlencode 'project=SuppieRK_Shoostr' \
+            --data-urlencode "branch=$SONAR_AUDIT_BRANCH" --data-urlencode 'ps=100' \
+            --output "$SONAR_ANALYSES_FILE" 'https://sonarcloud.io/api/project_analyses/search'
+          curl -fsS -H "Authorization: Bearer $SONAR_TOKEN" --get \
             --data-urlencode 'componentKeys=SuppieRK_Shoostr' \
             --data-urlencode 'resolved=false' \
             --data-urlencode 'ps=1' \
-            --data-urlencode "branch=$audit_branch" \
-            'https://sonarcloud.io/api/issues/search' | jq -er '.total')
-          if (( issue_count != 0 )); then
-            echo "::error::SonarQube Cloud reports $issue_count open issues on $audit_branch"
-            exit 1
-          fi
+            --data-urlencode "branch=$SONAR_AUDIT_BRANCH" \
+            --output "$SONAR_ISSUES_FILE" 'https://sonarcloud.io/api/issues/search'
+          node .github/ci/audit.mjs
+          echo 'analysis_completed=true' >> "$GITHUB_OUTPUT"
+          echo "analyzed_revision=$EXPECTED_REVISION" >> "$GITHUB_OUTPUT"
+
+  build:
+    if: ${{ always() }}
+    needs: validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Require validation and trusted full-project analysis
+        env:
+          VALIDATION_RESULT: ${{ needs.validation.result }}
+          ANALYSIS_COMPLETED: ${{ needs.validation.outputs.analysis_completed }}
+          ANALYZED_REVISION: ${{ needs.validation.outputs.analyzed_revision }}
+          EXPECTED_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node .github/ci/gate.mjs
