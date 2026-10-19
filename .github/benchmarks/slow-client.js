@@ -24,7 +24,7 @@ export const options = {
       duration: '60s', gracefulStop: '0s' },
   },
   thresholds: role === 'health' ? {
-    health_completed: ['count==100'],
+    health_completed: ['count>=100', 'count<=101'],
     health_elapsed: ['max<=1000'],
     checks: ['rate==1'],
     http_req_failed: ['rate==0'],

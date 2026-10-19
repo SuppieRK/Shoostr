@@ -148,7 +148,7 @@ jq -n --arg revision "$(git rev-parse HEAD)" --arg image "${ImageVersion:-unknow
   --arg image_os "${ImageOS:-unknown}" \
   '{revision:$revision,image:$image,image_os:$image_os,jvm_cpus:1,jvm_memory_mib:1024,
     heap_mib:256,collector:"G1",swap_bytes:0,clients:[32,128],repeats:2,
-    load_seconds:60,recovery_seconds:30,health_probes:100,
+    load_seconds:60,recovery_seconds:30,health_probe_target:100,health_probe_boundary_allowance:1,
     body_arguments:["-B","-r N","-l 60","-i 1","-s 65536","-x 8","-t POST"],
     blocked_wait_seconds:5,native_policy:"defaults; recorded without mutation"}' \
   > "$destination/configuration.json"

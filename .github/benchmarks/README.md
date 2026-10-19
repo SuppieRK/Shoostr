@@ -127,8 +127,11 @@ second targets. The checker uses k6's optional native `vu` tag and
 [end-of-response duration timestamps](https://grafana.com/docs/k6/latest/using-k6/metrics/reference/),
 not synthetic server throughput estimates.
 
-A separate k6 process schedules 100 complete healthy requests at one per second,
-covering load and recovery plus bounded tool-start/output margin. Every status,
+A separate k6 process schedules healthy requests at one per second for 100 seconds,
+covering load and recovery plus bounded tool-start/output margin. The target is
+100 probes with a one-probe native duration-boundary allowance: only complete,
+consistent 100- or 101-probe evidence is accepted, including every extra probe.
+This does not assert a universal native scheduling maximum. Every status,
 body and complete-call duration must pass; no response may exceed one second and
 no probe may be missing or dropped. Native raw timestamps must span both phases.
 The campaign stops on an observed probe/OOM failure; failed or partial runs are
@@ -138,7 +141,7 @@ Public matched/terminal callbacks distinguish active handlers from unfinished
 exchanges. Recovery requires zero workload handlers/exchanges, balanced admitted
 and terminal counts, the exact selected peak concurrency, and only the current
 state-control connection. A qualifying recovery sample must fall within 30 seconds,
-not merely after the 100-probe process exits. Native connected endpoints include
+not merely after the health process exits. Native connected endpoints include
 live control/probe connections; short overlaps are recorded rather than subtracted
 by an invented constant. A quiet recovered observation contains one current control
 connection. All cycles reuse the same listener and JVM to expose accumulation.

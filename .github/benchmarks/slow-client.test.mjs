@@ -22,8 +22,37 @@ test('requires every scheduled health probe instead of only successful-response 
   assert.doesNotThrow(() => verifyHealth(health()));
   const incomplete = health();
   incomplete.metrics.health_completed.count = 99;
-  assert.throws(() => verifyHealth(incomplete), /100 health probes/);
+  assert.throws(() => verifyHealth(incomplete), /100.*health probes/);
 });
+
+test('validates every probe when native scheduling adds one duration-boundary iteration', () => {
+  const summary = health();
+  summary.metrics.health_completed.count = 101;
+  summary.metrics.checks.passes = 303;
+  assert.doesNotThrow(() => verifyHealth(summary));
+  summary.metrics.checks.passes = 300;
+  assert.throws(() => verifyHealth(summary), /status\/body/);
+  summary.metrics.checks.passes = 303;
+  summary.metrics.health_elapsed.max = 1001;
+  assert.throws(() => verifyHealth(summary), /one second/);
+  summary.metrics.health_elapsed.max = 6;
+  summary.metrics.checks.fails = 1;
+  assert.throws(() => verifyHealth(summary), /status\/body/);
+  summary.metrics.checks.fails = 0;
+  summary.metrics.http_req_failed.value = 1 / 102;
+  assert.throws(() => verifyHealth(summary), /HTTP failure/);
+  summary.metrics.http_req_failed.value = 0;
+  summary.metrics.dropped_iterations.count = 1;
+  assert.throws(() => verifyHealth(summary), /dropped/);
+});
+
+for (const count of [99, 102, undefined, 100.5]) {
+  test(`rejects a missing or out-of-window native health count: ${count}`, () => {
+    const summary = health();
+    summary.metrics.health_completed.count = count;
+    assert.throws(() => verifyHealth(summary), /health probes/);
+  });
+}
 
 for (const [metric, field, value, message] of [
   ['health_elapsed', 'max', 1001, /one second/],
@@ -77,6 +106,15 @@ test('rejects missing probe samples or an uncovered part of either phase', () =>
   assert.throws(() => verifyTiming(phase, points.slice(1)), /probe evidence/);
   assert.throws(() => verifyTiming(phase, points.map(value => value + 10000)), /coverage/);
   assert.throws(() => verifyTiming(phase, points.map(value => value - 10000)), /coverage/);
+});
+
+test('matches raw health evidence to the accepted native summary count without truncation', () => {
+  const boundaryPoints = [...points, start + 100000];
+  assert.doesNotThrow(() => verifyTiming(phase, boundaryPoints, 101));
+  assert.throws(() => verifyTiming(phase, points, 101), /probe evidence/);
+  assert.throws(() => verifyTiming(phase, boundaryPoints, 100), /probe evidence/);
+  assert.throws(() => verifyTiming(phase, boundaryPoints, 102), /probe evidence/);
+  assert.throws(() => verifyTiming(phase, boundaryPoints.map(value => value + 10000), 101), /coverage/);
 });
 
 test('rejects Java OOM and cgroup OOM events, not only OOM kills', () => {
@@ -151,6 +189,31 @@ test('the executable checker requires complete native artifacts', t => {
     gzipSync(rows.map(row => JSON.stringify(row)).join('\n')));
   writeBlocked(blockedPoints());
   assert.equal(run().status, 0);
+  const boundarySummary = health();
+  boundarySummary.metrics.health_completed.count = 101;
+  boundarySummary.metrics.checks.passes = 303;
+  fs.writeFileSync(path.join(dir, 'health-summary.json'), JSON.stringify(boundarySummary));
+  const rawMismatch = run();
+  assert.notEqual(rawMismatch.status, 0);
+  assert.match(rawMismatch.stderr, /probe evidence/);
+  const boundaryPoint = { type: 'Point', metric: 'health_completed',
+    data: { time: new Date(start + 100000).toISOString(), value: 1 } };
+  const boundaryRaw = raw + '\n' + JSON.stringify(boundaryPoint);
+  fs.writeFileSync(path.join(dir, 'health-metrics.json.gz'), gzipSync(boundaryRaw));
+  const boundary = run();
+  assert.equal(boundary.status, 0, boundary.stderr);
+  assert.equal(JSON.parse(boundary.stdout).health_probes, 101);
+  fs.writeFileSync(path.join(dir, 'health-metrics.json.gz'),
+    gzipSync(raw + '\n' + JSON.stringify({ ...boundaryPoint, data: { ...boundaryPoint.data, value: 2 } })));
+  const nonUnit = run();
+  assert.notEqual(nonUnit.status, 0);
+  assert.match(nonUnit.stderr, /Invalid raw probe evidence/);
+  fs.writeFileSync(path.join(dir, 'health-summary.json'), JSON.stringify(health()));
+  fs.writeFileSync(path.join(dir, 'health-metrics.json.gz'), gzipSync(boundaryRaw));
+  const extraRaw = run();
+  assert.notEqual(extraRaw.status, 0);
+  assert.match(extraRaw.stderr, /probe evidence/);
+  fs.writeFileSync(path.join(dir, 'health-metrics.json.gz'), gzipSync(raw));
   writeBlocked(blockedPoints().filter(row => row.metric === 'vus'
     || Date.parse(row.data.time) < phase.start_ms + 6000));
   const earlyOnly = run();

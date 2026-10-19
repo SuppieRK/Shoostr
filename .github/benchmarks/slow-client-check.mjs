@@ -4,14 +4,15 @@ import { gunzipSync } from 'node:zlib';
 import { pathToFileURL } from 'node:url';
 
 export function verifyHealth(summary) {
-  if (summary.metrics?.health_completed?.count !== 100) {
-    throw new Error('Expected all 100 health probes to complete');
+  const completed = summary.metrics?.health_completed?.count;
+  if (![100, 101].includes(completed)) {
+    throw new Error('Expected 100 or 101 complete health probes');
   }
   const elapsed = summary.metrics?.health_elapsed?.max;
   if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed > 1000) {
     throw new Error('Every complete healthy response must finish within one second');
   }
-  if (summary.metrics?.checks?.value !== 1 || summary.metrics?.checks?.passes !== 300
+  if (summary.metrics?.checks?.value !== 1 || summary.metrics?.checks?.passes !== 3 * completed
       || summary.metrics?.checks?.fails !== 0) {
     throw new Error('Healthy response status/body validation failed');
   }
@@ -21,6 +22,7 @@ export function verifyHealth(summary) {
   if (summary.metrics?.dropped_iterations?.count !== 0) {
     throw new Error('Healthy probes were dropped or their evidence is missing');
   }
+  return completed;
 }
 
 export function verifyRecovery(state, clients) {
@@ -40,7 +42,7 @@ export function verifyRecovery(state, clients) {
   }
 }
 
-export function verifyTiming(phase, points) {
+export function verifyTiming(phase, points, completed = 100) {
   if (![phase.start_ms, phase.load_end_ms, phase.recovery_end_ms].every(Number.isFinite)) {
     throw new Error('Missing phase timing evidence');
   }
@@ -48,7 +50,8 @@ export function verifyTiming(phase, points) {
   if (phase.recovery_end_ms - phase.load_end_ms < 30000) {
     throw new Error('Recovery was not observed for 30 seconds');
   }
-  if (!Array.isArray(points) || points.length !== 100 || !points.every(Number.isFinite)) {
+  if (![100, 101].includes(completed) || !Array.isArray(points) || points.length !== completed
+      || !points.every(Number.isFinite)) {
     throw new Error('Missing complete raw probe evidence');
   }
   if (Math.min(...points) > phase.start_ms + 1000
@@ -155,14 +158,14 @@ export function verifyCycle(directory, clients) {
     if (read(name).trim() !== '0') throw new Error(`Load tool failed: ${name}`);
   }
   const summary = json('health-summary.json');
-  verifyHealth(summary);
+  const completed = verifyHealth(summary);
   const state = json('recovered-state.json');
   verifyRecovery(state, clients);
   const raw = gunzipSync(fs.readFileSync(path.join(directory, 'health-metrics.json.gz')))
     .toString().trim().split('\n').map(line => JSON.parse(line))
     .filter(row => row.type === 'Point' && row.metric === 'health_completed');
   if (raw.some(row => row.data.value !== 1)) throw new Error('Invalid raw probe evidence');
-  verifyTiming(phase, raw.map(row => Date.parse(row.data.time)));
+  verifyTiming(phase, raw.map(row => Date.parse(row.data.time)), completed);
   const samples = read('state-samples.jsonl').trim().split('\n').map(line => JSON.parse(line));
   const recoveryMs = verifyRecoveryWindow(samples, phase, clients);
   verifyMemory(read('memory.events'), read('server.log') + '\n' + read('java-errors.txt'));
@@ -179,7 +182,7 @@ export function verifyCycle(directory, clients) {
   }
   return { verified: true, kind: phase.kind, clients, peak_work: state.peak_work,
     admitted: state.admitted, completed: state.completed,
-    health_max_ms: summary.metrics.health_elapsed.max, recovery_ms: recoveryMs };
+    health_probes: completed, health_max_ms: summary.metrics.health_elapsed.max, recovery_ms: recoveryMs };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
