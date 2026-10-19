@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -27,8 +28,10 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.http.HttpTester;
@@ -1332,6 +1335,106 @@ class MultipartRequestTest {
   }
 
   @Test
+  void abortingOneSpilledUploadPreservesAnotherUntilItsHandlerCompletes() throws Exception {
+    for (var repeat = 0; repeat < 2; repeat++) {
+      var directory = Files.createDirectory(temporaryDirectory.resolve("overlap-" + repeat));
+      var multipart = new MultipartOptions(32_768, 16_384, 2, 8192, 128, directory);
+      var abandonedPublished = new AtomicBoolean();
+      var abandonedCompleted = new CompletableFuture<Void>();
+      var survivorCompleted = new CompletableFuture<Void>();
+      var survivorParsed = new CountDownLatch(1);
+      var releaseSurvivor = new CountDownLatch(1);
+      var abandonedBody = fileBody("abandoned.txt", "A".repeat(8192));
+      var survivorContent = "survivor".repeat(1024).getBytes(StandardCharsets.US_ASCII);
+      var survivorBody = fileBody("survivor.txt", "survivor".repeat(1024));
+      var closingBoundary = ("\r\n--" + BOUNDARY + "--\r\n").getBytes(StandardCharsets.US_ASCII);
+
+      try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+        app.afterRequest(
+            outcome -> {
+              if ("/abandon".equals(outcome.routePattern())) {
+                abandonedCompleted.complete(null);
+              } else if ("/survive".equals(outcome.routePattern())) {
+                survivorCompleted.complete(null);
+              }
+            });
+        app.routes()
+            .post(
+                "/abandon",
+                (request, response) -> {
+                  request.files();
+                  abandonedPublished.set(true);
+                  response.text("unexpected publication");
+                });
+        app.routes()
+            .post(
+                "/survive",
+                (request, response) -> {
+                  var upload = request.file("document").orElseThrow();
+                  survivorParsed.countDown();
+                  assertTrue(releaseSurvivor.await(5, TimeUnit.SECONDS));
+
+                  try (var content = upload.content()) {
+                    response
+                        .setHeader("X-Upload-Name", upload.fileName())
+                        .body("application/octet-stream", content.readAllBytes());
+                  }
+                });
+        app.routes().get("/healthy", (_, response) -> response.text("healthy"));
+
+        try (var test = TestServer.start(app)) {
+          try (var abandoned = new Socket();
+              var survivor = new Socket()) {
+            try {
+              sendMultipartPrefix(
+                  abandoned, app.port(), "/abandon", abandonedBody, closingBoundary.length);
+              var abandonedSpool = awaitSpoolFiles(directory, 1).getFirst();
+              sendMultipartPrefix(
+                  survivor, app.port(), "/survive", survivorBody, closingBoundary.length);
+              var survivorSpool =
+                  awaitSpoolFiles(directory, 2).stream()
+                      .filter(path -> !path.equals(abandonedSpool))
+                      .findFirst()
+                      .orElseThrow();
+              survivor.getOutputStream().write(closingBoundary);
+              survivor.getOutputStream().flush();
+              assertTrue(survivorParsed.await(3, TimeUnit.SECONDS));
+
+              abandoned.close();
+              abandonedCompleted.get(3, TimeUnit.SECONDS);
+              await()
+                  .atMost(Duration.ofSeconds(3))
+                  .untilAsserted(() -> assertFalse(Files.exists(abandonedSpool)));
+              assertFalse(abandonedPublished.get());
+              assertEquals(List.of(survivorSpool), awaitSpoolFiles(directory, 1));
+              assertTrue(Files.exists(survivorSpool));
+              assertFalse(survivorCompleted.isDone());
+
+              releaseSurvivor.countDown();
+              var response = HttpTester.parseResponse(survivor.getInputStream());
+              assertNotNull(response);
+              assertEquals(200, response.getStatus());
+              assertEquals("survivor.txt", response.get("X-Upload-Name"));
+              assertArrayEquals(survivorContent, response.getContentBytes());
+              survivorCompleted.get(3, TimeUnit.SECONDS);
+              awaitFile(directory, false);
+            } finally {
+              releaseSurvivor.countDown();
+            }
+          }
+
+          var healthy =
+              test.send(
+                  request -> request.path("/healthy").timeout(Duration.ofSeconds(1)),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, healthy.statusCode());
+          assertEquals("healthy", healthy.body());
+        }
+      }
+    }
+  }
+
+  @Test
   void retainsRepeatedUploadsInArrivalOrder() throws Exception {
     try (var app = new Shoostr(Options.defaults().withPort(0))) {
       app.routes()
@@ -1524,6 +1627,38 @@ class MultipartRequestTest {
                 assertEquals(expected, files.findAny().isPresent());
               }
             });
+  }
+
+  private static List<Path> awaitSpoolFiles(Path directory, int expected) {
+    return await()
+        .pollInterval(Duration.ofMillis(20))
+        .atMost(Duration.ofSeconds(3))
+        .until(
+            () -> {
+              try (var files = Files.list(directory)) {
+                return files.toList();
+              }
+            },
+            files -> files.size() == expected);
+  }
+
+  private static void sendMultipartPrefix(
+      Socket socket, int port, String path, byte[] body, int withheld) throws IOException {
+    socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 1000);
+    socket.setSoTimeout(3000);
+    socket
+        .getOutputStream()
+        .write(
+            ("POST "
+                    + path
+                    + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: multipart/form-data; boundary="
+                    + BOUNDARY
+                    + "\r\nContent-Length: "
+                    + body.length
+                    + "\r\n\r\n")
+                .getBytes(StandardCharsets.US_ASCII));
+    socket.getOutputStream().write(body, 0, body.length - withheld);
+    socket.getOutputStream().flush();
   }
 
   private static void writeChunk(OutputStream output, byte[] chunk) throws IOException {
