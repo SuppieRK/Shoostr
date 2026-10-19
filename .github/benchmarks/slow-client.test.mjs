@@ -89,11 +89,14 @@ test('rejects Java OOM and cgroup OOM events, not only OOM kills', () => {
 });
 
 test('requires achieved slow-body connections throughout the native measurement', () => {
-  const rows = Array.from({ length: 62 }, (_, second) => `${second},0,0,32,1`);
+  const rows = Array.from({ length: 62 }, (_, second) => `${second},0,0,32,32`);
   const csv = ['Seconds,Closed,Pending,Connected,Service Available', ...rows].join('\n');
   assert.doesNotThrow(() => verifyBodies(csv, 32));
-  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,1', '20,1,0,31,1'), 32), /exposure/);
-  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,1\n', ''), 32), /evidence/);
+  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,32', '20,1,0,31,32'), 32), /exposure/);
+  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,32', '20,0,0,32,0'), 32), /probe/);
+  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,32', '20,0,0,32,1'), 32), /probe/);
+  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,32\n', ''), 32), /evidence/);
+  assert.doesNotThrow(() => verifyBodies(csv.replaceAll(',32', ',128'), 128));
 });
 
 test('requires observed connection/work recovery within thirty seconds, not only at run end', () => {

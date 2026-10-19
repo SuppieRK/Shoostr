@@ -101,7 +101,8 @@ export function verifyBodies(csv, clients) {
   for (let second = 5; second < 60; second++) {
     const samples = rows.filter(row => row[0] === second);
     if (!samples.length) throw new Error('Missing slow-body connection evidence');
-    if (samples.some(row => row[1] !== 0 || row[2] !== 0 || row[3] !== clients || row[4] !== 1)) {
+    // slowhttptest 1.9.0 scales its availability flag by the configured connection count.
+    if (samples.some(row => row[1] !== 0 || row[2] !== 0 || row[3] !== clients || row[4] !== clients)) {
       throw new Error('Reduced slow-body exposure or native probe failure');
     }
   }
