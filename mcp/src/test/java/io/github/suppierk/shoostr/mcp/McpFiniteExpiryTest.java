@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -103,18 +104,21 @@ class McpFiniteExpiryTest {
 
         var target = expiry.get().plusMillis(100);
         var started = System.nanoTime();
-        var remaining = Duration.between(Instant.now(), target);
-        var waiting = new CountDownLatch(1);
-        do {
-          var budget = TimeUnit.SECONDS.toNanos(5) - (System.nanoTime() - started);
-          assertTrue(budget > 0, "Wall clock did not pass the verified expiry within five seconds");
-          var delay =
-              remaining.compareTo(Duration.ofNanos(budget)) > 0
-                  ? budget
-                  : Math.max(0, remaining.toNanos());
-          assertFalse(waiting.await(delay, TimeUnit.NANOSECONDS));
-          remaining = Duration.between(Instant.now(), target);
-        } while (remaining.isPositive());
+        var initial = Duration.between(Instant.now(), target);
+        await("the finite request body follows the verified expiry")
+            .pollInSameThread()
+            .pollDelay(Duration.ZERO)
+            .pollInterval(Duration.ofMillis(10))
+            .atMost(Duration.ofSeconds(5))
+            .until(
+                () -> {
+                  if (Thread.interrupted()) {
+                    throw new InterruptedException("The finite expiry wait was interrupted");
+                  }
+
+                  return Duration.ofNanos(System.nanoTime() - started).compareTo(initial) >= 0
+                      && !Instant.now().isBefore(target);
+                });
 
         socket.getOutputStream().write(body);
         socket.getOutputStream().flush();
@@ -142,6 +146,7 @@ class McpFiniteExpiryTest {
                         "alice:client", McpTransportContext.EMPTY, Instant.now().plusSeconds(1)),
                 (_, _) -> {
                   try {
+                    // Keep authorization interruptible so the deadline can abort it.
                     new CountDownLatch(1).await(5, TimeUnit.SECONDS);
                   } catch (InterruptedException failure) {
                     Thread.currentThread().interrupt();

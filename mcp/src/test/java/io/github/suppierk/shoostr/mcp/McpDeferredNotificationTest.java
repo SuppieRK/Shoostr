@@ -1,9 +1,9 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -98,8 +98,23 @@ class McpDeferredNotificationTest {
       assertEquals(
           new McpSchema.ElicitationCompleteNotification("live-notification", Map.of()),
           betaNotifications.poll(3, TimeUnit.SECONDS));
-      assertNull(alphaNotifications.poll(250, TimeUnit.MILLISECONDS));
-      assertNull(betaNotifications.poll(250, TimeUnit.MILLISECONDS));
+      await("no notification reaches the deleted session")
+          .pollDelay(Duration.ZERO)
+          .pollInterval(Duration.ofMillis(10))
+          .during(Duration.ofMillis(250))
+          .atMost(Duration.ofMillis(1250))
+          .failFast(
+              "the deleted session received a notification", () -> !alphaNotifications.isEmpty())
+          .until(alphaNotifications::isEmpty);
+      await("no duplicate notification reaches the live session")
+          .pollDelay(Duration.ZERO)
+          .pollInterval(Duration.ofMillis(10))
+          .during(Duration.ofMillis(250))
+          .atMost(Duration.ofMillis(1250))
+          .failFast(
+              "the live session received a duplicate notification",
+              () -> !betaNotifications.isEmpty())
+          .until(betaNotifications::isEmpty);
     }
   }
 }
