@@ -234,3 +234,30 @@ configure([
 		}
 	}
 }
+
+def consumerRepository = layout.buildDirectory.dir('published-consumer-repository')
+def prepareConsumerRepository = tasks.register('preparePublishedConsumerRepository', Delete) {
+	delete consumerRepository
+}
+configure([
+	project(':http'),
+	project(':core')
+]) {
+	publishing.repositories {
+		maven {
+			name = 'consumerVerification'
+			url = consumerRepository
+		}
+	}
+	tasks.named('publishMavenJavaPublicationToConsumerVerificationRepository') {
+		dependsOn prepareConsumerRepository
+	}
+}
+project(':core') {
+	tasks.named('test') {
+		dependsOn ':http:publishMavenJavaPublicationToConsumerVerificationRepository',
+				':core:publishMavenJavaPublicationToConsumerVerificationRepository'
+		inputs.dir(consumerRepository)
+		outputs.dir(layout.buildDirectory.dir('reports/published-consumer'))
+	}
+}

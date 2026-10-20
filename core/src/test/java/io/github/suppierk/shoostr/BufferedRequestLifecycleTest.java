@@ -15,6 +15,7 @@ import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -23,15 +24,28 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpTester;
+import org.eclipse.jetty.http.HttpURI;
+import org.eclipse.jetty.http.HttpVersion;
+import org.eclipse.jetty.http.MetaData;
+import org.eclipse.jetty.http2.api.Session;
+import org.eclipse.jetty.http2.api.Stream;
+import org.eclipse.jetty.http2.client.HTTP2Client;
+import org.eclipse.jetty.http2.frames.DataFrame;
+import org.eclipse.jetty.http2.frames.HeadersFrame;
+import org.eclipse.jetty.http2.frames.ResetFrame;
 import org.eclipse.jetty.io.QuietException;
 import org.eclipse.jetty.server.HttpStream;
+import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -453,46 +467,47 @@ class BufferedRequestLifecycleTest {
   }
 
   @Test
-  void mapsOversizedBodyAndReusesHttp2Connection() throws Exception {
+  void mapsConsumedOversizeWithCompleteFramingAndReusesHttp2Connection() throws Exception {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var rejections = new LinkedBlockingQueue<ContentTooLargeException>();
 
     try (var app = app();
-        var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()) {
+        var client = new HTTP2Client()) {
       app.http2();
       routes(app, outcomes, rejections);
       app.start();
-      var base = "http://127.0.0.1:" + app.port();
-      var warmup =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/ok"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, warmup.statusCode());
-      assertEquals(HttpClient.Version.HTTP_2, warmup.version());
+      client.setConnectTimeout(3000);
+      client.setIdleTimeout(3000);
+      client.start();
+      var connection =
+          client
+              .connect(
+                  null,
+                  new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
+                  new Session.Listener() {})
+              .get(3, TimeUnit.SECONDS);
+      var warmup = http2Request(connection, app, "GET", "/ok", new byte[0]);
+      var warmupHeaders = warmup.headers.get(3, TimeUnit.SECONDS);
+      var peer = warmup.body.get(3, TimeUnit.SECONDS);
+      assertEquals(200, warmupHeaders.getStatus());
+      assertEquals(HttpVersion.HTTP_2, warmupHeaders.getHttpVersion());
       assertSuccessfulCompletion(outcomes);
 
+      // No Content-Length: exercise consumed-byte rejection, with END_STREAM on the payload frame.
+      // An unfinished JDK publisher can instead lose the response to a native stream cancellation.
       var rejected =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/body"))
-                  .timeout(Duration.ofSeconds(3))
-                  .POST(
-                      HttpRequest.BodyPublishers.ofInputStream(
-                          () ->
-                              new ByteArrayInputStream(
-                                  PAYLOAD.getBytes(StandardCharsets.US_ASCII))))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(413, rejected.statusCode());
-      assertEquals(HttpClient.Version.HTTP_2, rejected.version());
-      assertEquals("too large", rejected.body());
-      assertEquals(warmup.body(), rejected.headers().firstValue("X-Peer-Port").orElseThrow());
+          http2Request(
+              connection, app, "POST", "/body", PAYLOAD.getBytes(StandardCharsets.US_ASCII));
+      var rejectedHeaders = rejected.headers.get(3, TimeUnit.SECONDS);
+      assertEquals(413, rejectedHeaders.getStatus());
+      assertEquals(HttpVersion.HTTP_2, rejectedHeaders.getHttpVersion());
+      assertEquals("too large", rejected.body.get(3, TimeUnit.SECONDS));
+      assertEquals(peer, rejectedHeaders.getHttpFields().get("X-Peer-Port"));
       var outcome = completed(outcomes);
       assertEquals(413, outcome.statusCode());
       assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
       assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
-      // Rejection before END_STREAM may reset this HTTP/2 stream without closing the connection.
+      // Native unread-content cleanup must not close the shared HTTP/2 connection.
       var transportFailure = outcome.transportFailure();
       if (transportFailure != null) {
         assertSame(
@@ -500,18 +515,36 @@ class BufferedRequestLifecycleTest {
             assertInstanceOf(QuietException.RuntimeException.class, transportFailure).getCause());
       }
 
-      var accepted =
-          client.send(
-              HttpRequest.newBuilder(URI.create(base + "/ok"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, accepted.statusCode());
-      assertEquals(HttpClient.Version.HTTP_2, accepted.version());
-      assertEquals(warmup.body(), accepted.body());
+      var accepted = http2Request(connection, app, "GET", "/ok", new byte[0]);
+      var acceptedHeaders = accepted.headers.get(3, TimeUnit.SECONDS);
+      assertEquals(200, acceptedHeaders.getStatus());
+      assertEquals(HttpVersion.HTTP_2, acceptedHeaders.getHttpVersion());
+      assertEquals(peer, accepted.body.get(3, TimeUnit.SECONDS));
       assertSuccessfulCompletion(outcomes);
       assertNull(outcomes.poll());
     }
+  }
+
+  private static Http2Response http2Request(
+      Session connection, Shoostr app, String method, String path, byte[] body) throws Exception {
+    var response = new Http2Response();
+    var request =
+        new MetaData.Request(
+            method,
+            HttpURI.from("http://127.0.0.1:" + app.port() + path),
+            HttpVersion.HTTP_2,
+            HttpFields.EMPTY);
+    var stream =
+        connection
+            .newStream(new HeadersFrame(request, null, body.length == 0), response)
+            .get(3, TimeUnit.SECONDS);
+    if (body.length > 0) {
+      stream
+          .data(new DataFrame(stream.getId(), ByteBuffer.wrap(body), true))
+          .get(3, TimeUnit.SECONDS);
+    }
+
+    return response;
   }
 
   private static Shoostr app() {
@@ -563,5 +596,72 @@ class BufferedRequestLifecycleTest {
     assertEquals(200, outcome.statusCode());
     assertNull(outcome.applicationFailure());
     assertNull(outcome.transportFailure());
+  }
+
+  private static final class Http2Response implements Stream.Listener {
+    private final CompletableFuture<MetaData.Response> headers;
+    private final CompletableFuture<String> body;
+    private final ByteArrayOutputStream content;
+
+    private Http2Response() {
+      headers = new CompletableFuture<>();
+      body = new CompletableFuture<>();
+      content = new ByteArrayOutputStream();
+    }
+
+    @Override
+    public void onHeaders(Stream stream, HeadersFrame frame) {
+      if (frame.getMetaData() instanceof MetaData.Response response) {
+        headers.complete(response);
+        if (frame.isEndStream()) {
+          body.complete(content.toString(StandardCharsets.UTF_8));
+        } else {
+          stream.demand();
+        }
+      } else {
+        fail(new IOException("Expected HTTP/2 response headers"));
+      }
+    }
+
+    @Override
+    public void onDataAvailable(Stream stream) {
+      var data = stream.readData();
+      if (data == null) {
+        stream.demand();
+        return;
+      }
+
+      try {
+        var buffer = data.frame().getByteBuffer();
+        var bytes = new byte[buffer.remaining()];
+        buffer.get(bytes);
+        content.writeBytes(bytes);
+        if (data.frame().isEndStream()) {
+          body.complete(content.toString(StandardCharsets.UTF_8));
+        } else {
+          stream.demand();
+        }
+      } finally {
+        data.release();
+      }
+    }
+
+    @Override
+    public void onReset(Stream stream, ResetFrame frame, Callback callback) {
+      fail(new IOException("HTTP/2 stream reset: " + frame.getError()));
+      callback.succeeded();
+    }
+
+    @Override
+    public void onFailure(
+        Stream stream, int error, String reason, Throwable failure, Callback callback) {
+      fail(failure);
+      callback.succeeded();
+    }
+
+    private void fail(Throwable failure) {
+      headers.completeExceptionally(failure);
+      body.completeExceptionally(failure);
+    }
   }
 }

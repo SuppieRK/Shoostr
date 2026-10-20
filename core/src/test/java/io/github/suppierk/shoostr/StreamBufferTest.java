@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -12,6 +13,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -19,7 +21,6 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.function.BiConsumer;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.server.Request;
@@ -378,7 +379,13 @@ class StreamBufferTest {
     assertNotNull(callback);
     assertFalse(completed.isDone());
     assertEquals(List.of("before", "after", "before"), calls);
-    assertThrows(TimeoutException.class, () -> completed.get(100, TimeUnit.MILLISECONDS));
+    await("response completion waits for the pending write callback")
+        .pollDelay(Duration.ZERO)
+        .pollInterval(Duration.ofMillis(10))
+        .during(Duration.ofMillis(100))
+        .atMost(Duration.ofMillis(1100))
+        .failFast("response completed before the write callback", completed::isDone)
+        .until(() -> !completed.isDone());
     callback.succeeded();
     completed.get(3, TimeUnit.SECONDS);
 
