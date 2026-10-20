@@ -1,7 +1,7 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -10,11 +10,11 @@ import io.modelcontextprotocol.server.McpServer;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -128,7 +128,13 @@ class McpExpiryTest {
 
                   return null;
                 });
-        assertThrows(TimeoutException.class, () -> ended.get(100, TimeUnit.MILLISECONDS));
+        await("the listening stream stays open before its authenticated expiry")
+            .pollDelay(Duration.ZERO)
+            .pollInterval(Duration.ofMillis(10))
+            .during(Duration.ofMillis(100))
+            .atMost(Duration.ofMillis(1100))
+            .failFast("the listening stream ended before expiry", ended::isDone)
+            .until(() -> !ended.isDone());
         ended.get(4, TimeUnit.SECONDS);
       }
     }

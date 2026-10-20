@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -426,7 +425,13 @@ class ServerSentEventsTest {
                 new String(
                     input.readNBytes(frames.getBytes(StandardCharsets.UTF_8).length),
                     StandardCharsets.UTF_8));
-            assertFalse(exited.await(100, TimeUnit.MILLISECONDS));
+            await("the event handler remains active until released")
+                .pollDelay(Duration.ZERO)
+                .pollInterval(Duration.ofMillis(10))
+                .during(Duration.ofMillis(100))
+                .atMost(Duration.ofMillis(1100))
+                .failFast("the event handler exited before release", () -> exited.getCount() == 0)
+                .until(() -> exited.getCount() > 0);
             release.countDown();
             assertEquals(-1, input.read());
             assertTrue(exited.await(3, TimeUnit.SECONDS));
