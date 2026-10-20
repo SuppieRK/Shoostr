@@ -464,8 +464,7 @@ class WebSocketExampleTest {
   }
 
   private static void assertDenied(
-      HttpClient client, TestServer test, String path, String cookie, List<String> origins)
-      throws Exception {
+      HttpClient client, TestServer test, String path, String cookie, List<String> origins) {
     var builder =
         client
             .newWebSocketBuilder()
