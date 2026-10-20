@@ -30,6 +30,45 @@ The room path demonstrates copied per-connection context, not a chat server or b
 detached path parameters, never Shoostr's handshake request or upgrade response. The `fail` command is explicit
 demo fault injection, not a production operation.
 
+## Opt-in session-authenticated Origin admission
+
+The default launcher and `application()` keep the development-only endpoints above unchanged.
+To register the separate `/session-echo` recipe on your own application:
+
+```java
+var app = new Shoostr()
+    .sessions()
+    .routes(WebSocketExample::sessionEcho);
+```
+
+This creates an unstarted, caller-owned app. Configure your trusted authentication flow and
+session-cookie policy before startup. Only that authentication flow may set the existing
+server-side session attribute `authenticated` to `true`; merely receiving an Authorization
+header or a client-supplied flag is not authentication. No login endpoint or SSO flow is included.
+
+The recipe's `beforeUpgrade` callback requires both:
+
+- Exactly one `Origin` header with the literal value `https://app.example`. Replace that literal
+  in the example with your trusted browser origin, including its scheme and any explicit port.
+  Missing, foreign, malformed, literal `null`, duplicate and comma-combined values are denied.
+- An existing session carrying the server-owned `authenticated=true` marker. Missing, unknown
+  and anonymous sessions are denied. `session(false)` never creates a session during admission.
+
+Denial is HTTP 403 before the managed listener is created or private messages can be exchanged;
+it does not issue a new session cookie. The message callback retains neither the handshake
+request nor its session. An authorized connection echoes text through the existing managed API.
+
+Origin is not a credential: non-browser clients can forge it. This cookie-authenticated route
+still requires Origin when an Authorization header is present. If you need missing-Origin
+non-browser access, configure a separate route with independently verified non-cookie
+authentication; that variant is deliberately not demonstrated here.
+
+These tests verify server-side admission through real HTTP/WebSocket clients, not browser
+cookie delivery or CORS enforcement. Use HTTPS/WSS and appropriate cookie settings in your
+deployment. Authentication is checked at upgrade only: this recipe does not close established
+connections when a session expires or a user logs out. Those lifecycle requirements remain
+separate application work; no connection registry or browser automation is introduced.
+
 ## Try browser clients
 
 From the landing page's console, send text and binary only after `open`:
@@ -109,6 +148,10 @@ Core owns app shutdown; close your client connections explicitly while testing.
 `./gradlew :websocket-example:test` uses the public app factory and a JDK WebSocket client connected through
 `TestServer.baseUri()`. Assertions observe messages, handshake responses and close frames; fragmented client callbacks
 are assembled before comparison. Waits are bounded, and clients/connections are closed.
+The opt-in recipe's tests issue authenticated/anonymous fixture sessions through HTTP, exercise
+the actual managed endpoint, and reuse its ordinary admission function in a native listener
+factory to observe rejection before listener creation. Those session-issuer endpoints exist
+only in tests and are not part of `application()` or the recipe.
 
 ```sh
 ./gradlew :websocket-example:jibDockerBuild

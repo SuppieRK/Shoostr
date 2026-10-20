@@ -1,9 +1,13 @@
 package io.github.suppierk.shoostr.example.websocket;
 
+import io.github.suppierk.shoostr.Request;
+import io.github.suppierk.shoostr.Routes;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.WebSocketConnection;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
+import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
+import java.util.List;
 import org.eclipse.jetty.websocket.api.StatusCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -115,5 +119,35 @@ public final class WebSocketExample {
                             connection.close(StatusCode.BAD_DATA, "Text messages required"));
                   });
             });
+  }
+
+  /**
+   * Registers an opt-in echo requiring the exact trusted Origin and an authenticated session.
+   *
+   * @param routes consumer-owned routes with sessions enabled on the application
+   */
+  public static void sessionEcho(Routes routes) {
+    routes.websocket(
+        "/session-echo",
+        websocket -> {
+          websocket.beforeUpgrade((request, _) -> requireSessionOrigin(request));
+          websocket.onText(WebSocketConnection::send);
+        });
+  }
+
+  /**
+   * Requires one exact Origin and a server-owned authentication marker before listener creation.
+   *
+   * @param request current handshake request, never retained by message callbacks
+   * @throws ForbiddenException if the Origin or existing session is not authorized
+   */
+  static void requireSessionOrigin(Request request) {
+    if (!request.headers("Origin").equals(List.of("https://app.example"))
+        || request
+            .session(false)
+            .filter(session -> Boolean.TRUE.equals(session.getAttribute("authenticated")))
+            .isEmpty()) {
+      throw new ForbiddenException();
+    }
   }
 }
