@@ -1,8 +1,8 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Extension;
@@ -264,7 +264,13 @@ class McpInitializationCleanupTest {
         assertTrue(
             closingExtensions.await(7, TimeUnit.SECONDS),
             "Observe extension cleanup after HTTP drain");
-        assertThrows(TimeoutException.class, () -> stopping.get(500, TimeUnit.MILLISECONDS));
+        await("shutdown waits for native session closure")
+            .pollDelay(Duration.ZERO)
+            .pollInterval(Duration.ofMillis(10))
+            .during(Duration.ofMillis(500))
+            .atMost(Duration.ofMillis(1500))
+            .failFast("shutdown completed before native session closure", stopping::isDone)
+            .until(() -> !stopping.isDone());
         assertEquals(1, closes.get());
       } finally {
         release.tryEmitEmpty();
@@ -329,7 +335,13 @@ class McpInitializationCleanupTest {
               canceled.await(3, TimeUnit.SECONDS),
               "Shutdown must cancel native initialization; native closes=" + closes.get());
           assertTrue(closed.await(3, TimeUnit.SECONDS));
-          assertThrows(TimeoutException.class, () -> stopping.get(500, TimeUnit.MILLISECONDS));
+          await("shutdown waits for pending initialization cleanup")
+              .pollDelay(Duration.ZERO)
+              .pollInterval(Duration.ofMillis(10))
+              .during(Duration.ofMillis(500))
+              .atMost(Duration.ofMillis(1500))
+              .failFast("shutdown completed before initialization cleanup", stopping::isDone)
+              .until(() -> !stopping.isDone());
         } finally {
           held.tryEmitError(new IOException("Release pending initialization after the test"));
           releaseCleanup.tryEmitEmpty();
