@@ -16,7 +16,6 @@ import java.time.Instant;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -102,14 +101,20 @@ class McpFiniteExpiryTest {
         assertTrue(extracted.await(5, TimeUnit.SECONDS));
         assertTrue(expiry.get().isAfter(Instant.now()));
 
-        try (var timer = Executors.newSingleThreadScheduledExecutor()) {
-          timer
-              .schedule(
-                  () -> true,
-                  Duration.between(Instant.now(), expiry.get().plusMillis(100)).toNanos(),
-                  TimeUnit.NANOSECONDS)
-              .get(5, TimeUnit.SECONDS);
-        }
+        var target = expiry.get().plusMillis(100);
+        var started = System.nanoTime();
+        var remaining = Duration.between(Instant.now(), target);
+        var waiting = new CountDownLatch(1);
+        do {
+          var budget = TimeUnit.SECONDS.toNanos(5) - (System.nanoTime() - started);
+          assertTrue(budget > 0, "Wall clock did not pass the verified expiry within five seconds");
+          var delay =
+              remaining.compareTo(Duration.ofNanos(budget)) > 0
+                  ? budget
+                  : Math.max(0, remaining.toNanos());
+          assertFalse(waiting.await(delay, TimeUnit.NANOSECONDS));
+          remaining = Duration.between(Instant.now(), target);
+        } while (remaining.isPositive());
 
         socket.getOutputStream().write(body);
         socket.getOutputStream().flush();

@@ -61,13 +61,24 @@ class McpCompletedDeadlineTest {
                   "/occupy",
                   selected,
                   (_, response) -> {
-                    var remaining =
-                        Duration.between(
-                            Instant.now(), Objects.requireNonNull(expiry.get()).plusMillis(100));
-                    assertFalse(
-                        new CountDownLatch(1)
-                            .await(Math.max(0, remaining.toNanos()), TimeUnit.NANOSECONDS),
-                        "The worker should remain occupied until the old deadline has passed");
+                    var target = Objects.requireNonNull(expiry.get()).plusMillis(100);
+                    var started = System.nanoTime();
+                    var remaining = Duration.between(Instant.now(), target);
+                    var waiting = new CountDownLatch(1);
+                    do {
+                      var budget = TimeUnit.SECONDS.toNanos(5) - (System.nanoTime() - started);
+                      assertTrue(
+                          budget > 0,
+                          "Wall clock did not pass the verified expiry within five seconds");
+                      var delay =
+                          remaining.compareTo(Duration.ofNanos(budget)) > 0
+                              ? budget
+                              : Math.max(0, remaining.toNanos());
+                      assertFalse(
+                          waiting.await(delay, TimeUnit.NANOSECONDS),
+                          "The worker should remain occupied until the old deadline has passed");
+                      remaining = Duration.between(Instant.now(), target);
+                    } while (remaining.isPositive());
                     response.text(
                         (Thread.currentThread() == owner.get())
                             + ":"
