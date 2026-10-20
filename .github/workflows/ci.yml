@@ -125,14 +125,6 @@ jobs:
           BENCHMARK_TEST_CGROUP: '1'
         run: node --test .github/benchmarks/*.test.mjs
 
-      - name: Preserve failed test results
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: junit-test-results
-          path: '**/build/test-results/test/TEST-*.xml'
-          if-no-files-found: warn
-
       - name: Analyze with SonarQube Cloud
         if: >-
           github.event_name != 'pull_request' ||
@@ -211,6 +203,14 @@ jobs:
           node .github/ci/audit.mjs
           echo 'analysis_completed=true' >> "$GITHUB_OUTPUT"
           echo "analyzed_revision=$EXPECTED_REVISION" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve failed test results
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-test-results
+          path: '**/build/test-results/test/TEST-*.xml'
+          if-no-files-found: warn
 
   build:
     if: ${{ always() }}
