@@ -1,8 +1,8 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -146,7 +146,13 @@ class McpSharedResourceTest {
                   .mimeType("text/plain")
                   .build()),
           betaUpdates.poll(3, TimeUnit.SECONDS));
-      assertNull(alphaUpdates.poll(250, TimeUnit.MILLISECONDS));
+      await("the deleted session receives no shared resource update")
+          .pollDelay(Duration.ZERO)
+          .pollInterval(Duration.ofMillis(10))
+          .during(Duration.ofMillis(250))
+          .atMost(Duration.ofMillis(1250))
+          .failFast("the deleted session received an update", () -> !alphaUpdates.isEmpty())
+          .until(alphaUpdates::isEmpty);
 
       var absent =
           test.send(

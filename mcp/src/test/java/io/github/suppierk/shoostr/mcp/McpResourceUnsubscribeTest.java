@@ -1,7 +1,7 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Shoostr;
@@ -101,7 +101,13 @@ class McpResourceUnsubscribeTest {
       alpha.set("alpha-after-unsubscribe");
       mcp.server()
           .notifyResourcesUpdated(new McpSchema.ResourcesUpdatedNotification("fixture://alpha"));
-      assertNull(updates.poll(250, TimeUnit.MILLISECONDS));
+      await("the unsubscribed client receives no resource update")
+          .pollDelay(Duration.ZERO)
+          .pollInterval(Duration.ofMillis(10))
+          .during(Duration.ofMillis(250))
+          .atMost(Duration.ofMillis(1250))
+          .failFast("the unsubscribed client received an update", () -> !updates.isEmpty())
+          .until(updates::isEmpty);
 
       mcp.server()
           .notifyResourcesUpdated(new McpSchema.ResourcesUpdatedNotification("fixture://control"));
@@ -111,7 +117,13 @@ class McpResourceUnsubscribeTest {
                   .mimeType("text/plain")
                   .build()),
           updates.poll(3, TimeUnit.SECONDS));
-      assertNull(updates.poll(250, TimeUnit.MILLISECONDS));
+      await("the control subscriber receives no duplicate update")
+          .pollDelay(Duration.ZERO)
+          .pollInterval(Duration.ofMillis(10))
+          .during(Duration.ofMillis(250))
+          .atMost(Duration.ofMillis(1250))
+          .failFast("the control subscriber received a duplicate update", () -> !updates.isEmpty())
+          .until(updates::isEmpty);
     }
   }
 }

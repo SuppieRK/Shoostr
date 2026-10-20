@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -175,9 +176,22 @@ class McpSessionLimitsTest {
         assertEquals(200, response.statusCode());
         assertTrue(started.await(3, TimeUnit.SECONDS));
 
-        try (var timer = Executors.newSingleThreadScheduledExecutor()) {
-          timer.schedule(() -> true, 900, TimeUnit.MILLISECONDS).get(3, TimeUnit.SECONDS);
-        }
+        var startedAt = System.nanoTime();
+        await("pending native work remains beyond the session idle interval")
+            .pollInSameThread()
+            .pollDelay(Duration.ZERO)
+            .pollInterval(Duration.ofMillis(10))
+            .atMost(Duration.ofSeconds(3))
+            .until(
+                () -> {
+                  if (Thread.interrupted()) {
+                    throw new InterruptedException("The pending work wait was interrupted");
+                  }
+
+                  return Duration.ofNanos(System.nanoTime() - startedAt)
+                          .compareTo(Duration.ofMillis(900))
+                      >= 0;
+                });
 
         var ping =
             test.send(

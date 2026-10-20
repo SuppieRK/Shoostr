@@ -9,4 +9,5 @@ dependencies {
 	api platform('com.fasterxml.jackson:jackson-bom:2.22.3')
 	implementation 'io.modelcontextprotocol.sdk:mcp-json-jackson2'
 	testImplementation project(':test')
+	testImplementation 'org.awaitility:awaitility:4.3.0'
 }
