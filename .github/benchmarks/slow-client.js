@@ -13,7 +13,7 @@ const completed = new Counter('health_completed');
 const elapsed = new Trend('health_elapsed', true);
 
 export const options = {
-  noConnectionReuse: true,
+  noConnectionReuse: role === 'health',
   systemTags: ['proto', 'subproto', 'status', 'method', 'url', 'name', 'group', 'check',
     'error', 'error_code', 'tls_version', 'scenario', 'service', 'expected_response', 'vu'],
   scenarios: role === 'health' ? {

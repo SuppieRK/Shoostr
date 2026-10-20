@@ -114,8 +114,14 @@ sample at or after second 60. Its one-second stop granularity can extend the
 nominal 60 seconds; exact wall-clock phase times remain evidence, not rounded
 claims. k6 supplies constant-VU blocked requests for 60 seconds; each handler
 waits at most five seconds on a cooperative gate so the fixture does not require
-cancellation of arbitrary application code. Ending load disconnects those clients,
-and the control route releases the gate before a full 30-second recovery window.
+cancellation of arbitrary application code. Blocked VUs reuse their HTTP connections
+between calls; healthy probes always establish fresh connections. Ending load
+disconnects the blocked clients, and the control route releases the gate before a
+full 30-second recovery window. This workload investigates persistent blocked
+clients, not connection churn. An earlier reconnect-per-call run failed sustained
+exposure when native TCP setup took over one second; a passing persistent-client
+run would neither resolve nor invalidate that observation. No server default or
+exposure, health or recovery criterion is changed to accommodate it.
 
 Blocked raw metrics must also show the selected active VUs throughout the nominal
 load (after five seconds of startup), with no missing one-second gauge series

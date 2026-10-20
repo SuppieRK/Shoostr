@@ -142,8 +142,19 @@ jobs:
             "$GOBIN/k6" inspect -e WORKLOAD="$selected" -e ROUTE_GROUPS=1000 ".github/benchmarks/$script" > /dev/null
           done < <(jq -r '.[] | [.script,.selected] | @tsv' .github/benchmarks/workloads.json)
           "$GOBIN/k6" inspect -e WORKLOAD=plaintext -e ROUTE_GROUPS=1000 .github/benchmarks/overload.js > /dev/null
-          "$GOBIN/k6" inspect -e ROLE=health .github/benchmarks/slow-client.js > /dev/null
-          "$GOBIN/k6" inspect -e ROLE=blocked -e CLIENTS=128 .github/benchmarks/slow-client.js > /dev/null
+          "$GOBIN/k6" inspect -e ROLE=health .github/benchmarks/slow-client.js | jq -e '
+            .noConnectionReuse == true and
+            .scenarios.health.executor == "constant-arrival-rate" and
+            .scenarios.health.exec == "probe" and
+            .scenarios.health.rate == 1 and .scenarios.health.timeUnit == "1s" and
+            .scenarios.health.duration == "1m40s" and
+            .scenarios.health.preAllocatedVUs == 4 and .scenarios.health.maxVUs == 4 and
+            .scenarios.health.gracefulStop == "1s"'
+          "$GOBIN/k6" inspect -e ROLE=blocked -e CLIENTS=128 .github/benchmarks/slow-client.js | jq -e '
+            .noConnectionReuse == false and (.noVUConnectionReuse // false) == false and
+            .scenarios.blocked.executor == "constant-vus" and
+            .scenarios.blocked.exec == "blocked" and .scenarios.blocked.vus == 128 and
+            .scenarios.blocked.duration == "1m0s" and .scenarios.blocked.gracefulStop == "0s"'
           rm "$GOBIN/xk6"
           (cd "$GOBIN" && sha256sum k6 lib/*.jar > checksums.txt)
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
