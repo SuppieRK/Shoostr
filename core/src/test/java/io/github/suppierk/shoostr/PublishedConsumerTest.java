@@ -160,7 +160,7 @@ class PublishedConsumerTest {
             .redirectOutput(output.toFile())
             .start();
 
-    try (AutoCloseable _ = () -> stopOwnedProcesses(process)) {
+    try (var _ = (AutoCloseable) () -> stopOwnedProcesses(process)) {
       if (waitForReady) {
         var ready = project.resolve("owned-application.pid");
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
