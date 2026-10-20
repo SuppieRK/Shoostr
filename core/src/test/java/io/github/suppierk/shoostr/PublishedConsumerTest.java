@@ -78,6 +78,8 @@ class PublishedConsumerTest {
     }
   }
 
+  // Poll actual readiness under a fixed deadline; sleeping does not establish completion.
+  @SuppressWarnings("java:S2925")
   private static String runConsumer(String metadata, String scenario, String extraBuild, int exit)
       throws Exception {
     var directory = Files.createTempDirectory(workspace, metadata + "-");
@@ -158,7 +160,7 @@ class PublishedConsumerTest {
             .redirectOutput(output.toFile())
             .start();
 
-    try (AutoCloseable cleanup = () -> stopOwnedProcesses(process)) {
+    try (AutoCloseable _ = () -> stopOwnedProcesses(process)) {
       if (waitForReady) {
         var ready = project.resolve("owned-application.pid");
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
@@ -203,6 +205,8 @@ class PublishedConsumerTest {
     }
   }
 
+  // Poll owned-process liveness under one deadline, preserving interruption during cleanup.
+  @SuppressWarnings("java:S2925")
   private static void stopOwnedProcesses(Process process) {
     List<ProcessHandle> owned;
 
@@ -220,7 +224,7 @@ class PublishedConsumerTest {
           TimeUnit.NANOSECONDS.sleep(
               Math.min(
                   TimeUnit.MILLISECONDS.toNanos(10), Math.max(1, deadline - System.nanoTime())));
-        } catch (InterruptedException failure) {
+        } catch (InterruptedException _) {
           interrupted = true;
         }
       }
