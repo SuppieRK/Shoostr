@@ -14,11 +14,11 @@ configurations {
 
 dependencies {
 	api project(':core')
-	api platform('com.fasterxml.jackson:jackson-bom:2.22.3')
+	api platform('com.fasterxml.jackson:jackson-bom:2.22.4')
 	api 'io.swagger.core.v3:swagger-core:2.2.55'
 	// Explicit patched dependencies also protect consumers using only the published Maven POM.
-	api 'com.fasterxml.jackson.core:jackson-core:2.22.3'
-	api 'com.fasterxml.jackson.core:jackson-databind:2.22.3'
+	api 'com.fasterxml.jackson.core:jackson-core:2.22.4'
+	api 'com.fasterxml.jackson.core:jackson-databind:2.22.4'
 	swaggerUiAssets 'org.webjars:swagger-ui:5.33.2'
 	testImplementation project(':test')
 }
