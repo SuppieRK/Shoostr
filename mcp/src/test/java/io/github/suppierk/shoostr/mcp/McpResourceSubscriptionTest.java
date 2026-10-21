@@ -1,7 +1,7 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Shoostr;
@@ -112,7 +112,13 @@ class McpResourceSubscriptionTest {
                   .mimeType("text/plain")
                   .build()),
           alphaUpdates.poll(3, TimeUnit.SECONDS));
-      assertNull(betaUpdates.poll(250, TimeUnit.MILLISECONDS));
+      await("the beta client receives no unrelated resource update")
+          .pollDelay(Duration.ZERO)
+          .pollInterval(Duration.ofMillis(10))
+          .during(Duration.ofMillis(250))
+          .atMost(Duration.ofMillis(1250))
+          .failFast("the beta client received an unrelated update", () -> !betaUpdates.isEmpty())
+          .until(betaUpdates::isEmpty);
 
       beta.set("beta-updated");
       mcp.server()
@@ -123,8 +129,20 @@ class McpResourceSubscriptionTest {
                   .mimeType("text/plain")
                   .build()),
           betaUpdates.poll(3, TimeUnit.SECONDS));
-      assertNull(betaUpdates.poll(250, TimeUnit.MILLISECONDS));
-      assertNull(alphaUpdates.poll(250, TimeUnit.MILLISECONDS));
+      await("the beta client receives no duplicate resource update")
+          .pollDelay(Duration.ZERO)
+          .pollInterval(Duration.ofMillis(10))
+          .during(Duration.ofMillis(250))
+          .atMost(Duration.ofMillis(1250))
+          .failFast("the beta client received a duplicate update", () -> !betaUpdates.isEmpty())
+          .until(betaUpdates::isEmpty);
+      await("the alpha client receives no unrelated resource update")
+          .pollDelay(Duration.ZERO)
+          .pollInterval(Duration.ofMillis(10))
+          .during(Duration.ofMillis(250))
+          .atMost(Duration.ofMillis(1250))
+          .failFast("the alpha client received an unrelated update", () -> !alphaUpdates.isEmpty())
+          .until(alphaUpdates::isEmpty);
     }
   }
 }

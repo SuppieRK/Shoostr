@@ -1,10 +1,10 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Shoostr;
@@ -30,7 +30,6 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -150,7 +149,13 @@ class McpPostExpiryTest {
 
                   return null;
                 });
-        assertThrows(TimeoutException.class, () -> ended.get(100, TimeUnit.MILLISECONDS));
+        await("pending native work keeps its HTTP stream open before expiry")
+            .pollDelay(Duration.ZERO)
+            .pollInterval(Duration.ofMillis(10))
+            .during(Duration.ofMillis(100))
+            .atMost(Duration.ofMillis(1100))
+            .failFast("the pending HTTP stream ended prematurely", ended::isDone)
+            .until(() -> !ended.isDone());
         ended.get(5, TimeUnit.SECONDS);
         assertTrue(httpEnded.await(5, TimeUnit.SECONDS));
         assertEquals(0, cancellations.get());

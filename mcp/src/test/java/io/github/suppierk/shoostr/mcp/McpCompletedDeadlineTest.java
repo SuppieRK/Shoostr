@@ -1,7 +1,7 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Shoostr;
@@ -13,11 +13,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -61,13 +59,25 @@ class McpCompletedDeadlineTest {
                   "/occupy",
                   selected,
                   (_, response) -> {
-                    var remaining =
-                        Duration.between(
-                            Instant.now(), Objects.requireNonNull(expiry.get()).plusMillis(100));
-                    assertFalse(
-                        new CountDownLatch(1)
-                            .await(Math.max(0, remaining.toNanos()), TimeUnit.NANOSECONDS),
-                        "The worker should remain occupied until the old deadline has passed");
+                    var target = Objects.requireNonNull(expiry.get()).plusMillis(100);
+                    var started = System.nanoTime();
+                    var initial = Duration.between(Instant.now(), target);
+                    await("the reused worker reaches the verified expiry without interruption")
+                        .pollInSameThread()
+                        .pollDelay(Duration.ZERO)
+                        .pollInterval(Duration.ofMillis(10))
+                        .atMost(Duration.ofSeconds(5))
+                        .until(
+                            () -> {
+                              if (Thread.interrupted()) {
+                                throw new InterruptedException("The reused worker was interrupted");
+                              }
+
+                              return Duration.ofNanos(System.nanoTime() - started)
+                                          .compareTo(initial)
+                                      >= 0
+                                  && !Instant.now().isBefore(target);
+                            });
                     response.text(
                         (Thread.currentThread() == owner.get())
                             + ":"
