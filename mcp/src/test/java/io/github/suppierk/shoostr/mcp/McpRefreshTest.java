@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -53,7 +54,6 @@ class McpRefreshTest {
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var readers = Executors.newVirtualThreadPerTaskExecutor();
-        var deadlines = Executors.newSingleThreadScheduledExecutor();
         var test = TestServer.start(app)) {
       var initialized =
           test.send(
@@ -110,10 +110,23 @@ class McpRefreshTest {
                     return null;
                   });
           oldEnded.get(1, TimeUnit.SECONDS);
-          var untilOldExpiry = Duration.between(Instant.now(), oldExpiry.get()).plusMillis(100);
-          deadlines
-              .schedule(() -> true, Math.max(0, untilOldExpiry.toNanos()), TimeUnit.NANOSECONDS)
-              .get(5, TimeUnit.SECONDS);
+          var target = oldExpiry.get().plusMillis(100);
+          var started = System.nanoTime();
+          var initial = Duration.between(Instant.now(), target);
+          await("the refreshed listener outlives the old token deadline")
+              .pollInSameThread()
+              .pollDelay(Duration.ZERO)
+              .pollInterval(Duration.ofMillis(10))
+              .atMost(Duration.ofSeconds(5))
+              .until(
+                  () -> {
+                    if (Thread.interrupted()) {
+                      throw new InterruptedException("The old expiry wait was interrupted");
+                    }
+
+                    return Duration.ofNanos(System.nanoTime() - started).compareTo(initial) >= 0
+                        && !Instant.now().isBefore(target);
+                  });
           mcp.server().notifyToolsListChanged();
           var received =
               readers.submit(

@@ -1,0 +1,94 @@
+import java.security.MessageDigest
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+
+plugins {
+    id 'application'
+}
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+}
+tasks.withType(JavaCompile).configureEach {
+    options.release = 25
+    options.compilerArgs.add('-proc:none')
+}
+repositories {
+    exclusiveContent {
+        forRepository {
+            maven {
+                url = uri(providers.gradleProperty('verificationRepository').get())
+                metadataSources {
+                    if (providers.gradleProperty('metadataMode').get() == 'pom') {
+                        mavenPom()
+                        ignoreGradleMetadataRedirection()
+                    } else {
+                        gradleMetadata()
+                    }
+                }
+            }
+        }
+        filter { includeGroup 'io.github.suppierk' }
+    }
+    mavenCentral()
+}
+dependencies {
+    implementation 'io.github.suppierk:shoostr-core:0.1.0-SNAPSHOT'
+}
+application { mainClass = 'io.github.suppierk.consumer.Main' }
+
+
+tasks.register('verifyDistribution') {
+    doLast {
+        def runtime = configurations.runtimeClasspath
+        def result = runtime.incoming.resolutionResult
+        def root = result.rootComponent.get().id
+        def modules = result.allComponents.findAll { it.id != root }.collect { it.id }
+        def artifacts = runtime.incoming.artifacts.artifacts
+        if (modules.any { !(it instanceof ModuleComponentIdentifier) }
+                || artifacts.any { !(it.id.componentIdentifier instanceof ModuleComponentIdentifier) }) {
+            throw new GradleException('Runtime must contain published modules, not project/file substitutes')
+        }
+        def coordinates = modules.collect { "${it.group}:${it.module}:${it.version}" }.sort()
+        def evidence = file(providers.gradleProperty('evidenceDirectory').get())
+        evidence.mkdirs()
+        new File(evidence, 'coordinates.txt').text = coordinates.join('\n') + '\n'
+        def shoostr = modules.findAll { it.group == 'io.github.suppierk' }*.module.toSet()
+        if (shoostr != ['shoostr-core', 'shoostr-http'].toSet()) {
+            throw new GradleException("Unexpected Shoostr runtime modules: ${shoostr}")
+        }
+        modules.each {
+            if (it.group != 'io.github.suppierk' && it.group != 'org.eclipse.jetty'
+                    && !it.group.startsWith('org.eclipse.jetty.')
+                    && !(it.group == 'org.slf4j' && it.module == 'slf4j-api')) {
+                throw new GradleException("Unexpected runtime dependency: ${it}")
+            }
+            if (it.group == 'org.eclipse.jetty.compression'
+                    && !(it.module in ['jetty-compression-common', 'jetty-compression-server', 'jetty-compression-gzip'])) {
+                throw new GradleException("Unexpected runtime dependency: ${it}")
+            }
+        }
+        if (!modules*.module.containsAll(['jetty-alpn-java-server', 'jetty-compression-gzip'])) {
+            throw new GradleException('Missing native runtime-only dependencies')
+        }
+        def hash = { File file -> MessageDigest.getInstance('SHA-256').digest(file.bytes).encodeHex().toString() }
+        new File(evidence, 'artifacts.tsv').text = artifacts.collect {
+            "${it.id.componentIdentifier}\t${it.file}\t${hash(it.file)}"
+        }.sort().join('\n') + '\n'
+        ['core', 'http'].each { name ->
+            def artifact = artifacts.find { it.id.componentIdentifier.group == 'io.github.suppierk'
+                    && it.id.componentIdentifier.module == "shoostr-${name}" }
+            def expected = file(providers.gradleProperty("expected${name.capitalize()}").get())
+            def repository = file(uri(providers.gradleProperty('verificationRepository').get()))
+            def published = fileTree(new File(repository, "io/github/suppierk/shoostr-${name}")) {
+                include '**/*.jar'
+            }.files
+            new File(evidence, "shoostr-${name}.tsv").text =
+                    ([expected, artifact.file] + published).collect { "${it}\t${hash(it)}" }.join('\n') + '\n'
+            if (published.size() != 1 || hash(artifact.file) != hash(expected)
+                    || hash(published.first()) != hash(expected)) {
+                throw new GradleException("Artifact hash mismatch: shoostr-${name}")
+            }
+        }
+    }
+}
+tasks.named('run') { dependsOn 'verifyDistribution' }

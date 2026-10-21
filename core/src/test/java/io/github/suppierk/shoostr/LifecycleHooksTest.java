@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -324,8 +325,13 @@ class LifecycleHooksTest {
               "GET /large HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
       socket.getOutputStream().flush();
       readHeaders(socket);
-      assertNull(
-          outcomes.poll(100, TimeUnit.MILLISECONDS), "pending bytes are not completed output");
+      await("pending bytes are not completed output")
+          .pollDelay(Duration.ZERO)
+          .pollInterval(Duration.ofMillis(10))
+          .during(Duration.ofMillis(100))
+          .atMost(Duration.ofMillis(1100))
+          .failFast("pending transport completed prematurely", () -> !outcomes.isEmpty())
+          .until(outcomes::isEmpty);
       socket.setSoLinger(true, 0);
     }
 
@@ -366,7 +372,13 @@ class LifecycleHooksTest {
                   HttpResponse.BodyHandlers.ofInputStream())
               .body()) {
         assertEquals("hello", new String(body.readNBytes(5), StandardCharsets.UTF_8));
-        assertNull(outcomes.poll(100, TimeUnit.MILLISECONDS));
+        await("the stream is observed only after handler exit")
+            .pollDelay(Duration.ZERO)
+            .pollInterval(Duration.ofMillis(10))
+            .during(Duration.ofMillis(100))
+            .atMost(Duration.ofMillis(1100))
+            .failFast("the stream completed before handler exit", () -> !outcomes.isEmpty())
+            .until(outcomes::isEmpty);
         release.countDown();
         assertEquals("world", new String(body.readAllBytes(), StandardCharsets.UTF_8));
       } finally {
@@ -481,7 +493,14 @@ class LifecycleHooksTest {
         socket.setSoLinger(true, 0);
       }
 
-      assertNull(outcomes.poll(100, TimeUnit.MILLISECONDS));
+      await("completion waits for the held lifecycle stage")
+          .pollDelay(Duration.ZERO)
+          .pollInterval(Duration.ofMillis(10))
+          .during(Duration.ofMillis(100))
+          .atMost(Duration.ofMillis(1100))
+          .failFast(
+              "completion was reported before the held stage finished", () -> !outcomes.isEmpty())
+          .until(outcomes::isEmpty);
     } finally {
       release.countDown();
     }

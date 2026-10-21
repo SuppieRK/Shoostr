@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -17,6 +18,7 @@ import io.modelcontextprotocol.server.McpServer;
 import java.net.URI;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -57,15 +59,22 @@ class McpExpiryChallengeTest {
                   Instant.now().isBefore(expiry), "Reach authorization with a fresh identity");
               passedIdentityCheck.set(true);
 
-              try {
-                var wait = new CountDownLatch(1);
-                while (Instant.now().isBefore(expiry.plusMillis(100))) {
-                  assertFalse(wait.await(100, TimeUnit.MILLISECONDS));
-                }
-              } catch (InterruptedException failure) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException("The unarmed expiry wait was interrupted", failure);
-              }
+              await("authorization reaches the verified expiry before stream admission")
+                  .pollInSameThread()
+                  .pollDelay(Duration.ZERO)
+                  .pollInterval(Duration.ofMillis(10))
+                  .atMost(Duration.ofSeconds(5))
+                  .until(
+                      () -> {
+                        if (Thread.interrupted()) {
+                          Thread.currentThread().interrupt();
+                          throw new IllegalStateException(
+                              "The unarmed expiry wait was interrupted",
+                              new InterruptedException());
+                        }
+
+                        return !Instant.now().isBefore(expiry.plusMillis(100));
+                      });
             },
             URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());

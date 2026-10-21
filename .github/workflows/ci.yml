@@ -63,6 +63,16 @@ jobs:
             --test-reporter=lcov --test-reporter-destination=build/reports/ci/lcov.info \
             .github/ci/*.test.mjs
 
+      - name: Preserve published core consumer evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: published-core-consumer-results
+          path: |
+            core/build/reports/published-consumer/
+            build/published-consumer-repository/
+          if-no-files-found: warn
+
       - name: Verify MCP interoperability with the official suite
         run: ./gradlew :mcp-example:conformanceTest --console=plain
 
@@ -114,14 +124,6 @@ jobs:
         env:
           BENCHMARK_TEST_CGROUP: '1'
         run: node --test .github/benchmarks/*.test.mjs
-
-      - name: Preserve failed test results
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: junit-test-results
-          path: '**/build/test-results/test/TEST-*.xml'
-          if-no-files-found: warn
 
       - name: Analyze with SonarQube Cloud
         if: >-
@@ -201,6 +203,14 @@ jobs:
           node .github/ci/audit.mjs
           echo 'analysis_completed=true' >> "$GITHUB_OUTPUT"
           echo "analyzed_revision=$EXPECTED_REVISION" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve failed test results
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: junit-test-results
+          path: '**/build/test-results/test/TEST-*.xml'
+          if-no-files-found: warn
 
   build:
     if: ${{ always() }}
