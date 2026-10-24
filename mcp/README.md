@@ -177,7 +177,7 @@ The current verification boundary is explicit:
 | External OAuth discovery, browser PKCE and scope escalation | No maintained external-provider end-to-end fixture |
 | Startup ownership, explicit deletion and application shutdown | Live registration/client/lifecycle tests |
 
-The [runnable public example](../examples/12-mcp/README.md) configures the official
+The [runnable public example](../examples/17-mcp/README.md) configures the official
 suite's native catalog and runs the pinned dated requirements, session lifecycle
 and JSON Schema checks. Its single Compose file also starts MCP Inspector for native
 tool, resource and prompt interaction. External OAuth-provider login and browser PKCE

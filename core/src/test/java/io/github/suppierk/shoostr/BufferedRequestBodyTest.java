@@ -218,7 +218,7 @@ class BufferedRequestBodyTest {
             Proxy.newProxyInstance(
                 BufferedRequestBodyTest.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Request.class},
-                (_, method, arguments) ->
+                (ignored, method, arguments) ->
                     switch (method.getName()) {
                       case "getHeaders" -> HttpFields.EMPTY;
                       case "getMethod" -> "GET";
@@ -258,19 +258,18 @@ class BufferedRequestBodyTest {
             Proxy.newProxyInstance(
                 BufferedRequestBodyTest.class.getClassLoader(),
                 new Class<?>[] {Response.class},
-                (_, method, _) -> {
+                (ignored2, method, ignored3) -> {
                   throw new UnsupportedOperationException(method.getName());
                 });
 
     var defaults = Options.defaults();
     var options =
         new Options(
-            defaults.host(),
-            defaults.port(),
             limit,
             defaults.maxResponseBytes(),
             defaults.streamBufferBytes(),
-            defaults.idleTimeoutMillis());
+            1000,
+            MultipartOptions.defaults());
     return Request.create(delegate, sink, options, Callback.NOOP);
   }
 }

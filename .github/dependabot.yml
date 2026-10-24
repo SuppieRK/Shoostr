@@ -13,7 +13,7 @@ updates:
       - /openapi
       - /.github/benchmarks
       - /microbenchmarks
-      - /examples/11-openapi
+      - /examples/16-openapi
     schedule:
       interval: weekly
       day: monday

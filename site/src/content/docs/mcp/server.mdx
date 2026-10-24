@@ -1,0 +1,46 @@
+---
+title: Expose MCP tools, resources and prompts
+description: Mount a native MCP SDK server over Streamable HTTP, configure synchronous or asynchronous callbacks, and expose tools, resources and prompts through explicit capabilities.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/17-mcp/src/main/java/io/github/suppierk/shoostr/example/mcp/McpServerExample.java?raw';
+import test from '../../../../../examples/17-mcp/src/test/java/io/github/suppierk/shoostr/example/mcp/McpServerExampleTest.java?raw';
+
+## Description
+
+Use `shoostr-mcp` to mount a native MCP Java SDK server on a Streamable HTTP endpoint.
+Configure capabilities and callbacks through the SDK factory passed to `Mcp.sync()` or `Mcp.async()`, install the resulting extension, then mount it explicitly with `routes.path("/mcp", mcp::routes)`.
+Installation alone adds neither an endpoint nor authentication.
+
+The SDK distinguishes [tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) that perform named operations, [resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources) that supply URI-addressed context, and [prompts](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts) that supply reusable messages.
+Resource URIs are not HTTP routes, and retrieving a prompt does not invoke a language model.
+
+## Example
+
+Both factories expose the same greeting tool, guide resource and explanation prompt; choose one factory for your application.
+The synchronous callbacks return native results directly, while the asynchronous callbacks return Reactor `Mono` values.
+Declare only capabilities that the server provides: this fixed catalog disables subscriptions and catalog-change notifications.
+
+The catalog is deliberately public and contains no private state.
+Its policy allows non-browser clients without an `Origin` header and browser requests only from `https://client.example`; Origin admission is not authentication.
+The shared owner and absent token expiry are appropriate only for this explicit public policy, not authenticated clients or user-specific resources.
+For private operations, follow [Protect MCP identity, permissions and sessions](../security/).
+For sampling, elicitation and resource subscriptions, see [Request MCP client input and enable resource subscriptions](../interactions/).
+
+Create a separate extension for each application and mount it once on a literal group endpoint.
+Shoostr owns its native server and transport cleanup; `mcp.server()` provides borrowed management access and must not be closed independently.
+Callbacks follow the native SDK's scheduling and transport context, rather than the lifetime of a retained Shoostr request or response.
+
+This adapter supplies Streamable HTTP, not stdio, legacy HTTP+SSE or a stateless transport.
+The installed SDK is 2.1.0; these examples use the `2025-11-25` protocol revision rather than assuming support for newer specifications.
+SSE replay and Last-Event-ID recovery are not implemented, so a successful connection does not establish resumable delivery.
+
+<Code code={application} lang="java" title="McpServerExample.java" />
+
+## Test
+
+The native SDK client discovers and calls the tool, reads the resource through MCP, and retrieves the prompt message.
+A separate test invokes all three features through the asynchronous server factory and closes each client session explicitly.
+
+<Code code={test} lang="java" title="McpServerExampleTest.java" />

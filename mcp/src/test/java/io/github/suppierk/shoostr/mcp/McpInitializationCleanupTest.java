@@ -57,7 +57,7 @@ class McpInitializationCleanupTest {
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     var fail = new AtomicBoolean(true);
     app.beforeResponseFlush(
-        (_, _) -> {
+        (ignored, ignored2) -> {
           if (fail.getAndSet(false)) {
             throw new IOException("Initialization response delivery failed");
           }
@@ -101,7 +101,7 @@ class McpInitializationCleanupTest {
     var completed = new CountDownLatch(1);
     var failedTransport = new AtomicBoolean();
     app.beforeResponseFlush(
-        (_, _) -> {
+        (ignored3, ignored4) -> {
           prepared.countDown();
           assertTrue(release.await(5, TimeUnit.SECONDS));
         });
@@ -150,7 +150,7 @@ class McpInitializationCleanupTest {
             closes,
             closed,
             sessionId,
-            _ -> Mono.error(new IOException("Native initialization failed")));
+            ignored5 -> Mono.error(new IOException("Native initialization failed")));
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
 
@@ -233,7 +233,7 @@ class McpInitializationCleanupTest {
     app.extensions(mcp, new ClosingSignal()).routes(routes -> routes.path("/mcp", mcp::routes));
     var fail = new AtomicBoolean(true);
     app.beforeResponseFlush(
-        (_, _) -> {
+        (ignored6, ignored7) -> {
           if (fail.getAndSet(false)) {
             throw new IOException("Failed initialization");
           }
@@ -298,9 +298,9 @@ class McpInitializationCleanupTest {
             closes,
             closed,
             new AtomicReference<>(),
-            _ ->
+            ignored8 ->
                 held.asMono()
-                    .doOnSubscribe(_ -> subscribed.countDown())
+                    .doOnSubscribe(ignored9 -> subscribed.countDown())
                     .doOnCancel(canceled::countDown),
             releaseCleanup::asMono);
     var app = new Shoostr();
@@ -423,13 +423,13 @@ class McpInitializationCleanupTest {
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     app.afterRouteHandler(
-        (request, _) -> {
+        (request, ignored10) -> {
           if (request.header("X-Expiring").isPresent()) {
             request.attribute("finite-handler-returned", true);
           }
         });
     app.beforeResponseFlush(
-        (request, _) -> {
+        (request, ignored11) -> {
           if (request
               .attribute("finite-handler-returned")
               .filter(Boolean.TRUE::equals)
@@ -501,7 +501,7 @@ class McpInitializationCleanupTest {
                 throw new IllegalStateException(failure);
               }
 
-              return Mono.just(result).doOnSubscribe(_ -> subscriptions.incrementAndGet());
+              return Mono.just(result).doOnSubscribe(ignored12 -> subscriptions.incrementAndGet());
             });
     var app = new Shoostr();
 
@@ -524,7 +524,7 @@ class McpInitializationCleanupTest {
                                     .header("Accept", "application/json, text/event-stream")
                                     .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)))
                         .statusCode();
-                  } catch (IOException _) {
+                  } catch (IOException ignored13) {
                     return 0;
                   }
                 });
@@ -582,7 +582,7 @@ class McpInitializationCleanupTest {
               if (first.getAndSet(false)) {
                 try {
                   new CountDownLatch(1).await(5, TimeUnit.SECONDS);
-                } catch (InterruptedException _) {
+                } catch (InterruptedException ignored14) {
                   throw fatal;
                 }
 
@@ -612,7 +612,7 @@ class McpInitializationCleanupTest {
                     .header("Content-Type", "application/json")
                     .header("Accept", "application/json, text/event-stream")
                     .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
-      } catch (IOException _) {
+      } catch (IOException ignored15) {
         // Fatal failures abort the exchange rather than render an authentication challenge.
       }
 
@@ -670,7 +670,7 @@ class McpInitializationCleanupTest {
                     "alice:client",
                     McpTransportContext.EMPTY,
                     request.header("X-Expiring").isPresent() ? Instant.now().plusSeconds(1) : null),
-            (_, _) -> {}),
+            (ignored16, ignored17) -> {}),
         new McpSessionLimits(1, 1, Duration.ofMinutes(30)),
         transport ->
             McpServer.sync(

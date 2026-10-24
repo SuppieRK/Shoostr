@@ -7,23 +7,27 @@ import java.util.concurrent.ExecutorService;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Codec-backed HTTP registration sharing the existing router, group-depth limits, availability,
+ * Codec-backed registration sharing the existing router, group-depth limits, availability,
  * extension configuration and caller-owned executor contract. No runtime route view is allocated.
- * Use ordinary Routes for SSE, WebSocket and static resources. Closing any scope ends registration
- * for the entire app without stopping its listener.
+ * Use ordinary Routes for native WebSocket listeners and static resources. Closing any scope ends
+ * registration for the entire app without stopping its listener.
  */
 public final class TypedRoutes implements Closeable {
   private final Routes routes;
+  private final Codec codec;
 
   /**
    * Wraps registration only; request/response state is not wrapped or copied.
    *
    * @param routes existing registration scope
+   * @param codec configured application conversion
    */
-  TypedRoutes(Routes routes) {
+  TypedRoutes(Routes routes, Codec codec) {
     this.routes = Objects.requireNonNull(routes);
+    this.codec = Objects.requireNonNull(codec);
   }
 
   /**
@@ -52,7 +56,7 @@ public final class TypedRoutes implements Closeable {
    */
   public TypedRoutes path(String path, Consumer<TypedRoutes> registration) {
     Objects.requireNonNull(registration);
-    routes.path(path, child -> registration.accept(new TypedRoutes(child)));
+    routes.path(path, child -> registration.accept(new TypedRoutes(child, codec)));
     return this;
   }
 
@@ -67,7 +71,7 @@ public final class TypedRoutes implements Closeable {
   public TypedRoutes path(
       String path, Consumer<TypedRoutes> registration, Consumer<Extensions> configuration) {
     Objects.requireNonNull(registration);
-    routes.path(path, child -> registration.accept(new TypedRoutes(child)), configuration);
+    routes.path(path, child -> registration.accept(new TypedRoutes(child, codec)), configuration);
     return this;
   }
 
@@ -80,7 +84,7 @@ public final class TypedRoutes implements Closeable {
    */
   public TypedRoutes when(BooleanSupplier condition, Consumer<TypedRoutes> registration) {
     Objects.requireNonNull(registration);
-    routes.when(condition, child -> registration.accept(new TypedRoutes(child)));
+    routes.when(condition, child -> registration.accept(new TypedRoutes(child, codec)));
     return this;
   }
 
@@ -93,7 +97,7 @@ public final class TypedRoutes implements Closeable {
    */
   public TypedRoutes when(Predicate<Request> condition, Consumer<TypedRoutes> registration) {
     Objects.requireNonNull(registration);
-    routes.when(condition, child -> registration.accept(new TypedRoutes(child)));
+    routes.when(condition, child -> registration.accept(new TypedRoutes(child, codec)));
     return this;
   }
 
@@ -1070,6 +1074,238 @@ public final class TypedRoutes implements Closeable {
       TypedHandler handler,
       Consumer<Extensions> configuration) {
     routes.route(method, executor, adapt(handler), configuration);
+    return this;
+  }
+
+  /**
+   * Registers a codec-enabled managed WebSocket. Object handlers receive binary messages; ordinary
+   * text and binary callbacks remain available.
+   *
+   * @param path relative endpoint path
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public TypedRoutes websocket(String path, Consumer<TypedWebSocket> configuration) {
+    return registerWebsocket(path, null, configuration, null);
+  }
+
+  /**
+   * Registers an object-capable WebSocket at this group's endpoint.
+   *
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public TypedRoutes websocket(Consumer<TypedWebSocket> configuration) {
+    return websocket("", configuration);
+  }
+
+  /**
+   * Registers an object-capable WebSocket with local handshake extensions.
+   *
+   * @param path relative endpoint path
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extensions
+   * @return this scope
+   */
+  public TypedRoutes websocket(
+      String path, Consumer<TypedWebSocket> configuration, Consumer<Extensions> extensions) {
+    return registerWebsocket(path, null, configuration, Objects.requireNonNull(extensions));
+  }
+
+  /**
+   * Registers this group's WebSocket with local handshake extensions.
+   *
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extensions
+   * @return this scope
+   */
+  public TypedRoutes websocket(
+      Consumer<TypedWebSocket> configuration, Consumer<Extensions> extensions) {
+    return websocket("", configuration, extensions);
+  }
+
+  /**
+   * Selects a borrowed HTTP handshake executor. Managed callbacks use the application's native
+   * execution mode: platform threads by default, with {@link Shoostr#virtualThreads()} for virtual
+   * execution.
+   *
+   * @param path relative endpoint path
+   * @param executor caller-owned handshake executor
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public TypedRoutes websocket(
+      String path, ExecutorService executor, Consumer<TypedWebSocket> configuration) {
+    return registerWebsocket(path, Objects.requireNonNull(executor), configuration, null);
+  }
+
+  /**
+   * Selects a borrowed handshake executor and local extensions.
+   *
+   * @param path relative endpoint path
+   * @param executor caller-owned handshake executor
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extensions
+   * @return this scope
+   */
+  public TypedRoutes websocket(
+      String path,
+      ExecutorService executor,
+      Consumer<TypedWebSocket> configuration,
+      Consumer<Extensions> extensions) {
+    return registerWebsocket(
+        path, Objects.requireNonNull(executor), configuration, Objects.requireNonNull(extensions));
+  }
+
+  /**
+   * Registers this group's WebSocket using a borrowed handshake executor.
+   *
+   * @param executor caller-owned handshake executor
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public TypedRoutes websocket(ExecutorService executor, Consumer<TypedWebSocket> configuration) {
+    return websocket("", executor, configuration);
+  }
+
+  /**
+   * Registers this group's WebSocket with a borrowed executor and local extensions.
+   *
+   * @param executor caller-owned handshake executor
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extensions
+   * @return this scope
+   */
+  public TypedRoutes websocket(
+      ExecutorService executor,
+      Consumer<TypedWebSocket> configuration,
+      Consumer<Extensions> extensions) {
+    return websocket("", executor, configuration, extensions);
+  }
+
+  /**
+   * Shares managed registration without changing eager callback ordering or scope ownership.
+   *
+   * @param path relative endpoint path
+   * @param executor optional borrowed handshake executor
+   * @param configuration eager callback configuration
+   * @param extensions optional local handshake extensions
+   * @return this scope
+   */
+  private TypedRoutes registerWebsocket(
+      String path,
+      @Nullable ExecutorService executor,
+      Consumer<TypedWebSocket> configuration,
+      @Nullable Consumer<Extensions> extensions) {
+    Objects.requireNonNull(configuration);
+    var callbacks = new TypedWebSocket(codec);
+    routes.registerManagedWebsocket(
+        path, executor, callbacks, ignored -> configuration.accept(callbacks), extensions);
+    return this;
+  }
+
+  /**
+   * Registers an SSE endpoint with codec-enabled request, response and event output.
+   *
+   * @param path relative endpoint path
+   * @param handler handler-scoped event producer
+   * @return this scope
+   */
+  public TypedRoutes sse(String path, TypedHandler handler) {
+    routes.sse(path, adapt(handler));
+    return this;
+  }
+
+  /**
+   * Registers SSE at this group's endpoint.
+   *
+   * @param handler handler-scoped event producer
+   * @return this scope
+   */
+  public TypedRoutes sse(TypedHandler handler) {
+    routes.sse(adapt(handler));
+    return this;
+  }
+
+  /**
+   * Registers SSE with local extension configuration.
+   *
+   * @param path relative endpoint path
+   * @param handler handler-scoped event producer
+   * @param configuration local extensions
+   * @return this scope
+   */
+  public TypedRoutes sse(String path, TypedHandler handler, Consumer<Extensions> configuration) {
+    routes.sse(path, adapt(handler), configuration);
+    return this;
+  }
+
+  /**
+   * Registers this group's SSE endpoint with local extensions.
+   *
+   * @param handler handler-scoped event producer
+   * @param configuration local extensions
+   * @return this scope
+   */
+  public TypedRoutes sse(TypedHandler handler, Consumer<Extensions> configuration) {
+    routes.sse(adapt(handler), configuration);
+    return this;
+  }
+
+  /**
+   * Registers SSE on a caller-owned executor without changing handler-scoped ownership.
+   *
+   * @param path relative endpoint path
+   * @param executor borrowed handler executor
+   * @param handler handler-scoped event producer
+   * @return this scope
+   */
+  public TypedRoutes sse(String path, ExecutorService executor, TypedHandler handler) {
+    routes.sse(path, executor, adapt(handler));
+    return this;
+  }
+
+  /**
+   * Registers SSE on a caller-owned executor with local extensions.
+   *
+   * @param path relative endpoint path
+   * @param executor borrowed handler executor
+   * @param handler handler-scoped event producer
+   * @param configuration local extensions
+   * @return this scope
+   */
+  public TypedRoutes sse(
+      String path,
+      ExecutorService executor,
+      TypedHandler handler,
+      Consumer<Extensions> configuration) {
+    routes.sse(path, executor, adapt(handler), configuration);
+    return this;
+  }
+
+  /**
+   * Registers this group's SSE endpoint on a caller-owned executor.
+   *
+   * @param executor borrowed handler executor
+   * @param handler handler-scoped event producer
+   * @return this scope
+   */
+  public TypedRoutes sse(ExecutorService executor, TypedHandler handler) {
+    routes.sse(executor, adapt(handler));
+    return this;
+  }
+
+  /**
+   * Registers this group's SSE endpoint with a borrowed executor and local extensions.
+   *
+   * @param executor borrowed handler executor
+   * @param handler handler-scoped event producer
+   * @param configuration local extensions
+   * @return this scope
+   */
+  public TypedRoutes sse(
+      ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration) {
+    routes.sse(executor, adapt(handler), configuration);
     return this;
   }
 

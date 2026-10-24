@@ -33,7 +33,7 @@ class OpenApiUiTest {
             "/docs/swagger-initializer.js",
             "text/javascript");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
@@ -90,7 +90,7 @@ class OpenApiUiTest {
     var docs = new OpenApi("API", "1");
     var ui = docs.uiHandler("/docs/", "/openapi.json");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {

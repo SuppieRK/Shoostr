@@ -7,6 +7,7 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.function.Consumer;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -16,7 +17,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 class CatchAllRoutingTest {
   @Test
   void capturesOneOrManyPathSegmentsButNotAnEmptyTail() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
       app.routes()
           .get(
               "/files/{*path}",
@@ -55,23 +64,31 @@ class CatchAllRoutingTest {
   @Test
   void prefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder() throws Exception {
     for (boolean catchAllFirst : new boolean[] {true, false}) {
-      try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
+      try (var app =
+          new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+              .modifyServer(
+                  nativeServer -> {
+                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                    nativeConnector.setHost("127.0.0.1");
+                    nativeConnector.setPort(0);
+                    nativeConnector.setIdleTimeout(5000);
+                  })) {
         Consumer<Routes> catchAll =
             routes -> {
               routes.get(
                   "/{*path}",
                   (request, response) ->
                       response.text("tail:" + request.pathParam("path").orElseThrow()));
-              routes.post("/{*path}", (_, response) -> response.text("post-tail"));
+              routes.post("/{*path}", (ignored, response) -> response.text("post-tail"));
             };
         Consumer<Routes> specific =
             routes -> {
-              routes.get("/fixed", (_, response) -> response.text("literal"));
+              routes.get("/fixed", (ignored2, response) -> response.text("literal"));
               routes.get(
                   "/{id}",
                   (request, response) ->
                       response.text("segment:" + request.pathParam("id").orElseThrow()));
-              routes.get("/fixed/end", (_, response) -> response.text("literal-end"));
+              routes.get("/fixed/end", (ignored3, response) -> response.text("literal-end"));
             };
         app.routes()
             .path(
@@ -136,7 +153,15 @@ class CatchAllRoutingTest {
 
   @Test
   void composesCatchAllWithParentParametersAndPreservesDecodedTailSpelling() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
       app.routes()
           .path(
               "/accounts/{accountId}",
@@ -200,26 +225,42 @@ class CatchAllRoutingTest {
         "/files/*"
       })
   void rejectsInvalidCatchAllSyntaxAtRegistration(String pattern) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       var routes = app.routes();
-      assertThrows(IllegalArgumentException.class, () -> routes.get(pattern, (_, _) -> {}));
+      assertThrows(
+          IllegalArgumentException.class, () -> routes.get(pattern, (ignored4, ignored5) -> {}));
     }
   }
 
   @Test
   void rejectsEquivalentCatchAllShapesForTheSameMethod() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       var routes = app.routes();
-      routes.get("/files/{*path}", (_, _) -> {});
+      routes.get("/files/{*path}", (ignored6, ignored7) -> {});
       assertThrows(
-          IllegalArgumentException.class, () -> routes.get("/files/{*rest}", (_, _) -> {}));
-      routes.post("/files/{*rest}", (_, _) -> {});
+          IllegalArgumentException.class,
+          () -> routes.get("/files/{*rest}", (ignored8, ignored9) -> {}));
+      routes.post("/files/{*rest}", (ignored10, ignored11) -> {});
     }
   }
 
   @Test
   void serverSentEventRouteUsesTheSameCatchAllCapture() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
       app.routes()
           .sse(
               "/events/{*topic}",
@@ -246,7 +287,15 @@ class CatchAllRoutingTest {
 
   @Test
   void keepsCaseAndTrailingSeparatorsDistinctWithoutReadingAnUnusedCapture() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
       app.routes()
           .get(
               "/Docs/{*path}",

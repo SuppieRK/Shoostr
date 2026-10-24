@@ -4,12 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.util.Arrays;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 
 class ExistingApplicationTest {
@@ -24,7 +24,9 @@ class ExistingApplicationTest {
   void servesRoutesRegisteredOnTheSuppliedApplication() throws Exception {
     var app = new Shoostr();
     app.routes()
-        .path("/api", routes -> routes.get("/value", (_, response) -> response.text("existing")));
+        .path(
+            "/api",
+            routes -> routes.get("/value", (ignored, response) -> response.text("existing")));
 
     try (var server = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
@@ -41,9 +43,13 @@ class ExistingApplicationTest {
 
   @Test
   void rejectsARunningApplicationWithoutStoppingIt() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/value", (_, response) -> response.text("still running"));
+      app.routes().get("/value", (ignored2, response) -> response.text("still running"));
       app.start();
       var target = java.net.URI.create("http://127.0.0.1:" + app.port() + "/value");
 

@@ -9,8 +9,8 @@ for dispatch time and allocated bytes/op; these fixtures do not measure exporter
 The separate `otelInstalled`, `otelSelected`, `otelUnselected` and `otelAppWide` modes use a
 recording OpenTelemetry SDK without an exporter. `otelUnselected` enables the sibling POST route
 while measuring GET; `otelInstalled` enables no routes. `execution=default,platform,forkJoin`
-selects normal virtual-thread dispatch or a fixture-owned single-worker executor for matched
-handling. Compare all four modes with `plain` under the same execution setting. SDK work is
+selects native Jetty platform-thread dispatch or a fixture-owned single-worker platform or
+ForkJoin executor for matched handling. Compare all four modes with `plain` under the same execution setting. SDK work is
 included in these modes; export/network costs and ForkJoin helping frequency are not.
 The manually dispatched [tracing JMH mode](../.github/benchmarks/README.md#paired-tracing-jmh)
 runs these pairs remotely with native GC measurements and separate JFR recordings.
@@ -23,7 +23,7 @@ Git; retain or copy them when sharing evidence.
 ## Extension dispatch
 
 `ExtensionRequestBenchmark` runs complete HTTP/1.1 exchanges through Jetty's `LocalConnector` and
-the production Shoostr dispatcher. It includes native parsing, virtual-thread dispatch, request
+the production Shoostr dispatcher. It includes native parsing, Jetty dispatch, request
 and response peers, response serialization and terminal completion; it excludes network sockets
 and an HTTP client. Report its microseconds and bytes/op separately from nanosecond router lookup.
 The table has GET/POST parameter endpoints in 1 or 1,000 groups. Outcomes cover matches, misses
@@ -38,6 +38,28 @@ cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks Exten
 
 Run paired baseline/candidate plain cases on the same JVM with identical settings, and profile JFR
 separately. Active-case overhead is expected work and must not be reported as extension-free cost.
+
+## Native scheduling
+
+`SchedulingBenchmark` compares `queued-platform`, a native Jetty `QueuedThreadPool`,
+with `queued-virtual`, the same native pool configured with a virtual-thread executor.
+These labels identify the current platform default and explicit virtual configuration.
+
+Each invocation submits a batch of 1, 32 or 4096 finite responses and waits for all of
+them to complete. Each task constructs a real Shoostr request/response pair against
+transport proxies. A blocking readiness queue represents producer waiting; the fixture
+excludes sockets, HTTP parsing and the full application dispatcher. Report batch time
+separately from complete HTTP latency and retain the selected pool and batch size.
+
+```sh
+cmdshape ./gradlew :microbenchmarks:installDist
+cmdshape mkdir -p benchmark-results
+cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks SchedulingBenchmark -p pool=queued-platform,queued-virtual -p batchSize=1,32,4096 -prof gc -foe true -rf json -rff benchmark-results/scheduling.json
+```
+
+Earlier scheduling labels describe different executor configurations. Keep their
+historical results with their original source revision and parameters; changing the
+fixture supplies no new performance evidence.
 
 ## Buffered request bodies
 
@@ -115,7 +137,7 @@ The JMH JFR profiler records measurement iterations using the JDK `profile` conf
 
 ## Literal dictionary baseline
 
-This module uses JMH 1.37 on Java 25 to compare the historical literal-route `HashMap<path, HashMap<HttpMethods, Handler>>` baseline with the package-private `RadixRoutes` implementation in `core`. It does not start an HTTP server. JMH and JOL are benchmark dependencies only; JMH annotation processing is enabled only for this module. End-to-end fixtures are maintained under `.github/benchmarks`.
+This module uses JMH 1.37 on Java 21 to compare the historical literal-route `HashMap<path, HashMap<HttpMethods, Handler>>` baseline with the package-private `RadixRoutes` implementation in `core`. It does not start an HTTP server. JMH and JOL are benchmark dependencies only; JMH annotation processing is enabled only for this module. End-to-end fixtures are maintained under `.github/benchmarks`.
 
 The current router is a compressed character-edge radix tree built from sorted, precompiled registrations. It supports named segments and literal-first precedence; these existing fixtures still exercise literal paths only. It has sorted child arrays, direct single-child selection with binary search for larger arrays, immutable endpoint maps, and offset-based exact lookup. Allowed-method sets are allocated only after matching a registered endpoint; path misses return the JDK empty set. Construction finishes before any measured read. Neither implementation is mutated during lookup; no concurrent map, update protocol, locks, or runtime resizing are needed. The benchmark uses the same package as `core` to access the internal implementation without adding a public routing API.
 
@@ -129,7 +151,7 @@ cmdshape mkdir -p benchmark-results/radix-local
 cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks RouteLookupBenchmark -prof gc -foe true -rf json -rff benchmark-results/radix-local/lookup.json
 ```
 
-Use a new results directory for each comparison. On Windows, use the generated `.bat` launcher. The launcher uses `JAVA_HOME` or `java` on `PATH`; ensure it selects JDK 25. Alternatively, `cmdshape ./gradlew :microbenchmarks:run --args='RouteLookupBenchmark -prof gc'` uses the configured Java toolchain.
+Use a new results directory for each comparison. On Windows, use the generated `.bat` launcher. The launcher uses `JAVA_HOME` or `java` on `PATH`; ensure it selects JDK 21. Alternatively, `cmdshape ./gradlew :microbenchmarks:run --args='RouteLookupBenchmark -prof gc'` uses the configured Java toolchain.
 
 Defaults are three JVM forks, five one-second warmup iterations and five one-second measurements per case, one benchmark thread, a 512 MiB fixed heap, and G1 GC. The default lookup run has 16 cases and takes approximately nine minutes including JVM startup. Run on an otherwise idle machine; retain native JMH JSON and the complete console log. `-foe true` stops on a benchmark error.
 

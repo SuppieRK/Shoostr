@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -33,18 +32,21 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class OpenTelemetryTracingTest {
-  @Test
-  void bareInstallationDoesNotCreateSpansOrOwnTheProvider() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void bareInstallationDoesNotCreateSpansOrOwnTheProvider(boolean virtualApplication)
+      throws Exception {
     var exporter = InMemorySpanExporter.create();
 
     try (var provider =
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       var tracing =
           new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build());
       app.extensions(tracing);
@@ -52,7 +54,7 @@ class OpenTelemetryTracingTest {
       app.routes()
           .get(
               "/",
-              (_, response) ->
+              (ignored, response) ->
                   response.text(Boolean.toString(Span.current().getSpanContext().isValid())));
 
       try (var test = TestServer.start(app)) {
@@ -67,8 +69,10 @@ class OpenTelemetryTracingTest {
     }
   }
 
-  @Test
-  void recordsExplicitServerErrorResponsesWithoutApplicationFailures() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void recordsExplicitServerErrorResponsesWithoutApplicationFailures(boolean virtualApplication)
+      throws Exception {
     var exporter = InMemorySpanExporter.create();
     var completed = new CompletableFuture<Void>();
 
@@ -76,12 +80,12 @@ class OpenTelemetryTracingTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       app.extensions(
           new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build())
               .allRequests());
-      app.afterRequest(_ -> completed.complete(null));
-      app.routes().get("/explicit", (_, response) -> response.status(500).text("explicit"));
+      app.afterRequest(ignored2 -> completed.complete(null));
+      app.routes().get("/explicit", (ignored3, response) -> response.status(500).text("explicit"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -96,14 +100,16 @@ class OpenTelemetryTracingTest {
     }
   }
 
-  @Test
-  void noOpTracingDoesNotChangeRequestHandlingOrInstallCurrentSpans() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void noOpTracingDoesNotChangeRequestHandlingOrInstallCurrentSpans(boolean virtualApplication)
+      throws Exception {
+    try (var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       app.extensions(new OpenTelemetryTracing(OpenTelemetry.noop()).allRequests());
       app.routes()
           .get(
               "/ok",
-              (_, response) ->
+              (ignored4, response) ->
                   response.text(Boolean.toString(Span.current().getSpanContext().isValid())));
 
       try (var test = TestServer.start(app)) {
@@ -115,9 +121,10 @@ class OpenTelemetryTracingTest {
     }
   }
 
-  @Test
-  void recordsMissesAndTerminalFailuresWithoutSensitiveAttributesAndRestoresContext()
-      throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void recordsMissesAndTerminalFailuresWithoutSensitiveAttributesAndRestoresContext(
+      boolean virtualApplication) throws Exception {
     var exporter = InMemorySpanExporter.create();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
@@ -125,7 +132,7 @@ class OpenTelemetryTracingTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
       app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
       app.afterRequest(
@@ -136,12 +143,12 @@ class OpenTelemetryTracingTest {
       app.routes()
           .get(
               "/failure",
-              (_, _) -> {
+              (ignored5, ignored6) -> {
                 throw new IllegalStateException("private");
               });
-      app.routes().get("/transport", (_, response) -> response.text("ok"));
+      app.routes().get("/transport", (ignored7, response) -> response.text("ok"));
       app.afterResponseFlush(
-          (request, _) -> {
+          (request, ignored8) -> {
             if (request.routePattern().filter("/transport"::equals).isPresent()) {
               throw new IOException("private");
             }
@@ -182,8 +189,10 @@ class OpenTelemetryTracingTest {
     }
   }
 
-  @Test
-  void isolatesConcurrentRemoteContextsAndSupportsExplicitDownstreamPropagation() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void isolatesConcurrentRemoteContextsAndSupportsExplicitDownstreamPropagation(
+      boolean virtualApplication) throws Exception {
     var exporter = InMemorySpanExporter.create();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
@@ -191,7 +200,7 @@ class OpenTelemetryTracingTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var app = new Shoostr(Options.defaults().withPort(0));
+        var app = withExecutionMode(new Shoostr(), virtualApplication);
         var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
       var telemetry =
           OpenTelemetrySdk.builder()
@@ -203,7 +212,7 @@ class OpenTelemetryTracingTest {
       app.routes()
           .get(
               "/context",
-              (_, response) -> {
+              (ignored9, response) -> {
                 var headers = new HashMap<String, String>();
                 telemetry
                     .getPropagators()
@@ -250,8 +259,10 @@ class OpenTelemetryTracingTest {
     }
   }
 
-  @Test
-  void extractsTheRemoteParentAndScopesAChildSpanUntilTerminalCompletion() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void extractsTheRemoteParentAndScopesAChildSpanUntilTerminalCompletion(boolean virtualApplication)
+      throws Exception {
     var exporter = InMemorySpanExporter.create();
     var completed = new CompletableFuture<Void>();
 
@@ -259,18 +270,18 @@ class OpenTelemetryTracingTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
               .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
               .build();
       app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
-      app.afterRequest(_ -> completed.complete(null));
+      app.afterRequest(ignored10 -> completed.complete(null));
       app.routes()
           .get(
               "/orders/{id}",
-              (_, response) -> {
+              (ignored11, response) -> {
                 assertTrue(Span.current().getSpanContext().isValid());
                 var child = telemetry.getTracer("test").spanBuilder("child").startSpan();
                 child.end();
@@ -304,5 +315,15 @@ class OpenTelemetryTracingTest {
         assertEquals(server.getSpanId(), response.body());
       }
     }
+  }
+
+  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
+    if (virtualApplication) {
+      app.virtualThreads();
+    }
+
+    return app.onRequestHeaders(
+        (request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

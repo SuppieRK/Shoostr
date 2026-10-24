@@ -1,0 +1,39 @@
+---
+title: Describe HTTP operations with OpenAPI
+description: Generate an OpenAPI document from selected routes and explicit schemas, describe request and response bodies, and keep independent documents frozen before serving traffic.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/16-openapi/src/main/java/io/github/suppierk/shoostr/example/openapi/OpenApiDocumentExample.java?raw';
+import test from '../../../../../examples/16-openapi/src/test/java/io/github/suppierk/shoostr/example/openapi/OpenApiDocumentExampleTest.java?raw';
+
+## Description
+
+Use `shoostr-openapi` to describe operations with explicit Swagger OpenAPI models, then install the `OpenApi` instance and select it through each route or group's extension callback.
+Register `docs.handler()` separately on the URL that serves the generated JSON; installing a document neither exposes that URL nor scans application classes, annotations or codecs.
+Group selections supply independent operation defaults, while a route can override its summary, identifier, parameters, representations and responses.
+
+Schemas describe the API rather than validate requests, choose a codec or enforce authentication.
+Keep those responsibilities in the actual handlers and security configuration, even when an operation declares required fields or a security scheme.
+Likewise, separate documents provide separate descriptions, not access-control boundaries.
+The [OpenAPI 3.1.1 specification](https://spec.openapis.org/oas/v3.1.1.html) explains operations, reusable schemas and security descriptions in more detail.
+
+## Example
+
+The item API defines a reusable schema, a constrained path parameter, and JSON request and response representations.
+Its POST handler checks the input independently, including malformed JSON, missing or blank names, and trailing JSON values.
+The operations endpoint selects another `OpenApi` instance, so it appears only in the separate operations document.
+
+Generation runs before the listener starts and serves a fixed byte snapshot afterward, without executing documented handlers or evaluating availability conditions.
+A conditional route remains described even when currently unavailable; use `hidden()` to exclude a selected binding instead of treating a runtime condition as documentation selection.
+Keep operation identifiers unique within each document, and avoid conflicting method/path descriptions that the OpenAPI format cannot distinguish.
+Protect specification URLs explicitly when they describe private operations; the [local UI recipe](../ui/) covers the page, assets and specification together.
+
+<Code code={application} lang="java" title="OpenApiDocumentExample.java" />
+
+## Test
+
+The tests inspect the generated schemas and operations, invoke the described POST, reject invalid input, and verify document isolation.
+A separate public-API fixture checks detached schema models, frozen configuration, repeated specification bytes and conditional metadata without synthetic handler execution.
+
+<Code code={test} lang="java" title="OpenApiDocumentExampleTest.java" />

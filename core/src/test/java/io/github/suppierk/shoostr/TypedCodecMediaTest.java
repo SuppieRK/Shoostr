@@ -27,7 +27,7 @@ class TypedCodecMediaTest {
           .routes()
           .get(
               "/representation",
-              (_, response) -> {
+              (ignored, response) -> {
                 var selected = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
                 if (MediaType.APPLICATION_JSON.equals(selected)) {
                   response.body(selected, "hello");
@@ -68,7 +68,7 @@ class TypedCodecMediaTest {
           .routes()
           .get(
               "/raw",
-              (_, response) -> {
+              (ignored2, response) -> {
                 switch (operation) {
                   case "string" -> response.body("text/plain", bytes);
                   case "mediaType" -> response.body(MediaType.TEXT_PLAIN, bytes);
@@ -107,7 +107,7 @@ class TypedCodecMediaTest {
           .routes()
           .get(
               "/encoded",
-              (_, response) -> {
+              (ignored3, response) -> {
                 response.text("old");
                 if (typedMedia) {
                   response.body(MediaType.APPLICATION_JSON, "Alice");
@@ -133,7 +133,7 @@ class TypedCodecMediaTest {
           .routes()
           .get(
               "/charset",
-              (_, response) ->
+              (ignored4, response) ->
                   response.body(
                       MediaType.TEXT_PLAIN.withCharset(StandardCharsets.ISO_8859_1), "é"));
 

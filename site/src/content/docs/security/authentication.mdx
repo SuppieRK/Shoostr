@@ -1,0 +1,47 @@
+---
+title: Require authentication for routes and groups
+description: Select an installed authenticator for routes or groups, publish a verified principal, and distinguish a 401 challenge from an authenticated 403 denial.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/14-security/src/main/java/io/github/suppierk/shoostr/example/authentication/RouteAuthenticationExample.java?raw';
+import test from '../../../../../examples/14-security/src/test/java/io/github/suppierk/shoostr/example/authentication/RouteAuthenticationExampleTest.java?raw';
+
+## Description
+
+`AuthenticationExtension` is an abstract base class that specializes the [extension model](../../extensions/route-metadata/#description) for authenticating requests.
+It implements `Extension<AuthenticationExtension>` and `Handler`, retaining the extension lifecycle while adding a dedicated authentication step.
+
+Implement `handle(request, response)` to validate credentials and establish the request's identity.
+Shoostr supplies the final `configure(...)` implementation; selecting the instance with `extensions.with(authentication)` requires authentication in that scope.
+The selected authenticator runs before local and application admission hooks and the endpoint handler.
+
+Install an instance with `app.authentication(authentication)`; `app.extensions(...)` rejects authentication extensions.
+In the route or group configuration callback, use the supplied [`Extensions`](../../extensions/route-metadata/#description) object to select that same instance through `extensions.with(authentication)`.
+Installation alone does not protect a route, and a group's selection is inherited by its child routes.
+To protect registered endpoints by default, select the authenticator in `app.configureExtensionsDefaults(...)` before registering routes, then use `extensions.without(authentication)` on a public endpoint or group.
+A deeper `with(authentication)` restores the same owner; exclusion does not permit substituting another authenticator.
+Several authenticators can be installed in one application, but each endpoint can require only one distinct instance; conflicting selections are rejected during registration.
+
+Validate the supplied credentials before assigning `request.principal(...)`, because a principal is the identity established by your policy, not proof that Shoostr has independently checked a token.
+Use `AuthenticationRequiredException(challenge)` for a `401` response with `WWW-Authenticate`, and `ForbiddenException` when a verified identity lacks permission for the operation.
+
+## Example
+
+The example leaves `/public` unprotected, requires an identity for `/private/me`, and permits only the `admin` identity at `/private/admin`.
+Its fixed bearer tokens are development fixtures, not production secrets or an OAuth server; replace that lookup with real credential validation, including the validity and permission checks your token format requires.
+Protect bearer tokens with HTTPS outside a controlled local test, as described in [Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750.html#section-2.1).
+
+The authenticator accepts one Authorization field, rejects ambiguous credentials, and publishes a principal only for a recognized token.
+Shoostr owns the installed authenticator's lifecycle; the handler reads the verified principal without retaining its live request.
+For a configured third-party direct client and role authorizer, use the [pac4j adapter](../pac4j/).
+For browser login backed by a native session, see [Log in and log out with session cookies](../login-logout/).
+
+<Code code={application} lang="java" title="RouteAuthenticationExample.java" />
+
+## Test
+
+The tests distinguish missing or invalid credentials from an authenticated permission denial, verify inherited protection on both private routes, and confirm that an unselected route remains public.
+They also check duplicate credentials and the Bearer scheme's case and spacing rules through real HTTP requests.
+
+<Code code={test} lang="java" title="RouteAuthenticationExampleTest.java" />

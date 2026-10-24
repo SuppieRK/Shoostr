@@ -34,8 +34,8 @@ class McpUrlElicitationTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (_, _) -> {}),
+                ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+                (ignored2, ignored3) -> {}),
             transport ->
                 McpServer.sync(transport)
                     .requestTimeout(Duration.ofSeconds(5))
@@ -46,7 +46,7 @@ class McpUrlElicitationTest {
                                 McpSchema.Tool.builder("authorize", Map.of("type", "object"))
                                     .build())
                             .callHandler(
-                                (exchange, _) -> {
+                                (exchange, ignored4) -> {
                                   session.complete(exchange.sessionId());
                                   var result =
                                       exchange.createElicitation(
@@ -64,7 +64,7 @@ class McpUrlElicitationTest {
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
-        (request, _) -> {
+        (request, ignored5) -> {
           if ("GET".equals(request.method())) {
             listening.countDown();
           }
@@ -79,7 +79,7 @@ class McpUrlElicitationTest {
                 .capabilities(
                     McpSchema.ClientCapabilities.builder().elicitation(false, true).build())
                 .urlElicitation(
-                    _ ->
+                    ignored6 ->
                         McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT)
                             .build())
                 .elicitationCompleteConsumer(completed::complete)
@@ -114,8 +114,8 @@ class McpUrlElicitationTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (_, _) -> {}),
+                ignored7 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+                (ignored8, ignored9) -> {}),
             transport ->
                 McpServer.sync(transport)
                     .serverInfo("url-elicitation", "1.0")
@@ -127,7 +127,7 @@ class McpUrlElicitationTest {
                                 McpSchema.Tool.builder("authorize", Map.of("type", "object"))
                                     .build())
                             .callHandler(
-                                (exchange, _) -> {
+                                (exchange, ignored10) -> {
                                   var result =
                                       exchange.createElicitation(
                                           McpSchema.ElicitUrlRequest.builder(

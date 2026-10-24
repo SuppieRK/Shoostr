@@ -50,6 +50,7 @@ import java.util.jar.JarOutputStream;
 import java.util.zip.GZIPInputStream;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -84,7 +85,7 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       Thread.currentThread().setContextClassLoader(loader);
       if (classpath) {
         app.routes().classpathResources("/assets", "/issue76-mime");
@@ -142,7 +143,7 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", temporaryDirectory);
 
       try (var test = TestServer.start(app)) {
@@ -164,7 +165,7 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.onRouteMatched(
           (request, response) ->
               response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
@@ -195,9 +196,9 @@ class StaticResourcesTest {
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
     var stages = new CopyOnWriteArrayList<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.onRouteMatched((_, _) -> stages.add("matched"));
-      app.afterRouteHandler((_, _) -> stages.add("after"));
+    try (var app = new Shoostr()) {
+      app.onRouteMatched((ignored, ignored2) -> stages.add("matched"));
+      app.afterRouteHandler((ignored3, ignored4) -> stages.add("after"));
       app.routes().staticFiles("/assets", temporaryDirectory);
 
       try (var test = TestServer.start(app)) {
@@ -229,7 +230,7 @@ class StaticResourcesTest {
     var nested = Files.createDirectory(temporaryDirectory.resolve("nested"));
     Files.writeString(nested.resolve("index.html"), "<h1>nested</h1>");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .staticFiles(
               "/assets",
@@ -269,13 +270,13 @@ class StaticResourcesTest {
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
     Files.writeString(temporaryDirectory.resolve("app.js"), "console.log('app');");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .staticFiles(
               "/assets",
               temporaryDirectory,
               StaticOptions.defaults().withSpaFallback("index.html"));
-      app.routes().get("/assets/health", (_, response) -> response.text("endpoint"));
+      app.routes().get("/assets/health", (ignored5, response) -> response.text("endpoint"));
 
       try (var test = TestServer.start(app)) {
 
@@ -322,7 +323,7 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.onRouteMatched(
           (request, response) ->
               response.addHeader("X-Stage", "matched:" + request.routePattern().orElseThrow()));
@@ -352,7 +353,7 @@ class StaticResourcesTest {
 
   @Test
   void servesConfiguredClasspathWelcomeFileWithoutEnablingFallback() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .classpathResources(
               "/assets", "/", StaticOptions.defaults().withWelcomeFile("static-resource.txt"));
@@ -376,7 +377,7 @@ class StaticResourcesTest {
 
   @Test
   void servesConfiguredClasspathSpaFallbackWithoutEnablingWelcomeFile() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .classpathResources(
               "/assets", "/", StaticOptions.defaults().withSpaFallback("static-resource.txt"));
@@ -412,9 +413,9 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.beforeRouteHandler(
-          (request, _) -> {
+          (request, ignored6) -> {
             if ("/assets/blocked".equals(request.path())) {
               throw new UnauthorizedException();
             }
@@ -450,18 +451,20 @@ class StaticResourcesTest {
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
     var admissions = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(
-          new CorsPolicy(
-              Set.of("https://client.example"),
-              Set.of(HttpMethods.GET),
-              Set.of(HttpHeaders.AUTHORIZATION),
-              true,
-              Set.of(),
-              5));
+    try (var app = new Shoostr()) {
+      var cors =
+          new Cors(
+              new CorsPolicy(
+                  Set.of("https://client.example"),
+                  Set.of(HttpMethods.GET),
+                  Set.of(HttpHeaders.AUTHORIZATION),
+                  true,
+                  Set.of(),
+                  5));
+      app.extensions(cors);
       var admission =
           new AdmissionExtension(
-              (request, _) -> {
+              (request, ignored7) -> {
                 admissions.incrementAndGet();
                 if (request.header("Authorization").filter("Bearer allowed"::equals).isEmpty()) {
                   throw new UnauthorizedException();
@@ -476,7 +479,10 @@ class StaticResourcesTest {
                       "/assets",
                       temporaryDirectory,
                       StaticOptions.defaults().withSpaFallback("index.html")),
-              e -> e.get(admission));
+              e -> {
+                e.with(admission);
+                e.with(cors);
+              });
 
       try (var test = TestServer.start(app)) {
 
@@ -532,8 +538,8 @@ class StaticResourcesTest {
     Files.writeString(selected, "selected");
     Files.writeString(temporaryDirectory.resolve("index.html"), "fallback");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.beforeRouteHandler((_, _) -> Files.delete(selected));
+    try (var app = new Shoostr()) {
+      app.beforeRouteHandler((ignored8, ignored9) -> Files.delete(selected));
       app.routes()
           .staticFiles(
               "/assets",
@@ -560,7 +566,7 @@ class StaticResourcesTest {
     Files.createSymbolicLink(
         publicDirectory.resolve("link.txt"), temporaryDirectory.resolve("secret.txt"));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .staticFiles(
               "/assets", publicDirectory, StaticOptions.defaults().withSpaFallback("index.html"));
@@ -588,9 +594,9 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.afterRouteHandler((_, response) -> response.redirect("/next"));
+      app.afterRouteHandler((ignored10, response) -> response.redirect("/next"));
 
       try (var test = TestServer.start(app)) {
 
@@ -621,7 +627,7 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       Thread.currentThread().setContextClassLoader(loader);
       app.routes().classpathResources("/assets", "/issue76-utf8-public");
 
@@ -659,7 +665,7 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       Thread.currentThread().setContextClassLoader(loader);
       registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
 
@@ -705,7 +711,7 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       Thread.currentThread().setContextClassLoader(loader);
       registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
 
@@ -745,7 +751,7 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       Thread.currentThread().setContextClassLoader(loader);
       registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
 
@@ -777,7 +783,7 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       Thread.currentThread().setContextClassLoader(loader);
       registerComposedStaticSources(app.routes(), filesystem, filesystemFirst);
 
@@ -806,7 +812,7 @@ class StaticResourcesTest {
 
   @Test
   void servesClasspathFilesBelowTheMountedPath() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().classpathResources("/assets", "/");
 
       try (var test = TestServer.start(app)) {
@@ -871,7 +877,12 @@ class StaticResourcesTest {
 
     try (var loader = new URLClassLoader(new URL[] {archive.toUri().toURL()}, previous);
         var occupied = new ServerSocket(0);
-        var app = new Shoostr(Options.defaults().withPort(occupied.getLocalPort()))) {
+        var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0])
+                            .setPort(occupied.getLocalPort()))) {
       Thread.currentThread().setContextClassLoader(loader);
       var routes = app.routes();
       routes.classpathResources("/assets", "/archive");
@@ -893,7 +904,7 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {archive.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       Thread.currentThread().setContextClassLoader(loader);
       var routes = app.routes();
       routes.classpathResources("/assets", "/archive");
@@ -923,7 +934,7 @@ class StaticResourcesTest {
     var file = temporaryDirectory.resolve("site.txt");
     Files.writeString(file, "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", temporaryDirectory);
 
       try (var test = TestServer.start(app)) {
@@ -964,7 +975,11 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = staticTransportClient(app, tls, http2)) {
       app.routes().staticFiles("/assets", temporaryDirectory);
       app.start();
@@ -992,7 +1007,11 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = staticTransportClient(app, tls, http2)) {
       app.routes().staticFiles("/assets", temporaryDirectory);
       app.start();
@@ -1026,7 +1045,11 @@ class StaticResourcesTest {
         temporaryDirectory.resolve("site.txt"),
         FileTime.from(Instant.parse("2020-01-01T00:00:00.500Z")));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = staticTransportClient(app, tls, http2)) {
       app.beforeRouteHandler(
           (request, response) ->
@@ -1084,7 +1107,7 @@ class StaticResourcesTest {
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.compression();
       app.routes().staticFiles("/assets", temporaryDirectory);
 
@@ -1115,7 +1138,7 @@ class StaticResourcesTest {
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.compression();
       app.routes().staticFiles("/assets", temporaryDirectory);
 
@@ -1148,7 +1171,7 @@ class StaticResourcesTest {
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.compression();
       app.routes().staticFiles("/assets", temporaryDirectory);
 
@@ -1187,9 +1210,9 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", temporaryDirectory);
-      app.routes().get("/assets/site.txt", (_, response) -> response.text("endpoint"));
+      app.routes().get("/assets/site.txt", (ignored11, response) -> response.text("endpoint"));
 
       try (var test = TestServer.start(app)) {
 
@@ -1208,7 +1231,7 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "composed resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().path("/api", routes -> routes.staticFiles("assets", temporaryDirectory));
 
       try (var test = TestServer.start(app)) {
@@ -1230,7 +1253,7 @@ class StaticResourcesTest {
     var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("public"));
     Files.writeString(temporaryDirectory.resolve("secret.txt"), "top-secret-content");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", publicDirectory);
 
       try (var test = TestServer.start(app)) {
@@ -1254,7 +1277,7 @@ class StaticResourcesTest {
     Files.writeString(publicDirectory.resolve("site.txt"), "public resource");
     Files.writeString(temporaryDirectory.resolve("secret.txt"), "outside-mount-secret");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", publicDirectory);
 
       try (var test = TestServer.start(app)) {
@@ -1291,7 +1314,7 @@ class StaticResourcesTest {
     var previous = Thread.currentThread().getContextClassLoader();
 
     try (var loader = new URLClassLoader(new URL[] {temporaryDirectory.toUri().toURL()}, previous);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       Thread.currentThread().setContextClassLoader(loader);
       app.routes().classpathResources("/assets", "/issue76-public");
 
@@ -1331,7 +1354,7 @@ class StaticResourcesTest {
     assertTrue(process.waitFor(5, TimeUnit.SECONDS));
     assertEquals(0, process.exitValue());
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", temporaryDirectory);
 
       try (var test = TestServer.start(app)) {
@@ -1360,9 +1383,9 @@ class StaticResourcesTest {
     assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.beforeRouteHandler(
-          (_, _) -> {
+          (ignored12, ignored13) -> {
             throw new UnauthorizedException();
           });
       app.routes().staticFiles("/assets", temporaryDirectory);
@@ -1385,7 +1408,7 @@ class StaticResourcesTest {
     var outcome = new AtomicReference<RequestOutcome>();
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.afterRequest(
           value -> {
             outcome.set(value);
@@ -1414,7 +1437,7 @@ class StaticResourcesTest {
     var file = temporaryDirectory.resolve("site.txt");
     Files.writeString(file, "first");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", temporaryDirectory);
 
       try (var test = TestServer.start(app)) {
@@ -1445,9 +1468,9 @@ class StaticResourcesTest {
     Files.writeString(publicDirectory.resolve("site.txt"), "mounted content");
     Files.writeString(externalDirectory.resolve("site.txt"), "external content");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.beforeRouteHandler(
-          (_, _) -> {
+          (ignored14, ignored15) -> {
             Files.move(publicDirectory, relocatedDirectory);
             Files.createSymbolicLink(publicDirectory, externalDirectory);
           });
@@ -1473,7 +1496,7 @@ class StaticResourcesTest {
     Files.writeString(secret, "top-secret-content");
     Files.createSymbolicLink(publicDirectory.resolve("link.txt"), secret);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", publicDirectory);
 
       try (var test = TestServer.start(app)) {
@@ -1493,14 +1516,14 @@ class StaticResourcesTest {
     var file = temporaryDirectory.resolve("report.txt");
     Files.writeString(file, "download");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       String[] filenames = {"", "line\nbreak.txt", "folder/report.txt", "folder\\report.txt"};
       for (int index = 0; index < filenames.length; index++) {
         var filename = filenames[index];
         app.routes()
             .get(
                 "/download-" + index,
-                (_, response) -> response.attachment(file, "text/plain", filename));
+                (ignored16, response) -> response.attachment(file, "text/plain", filename));
       }
 
       try (var test = TestServer.start(app)) {
@@ -1521,11 +1544,11 @@ class StaticResourcesTest {
     var file = temporaryDirectory.resolve("report.txt");
     Files.writeString(file, "download");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/download",
-              (_, response) -> response.attachment(file, "text/plain", "résumé 2026.txt"));
+              (ignored17, response) -> response.attachment(file, "text/plain", "résumé 2026.txt"));
 
       try (var test = TestServer.start(app)) {
 

@@ -28,13 +28,13 @@ class McpSessionDeletionTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
-        (request, _) -> {
+        (request, ignored4) -> {
           if (request.header("X-Hold-Flush").isPresent()) {
             opening.countDown();
             if (!release.await(5, TimeUnit.SECONDS)) {
@@ -109,8 +109,8 @@ class McpSessionDeletionTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored5 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored6, ignored7) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));

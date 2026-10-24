@@ -1,0 +1,49 @@
+---
+title: Handle file ranges and conditional requests
+description: Serve one file byte range, validate If-None-Match requests, and use a strong If-Range revision without confusing HTTP validators with an application cache.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/09-resources/src/main/java/io/github/suppierk/shoostr/example/resources/FileCachingExample.java?raw';
+import test from '../../../../../examples/09-resources/src/test/java/io/github/suppierk/shoostr/example/resources/FileCachingExampleTest.java?raw';
+
+## Description
+
+Send a file through `response.file(...)` to let Shoostr evaluate conditional headers and select a single byte range.
+The response supplies representation metadata, including validators; a client can use them to avoid downloading an unchanged file or to resume the same revision.
+These are HTTP transfer rules, not an application cache or a guarantee that a client will store the response.
+
+Preconditions run before range selection.
+`If-Match` takes precedence over `If-Unmodified-Since`, and `If-None-Match` takes precedence over `If-Modified-Since`.
+For the GET endpoint below, the main outcomes are:
+
+| Request condition | Response |
+| --- | --- |
+| Matching `If-None-Match`, or an eligible unchanged date | `304` without a body |
+| An eligible `If-Match` or `If-Unmodified-Since` precondition fails | `412` without a body |
+| One satisfiable byte range | `206` with `Content-Range` and the selected bytes |
+| A valid but unsatisfiable range | `416` with `Content-Range: bytes */length` |
+| Unsupported, multiple or malformed ranges | The full `200` representation |
+
+Range selection applies to `GET` responses with status `200`, not to `HEAD`.
+A [strong ETag](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.8.1) identifies an exact, byte-for-byte file revision and must change whenever the file's bytes change.
+Shoostr requires a matching strong tag for `If-Range` to resume a download without mixing file revisions; weak tags, mismatches and date validators fall back to the full file.
+Keep the selected file available and stable through transfer completion, as described in [file downloads](../downloads/).
+
+## Example
+
+This application serves one fixed file revision and supplies a strong `"revision-1"` ETag before selecting the file.
+The caller must change that tag whenever the representation changes; do not keep this literal for a file that can be edited in place.
+If the application does not maintain a strong revision, leave validator generation to Shoostr rather than claiming byte-for-byte identity with a fixed tag.
+
+The file API and [static mounts](../static/) both handle conditional requests, but the explicit strong tag here makes the `If-Range` example unambiguous.
+It is not a replacement for an authorization check before selecting a private file.
+
+<Code code={application} lang="java" title="FileCachingExample.java" />
+
+## Test
+
+The tests use a ten-byte file so the selected intervals and full-response fallback have exact expected values.
+They also check validator precedence and confirm that failed preconditions are resolved before a range can produce a partial response.
+
+<Code code={test} lang="java" title="FileCachingExampleTest.java" />

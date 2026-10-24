@@ -8,7 +8,7 @@ receive neither this module nor its Swagger/Jackson/UI dependencies.
 var docs = new OpenApi("Users API", "1.0");
 var user = docs.schema("User", userSchema); // Explicit Swagger Schema<?> / JsonSchema.
 app.extensions(docs).routes(routes -> {
-  routes.get("/users/{id}", getUser, e -> e.get(docs)
+  routes.get("/users/{id}", getUser, e -> e.with(docs)
       .summary("Find a user")
       .pathParameter("id", "User identifier")
       .response(200, "User found", MediaType.APPLICATION_JSON, user));
@@ -31,7 +31,7 @@ YAML and server-side remote-reference fetching are not supported.
 ## Configuration and inheritance
 
 Configure document title/version in the constructor, then description, servers, named schemas,
-tags and security schemes on the extension. Select its exact installed instance with `e.get(docs)`.
+tags and security schemes on the extension. Select its exact installed instance with `e.with(docs)`.
 Operations support summary/description/operationId/tags, explicit path/query/header parameters,
 request body, responses and security. No operation ID, success response, payload schema or
 security requirement is guessed. Different installed instances compile independent documents.
@@ -76,10 +76,10 @@ app.authentication(security).extensions(docs).routes(routes -> {
     group.get("/", ui);
     group.get("/{*resource}", ui);
   }, e -> {
-    e.get(security).enabled();
-    e.get(docs).hidden(); // Also opts out if documentation defaults are inherited.
+    e.with(security);
+    e.with(docs).hidden(); // Also opts out if documentation defaults are inherited.
   });
-  routes.get("/openapi.json", docs.handler(), e -> e.get(security).enabled());
+  routes.get("/openapi.json", docs.handler(), e -> e.with(security));
 });
 ```
 
@@ -100,7 +100,7 @@ are embedded or persisted in shared
 resources; the online validator is disabled. UI initialization uses fixed same-origin paths,
 not a request's Host header.
 
-See the [runnable example](../examples/11-openapi/README.md) for Pac4j Basic authentication,
+See the [runnable example](../examples/16-openapi/README.md) for Pac4j Basic authentication,
 typed JSON, ordinary text, group overrides and independent documents.
 
 ## Provenance

@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.Handler;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.swagger.v3.oas.models.media.Content;
@@ -16,6 +15,7 @@ import io.swagger.v3.oas.models.security.SecurityScheme;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -39,7 +39,10 @@ class OpenApiValidationTest {
     var docs = new OpenApi("API", "1");
     docs.schema("Container", schema);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(docs);
       assertThrows(IllegalArgumentException.class, app::start);
     }
@@ -60,7 +63,9 @@ class OpenApiValidationTest {
       var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
-          () -> routes.post("/users", (_, _) -> {}, e -> e.get(docs).requestBody(body)));
+          () ->
+              routes.post(
+                  "/users", (ignored, ignored2) -> {}, e -> e.with(docs).requestBody(body)));
     }
   }
 
@@ -82,10 +87,16 @@ class OpenApiValidationTest {
 
     var docs = new OpenApi("API", "1");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(docs)
           .routes()
-          .get("/users/{id:[0-9]+}", (_, _) -> {}, e -> e.get(docs).parameter(parameter));
+          .get(
+              "/users/{id:[0-9]+}",
+              (ignored3, ignored4) -> {},
+              e -> e.with(docs).parameter(parameter));
       assertThrows(IllegalArgumentException.class, app::start);
     }
   }
@@ -100,7 +111,9 @@ class OpenApiValidationTest {
       var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
-          () -> routes.get("/users", (_, _) -> {}, e -> e.get(docs).parameter(parameter)));
+          () ->
+              routes.get(
+                  "/users", (ignored5, ignored6) -> {}, e -> e.with(docs).parameter(parameter)));
     }
   }
 
@@ -108,11 +121,17 @@ class OpenApiValidationTest {
   void rejectsPublishedCatchAllRoutesInsteadOfApproximatingTheirMeaning() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(docs)
           .routes(
               routes ->
-                  routes.get("/files/{*tail}", (_, _) -> {}, e -> e.get(docs).summary("Files")));
+                  routes.get(
+                      "/files/{*tail}",
+                      (ignored7, ignored8) -> {},
+                      e -> e.with(docs).summary("Files")));
       assertThrows(IllegalArgumentException.class, app::start);
     }
   }
@@ -121,14 +140,17 @@ class OpenApiValidationTest {
   void rejectsPathParametersThatDoNotBelongToTheActualTemplate() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(docs)
           .routes(
               routes ->
                   routes.get(
                       "/users/{id}",
-                      (_, _) -> {},
-                      e -> e.get(docs).pathParameter("other", "Wrong parameter")));
+                      (ignored9, ignored10) -> {},
+                      e -> e.with(docs).pathParameter("other", "Wrong parameter")));
       assertThrows(IllegalArgumentException.class, app::start);
     }
   }
@@ -137,12 +159,18 @@ class OpenApiValidationTest {
   void rejectsHttpMethodsThatOpenApiCannotRepresent() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(docs)
           .routes(
               routes ->
                   routes.route(
-                      "CONNECT", "/tunnel", (_, _) -> {}, e -> e.get(docs).summary("Tunnel")));
+                      "CONNECT",
+                      "/tunnel",
+                      (ignored11, ignored12) -> {},
+                      e -> e.with(docs).summary("Tunnel")));
       assertThrows(IllegalArgumentException.class, app::start);
     }
   }
@@ -165,21 +193,28 @@ class OpenApiValidationTest {
       var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
-          () -> routes.get("/users", (_, _) -> {}, e -> e.get(docs).response(200, response)));
+          () ->
+              routes.get(
+                  "/users",
+                  (ignored13, ignored14) -> {},
+                  e -> e.with(docs).response(200, response)));
     }
   }
 
   @Test
   void rejectsDuplicateExplicitOperationIdentifiersWithinOneDocument() throws Exception {
     var docs = new OpenApi("API", "1");
-    Handler shared = (_, _) -> {};
+    Handler shared = (ignored15, ignored16) -> {};
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(docs)
           .routes(
               routes -> {
-                routes.get("/first", shared, e -> e.get(docs).operationId("read"));
-                routes.get("/second", shared, e -> e.get(docs).operationId("read"));
+                routes.get("/first", shared, e -> e.with(docs).operationId("read"));
+                routes.get("/second", shared, e -> e.with(docs).operationId("read"));
               });
       var failure = assertThrows(IllegalArgumentException.class, app::start);
       assertEquals("Duplicate OpenAPI operationId: read", failure.getMessage());
@@ -190,15 +225,18 @@ class OpenApiValidationTest {
   void rejectsUnknownLocalSchemaReferencesBeforeListening() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(docs)
           .routes(
               routes ->
                   routes.get(
                       "/users",
-                      (_, _) -> {},
+                      (ignored17, ignored18) -> {},
                       e ->
-                          e.get(docs)
+                          e.with(docs)
                               .response(
                                   200,
                                   "User",
@@ -214,10 +252,17 @@ class OpenApiValidationTest {
   void rejectsUnknownSecuritySchemesBeforeListening() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(docs)
           .routes(
-              routes -> routes.get("/users", (_, _) -> {}, e -> e.get(docs).security("missing")));
+              routes ->
+                  routes.get(
+                      "/users",
+                      (ignored19, ignored20) -> {},
+                      e -> e.with(docs).security("missing")));
       var failure = assertThrows(IllegalArgumentException.class, app::start);
       assertEquals("Unknown OpenAPI security scheme: missing", failure.getMessage());
     }

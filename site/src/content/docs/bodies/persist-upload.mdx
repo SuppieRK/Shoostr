@@ -1,0 +1,39 @@
+---
+title: Keep an uploaded file
+description: Save an uploaded file under a generated name and retain it after request cleanup.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/05-bodies/src/main/java/io/github/suppierk/shoostr/example/bodies/PersistUploadExample.java?raw';
+import test from '../../../../../examples/05-bodies/src/test/java/io/github/suppierk/shoostr/example/bodies/PersistUploadExampleTest.java?raw';
+
+## Description
+
+To save an uploaded file beyond the request, call `persistTo(Path)` while its handler is active.
+This transfers the content to application ownership: Shoostr no longer removes the saved file during request cleanup.
+Your application decides how long to keep it and when to delete it.
+The `Upload` object itself remains request-scoped, so retain the destination path rather than the upload or its content stream.
+
+Choose a directory controlled by your application and generate destination names there.
+Do not resolve a client-supplied filename against that directory; it is untrusted metadata and can contain path traversal text.
+See [multipart fields and files](../multipart/) for part access, parser limits, and temporary-file behavior.
+
+## Example
+
+The endpoint requires a `document` upload, reserves a unique destination with `Files.createTempFile()`, and returns its generated filename with status `201` after persistence succeeds.
+It removes only that reserved destination if persistence fails, leaving existing files untouched.
+A later response failure does not discard successfully saved content.
+
+The selected directory is created before startup and holds both temporary uploads and saved files.
+This example retains the default multipart limits, including a 16,384-byte file-part memory threshold.
+Persistence works for both in-memory and spilled uploads; it does not promise an atomic move across filesystems.
+
+<Code code={application} lang="java" title="PersistUploadExample.java" />
+
+## Test
+
+The tests verify that both small and spilled uploads remain readable after the application closes.
+They also check generated names, missing uploads, early directory validation, and preservation of existing files when a submitted filename contains traversal text.
+Awaitility is an additional test library used to wait until cleanup leaves only the expected application-owned files.
+
+<Code code={test} lang="java" title="PersistUploadExampleTest.java" />

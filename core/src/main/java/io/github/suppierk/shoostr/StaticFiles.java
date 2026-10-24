@@ -193,7 +193,7 @@ final class StaticFiles implements Closeable {
         method,
         mount,
         mount,
-        (_, response) -> serve(selected, response),
+        (ignored, response) -> serve(selected, response),
         Map.of(),
         -1,
         0,
@@ -209,6 +209,15 @@ final class StaticFiles implements Closeable {
    */
   void behavior(@Nullable EndpointBehavior behavior) {
     this.behavior = behavior;
+  }
+
+  /**
+   * Reports whether the selected protection requires native application sessions.
+   *
+   * @return whether this mount selects CSRF protection
+   */
+  boolean requiresSessions() {
+    return behavior != null && behavior.csrf() != null;
   }
 
   /**
@@ -368,7 +377,7 @@ final class StaticFiles implements Closeable {
       }
 
       return filesystemAttributes(relative) != null;
-    } catch (IOException _) {
+    } catch (IOException ignored2) {
       return false;
     }
   }
@@ -525,7 +534,7 @@ final class StaticFiles implements Closeable {
       }
 
       return directories;
-    } catch (NoSuchFileException | NotDirectoryException _) {
+    } catch (NoSuchFileException | NotDirectoryException ignored3) {
       closeNestedDirectories(directories);
       return null;
     } catch (IOException | RuntimeException failure) {
@@ -550,7 +559,7 @@ final class StaticFiles implements Closeable {
               Path.of(file), BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
       var attributes = view.readAttributes();
       return attributes.isRegularFile() ? attributes : null;
-    } catch (NoSuchFileException _) {
+    } catch (NoSuchFileException ignored4) {
       return null;
     }
   }
@@ -621,7 +630,7 @@ final class StaticFiles implements Closeable {
           URLDecoder.decode(
               encoded.replace(HttpCharacters.PLUS_SIGN_STRING, HttpCharacters.PERCENT_ENCODED_PLUS),
               StandardCharsets.UTF_8);
-    } catch (IllegalArgumentException _) {
+    } catch (IllegalArgumentException ignored5) {
       return null;
     }
 

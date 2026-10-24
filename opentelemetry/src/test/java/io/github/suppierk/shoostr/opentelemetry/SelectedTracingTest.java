@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.AuthenticationExtension;
+import io.github.suppierk.shoostr.Extensions;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Response;
@@ -27,6 +28,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class SelectedTracingTest {
@@ -60,19 +62,21 @@ class SelectedTracingTest {
     }
   }
 
-  @Test
-  void createsServerSpansOnlyForEnabledRoutes() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void createsServerSpansOnlyForSelectedRoutes(boolean virtualApplication) throws Exception {
+    withExecutionMode(app, virtualApplication);
     app.extensions(tracing);
     app.routes()
         .get(
             "/selected",
-            (_, response) ->
+            (ignored, response) ->
                 response.text(Boolean.toString(Span.current().getSpanContext().isValid())),
-            extensions -> extensions.get(tracing).enabled());
+            extensions -> extensions.with(tracing));
     app.routes()
         .get(
             "/plain",
-            (_, response) ->
+            (ignored2, response) ->
                 response.text(Boolean.toString(Span.current().getSpanContext().isValid())));
 
     try (var test = TestServer.start(app)) {
@@ -90,11 +94,16 @@ class SelectedTracingTest {
     }
   }
 
-  @Test
-  void selectingConfigurationWithoutEnablingItLeavesTheRouteUntraced() throws Exception {
-    app.extensions(tracing);
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void excludingDefaultTracingLeavesTheRouteUntraced(boolean virtualApplication) throws Exception {
+    withExecutionMode(app, virtualApplication);
+    app.extensions(tracing).configureExtensionsDefaults(e -> e.with(tracing));
     app.routes()
-        .get("/inert", (_, response) -> response.text("ok"), extensions -> extensions.get(tracing));
+        .get(
+            "/inert",
+            (ignored3, response) -> response.text("ok"),
+            extensions -> extensions.without(tracing));
 
     try (var test = TestServer.start(app)) {
       assertEquals(200, test.send(request -> request.path("/inert")).statusCode());
@@ -103,8 +112,11 @@ class SelectedTracingTest {
     }
   }
 
-  @Test
-  void inheritedAndRepeatedActivationCreatesOneServerSpan() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void inheritedAndRepeatedActivationCreatesOneServerSpan(boolean virtualApplication)
+      throws Exception {
+    withExecutionMode(app, virtualApplication);
     app.extensions(tracing);
     app.routes()
         .path(
@@ -115,13 +127,12 @@ class SelectedTracingTest {
                     nested ->
                         nested.get(
                             "/orders",
-                            (_, response) -> response.text("ok"),
+                            (ignored4, response) -> response.text("ok"),
                             extensions -> {
-                              var configuration = extensions.get(tracing);
-                              assertSame(configuration, extensions.get(tracing));
-                              configuration.enabled().enabled();
+                              var configuration = extensions.with(tracing);
+                              assertSame(configuration, extensions.with(tracing));
                             })),
-            extensions -> extensions.get(tracing).enabled());
+            extensions -> extensions.with(tracing));
 
     try (var test = TestServer.start(app)) {
       assertEquals(200, test.send(request -> request.path("/api/v1/orders")).statusCode());
@@ -131,18 +142,19 @@ class SelectedTracingTest {
     }
   }
 
-  @Test
-  void enablingOneChildDoesNotEnableItsSibling() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void enablingOneChildDoesNotEnableItsSibling(boolean virtualApplication) throws Exception {
+    withExecutionMode(app, virtualApplication);
     app.extensions(tracing);
     app.routes()
         .path(
             "/api",
             group -> {
               group.get(
-                  "/selected", (_, response) -> response.text("ok"), e -> e.get(tracing).enabled());
-              group.get("/plain", (_, response) -> response.text("ok"));
-            },
-            e -> e.get(tracing));
+                  "/selected", (ignored5, response) -> response.text("ok"), e -> e.with(tracing));
+              group.get("/plain", (ignored6, response) -> response.text("ok"));
+            });
 
     try (var test = TestServer.start(app)) {
       assertEquals(200, test.send(request -> request.path("/api/plain")).statusCode());
@@ -154,14 +166,20 @@ class SelectedTracingTest {
     }
   }
 
-  @Test
-  void appWideTracingSubsumesLocalActivationOfTheSameInstance() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void appWideTracingSurvivesScopedExclusionWithoutCreatingDuplicateSpans(
+      boolean virtualApplication) throws Exception {
+    withExecutionMode(app, virtualApplication);
     app.extensions(tracing.allRequests());
     app.routes()
         .get(
             "/selected",
-            (_, response) -> response.text("ok"),
-            e -> e.get(tracing).enabled().enabled());
+            (ignored7, response) -> response.text("ok"),
+            e -> {
+              e.with(tracing);
+              e.without(tracing);
+            });
 
     try (var test = TestServer.start(app)) {
       assertEquals(200, test.send(request -> request.path("/selected")).statusCode());
@@ -172,12 +190,19 @@ class SelectedTracingTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void rejectsActivationAfterTheRegistrationCallbackHasFinished(boolean appWide) {
+  void rejectsSelectionAfterTheRegistrationCallbackHasFinished(boolean appWide) {
     app.extensions(appWide ? tracing.allRequests() : tracing);
-    var retained = new AtomicReference<OpenTelemetryTracing.Configuration>();
-    app.routes().get("/selected", (_, _) -> {}, e -> retained.set(e.get(tracing).enabled()));
+    var retained = new AtomicReference<Extensions>();
+    app.routes()
+        .get(
+            "/selected",
+            (ignored8, ignored9) -> {},
+            e -> {
+              e.with(tracing);
+              retained.set(e);
+            });
     var configuration = retained.get();
-    assertThrows(IllegalStateException.class, configuration::enabled);
+    assertThrows(IllegalStateException.class, () -> configuration.with(tracing));
   }
 
   @Test
@@ -185,21 +210,24 @@ class SelectedTracingTest {
     app.routes()
         .get(
             "/selected",
-            (_, _) -> {},
-            e -> assertThrows(IllegalArgumentException.class, () -> e.get(tracing)));
+            (ignored10, ignored11) -> {},
+            e -> assertThrows(IllegalArgumentException.class, () -> e.with(tracing)));
   }
 
-  @Test
-  void leavesApplicationSpansOnUnselectedRoutesControlledByTheSdk() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void leavesApplicationSpansOnUnselectedRoutesControlledByTheSdk(boolean virtualApplication)
+      throws Exception {
+    withExecutionMode(app, virtualApplication);
     app.extensions(tracing);
-    app.routes().get("/selected", (_, _) -> {}, e -> e.get(tracing).enabled());
+    app.routes().get("/selected", (ignored12, ignored13) -> {}, e -> e.with(tracing));
     app.routes()
         .get(
             "/business",
-            (_, response) -> {
+            (ignored14, response) -> {
               var span = telemetry.getTracer("business").spanBuilder("business").startSpan();
 
-              try (var _ = span.makeCurrent()) {
+              try (var ignored15 = span.makeCurrent()) {
                 response.text(Span.current().getSpanContext().getTraceId());
               } finally {
                 span.end();
@@ -217,12 +245,15 @@ class SelectedTracingTest {
     }
   }
 
-  @Test
-  void activatesContextBeforeManagedAuthenticationAndMatchCallbacks() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void activatesContextBeforeManagedAuthenticationAndMatchCallbacks(boolean virtualApplication)
+      throws Exception {
+    withExecutionMode(app, virtualApplication);
     var authentication = new ContextAuthentication();
     app.extensions(tracing).authentication(authentication);
     app.onRouteMatched(
-        (_, response) ->
+        (ignored16, response) ->
             response.setHeader(
                 "Observed", Boolean.toString(Span.current().getSpanContext().isValid())));
     app.routes()
@@ -230,8 +261,8 @@ class SelectedTracingTest {
             "/selected",
             (request, response) -> response.text(request.principal().orElseThrow().getName()),
             e -> {
-              e.get(authentication).enabled();
-              e.get(tracing).enabled();
+              e.with(authentication);
+              e.with(tracing);
             });
 
     try (var test = TestServer.start(app)) {
@@ -243,10 +274,12 @@ class SelectedTracingTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"/missing", "/selected"})
-  void doesNotObserveUnmatchedPathsOrMethodMismatches(String path) throws Exception {
+  @CsvSource({"/missing,false", "/missing,true", "/selected,false", "/selected,true"})
+  void doesNotObserveUnmatchedPathsOrMethodMismatches(String path, boolean virtualApplication)
+      throws Exception {
+    withExecutionMode(app, virtualApplication);
     app.extensions(tracing);
-    app.routes().get("/selected", (_, _) -> {}, e -> e.get(tracing).enabled());
+    app.routes().get("/selected", (ignored17, ignored18) -> {}, e -> e.with(tracing));
 
     try (var test = TestServer.start(app)) {
       var result = test.send(request -> request.path(path).method("DELETE"));
@@ -256,14 +289,16 @@ class SelectedTracingTest {
     }
   }
 
-  @Test
-  void doesNotObserveARequestRejectedBeforeMatching() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void doesNotObserveARequestRejectedBeforeMatching(boolean virtualApplication) throws Exception {
+    withExecutionMode(app, virtualApplication);
     app.extensions(tracing);
     app.onRequestHeaders(
-        (_, _) -> {
+        (ignored19, ignored20) -> {
           throw new IllegalArgumentException("rejected");
         });
-    app.routes().get("/selected", (_, _) -> {}, e -> e.get(tracing).enabled());
+    app.routes().get("/selected", (ignored21, ignored22) -> {}, e -> e.with(tracing));
 
     try (var test = TestServer.start(app)) {
       assertEquals(500, test.send(request -> request.path("/selected")).statusCode());
@@ -272,17 +307,20 @@ class SelectedTracingTest {
     }
   }
 
-  @Test
-  void distinctTracingInstancesEachContributeTheirOwnSpan() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void distinctTracingInstancesEachContributeTheirOwnSpan(boolean virtualApplication)
+      throws Exception {
+    withExecutionMode(app, virtualApplication);
     var second = new OpenTelemetryTracing(telemetry);
     app.extensions(tracing, second);
     app.routes()
         .get(
             "/selected",
-            (_, response) -> response.text("ok"),
+            (ignored23, response) -> response.text("ok"),
             e -> {
-              e.get(tracing).enabled();
-              e.get(second).enabled();
+              e.with(tracing);
+              e.with(second);
             });
 
     try (var test = TestServer.start(app)) {
@@ -294,13 +332,16 @@ class SelectedTracingTest {
     }
   }
 
-  @Test
-  void recordsTheGenerated404WhenAvailabilityRejectsAMatchedEndpoint() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void recordsTheGenerated404WhenAvailabilityRejectsAMatchedEndpoint(boolean virtualApplication)
+      throws Exception {
+    withExecutionMode(app, virtualApplication);
     app.extensions(tracing);
     app.routes()
         .when(
             () -> false,
-            routes -> routes.get("/selected", (_, _) -> {}, e -> e.get(tracing).enabled()));
+            routes -> routes.get("/selected", (ignored24, ignored25) -> {}, e -> e.with(tracing)));
 
     try (var test = TestServer.start(app)) {
       assertEquals(404, test.send(request -> request.path("/selected")).statusCode());
@@ -323,5 +364,15 @@ class SelectedTracingTest {
       var observed = Boolean.toString(Span.current().getSpanContext().isValid());
       request.principal(() -> observed);
     }
+  }
+
+  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
+    if (virtualApplication) {
+      app.virtualThreads();
+    }
+
+    return app.onRequestHeaders(
+        (request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

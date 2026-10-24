@@ -115,13 +115,14 @@ class TypedCodecCompositionTest {
   @Test
   void mixesOrdinaryAndTypedHandlersInOneApp() throws Exception {
     try (var app = new Shoostr()) {
-      app.routes().get("/ordinary", (_, response) -> response.text("ordinary"));
+      app.routes().get("/ordinary", (ignored, response) -> response.text("ordinary"));
       var returned =
           app.codec(new TestCodec())
               .routes(
                   routes ->
                       routes.get(
-                          "/typed", (_, response) -> response.body("application/json", "typed")));
+                          "/typed",
+                          (ignored2, response) -> response.body("application/json", "typed")));
       assertSame(app, returned);
 
       try (var test = TestServer.start(app)) {
@@ -179,7 +180,7 @@ class TypedCodecCompositionTest {
                 response.body(
                     MediaType.APPLICATION_JSON, request.principal().orElseThrow().getName());
               },
-              extensions -> extensions.get(authentication).enabled());
+              extensions -> extensions.with(authentication));
 
       try (var test = TestServer.start(app)) {
         var result =

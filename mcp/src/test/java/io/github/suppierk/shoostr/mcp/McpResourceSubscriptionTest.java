@@ -36,8 +36,8 @@ class McpResourceSubscriptionTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     var mcp =
         Mcp.sync(
             security,
@@ -48,7 +48,7 @@ class McpResourceSubscriptionTest {
                     .resources(
                         new McpServerFeatures.SyncResourceSpecification(
                             McpSchema.Resource.builder("fixture://alpha", "alpha").build(),
-                            (_, _) ->
+                            (ignored4, ignored5) ->
                                 McpSchema.ReadResourceResult.builder(
                                         List.of(
                                             McpSchema.TextResourceContents.builder(
@@ -58,7 +58,7 @@ class McpResourceSubscriptionTest {
                                     .build()),
                         new McpServerFeatures.SyncResourceSpecification(
                             McpSchema.Resource.builder("fixture://beta", "beta").build(),
-                            (_, _) ->
+                            (ignored6, ignored7) ->
                                 McpSchema.ReadResourceResult.builder(
                                         List.of(
                                             McpSchema.TextResourceContents.builder(
@@ -70,7 +70,7 @@ class McpResourceSubscriptionTest {
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
-        (request, _) -> {
+        (request, ignored8) -> {
           if ("GET".equals(request.method())
               && "/mcp".equals(request.path())
               && attached.add(request.header("Mcp-Session-Id").orElseThrow())) {

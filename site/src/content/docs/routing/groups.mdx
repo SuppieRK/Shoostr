@@ -1,0 +1,38 @@
+---
+title: Group and reuse routes
+description: Reuse route definitions under different prefixes and apply inherited configuration to a group.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/03-routing/src/main/java/io/github/suppierk/shoostr/example/routing/RouteGroupsExample.java?raw';
+import test from '../../../../../examples/03-routing/src/test/java/io/github/suppierk/shoostr/example/routing/RouteGroupsExampleTest.java?raw';
+
+## Description
+
+Use `path(...)` to give related routes a common prefix, or pass the same registration method to several groups when their endpoint definitions are shared.
+Nested prefixes remain relative to their parent even when they begin with `/`, so `/api` followed by `/v1` produces `/api/v1`.
+
+An empty prefix creates a pathless group: its configuration applies to its routes without adding a URL segment.
+Within a group, `get(handler)` registers the group's own endpoint, while `get("/", handler)` registers the distinct trailing-slash endpoint.
+
+The group configuration callback receives an [`Extensions`](../../extensions/route-metadata/#description) object for adding local behavior.
+The example uses it to register inherited response-header hooks without installing an extension.
+
+## Example
+
+The `notes(...)` method is reused under `/api/v1/notes` and `/api/v2/notes`.
+Both groups inherit the API header, but only the second receives the version header; the pathless status group and public sibling remain outside that configuration.
+The nested account route also reads parameters captured by both parent and child paths.
+
+Group configuration runs before its registration callback, and the registration callbacks run before the application starts rather than for each request.
+The response-header hooks below demonstrate inherited configuration without changing the endpoint definitions.
+
+Route scopes share application-wide registration state, so do not close an individual group: that would end registration for the entire application.
+
+<Code code={application} lang="java" title="RouteGroupsExample.java" />
+
+## Test
+
+The tests verify reuse across both prefixes, distinguish group endpoints from trailing-slash endpoints, and check inherited headers without leaking child configuration into siblings.
+
+<Code code={test} lang="java" title="RouteGroupsExampleTest.java" />

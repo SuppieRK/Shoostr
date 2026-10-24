@@ -1,0 +1,36 @@
+---
+title: Customize generated error statuses
+description: Customize generated 404 and 405 responses, preserve Allow, and select a local error renderer for an unavailable route.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/08-errors/src/main/java/io/github/suppierk/shoostr/example/errors/GeneratedStatusExample.java?raw';
+import test from '../../../../../examples/08-errors/src/test/java/io/github/suppierk/shoostr/example/errors/GeneratedStatusExampleTest.java?raw';
+
+## Description
+
+Use `app.status(HttpStatusCodes.NOT_FOUND.value(), handler)` to customize a router-generated error response, such as an unknown path's `404` or an unsupported method's `405`.
+The `HttpStatusCodes` constants come from Shoostr's HTTP library; `.value()` supplies the integer that the status methods accept.
+Shoostr initializes the status before calling the renderer and retains the required `Allow` field on `405` responses.
+See [HTTP method routing](../../routing/methods/) for how those statuses are selected.
+
+A status renderer does not handle a thrown exception or run when an endpoint calls `response.status(...)` itself.
+Use an [exception renderer](../exceptions/) for a thrown `NotFoundException`, even though it also produces `404`.
+Register application status renderers before startup; duplicate registrations for the same status are rejected.
+
+## Example
+
+The application supplies public text for generated `404` and `405` responses, while `/manual` and `/thrown` show the two paths that do not invoke those renderers.
+The group configuration callback receives an [`Extensions`](../../extensions/route-metadata/#description) object and uses `extensions.lifecycle().status(...)` to give the selected but unavailable `/reports/daily` route a local `404` response, together with `Cache-Control: no-store`.
+Availability itself is covered in [conditional routing](../../routing/conditions/).
+
+Local configuration follows the selected endpoint, not just a URL prefix: `/reports/missing` still uses the application renderer.
+Likewise, `POST /reports/daily` has no matching endpoint for that method and uses the application `405` renderer.
+
+<Code code={application} lang="java" title="GeneratedStatusExample.java" />
+
+## Test
+
+The tests distinguish generated, thrown, and manually selected statuses, then verify local unavailable-route rendering, `no-store`, and preserved `Allow` values.
+
+<Code code={test} lang="java" title="GeneratedStatusExampleTest.java" />

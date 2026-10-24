@@ -1,0 +1,44 @@
+---
+title: Log in and log out with session cookies
+description: Verify login credentials, renew a session identifier, refresh the CSRF token, and invalidate authenticated state at logout through explicit application handlers.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/14-security/src/main/java/io/github/suppierk/shoostr/example/authentication/LoginLogoutExample.java?raw';
+import test from '../../../../../examples/14-security/src/test/java/io/github/suppierk/shoostr/example/authentication/LoginLogoutExampleTest.java?raw';
+
+## Description
+
+Use application handlers to coordinate [Sessions](../sessions/), [CSRF protection](../csrf/) and [authentication](../authentication/) when a browser logs in or out.
+Application handlers decide when authentication changes; no extension automatically performs login or logout.
+The session-backed CSRF token follows the native session identifier, so renewal rejects the old proof and invalidation removes its expected value.
+The credential function in this example calls your application's existing, thread-safe verifier and returns its canonical account identifier; it does not store passwords or own the verifier's lifecycle.
+
+Start with `GET /login`, which returns a CSRF token and creates an anonymous session without replacing existing state.
+Submit one username and password in the body of `POST /login`, together with the current cookies, proof and accepted source origin.
+After credential verification succeeds, the handler renews the session identifier and prepares a fresh session-bound proof before publishing the account identity, then returns the proof.
+Use the replacement session cookie and proof for protected writes; repeated login is rejected so one account cannot silently replace another in the same session.
+Successful account responses use `Cache-Control: no-store` to prevent HTTP caches from retaining the identity or preferences.
+
+`POST /account/logout` invalidates the native session and expires its cookie. Obtain a new proof and anonymous session in a later request before logging in again.
+The server-side invalidation remains effective even if the browser never receives the logout response, but cookie changes and network delivery are not a transaction that can roll back a completed transition.
+Restoring the old cookie and proof does not restore an invalidated native session.
+Renewal and invalidation affect later admission; they do not cancel work that another request has already been authorized to perform or close an existing WebSocket.
+
+Use HTTPS directly or through an [explicitly trusted HTTPS proxy](../proxies/), and keep every transition before the response commits.
+Do not host untrusted executable HTML or JavaScript on this trusted origin; use a separate origin and host with host-only cookies, following the [browser trust guidance](../csrf/#description).
+
+## Example
+
+The authentication extension resolves identity from the native session, while `/account/theme` shows a protected state change.
+The handler preserves the deliberately initialized anonymous theme through login and never stores the submitted credentials.
+
+<Code code={application} lang="java" title="LoginLogoutExample.java" />
+
+## Test
+
+The HTTPS tests use a temporary certificate and a deterministic credential verifier to exercise successful login, failed credentials, rejected proofs, identifier renewal, logout and a later login.
+They also release two concurrent credential checks together and verify that only one account is published, while the losing request receives `409`.
+Other checks cover cache protection on repeated account reads, unchanged state after rejected requests, and rejection of old cookies after logout.
+
+<Code code={test} lang="java" title="LoginLogoutExampleTest.java" />

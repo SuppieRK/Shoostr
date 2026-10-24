@@ -142,10 +142,10 @@ class McpSessionLimitsTest {
                         McpServerFeatures.AsyncToolSpecification.builder()
                             .tool(McpSchema.Tool.builder("wait", Map.of("type", "object")).build())
                             .callHandler(
-                                (_, _) ->
+                                (ignored, ignored2) ->
                                     release
                                         .asMono()
-                                        .doOnSubscribe(_ -> started.countDown())
+                                        .doOnSubscribe(ignored3 -> started.countDown())
                                         .thenReturn(
                                             McpSchema.CallToolResult.builder()
                                                 .addTextContent("finished")
@@ -286,7 +286,7 @@ class McpSessionLimitsTest {
                   initialized
                       .initResult()
                       .delayUntil(
-                          _ -> {
+                          ignored4 -> {
                             started.countDown();
                             return release.asMono();
                           }));
@@ -318,7 +318,7 @@ class McpSessionLimitsTest {
                 request.header("X-Verified-Owner").orElse("alice:client"),
                 McpTransportContext.EMPTY,
                 null),
-        (_, _) -> {});
+        (ignored5, ignored6) -> {});
   }
 
   private static HttpResponse<String> initialize(TestServer test, String owner) throws Exception {

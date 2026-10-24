@@ -22,8 +22,10 @@ class ClientConfigurationTest {
   void appliesExplicitClientConfigurationAfterTheDefaults() throws Exception {
     var app = new Shoostr();
     app.routes()
-        .get("/redirect", (_, response) -> response.status(302).setHeader("Location", "/target"));
-    app.routes().get("/target", (_, response) -> response.text("target"));
+        .get(
+            "/redirect",
+            (ignored, response) -> response.status(302).setHeader("Location", "/target"));
+    app.routes().get("/target", (ignored2, response) -> response.text("target"));
 
     try (var test =
         TestServer.start(app, builder -> builder.followRedirects(HttpClient.Redirect.ALWAYS))) {
@@ -60,7 +62,7 @@ class ClientConfigurationTest {
   void leavesTheConfiguredExecutorOwnedByTheCaller() throws Exception {
     try (var executor = Executors.newSingleThreadExecutor()) {
       var app = new Shoostr();
-      app.routes().get("/value", (_, response) -> response.text("value"));
+      app.routes().get("/value", (ignored3, response) -> response.text("value"));
 
       try (var test = TestServer.start(app, builder -> builder.executor(executor))) {
         assertEquals(200, test.send(request -> request.path("/value")).statusCode());
@@ -80,7 +82,7 @@ class ClientConfigurationTest {
               () ->
                   TestServer.start(
                       app,
-                      _ -> {
+                      ignored4 -> {
                         throw expected;
                       }));
       assertSame(expected, actual);
@@ -94,7 +96,9 @@ class ClientConfigurationTest {
     app.close();
     assertThrows(
         IllegalStateException.class,
-        () -> TestServer.start(app, _ -> fail("must not configure a client for a rejected app")));
+        () ->
+            TestServer.start(
+                app, ignored5 -> fail("must not configure a client for a rejected app")));
   }
 
   @Test

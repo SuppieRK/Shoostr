@@ -1,0 +1,33 @@
+---
+title: Write safe HTTP access logs
+description: Enable terminal access logging with an application-owned sink, recording configured route templates and failure flags without raw paths, credentials, bodies or exception details.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/15-observability/micrometer/src/main/java/io/github/suppierk/shoostr/example/metrics/AccessLoggingExample.java?raw';
+import test from '../../../../../examples/15-observability/micrometer/src/test/java/io/github/suppierk/shoostr/example/metrics/AccessLoggingExampleTest.java?raw';
+
+## Description
+
+Register an `AccessLog` with `afterRequest(...)` to emit one summary after application finalization and transport termination.
+Access logging is off unless you register it; the no-argument constructor uses `System.Logger` at INFO, while the constructor shown here accepts your own destination without selecting a logging backend.
+The sink can run concurrently on completion threads and must return promptly rather than perform blocking file or network writes.
+
+Each record contains the bounded HTTP method, configured route template or `UNMATCHED`, final committed status, duration in nanoseconds, and separate application and transport failure flags.
+A status of zero means no final status was committed; the duration covers the request lifecycle, not only time spent in the handler.
+Raw request paths, query strings, headers, bodies and exception details are excluded, and whitespace or controls in a configured template are replaced with underscores to keep each record on one line.
+
+## Example
+
+Requests to `/orders/42` are logged under `/orders/{id}`, so identifiers do not become log fields.
+The failure route demonstrates a terminal failure flag without exposing the exception message, while a route miss produces `UNMATCHED` without revealing its raw path.
+The destination remains application-owned; coordinate its final disposal with [application shutdown](../../lifecycle/shutdown/) rather than closing it inside the callback.
+
+<Code code={application} lang="java" title="AccessLoggingExample.java" />
+
+## Test
+
+The tests make real requests carrying query, authorization and cookie secrets, then check the emitted summaries, generated 404 and thrown 500.
+They verify that the log contains neither the raw identifier path nor secret or exception text.
+
+<Code code={test} lang="java" title="AccessLoggingExampleTest.java" />

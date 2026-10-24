@@ -1,0 +1,44 @@
+---
+title: Start an application and shut it down safely
+description: Start the listener, signal waiting handlers before graceful shutdown, and release application resources after framework cleanup, including startup failures.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/ShutdownExample.java?raw';
+import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/ShutdownExampleTest.java?raw';
+
+## Description
+
+Configure the application and register shutdown callbacks before startup, keeping its owner responsible for closing it.
+
+| Method | When it runs |
+| --- | --- |
+| `start` | Called by the owner to compile routes and start the listener. Successful startup freezes registration. |
+| `close` | Called explicitly, by try-with-resources, or by the JVM shutdown hook. Startup failures after route compilation also invoke it; repeated calls do nothing. |
+| `beforeClose` | Registered callbacks run in registration order at the start of the first closure, before native graceful shutdown. Use them to signal long-lived work. |
+| `afterClose` | Registered callbacks run in reverse registration order after framework and extension cleanup. Use them for final disposal of application-owned resources. |
+
+Construction registers one JVM shutdown hook, even before startup; explicit closure removes it, while `start()` adds no further hook.
+Both shutdown callback lists run synchronously on the closing thread, including when an application closes without starting, and a closed application cannot restart.
+
+Keep signalling callbacks prompt so they do not wait for the handlers they must release.
+Caller-owned executor tasks can outlive the native drain, so coordinate those tasks before disposing any resource they still use; see [endpoint executors](../executors/).
+Jetty stops its native platform pool with the server, and Shoostr closes the dedicated executor it creates when virtual execution is enabled.
+Executors supplied through native configuration remain caller-owned unless their lifecycle is explicitly registered with Jetty.
+
+A rejected route compilation leaves registration open for correction, whereas failures after compilation close acquired resources and prevent another startup attempt.
+`RuntimeException` failures from shutdown callbacks are collected without skipping later cleanup.
+
+## Example
+
+`/wait-for-shutdown` waits for a shutdown signal or returns 204 after 30 seconds without one.
+The signal releases waiting requests while their resources remain available, and `dispose` runs during final cleanup.
+
+<Code code={application} lang="java" title="ShutdownExample.java" />
+
+## Test
+
+The live request test closes the application while a handler is waiting, then verifies its response and final cleanup.
+The other tests cover normal traffic, repeated closure, callback order before startup, and cleanup after an extension fails during startup.
+
+<Code code={test} lang="java" title="ShutdownExampleTest.java" />

@@ -1,0 +1,37 @@
+---
+title: Handle your first HTTP request
+description: Start a Java HTTP server, return a text response, and verify it with a live HTTP test.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/01-hello/src/main/java/io/github/suppierk/shoostr/example/hello/HelloExample.java?raw';
+import test from '../../../../../examples/01-hello/src/test/java/io/github/suppierk/shoostr/example/hello/HelloExampleTest.java?raw';
+
+## Description
+
+Register a GET endpoint at `/hello` that returns `Hello, Shoostr!` as plain text.
+
+With Shoostr core available in your Java 21 project, this example uses your existing SLF4J logging configuration.
+The [library reference](../libraries/) covers the core, test, and optional libraries.
+
+Shoostr is experimental, so its public interfaces can change.
+
+The default listener binds to all IPv4 interfaces on port `8080`, not only to localhost.
+
+## Example
+
+`application()` builds an unstarted `Shoostr` application and leaves its lifetime with the caller.
+Construction registers Shoostr's JVM shutdown hook without starting the listener.
+
+Launching `HelloExample` invokes `main`, which starts the listener; normal JVM shutdown closes the application through its hook.
+Callers that manage the application directly must close it even if it never starts.
+
+<Code code={application} lang="java" title="HelloExample.java" />
+
+## Test
+
+The `TestServer` fixture runs the application on an available loopback port and owns its shutdown, keeping the test independent of the application's default binding.
+
+Response handling uses Java's standard `java.net.http` API: `HttpResponse.BodyHandlers.ofString()` reads the response body as a `String`.
+
+<Code code={test} lang="java" title="HelloExampleTest.java" />

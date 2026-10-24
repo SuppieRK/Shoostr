@@ -28,12 +28,15 @@ import org.junit.jupiter.api.io.TempDir;
 class SessionTest {
   @Test
   void leavesSessionsDisabledUntilConfigured() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/peek",
-              (request, response) ->
-                  response.text(request.session(true).isEmpty() ? "disabled" : "created"));
+              (request, response) -> {
+                assertTrue(request.getSession().isEmpty());
+                assertThrows(IllegalStateException.class, request::getOrCreateSession);
+                response.text("disabled");
+              });
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -46,20 +49,20 @@ class SessionTest {
 
   @Test
   void createsSessionOnlyWhenRequestedAndRetainsAttributesAcrossRequests() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions();
       app.routes()
           .get(
               "/peek",
               (request, response) -> {
-                var session = request.session(false);
+                var session = request.getSession();
                 response.text(
                     session.map(value -> (String) value.getAttribute("name")).orElse("absent"));
               })
           .get(
               "/create",
               (request, response) -> {
-                var session = request.session(true).orElseThrow();
+                var session = request.getOrCreateSession();
                 session.setAttribute("name", "alice");
                 response.text(session.getId());
               });
@@ -100,20 +103,20 @@ class SessionTest {
 
   @Test
   void renewsSessionIdWithoutLosingAttributesOrAcceptingTheOldCookie() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions();
       app.routes()
           .get(
               "/create",
               (request, response) -> {
-                request.session(true).orElseThrow().setAttribute("name", "alice");
+                request.getOrCreateSession().setAttribute("name", "alice");
                 response.text("created");
               })
           .get("/renew", (request, response) -> response.text(request.renewSessionId()))
           .get(
               "/peek",
               (request, response) -> {
-                var session = request.session(false);
+                var session = request.getSession();
                 response.text(
                     session.map(value -> (String) value.getAttribute("name")).orElse("absent"));
               });
@@ -154,20 +157,19 @@ class SessionTest {
 
   @Test
   void rejectsUnknownIdsAndInvalidatedSessionsWithoutAdoptingTheirIdentifiers() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions();
       app.routes()
           .get(
-              "/create",
-              (request, response) -> response.text(request.session(true).orElseThrow().getId()))
+              "/create", (request, response) -> response.text(request.getOrCreateSession().getId()))
           .get(
               "/peek",
               (request, response) ->
-                  response.text(request.session(false).isEmpty() ? "absent" : "present"))
+                  response.text(request.getSession().isEmpty() ? "absent" : "present"))
           .get(
               "/logout",
               (request, response) -> {
-                request.session(false).orElseThrow().invalidate();
+                request.getSession().orElseThrow().invalidate();
                 response.text("logged out");
               });
 
@@ -214,7 +216,7 @@ class SessionTest {
 
   @Test
   void appliesSafeCookieDefaultsAndAllowsNativeJettyOverrides() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions(
           handler -> {
             handler.setSessionCookie("WEBSESSION");
@@ -224,7 +226,7 @@ class SessionTest {
       app.routes()
           .get(
               "/create",
-              (request, response) -> response.text(request.session(true).orElseThrow().getId()));
+              (request, response) -> response.text(request.getOrCreateSession().getId()));
 
       try (var test =
           TestServer.start(
@@ -250,16 +252,15 @@ class SessionTest {
   void expiresIdleSessionsAndClearsMemoryWhenApplicationCloses() throws Exception {
     String cookie;
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions(handler -> handler.setMaxInactiveInterval(1));
       app.routes()
           .get(
-              "/create",
-              (request, response) -> response.text(request.session(true).orElseThrow().getId()))
+              "/create", (request, response) -> response.text(request.getOrCreateSession().getId()))
           .get(
               "/peek",
               (request, response) ->
-                  response.text(request.session(false).isEmpty() ? "absent" : "present"));
+                  response.text(request.getSession().isEmpty() ? "absent" : "present"));
 
       try (var test =
           TestServer.start(
@@ -292,14 +293,14 @@ class SessionTest {
       }
     }
 
-    try (var restarted = new Shoostr(Options.defaults().withPort(0))) {
+    try (var restarted = new Shoostr()) {
       restarted.sessions();
       restarted
           .routes()
           .get(
               "/peek",
               (request, response) ->
-                  response.text(request.session(false).isEmpty() ? "absent" : "present"));
+                  response.text(request.getSession().isEmpty() ? "absent" : "present"));
 
       try (var test =
           TestServer.start(
@@ -321,12 +322,12 @@ class SessionTest {
     var sessionHandler = new AtomicReference<SessionHandler>();
     String cookie;
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions(sessionHandler::set);
       app.routes()
           .get(
               "/create",
-              (request, response) -> response.text(request.session(true).orElseThrow().getId()));
+              (request, response) -> response.text(request.getOrCreateSession().getId()));
 
       try (var test =
           TestServer.start(
@@ -349,14 +350,14 @@ class SessionTest {
     assertTrue(cache.isStopped());
     assertEquals(0, cache.getSessionsCurrent());
 
-    try (var restarted = new Shoostr(Options.defaults().withPort(0))) {
+    try (var restarted = new Shoostr()) {
       restarted.sessions();
       restarted
           .routes()
           .get(
               "/peek",
               (request, response) ->
-                  response.text(request.session(false).isEmpty() ? "absent" : "present"));
+                  response.text(request.getSession().isEmpty() ? "absent" : "present"));
 
       try (var test =
           TestServer.start(
@@ -374,22 +375,23 @@ class SessionTest {
 
   @Test
   void retainsNewSessionCookieWhenApplicationErrorIsHandled() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions();
       app.exception(
-          IllegalArgumentException.class, (_, _, response) -> response.status(409).text("handled"));
+          IllegalArgumentException.class,
+          (ignored, ignored2, response) -> response.status(409).text("handled"));
       app.routes()
           .get(
               "/start",
               (request, response) -> {
-                request.session(true).orElseThrow().setAttribute("name", "alice");
+                request.getOrCreateSession().setAttribute("name", "alice");
                 response.cookie("discard", "unsafe");
                 throw new IllegalArgumentException("failure after session creation");
               })
           .get(
               "/peek",
               (request, response) -> {
-                var session = request.session(false);
+                var session = request.getSession();
                 response.text(
                     session.map(value -> (String) value.getAttribute("name")).orElse("absent"));
               });
@@ -419,13 +421,13 @@ class SessionTest {
       @TempDir Path directory) throws Exception {
     String cookie;
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions(handler -> fileStore(handler, directory));
       app.routes()
           .get(
               "/create",
               (request, response) -> {
-                request.session(true).orElseThrow().setAttribute("name", "alice");
+                request.getOrCreateSession().setAttribute("name", "alice");
                 response.text("created");
               });
 
@@ -442,14 +444,14 @@ class SessionTest {
       }
     }
 
-    try (var restarted = new Shoostr(Options.defaults().withPort(0))) {
+    try (var restarted = new Shoostr()) {
       restarted.sessions(handler -> fileStore(handler, directory));
       restarted
           .routes()
           .get(
               "/peek",
               (request, response) -> {
-                var session = request.session(false);
+                var session = request.getSession();
                 response.text(
                     session.map(value -> (String) value.getAttribute("name")).orElse("absent"));
               });
@@ -474,7 +476,7 @@ class SessionTest {
     String cookie;
     String token;
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var csrf = new Csrf();
       app.sessions(handler -> fileStore(handler, directory));
       app.routes().get("/form", (request, response) -> response.text(csrf.token(request)));
@@ -491,7 +493,7 @@ class SessionTest {
       }
     }
 
-    try (var restarted = new Shoostr(Options.defaults().withPort(0))) {
+    try (var restarted = new Shoostr()) {
       var csrf = new Csrf();
       restarted.sessions(handler -> fileStore(handler, directory));
       restarted.extensions(csrf);
@@ -499,8 +501,8 @@ class SessionTest {
           .routes()
           .path(
               "/",
-              routes -> routes.post("/submit", (_, response) -> response.text("accepted")),
-              e -> e.get(csrf).required());
+              routes -> routes.post("/submit", (ignored3, response) -> response.text("accepted")),
+              e -> e.with(csrf));
 
       try (var test =
           TestServer.start(
@@ -527,17 +529,16 @@ class SessionTest {
     var ready = new CountDownLatch(8);
     var release = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       app.sessions();
       app.routes()
           .get(
-              "/create",
-              (request, response) -> response.text(request.session(true).orElseThrow().getId()))
+              "/create", (request, response) -> response.text(request.getOrCreateSession().getId()))
           .get(
               "/write/{key}",
               (request, response) -> {
-                var session = request.session(false).orElseThrow();
+                var session = request.getSession().orElseThrow();
                 ready.countDown();
                 if (!release.await(5, TimeUnit.SECONDS)) {
                   throw new IllegalStateException("Concurrent writers did not arrive");
@@ -551,7 +552,7 @@ class SessionTest {
               (request, response) ->
                   response.text(
                       Integer.toString(
-                          request.session(false).orElseThrow().getAttributeNameSet().size())));
+                          request.getSession().orElseThrow().getAttributeNameSet().size())));
 
       try (var test =
           TestServer.start(
@@ -596,13 +597,12 @@ class SessionTest {
 
   @Test
   void rejectsTwoDifferentValidSessionCookies() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions();
       app.routes()
           .get(
-              "/create",
-              (request, response) -> response.text(request.session(true).orElseThrow().getId()))
-          .get("/peek", (_, response) -> response.text("handled"));
+              "/create", (request, response) -> response.text(request.getOrCreateSession().getId()))
+          .get("/peek", (ignored4, response) -> response.text("handled"));
 
       try (var test =
           TestServer.start(
@@ -633,14 +633,14 @@ class SessionTest {
 
   @Test
   void rejectsSessionCreationAfterStreamingHasCommittedTheResponse() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions();
       app.routes()
           .get(
               "/stream",
               (request, response) -> {
                 var stream = response.startStream("text/plain");
-                assertThrows(IllegalStateException.class, () -> request.session(true));
+                assertThrows(IllegalStateException.class, () -> request.getOrCreateSession());
                 stream.write("ok");
               });
 

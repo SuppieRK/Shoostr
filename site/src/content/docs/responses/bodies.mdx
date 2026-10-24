@@ -1,0 +1,40 @@
+---
+title: Send text, bytes or a HEAD response
+description: Set a response status, encode text with a selected charset or send existing bytes, and return empty or HEAD responses.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/06-responses/src/main/java/io/github/suppierk/shoostr/example/responses/ResponseBodyExample.java?raw';
+import test from '../../../../../examples/06-responses/src/test/java/io/github/suppierk/shoostr/example/responses/ResponseBodyExampleTest.java?raw';
+
+## Description
+
+Use `text(value)` for UTF-8 plain text, or `text(value, charset)` when the response needs another encoding; Shoostr encodes the text and sets matching charset metadata.
+When you already have encoded bytes, use `body(...)` with a matching `MediaType`, which labels those bytes without converting them.
+Text encoding follows `String.getBytes(Charset)`: malformed or unmappable input uses replacement bytes rather than strict validation.
+For object output, use an [explicit JSON codec](../../json/codec/).
+Set a response status with `status(...)`, using a named `HttpStatusCodes` constant and its `value()` when that makes the result clearer.
+
+A `HEAD` response carries representation metadata without transmitting its body, but the route must be [registered explicitly](../../routing/methods/).
+For an empty response with `204`, `205`, or `304`, leave the body unset: Shoostr rejects nonempty content during completion rather than silently discarding it.
+`304` belongs to conditional requests, not to a general “nothing to return” response; see the [HTTP status semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4.5) for that distinction.
+
+## Example
+
+The messages endpoint returns `201` with UTF-8 text, while `/bytes` sends binary data and `/latin1` uses the text helper to select ISO-8859-1.
+The DELETE handler returns `204`; the matching `GET` and `HEAD` handlers for `/message` select the same representation, with HEAD suppressing the transmitted bytes.
+
+This example limits finite responses to 64 bytes through `Options.maxResponseBytes()`.
+Finite output remains staged until the handler returns successfully, and selecting another body replaces the previous one rather than appending to it.
+Keep response access on the handler thread and within its lifetime; Shoostr completes the transfer, so application code must not close `Response`.
+See [exception recovery](../../errors/exceptions/) for output replacement before commitment and failures after it.
+For file output and its longer transfer lifetime, use the [download recipe](../../resources/downloads/).
+For incremental output while the handler runs, use [response streaming](../../streaming/output/).
+
+<Code code={application} lang="java" title="ResponseBodyExample.java" />
+
+## Test
+
+The tests check exact bytes and media metadata, the finite byte limit, bodyless status handling, and HEAD responses that retain representation headers without sending content.
+
+<Code code={test} lang="java" title="ResponseBodyExampleTest.java" />

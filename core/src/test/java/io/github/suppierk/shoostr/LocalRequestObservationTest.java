@@ -12,10 +12,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Function;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class LocalRequestObservationTest {
-  @Test
-  void inheritsTheSameFactoryOnceAndCompletesWithoutAppObservers() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void inheritsTheSameFactoryOnceAndCompletesWithoutAppObservers(boolean virtualApplication)
+      throws Exception {
     var started = new AtomicInteger();
     var closed = new AtomicInteger();
     var completed = new CompletableFuture<RequestOutcome>();
@@ -36,16 +40,16 @@ class LocalRequestObservationTest {
           };
         };
 
-    try (var app = new Shoostr()) {
+    try (var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       app.routes()
           .path(
               "/api",
               routes ->
                   routes.get(
                       "/ok",
-                      (_, response) -> response.text("ok"),
-                      e -> e.observe(factory).observe(factory)),
-              e -> e.observe(factory));
+                      (ignored, response) -> response.text("ok"),
+                      e -> e.lifecycle().observe(factory).observe(factory)),
+              e -> e.lifecycle().observe(factory));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/api/ok")).statusCode());
@@ -56,49 +60,54 @@ class LocalRequestObservationTest {
     }
   }
 
-  @Test
-  void isolatesLocalObservationFailuresWithoutRejectingTheEndpoint() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void isolatesLocalObservationFailuresWithoutRejectingTheEndpoint(boolean virtualApplication)
+      throws Exception {
     var completed = new CompletableFuture<RequestOutcome>();
     var current = new ThreadLocal<String>();
 
-    try (var app = new Shoostr()) {
+    try (var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       app.routes()
           .get(
               "/ok",
-              (_, response) -> response.text(current.get()),
+              (ignored2, response) -> response.text(current.get()),
               e -> {
-                e.observe(
-                    _ -> {
-                      throw new IllegalStateException("factory");
-                    });
-                e.observe(
-                    _ ->
-                        new RequestObservation() {
-                          @Override
-                          public void close() {
-                            throw new IllegalStateException("scope");
-                          }
-
-                          @Override
-                          public void complete(RequestOutcome outcome) {
-                            throw new IllegalStateException("completion");
-                          }
+                e.lifecycle()
+                    .observe(
+                        ignored3 -> {
+                          throw new IllegalStateException("factory");
                         });
-                e.observe(
-                    _ -> {
-                      current.set("observed");
-                      return new RequestObservation() {
-                        @Override
-                        public void close() {
-                          current.remove();
-                        }
+                e.lifecycle()
+                    .observe(
+                        ignored4 ->
+                            new RequestObservation() {
+                              @Override
+                              public void close() {
+                                throw new IllegalStateException("scope");
+                              }
 
-                        @Override
-                        public void complete(RequestOutcome outcome) {
-                          completed.complete(outcome);
-                        }
-                      };
-                    });
+                              @Override
+                              public void complete(RequestOutcome outcome) {
+                                throw new IllegalStateException("completion");
+                              }
+                            });
+                e.lifecycle()
+                    .observe(
+                        ignored5 -> {
+                          current.set("observed");
+                          return new RequestObservation() {
+                            @Override
+                            public void close() {
+                              current.remove();
+                            }
+
+                            @Override
+                            public void complete(RequestOutcome outcome) {
+                              completed.complete(outcome);
+                            }
+                          };
+                        });
               });
 
       try (var test = TestServer.start(app)) {
@@ -116,9 +125,21 @@ class LocalRequestObservationTest {
     var retained = new AtomicReference<Extensions>();
 
     try (var app = new Shoostr()) {
-      app.routes().get("/ok", (_, _) -> {}, retained::set);
+      app.routes().get("/ok", (ignored6, ignored7) -> {}, retained::set);
       var configuration = retained.get();
-      assertThrows(IllegalStateException.class, () -> configuration.observe(_ -> _ -> {}));
+      assertThrows(
+          IllegalStateException.class,
+          () -> configuration.lifecycle().observe(ignored8 -> ignored9 -> {}));
     }
+  }
+
+  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
+    if (virtualApplication) {
+      app.virtualThreads();
+    }
+
+    return app.onRequestHeaders(
+        (request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

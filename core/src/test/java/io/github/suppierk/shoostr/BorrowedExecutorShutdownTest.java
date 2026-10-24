@@ -23,6 +23,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 
 class BorrowedExecutorShutdownTest {
@@ -40,8 +41,16 @@ class BorrowedExecutorShutdownTest {
     try (var workers =
             new ThreadPoolExecutor(2, 2, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>());
         var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var first = new Shoostr(Options.defaults().withPort(0));
-        var second = new Shoostr(Options.defaults().withPort(0))) {
+        var first =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+        var second =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       first.modifyServer(server -> server.setStopTimeout(0));
       first.afterRequest(
           outcome -> {
@@ -56,7 +65,7 @@ class BorrowedExecutorShutdownTest {
           .get(
               "/active",
               workers,
-              (_, _) -> {
+              (ignored, ignored2) -> {
                 entered.countDown();
 
                 try {
@@ -68,8 +77,8 @@ class BorrowedExecutorShutdownTest {
                   throw failure;
                 }
               })
-          .get("/queued", workers, (_, _) -> queuedInvoked.set(true));
-      second.routes().get("/second", workers, (_, response) -> response.text("second"));
+          .get("/queued", workers, (ignored3, ignored4) -> queuedInvoked.set(true));
+      second.routes().get("/second", workers, (ignored5, response) -> response.text("second"));
 
       try (var firstTest = TestServer.start(first);
           var secondTest = TestServer.start(second)) {
@@ -147,14 +156,18 @@ class BorrowedExecutorShutdownTest {
               }
             };
         var driver = Executors.newVirtualThreadPerTaskExecutor();
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.modifyServer(server -> server.setStopTimeout(0));
       app.afterRequest(
           outcome -> {
             completions.incrementAndGet();
             completed.complete(outcome);
           });
-      app.routes().get("/racing", workers, (_, _) -> invoked.set(true));
+      app.routes().get("/racing", workers, (ignored6, ignored7) -> invoked.set(true));
 
       try (var test = TestServer.start(app)) {
         var sent = driver.submit(() -> test.send(request -> request.path("/racing")));
@@ -196,7 +209,11 @@ class BorrowedExecutorShutdownTest {
 
     try (var workers = Executors.newSingleThreadExecutor();
         var driver = Executors.newVirtualThreadPerTaskExecutor();
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.modifyServer(server -> server.setStopTimeout(0));
       app.afterRequest(
           outcome -> {
@@ -207,7 +224,7 @@ class BorrowedExecutorShutdownTest {
           .get(
               "/active",
               workers,
-              (request, _) -> {
+              (request, ignored8) -> {
                 entered.countDown();
 
                 try {
@@ -263,14 +280,18 @@ class BorrowedExecutorShutdownTest {
 
     try (var workers = new ForkJoinPool(1);
         var driver = Executors.newVirtualThreadPerTaskExecutor();
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.modifyServer(server -> server.setStopTimeout(0));
       app.afterRequest(completed::complete);
       app.routes()
           .get(
               "/help",
               workers,
-              (_, _) -> {
+              (ignored9, ignored10) -> {
                 handlerThread.complete(Thread.currentThread());
                 entered.countDown();
                 if (!allowHelping.await(5, TimeUnit.SECONDS)) {

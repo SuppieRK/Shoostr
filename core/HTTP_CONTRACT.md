@@ -2,7 +2,7 @@
 
 Reviewed 2026-09-18 against local `6d666d9`, Javalin **7.2.3** (`javalin-parent-7.2.3`, commit `8c12b9f8a5ecf889b54db7d6b2a7539490ceb86b`) and our Jetty **12.1.11** runtime. The original source audit is followed by the lifecycle implementation described below. This is not a differential competitor runtime run or a performance comparison. [Published Javalin metadata](https://repo.maven.apache.org/maven2/io/javalin/javalin/maven-metadata.xml), [pinned source tree](https://github.com/javalin/javalin/tree/8c12b9f8a5ecf889b54db7d6b2a7539490ceb86b).
 
-The target is complete framework feature coverage relative to Javalin and Jooby, preserving the explicitly selected contracts and exclusions. The implementation currently covers only a subset; this document does not claim source, binary, or full behavioral compatibility. Preserve the explicit request/response pair, literal-segment route precedence, Java 25, annotation-free production API, and framework-owned streaming lifetime. Feature gaps remain open until implementation and executable evidence close them; prior prioritization deferrals do not exclude them from the completion target.
+The target is complete framework feature coverage relative to Javalin and Jooby, preserving the explicitly selected contracts and exclusions. The implementation currently covers only a subset; this document does not claim source, binary, or full behavioral compatibility. Preserve the explicit request/response pair, literal-segment route precedence, Java 21, annotation-free production API, and framework-owned streaming lifetime. Feature gaps remain open until implementation and executable evidence close them; prior prioritization deferrals do not exclude them from the completion target.
 
 **Aligned** means the stated subset agrees. **Different** describes a current local contract to preserve until an explicit change is selected. **Gap** means absent functionality worth prioritizing. **Excluded** records a deliberate scope decision. **Deferred** records unfinished work, unless the row explicitly identifies a chosen contract to preserve. Existing tests are evidence for our implementation; proposed tests below are not implemented assertions.
 
@@ -19,7 +19,7 @@ The target is complete framework feature coverage relative to Javalin and Jooby,
 | Encoded paths | Jetty canonical encoded path is matched; selected parameter decoding happens once and preserves literal `+`. Ambiguous `%25`/double-encoding and repeated slashes can be rejected before core. `HttpCompatibilityTest.rejectsEncodedPercentBeforeInvokingTheHandler`, `RouteCompositionTest.retainsTransportRejectionOfAmbiguousPaths`. | Routing uses a path parser and configured Jetty/Servlet URI policy. [Parser][parser], [routing tests][routing] | Partial overlap; do not infer wire acceptance from matcher-only tests or loosen Jetty URI compliance. |
 | HTTP method registration | Enum or exact known String token; unknown/lowercase registration rejected. Incoming method remains raw; no method-override header. `RouteCompositionTest.rejectsUnrecognizedWireMethodsDuringRegistration`. | Extensible HandlerType; Context method consults `X-HTTP-Method-Override`. [HandlerType][methods], [Context][context] | Different: custom token support is a possible later feature; method override is not adopted. |
 | HEAD | Explicit HEAD handler executes; Jetty suppresses wire body. GET alone does not register HEAD, so matching path/wrong method produces HTTP 405. `HttpCompatibilityTest.dispatchesEveryExplicitlyRegisteredVerb`; Shoostr dispatch source. | Explicit HEAD wins. Without one, a matching GET produces an implicit success without invoking GET; ordinary hooks can still change status. [DefaultTasks][tasks], [routing HEAD test][routing] | Different: preserve explicit HEAD. Do not describe Javalin's fallback as executing GET. Add a dedicated HTTP negative test for GET-only registration. |
-| OPTIONS | Explicit OPTIONS works when CORS is disabled. With `Shoostr.cors(...)`, recognized preflights run application-wide header admission and CORS policy, then answer without scoped authentication or route-handler execution; the actual request still runs both. `CorsTest` covers enabled and disabled behavior. | Automatic method discovery is an opt-in plugin. [HttpAllowedMethodsPlugin][allowed] | Explicit OPTIONS and opt-in CORS preflight have distinct dispatch paths. |
+| OPTIONS | Explicit OPTIONS works when CORS is disabled. Selected endpoint CORS or missing-target group fallback handles preflight before authentication, CSRF and session creation, retaining application-wide header admission. The actual request keeps ordinary routing and security. `CorsTest` and `CorsFallbackTest` cover these paths. | Automatic method discovery is an opt-in plugin. [HttpAllowedMethodsPlugin][allowed] | Explicit OPTIONS and opt-in CORS preflight have distinct dispatch paths. |
 | 404/405 | Unknown path404; known path/wrong method405 with union Allow across matching patterns. `RouteCompositionTest.distinguishesNotFoundFromMethodNotAllowedAndIncludesAllMatchingMethods`. | Default wrong-method404;405 is configurable. [HttpConfig][httpconfig], [DefaultTasks][tasks] | Different default; retain standards-oriented405/Allow behavior. |
 
 ## Input and output
@@ -32,11 +32,11 @@ The target is complete framework feature coverage relative to Javalin and Jooby,
 | Form representations | UTF-8 URL-encoded and multipart text fields; `Upload` exposes repeated file parts and explicit persistence. Nonmultipart `files()`/`files(name)`/`file(name)` return empty without reading or claiming the ordinary body. Actual multipart and raw body access remain exclusive, even when multipart has no files; malformed declared multipart still rejects. Temporary parts close at transport completion. | Multipart supported; strict-content-type setting affects form handling. [Context][context], [HttpConfig][httpconfig] | Local bounded multipart contract; no built-in object conversion. |
 | Resource bounds | 1MiB default buffered body;1000 pairs each for query/form including repeats, separately overridable;413 byte overflow,400 pair overflow. Retry after oversized chunked input remains rejected. `RequestParametersTest`, `HttpCompatibilityTest.acceptsTheByteLimitAndRejectsOneAdditionalByte`. | Own configurable request-size behavior. [Size tests][sizetests] | Different defaults/policies; preserve our tested bounds. |
 | Headers | First header or immutable list of raw repeated fields; case-insensitive name lookup, no comma splitting. Response setter replaces; framework owns framing headers. `RequestParametersTest.readsImmutableRepeatedHeadersCaseInsensitively`, `HttpCompatibilityTest.readsAndReplacesHeadersCaseInsensitively`. | Context header/headerMap exposes first values; raw Servlet request supplies repetitions. [Context][context], [response tests][responsetests] | Comparable capability, different convenience API. ResponseMetadataTest covers inspection, immutable case-insensitive snapshots, append/remove and distinct Set-Cookie fields; framing remains framework-owned. |
-| Raw body and serialization | Cached defensive bytes; UTF-8 text; serializers, converters, and business validation application-owned. `HttpCompatibilityTest.cachesRequestBytesWithoutExposingMutableStorage`. | Broader object/validator API. [Context][context] | Intentional scope exclusion, not codec work waiting to happen. |
+| Raw body and serialization | Cached defensive bytes; explicit text encodings; optional typed body conversion through a caller-owned `Codec`. Serializers and business validation remain application-owned. `HttpCompatibilityTest`, `TypedCodecTest`. | Broader object/validator API. [Context][context] | Typed conversion delegates to an explicitly configured codec; no automatic serializer selection or validation. |
 | Finite output | Staged until handler succeeds, then asynchronously submitted. Bodyless statuses enforced; HEAD suppressed. `HttpContractTest.stagesFiniteBodyUntilHandlerReturnsAndClosesApplicationAccess`, `completesFiniteResponsesAsynchronously`. | Context result handling coexists with direct Servlet output and async APIs. [Response tests][responsetests], [servlet context][servletcontext] | Different ownership/API; keep explicit semantics. |
 | Streaming | startStream commits during the handler; bounded writes/flushes; framework ends or aborts at handler exit; no retained writer. `HttpContractTest.streamsBeforeHandlerReturnsAndFlushesRemainderOnReturn`, `abortsCommittedStreamOnFailure`. | Servlet streaming, futures/async, SSE and WebSocket APIs support other lifetimes. [Servlet context][servletcontext], [SSE tests][ssetests] | Deliberate lifecycle difference; SSE and WebSocket now have dedicated APIs with their own documented lifetimes. |
 | Seekable files | `Response.file(Path, contentType)` streams a selected Jetty resource, supports one `bytes` range and conditional validators, and remains framework-owned until terminal callback completion. `RangeConditionalResponseTest` covers 200/206/304/412/416, HEAD, suffix/open-ended ranges, validator precedence, and single-range fallback policy. | Resource handlers can add multipart ranges and mounted static trees. | Deliberately one range only; malformed/multiple fields are ignored as a full 200 response. |
-| Media types | Extensible immutable outbound MediaType plus retained String overloads; metadata does not transcode bytes. Response.negotiate selects supplied representations from Accept, adds Vary: Accept and uses 406 only when a valid explicit preference excludes every candidate. `MediaTypeResponseTest`. | Content type supplied through Context APIs. [Context][context] | Local typed convenience plus strict RFC9110 Accept selection; no codecs or generic object rendering. |
+| Media types | Extensible immutable outbound MediaType plus retained String overloads; metadata does not transcode bytes. Response.negotiate selects supplied representations from Accept, adds Vary: Accept and uses 406 only when a valid explicit preference excludes every candidate. `MediaTypeResponseTest`. | Content type supplied through Context APIs. [Context][context] | Explicit metadata and strict RFC9110 Accept selection remain separate from codec-backed object conversion. |
 
 ## Errors and lifecycle
 
@@ -48,16 +48,16 @@ The target is complete framework feature coverage relative to Javalin and Jooby,
 | Matched route metadata | Request.routePattern() exposes the original composed named template; retained once at registration. LifecycleHooksTest covers route and global error handling. | Matched endpoint metadata is available. [Context][context] | Implemented foundation for bounded metric labels and route-aware policy. |
 | Auth gates/middleware | Shoostr.beforeRouteHandler runs ordered matched-route gates; rejection skips business logic and uses global exception mapping. Request.principal carries identity; the optional pac4j adapter supports configured direct clients and authorizers. LifecycleHooksTest, RoutePolicyTest and Pac4jTest cover behavior. | Before/matched/wrapper APIs and role metadata support policies. [DefaultTasks][tasks], [handler wrapper][wrapper] | Shared gate and optional provider adapter implemented; credentials and identity stores remain application-owned. |
 | Completion metrics/logging | Shoostr.afterRequest publishes RequestOutcome after terminal transport observation. Optional Micrometer and OpenTelemetry adapters, plus AccessLog, use this lifecycle. LifecycleHooksTest and adapter tests cover finite/streaming output, misses, errors and disconnects. | Request logger is separate from ordinary after handlers. [Request logger config][logger] | Completion summary and optional integrations implemented; applications own registries, exporters and providers. |
-| Native server configuration | Ordered Shoostr.modifyHttpConfiguration and Shoostr.modifyServer callbacks apply after defaults, before startup. Additional connectors and handler wrappers retain Shoostr ownership and dispatch. ShoostrLifecycleTest exercises real listeners and failure cleanup. | Native Server/HttpConfiguration consumers, connector factories and other servlet-specific settings. [JettyConfig](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/main/java/io/javalin/config/JettyConfig.kt) | Aligned callback model; Jetty remains the selected backend. No servlet configuration or engine adapter is implied. |
-| Consumer testing | Separate `shoostr-test` artifact starts the supplied app and owns a JDK client. `send` uses callback request configuration, byte responses or an explicit body handler. Startup supports automatic loopback ports or explicit single-listener fixed/range ports. Harness tests cover caller dependencies, extensions, shared/isolated cookies, live binding, TLS/HTTP2 and cleanup; ordinary `RouteCompositionTest` cases reuse it through a core test-only dependency. | Javalin documents programmatic test servers; Jooby provides an annotation-based JUnit extension. [Javalin testing](https://javalin.io/documentation#testing), [Jooby integration testing](https://jooby.io/v3/#testing) | The separate fixture keeps testing APIs out of core production and publication dependencies; assertions and fixture resets stay caller-owned. `PublishedConsumerTest` separately verifies core-only Java25 binary consumption, live HTTP, POM-only/module-only metadata, runtime isolation and current producer/published/resolved hashes. It does not verify optional-adapter or test-support publications. Repeat with `./gradlew :core:test --tests '*PublishedConsumerTest'`; native graphs, coordinates, commands and hashes are retained in `core/build/reports/published-consumer/` and the CI artifact. |
+| Native server configuration | Immutable `Options` holds Shoostr-owned resource limits. Ordered `Shoostr.modifyHttpConfiguration` and `Shoostr.modifyServer` callbacks configure Jetty-owned listener, timeout, pool and HTTP settings after defaults, before startup. Platform threads are the default; `Shoostr.virtualThreads()` explicitly selects virtual threads. Additional connectors and handler wrappers retain Shoostr ownership and dispatch. ShoostrLifecycleTest exercises real listeners and failure cleanup. | Native Server/HttpConfiguration consumers, connector factories and other servlet-specific settings. [JettyConfig](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/main/java/io/javalin/config/JettyConfig.kt) | Aligned callback model; Jetty remains the selected backend. No servlet configuration or engine adapter is implied. |
+| Consumer testing | Separate `shoostr-test` artifact starts the supplied app and owns a JDK client. `send` uses callback request configuration, byte responses or an explicit body handler. Startup supports automatic loopback ports or explicit single-listener fixed/range ports. Harness tests cover caller dependencies, extensions, shared/isolated cookies, live binding, TLS/HTTP2 and cleanup; ordinary `RouteCompositionTest` cases reuse it through a core test-only dependency. | Javalin documents programmatic test servers; Jooby provides an annotation-based JUnit extension. [Javalin testing](https://javalin.io/documentation#testing), [Jooby integration testing](https://jooby.io/v3/#testing) | The separate fixture keeps testing APIs out of core production and publication dependencies; assertions and fixture resets stay caller-owned. `PublishedConsumerTest` separately verifies core-only Java 21 binary consumption, live HTTP, POM-only/module-only metadata, runtime isolation and current producer/published/resolved hashes. It does not verify optional-adapter or test-support publications. Repeat with `./gradlew :core:test --tests '*PublishedConsumerTest'`; native graphs, coordinates, commands and hashes are retained in `core/build/reports/published-consumer/` and the CI artifact. |
 | Graceful shutdown | Native GracefulHandler rejects new work during drain and tracks admitted responses; five-second project grace and native one-second shutdown idle defaults, independently overridable. ShoostrLifecycleTest covers HTTP/1.1 finite/streaming drain and native deadline exhaustion. TransportTest covers TLS/HTTP/2 finite/streaming drain, forced cancellation, h2c session cleanup and failed-start cleanup. | The pinned Javalin server does not set a positive native stop timeout. Jooby's optional GracefulShutdown has a distinct application drain phase. [Javalin server](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/main/java/io/javalin/jetty/JettyServer.kt), [Jooby extension](https://github.com/jooby-project/jooby/blob/v4.5.4/jooby/src/main/java/io/jooby/GracefulShutdown.java) | Explicit local policy. Native idle and stop timers differ; arbitrary lifecycle components or ignored interruption cannot be given a strict termination guarantee. Liveness and readiness remain application-defined routes. |
-| Other everyday HTTP features | Response inspection, redirects, cookies, negotiation, multipart uploads, streaming input/file output, ranges and static file serving are exercised by public HTTP tests. | Available across Context and optional features. [Context][context] | Chosen byte/UTF-8 serialization, strict routing and resource ownership contracts remain distinct. Welcome files and SPA fallback are explicit static-mount options; OpenAPI and MCP are separate open gaps. |
+| Other everyday HTTP features | Response inspection, redirects, cookies, negotiation, multipart uploads, streaming input/file output, ranges and static file serving are exercised by public HTTP tests. | Available across Context and optional features. [Context][context] | Chosen byte/UTF-8 serialization, strict routing and resource ownership contracts remain distinct. Welcome files and SPA fallback are explicit static-mount options; [OpenAPI](../openapi/README.md) and [MCP](../mcp/README.md) are separate implemented integrations. |
 | SSE | `Routes.sse` registers a GET endpoint; `Response.startEventStream` frames UTF-8 events and comments through the bounded handler-owned stream. `ServerSentEventsTest` covers wire framing, Last-Event-ID, disconnect and shutdown. | Javalin supports SSE and optional detached keep-alive. [SSE tests][ssetests] | Different lifetime: the handler remains active and its return ends the stream; replay remains application-owned. |
-| WebSocket/MCP | `Routes.websocket` uses a per-upgrade `BiFunction<Request, ServerUpgradeResponse, Session.Listener>` after existing route admission. Jetty owns successful handshake, callbacks, frames and session lifetime. The container defaults to 32 pending outgoing frames per session, with native container/session overrides. `WebSocketRoutesTest` covers JDK client interoperation, route composition, GET coexistence, subprotocol selection, authentication/Origin denial, factory exception mapping, explicit demand, message limits, slow-peer outgoing-frame rejection, callback-driven concurrent producer ordering and shutdown. MCP remains absent. | Javalin supplies WebSocket APIs; MCP is a separate research question here. | WebSocket support uses the native Jetty listener instead of a framework callback wrapper. Applications bound producer queues and sequence concurrent sends. No delivery/performance inference from ordinary HTTP tests. |
+| WebSocket/MCP | `Routes.websocket` supports native Jetty listeners and managed complete-message callbacks after existing route admission. Native listener factories use a per-upgrade `BiFunction<Request, ServerUpgradeResponse, Session.Listener>`; managed callbacks serialize work per connection through the configured Jetty executor. Jetty handles the handshake, frames and native session. The container defaults to 32 pending outgoing frames per session, with native container/session overrides. `WebSocketRoutesTest` covers native interoperability, composition, admission, demand, limits and shutdown; `ManagedWebSocketTest` covers managed callbacks. The separate [MCP module](../mcp/README.md) defines its transport and lifetime contracts. | Javalin supplies WebSocket APIs; MCP is a separate integration, not WebSocket transport. | See [codec-backed object operations](#codec-backed-object-operations) for typed managed behavior. Applications bound producer queues; managed sends serialize writes, while application message ordering remains caller-owned. No delivery/performance inference from ordinary HTTP tests. |
 
 ## Executable follow-up checklist
 
-The tests linked above already exercise our listener or explicitly identified routing unit seams. A source-derived claim is not presented as a new runtime result. Keep upstream inspiration independently implemented using our APIs; preserve attribution if copying any test text. [Existing test provenance](src/test/README.md).
+The tests linked above already exercise our listener or explicitly identified routing unit seams. A source-derived claim is not presented as a new runtime result. Keep upstream inspiration independently implemented using our APIs; preserve attribution if copying any test text. [Existing test provenance](../docs/maintainers/test-provenance.md).
 
 | Priority | Scenario and expected local result | Coverage/action |
 | --- | --- | --- |
@@ -68,13 +68,13 @@ The tests linked above already exercise our listener or explicitly identified ro
 | P1 | Expose original composed route template; ordered auth gates reject before endpoint invocation; one terminal summary after actual completion | Implemented through TDD and real HTTP/socket tests, including404/405, errors and disconnects. |
 | P2 | Response append/remove and repeated Set-Cookie preserve distinct fields; redirects use selected status and validated Location | Implemented in ResponseMetadataTest, including invalid input atomicity, thread/lifetime confinement, streaming rejection, HEAD and error cleanup. CookieTest covers validated values, scopes, deletion and client-store interoperability. |
 | P2 | Negotiation, multipart/resource cleanup and file/range output | Implemented and covered by MediaTypeResponseTest, MultipartRequestTest, StreamingInputOutputTest and RangeConditionalResponseTest. |
-| Separate | SSE event framing and cancellation; WebSocket upgrade/auth/messages/backpressure; MCP transport/lifetime | SSE and WebSocket have separate HTTP/client tests and documented lifetime contracts. MCP remains an open integration gap; research alone is not runtime support. |
+| Separate | SSE event framing and cancellation; WebSocket upgrade/auth/messages/backpressure; MCP transport/lifetime | SSE and WebSocket have separate HTTP/client tests and documented lifetime contracts. The separate [MCP module](../mcp/README.md) has native SDK and public HTTP/client tests; its documented limits remain distinct from SSE and WebSocket. |
 
 ## Next slice and remaining decisions
 
 The lifecycle stages `onRequestHeaders`, `onRouteMatched`, `beforeRouteHandler`, `afterRouteHandler`, `beforeResponseFlush`, `afterResponseFlush` and `afterRequest` are implemented with the documented request/response lifetime. Gates reject via existing exceptions and global mapping; completion uses a compact read-only record rather than a retained Request/Response.
 
-Chosen differences remain: known HTTP method tokens, whole-segment route parameters, strict path matching, explicit HEAD/OPTIONS, global error mapping and handler-owned streams. Conversion hooks remain deprioritized. OpenAPI (issue 35) and MCP integration (issue 36) remain unimplemented under the user's hold; issue 09 is feasibility research only. A separately resumed k6 comparison is required before any performance ranking.
+Chosen differences remain: known HTTP method tokens, whole-segment route parameters, strict path matching, explicit HEAD/OPTIONS, global error mapping and handler-owned streams. Conversion hooks remain deprioritized. [OpenAPI](../openapi/README.md) and [MCP](../mcp/README.md) are implemented in separate modules; consult their current contracts rather than the historical integration gaps in the original comparison. Issue 09 is feasibility research only. A separately resumed k6 comparison is required before any performance ranking.
 
 [routing]: https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestRouting.kt
 [builder]: https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestApiBuilder.kt
@@ -101,11 +101,25 @@ Chosen differences remain: known HTTP method tokens, whole-segment route paramet
 
 ## Response metadata and redirects
 
+`Response.text(value)` encodes UTF-8, while `text(value, charset)` uses the supplied charset and sets matching plain-text metadata. Both remain staged until handler return and use the encoded byte count for the finite response limit and HEAD representation length. Malformed or unmappable text uses the charset's replacement bytes, not strict validation. The charset overload rejects null inputs, invalid charset metadata and unavailable finite-output state before encoding; encoding or size failures preserve the previously selected output. `TypedResponse` retains fluent typing without passing text through its object codec. `ResponseTextCharsetTest` verifies these rules over real HTTP. By contrast, `body(MediaType, byte[])` labels existing bytes without converting them.
+
+Use `Response.header(name)` to read the first header value, or null when it is absent.
+The misleading one-argument `setHeader(name)` getter has been removed; the two-argument
+setter is unchanged. `ResponseHeaderGetterTest` verifies the removal and covers ordinary
+and typed handlers, while `ResponseMetadataTest` verifies thread and lifetime restrictions.
+
 `ResponseMetadataTest` verifies the handler-owned inspection and mutation API over real HTTP. Header lists retain distinct field occurrences (not comma-split members), and case-insensitive header maps are deeply immutable snapshots. Reading is allowed during an active stream; mutation requires uncommitted output. Initial status inspection reports the effective default 200 even before Jetty assigns its internal status. General header values reject HTTP controls except horizontal tab; the transport can normalize tabs to spaces. This follows [RFC 9110 field syntax](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.5), without promising arbitrary field-specific semantic validation.
 
 Redirects default to302; explicit navigation codes300/301/302/303/307/308 are accepted. They replace the previous body or selected file, clear Content-Type, Content-Length and Content-Range, and remain staged until handler return. Replacing a file also removes its ETag, Last-Modified, Accept-Ranges and Content-Disposition fields; unrelated headers remain. Invalid locations/statuses leave output unchanged. Empty references are rejected as a helper policy, although the URI grammar permits them; relative/query/fragment references and non-HTTP schemes remain supported. Existing escapes are preserved and Unicode components are ASCII-escaped by JDK URI. Network destinations require a host, no userinfo and a valid port; destination authorization is application-owned. See [RFC 9110 Location](https://www.rfc-editor.org/rfc/rfc9110.html#section-10.2.2). CookieTest now covers the dedicated cookie APIs in addition to raw repeated Set-Cookie support.
 
 ## Buffered request-body ownership
+
+`Request.bodyText()` decodes UTF-8; `bodyText(Charset)` selects another encoding explicitly.
+Both decode the same bounded cached bytes without inferring a charset from `Content-Type`.
+Malformed input uses the selected charset's replacement text. A null charset is rejected
+before reading or selecting a body mode, and form parsing retains its strict UTF-8 contract.
+`RequestBodyCharsetTest` verifies these rules through real HTTP, including byte limits,
+typed routes, repeated reads and handler ownership.
 
 `Request.bodyBytes()` owns and closes its native input adapter on every exit. Jetty owns remaining request content, framing and connection reuse. Declared oversize is rejected before opening the adapter. Consumed oversize is cached before rejection so repeated body access continues to throw `ContentTooLargeException`; close-time failures are suppressed under that rejection or the original read/validation failure. Valid buffered reads retain their defensive-copy contract.
 
@@ -151,6 +165,15 @@ URL keeps the original encoded path and raw query, substituting only selected sc
 fields; it does not prove TLS or establish a safe redirect origin. These values are available to
 route gates and application-wide exception handlers under the normal request lifetime rules.
 
+`Request.isEffectivelySecure()` uses the protocol from the selected trusted boundary element:
+`https` returns true and `http` returns false, even when the backend connection uses TLS. If that
+element asserts no protocol, the accessor falls back to `isSecure()`, not to an effective-URL or
+request-target scheme. Headers from untrusted peers, another header family, or another hop cannot
+supply that protocol. The pac4j context uses this accessor for its security decision; its scheme
+remains URL metadata and can differ when no protocol was asserted. `EffectiveSecurityTest` and
+`Pac4jProxySecurityTest` cover both forwarding families over real HTTP and TLS connections, along
+with forged HTTPS targets and the normal request thread and lifetime guards.
+
 RFC 7239 elements are parsed in arrival order, including repeated field lines. Starting with the
 rightmost assertion from the trusted physical peer, the framework walks left only through trusted
 literal predecessors and selects client identity and origin from the same boundary element.
@@ -177,41 +200,88 @@ coverage is `TrustedProxyTest`; it does not prove firewall or reverse-proxy conf
 
 ## Sessions and browser CSRF
 
-Sessions are disabled until `Shoostr.sessions()` or `Shoostr.sessions(Consumer<SessionHandler>)` is called
-before startup. The Jetty core `ContextHandler → SessionHandler` chain wraps the application's
-handler, and Shoostr owns its lifecycle. `Request.session(false)` returns an empty Optional without creating a
-session when none exists; `session(true)` creates one before response commitment. Jetty's `Session` owns ID, attributes, per-session idle
-expiry and invalidation. `Request.renewSessionId()` uses the current transport response and must
-run before commitment. The old ID stops resolving. Invalidating server state does not itself
-delete the browser cookie; the application also calls `Response.removeCookie` with the configured
-cookie name and path. New/renewed session cookies survive framework error resets, while unrelated
-staged cookies are discarded.
+Enable sessions through `Shoostr.sessions()` or `sessions(Consumer<SessionHandler>)`.
+One native application-level SessionHandler wraps ordinary requests. `request.getSession()`
+returns an `Optional` without creating state; `getOrCreateSession()` returns a native Session
+directly, creating before response commitment when absent. It throws `IllegalStateException` if creation
+is unavailable because sessions are disabled or invalidation occurred earlier in this exchange.
+`renewSessionId()` renews an existing identifier without losing attributes.
+Jetty's Session owns attributes, expiry and invalidation. Create a replacement session in a later
+request after invalidation. Required native cookie changes survive error resets; unrelated cookies do not.
 
-The default Jetty cache/store pair is `DefaultSessionCache` with `NullSessionDataStore`: live
-sessions are shared across concurrent requests on one app instance and disappear on shutdown.
-The native configuration callback can install an established Jetty `SessionDataStore` or factory;
-the public HTTP test reloads attributes from Jetty's file store after restart. Attribute access
-is safe for concurrent requests, but compound operations and mutable values in attributes are
-application synchronization concerns, and cross-node atomicity is not promised. Default cookie
-settings are HttpOnly, SameSite=Lax, root path, no Domain or browser Max-Age, and Secure when the
-direct connection is secure; the native callback may override them. Server-side idle expiry is
-30 minutes by default. URL session-ID tracking is disabled.
+The native handler is a managed child of the application dispatcher, beneath its ContextHandler.
+A cached pure route lookup lets preflight dispatch directly without entering native session handling,
+including when an incoming session cookie already exists. Ordinary requests retain native completion
+ownership across executor handoff, streaming and WebSocket admission. Preserve the fixed handler chain,
+server and server-level SessionIdManager when customizing native settings.
 
-`Csrf` is an explicit route policy for cookie-authenticated browser operations, installed with
-`Shoostr.extensions(csrf)` and selected with `extensions.get(csrf).required()` in route configuration.
-GET, HEAD, OPTIONS and TRACE are safe under RFC 9110; all other methods require
-an existing session, one session-bound synchronizer token in `X-CSRF-Token` or `_csrf` form input,
-and a trustworthy source origin. A single `Origin` must match the effective target origin or an
-explicitly configured trusted origin; if absent, one `Referer` supplies that comparison. Missing,
-ambiguous, opaque or mismatched sources and tokens yield 403 before the business handler.
-`Csrf.token` creates a session lazily when the application exposes a token on a safe response;
-tokens remain stable within the session and rotate after ID renewal. They are not placed in
-cookies or URLs. CORS preflight remains CORS-only; actual requests reach this policy. Routes
-outside a protected scope, including bearer-token APIs, have no implied CSRF guarantee.
+The default native cache/store is DefaultSessionCache with NullSessionDataStore. Sessions expire
+after 30 idle minutes and disappear on shutdown unless configured with persistence. Cookies default
+to HttpOnly, SameSite Lax, root path, no Domain or Max-Age, and Secure on direct secure requests.
+URL tracking is disabled. Session configuration runs after application server customization and before
+startup. Set Secure cookies explicitly behind HTTPS termination when the backend receives HTTP;
+trusted forwarded protocol metadata does not change native cookie settings automatically.
+Configure persistence and context/backend partitioning through Jetty's native cache/store settings.
+Separate Java store objects alone do not establish separate persistent namespaces. Compound attribute
+updates remain the application's synchronization concern.
 
-The pinned [Jetty 12.1.11 session source](https://github.com/jetty/jetty.project/blob/jetty-12.1.11/jetty-core/jetty-session/src/main/java/org/eclipse/jetty/session/SessionHandler.java)
-and [OWASP CSRF guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html)
-provide the provenance. SessionTest and CsrfTest exercise the public HTTP boundary.
+Install session-backed Csrf and select it with `extensions.with(csrf)`. Application defaults apply
+before route registration; `without(csrf)` excludes scoped verification, and a deeper `with` restores
+the same owner. Exclusion does not permit a conflicting owner. Effective CSRF selection requires
+application sessions before traffic is accepted; installation alone does not enable sessions.
+
+The expected CSRF token is 32 random bytes encoded as unpadded Base64url and stored server-side with
+its issuing session identifier. token(request) creates a session when needed and returns the stable
+token while that identifier is unchanged. Unsafe requests require an existing session, exactly one
+X-CSRF-Token header or _csrf form field, and an accepted Origin or fallback Referer. Missing,
+ambiguous, duplicate or foreign input yields 403; comparison is constant-time. Safe methods pass.
+No query fallback or separate CSRF cookie is used. Keep token responses out of shared caches.
+
+Application login/logout handlers explicitly coordinate credential verification, native session
+renewal/invalidation and fresh token delivery. Renewal immediately rejects the old proof because its
+server-side issuing identifier no longer matches; the next token call generates a replacement.
+Invalidation removes the session and token. Authentication precedes local admission hooks, including
+CSRF. A public login can exclude authentication while retaining CSRF before credential handling.
+No automatic extension dependency graph or authentication adapter is added.
+
+Untrusted executable content needs a separate origin and host with host-only cookies. Route groups,
+server-side ownership, cookie names and Cookie Path are not browser trust boundaries. Ports distinguish
+origins but do not partition cookies.
+
+CorsPolicy contains complete immutable builder-created permissions and typed allowedHeaders and
+exposedHeaders accessors. Install Cors and select it with `extensions.with(cors)`. A scope inherits its
+complete policy until policy(replacement) replaces it wholesale; omitted fields use standalone defaults.
+Do not combine collections, overlay fields or retain unset-value provenance. Local policy changes leave
+parent and sibling configuration unchanged. Selecting a different inherited owner remains forbidden,
+even after exclusion. Explicit wildcards absorb collection values; allMethods() is independent of the
+HTTP method enum. Wildcard methods/headers reflect validated requested names. Credentialed origin
+and exposed-header wildcards fail construction validation.
+
+Registered endpoint CORS remains authoritative, including absence; method-specific policies at one
+path remain supported. Groups configure their registered descendants, not matching URL prefixes.
+Missing paths/methods receive normal 404/405 without a group fallback grant. Explicit scope exclusion
+removes automatic sharing and CORS origin rejection; ordinary requests can still execute under their
+independent authentication and CSRF requirements.
+
+Structurally invalid preflights return 400; selected permission denial or a registered target without
+CORS returns 403. Accepted preflight returns 204 before native sessions, authentication, target conditions,
+local lifecycle or endpoint execution. Application header admission remains active. Actual requests are
+checked independently of cached preflight permission. CORS and Vary fields remain protected through
+errors, response reset and flushes, including allowed-origin authentication failures.
+
+Recognized WebSocket bindings skip HTTP CORS and HTTP CSRF for HTTP/1 GET and HTTP/2 extended CONNECT.
+Use an explicit Origin guard before upgrade in a managed callback or native listener factory;
+ordinary HTTP endpoints do not gain an exemption from forged Upgrade headers. Authentication and
+native sessions still apply before upgrade, without automatic authorization or revocation of open sockets.
+
+Local request hooks belong to extensions.lifecycle(); cold onRoute metadata remains separate.
+Public request route metadata remains unavailable until ordinary matching is published.
+
+References: [Jetty sessions](https://jetty.org/docs/jetty/12.1/programming-guide/server/session.html),
+[OWASP CSRF](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html)
+and [Spring CORS ordering](https://docs.spring.io/spring-security/reference/servlet/integrations/cors.html).
+Public HTTP/WebSocket tests establish server behavior; they do not prove browser cookie delivery or
+arbitrary deployment/backend isolation.
 
 ## TLS, HTTP/2 and compression
 
@@ -251,6 +321,25 @@ real HTTPS, ALPN, same-connection concurrent HTTP/2 streams, h2c, proxy metadata
 wire bytes, ranges, HEAD and startup cleanup. Sources: [Jetty server guide](https://jetty.org/docs/jetty/12.1/programming-guide/server/http.html)
 and [RFC 9110 section 8.6](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.6).
 
+## Codec-backed object operations
+
+The codec-enabled route view supports managed WebSockets and SSE alongside typed HTTP bodies.
+`TypedWebSocket.onObject(Class<T>, handler)` decodes complete binary messages; it shares the
+raw binary callback slot, with the latest registration winning. `TypedWebSocketConnection.sendObject`
+encodes binary output under the existing write lock, checks closure before conversion and again
+before submission, and preserves independent close handling. Raw text callbacks and raw sends
+remain independent of conversion. Uncaught decode or encode failures retain the managed
+terminal observer/1011 behavior rather than becoming HTTP responses after upgrade.
+
+`TypedResponse.startEventStream()` returns `TypedEventStream` over the same response-owned
+stream. Its `sendObject` checks thread/lifetime before conversion and strictly decodes the
+codec's complete output as UTF-8 before framing. Conversion failure emits none of the failing
+event, but cannot undo headers committed by starting the stream or earlier events. Raw event
+metadata, comments and heartbeats retain their existing behavior. The finite HTTP body limit
+does not govern WebSocket or SSE object sends and cannot bound work inside a codec.
+`TypedWebSocketTest`, `TypedEventStreamTest` and `TypedProtocolRoutesTest` verify these contracts
+through public registration and real HTTP/WebSocket clients.
+
 ## WebSocket HTTP/2 transport
 
 With `Shoostr.http2()`, existing `Routes.websocket` registrations accept negotiated
@@ -268,6 +357,6 @@ This does not imply HTTP/3 support. See [RFC 8441](https://www.rfc-editor.org/rf
 
 ## Optional request retrieval
 
-All17 potentially absent Request accessors return non-null JDK Optionals. Missing named path parameters and access before route selection return empty; null names still reject, and decoding failures remain failures. Present empty query, form, header and cookie values remain present. Raw query absence differs from an explicitly empty query. Native URI/address absence is represented without inventing metadata or changing Jetty fallbacks.
+Potentially absent Request accessors return non-null JDK Optionals. Missing named path parameters and access before route selection return empty; null names still reject, and decoding failures remain failures. Present empty query, form, header and cookie values remain present. Raw query absence differs from an explicitly empty query. Native URI/address absence is represented without inventing metadata or changing Jetty fallbacks.
 
 Session creation restrictions, multipart ownership, body limits, parsing and handler confinement are unchanged. Attribute/principal setter nulls retain removal/clearing semantics; internal nullable state and RequestOutcome/Response interfaces are unaffected. This is a source and binary interface change without aliases.

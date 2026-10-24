@@ -30,11 +30,11 @@ class MediaTypeResponseTest {
   @MethodSource("nullAdditionalAcceptCases")
   void treatsNullAdditionalCandidatesAsOnlyTheFirstCandidate(
       String accept, int status, String body, List<String> vary) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/null-additional",
-              (_, response) -> {
+              (ignored, response) -> {
                 var selected = response.negotiate(MediaType.APPLICATION_JSON, (MediaType[]) null);
                 assertSame(MediaType.APPLICATION_JSON, selected);
                 response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
@@ -65,11 +65,11 @@ class MediaTypeResponseTest {
   @Test
   @SuppressWarnings("NullAway") // Deliberately verifies invalid inputs at the public API boundary.
   void rejectsNullNegotiationInputsWithoutChangingStagedResponse() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/invalid-candidates",
-              (_, response) -> {
+              (ignored2, response) -> {
                 response
                     .status(202)
                     .setHeader("Vary", "Origin")
@@ -100,12 +100,12 @@ class MediaTypeResponseTest {
   void keepsConcurrentRequestNegotiationIndependent() throws Exception {
     var ready = new CountDownLatch(2);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
       app.routes()
           .get(
               "/concurrent",
-              (_, response) -> {
+              (ignored3, response) -> {
                 ready.countDown();
                 if (!ready.await(3, TimeUnit.SECONDS)) {
                   throw new IllegalStateException("Requests did not overlap");
@@ -155,11 +155,11 @@ class MediaTypeResponseTest {
   void negotiatesUsingItsBoundRequestHeaderSnapshot() throws Exception {
     var transportHeaders = new AtomicReference<HttpFields.Mutable>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.modifyHttpConfiguration(
           configuration ->
               configuration.addCustomizer(
-                  (nativeRequest, _) -> {
+                  (nativeRequest, ignored4) -> {
                     var fields = HttpFields.build(nativeRequest.getHeaders());
                     transportHeaders.set(fields);
                     return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
@@ -169,11 +169,12 @@ class MediaTypeResponseTest {
                       }
                     };
                   }));
-      app.onRequestHeaders((_, _) -> transportHeaders.get().put("Accept", "text/plain"));
+      app.onRequestHeaders(
+          (ignored5, ignored6) -> transportHeaders.get().put("Accept", "text/plain"));
       app.routes()
           .get(
               "/bound",
-              (_, response) -> {
+              (ignored7, response) -> {
                 var selected = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
                 response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
               });
@@ -200,11 +201,11 @@ class MediaTypeResponseTest {
   void negotiatesMetadataWithoutTranscodingCallerBytes() throws Exception {
     var latin = MediaType.TEXT_PLAIN.withCharset(StandardCharsets.ISO_8859_1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/bytes",
-              (_, response) -> {
+              (ignored8, response) -> {
                 var type = response.negotiate(latin, MediaType.APPLICATION_JSON);
                 var bytes = type.equals(latin) ? new byte[] {(byte) 0xe9} : new byte[] {'{', '}'};
                 response.body(type, bytes);
@@ -228,11 +229,11 @@ class MediaTypeResponseTest {
 
   @Test
   void mergesAcceptIntoVaryAndPreservesAnExistingWildcard() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/merged",
-              (_, response) -> {
+              (ignored9, response) -> {
                 response.addHeader("Vary", "Origin, aCcEpT");
                 response.addHeader("Vary", "User-Agent");
                 var type = response.negotiate(MediaType.APPLICATION_JSON);
@@ -241,7 +242,7 @@ class MediaTypeResponseTest {
       app.routes()
           .get(
               "/wildcard",
-              (_, response) -> {
+              (ignored10, response) -> {
                 response.setHeader("Vary", "*");
                 var type = response.negotiate(MediaType.APPLICATION_JSON);
                 response.body(type, new byte[] {1});
@@ -264,7 +265,7 @@ class MediaTypeResponseTest {
 
   @Test
   void readsRepeatedAcceptFieldsAsOnePreferenceList() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
 
       try (var test = TestServer.start(app)) {
@@ -286,7 +287,7 @@ class MediaTypeResponseTest {
 
   @Test
   void ignoresEmptyAcceptListElementsAndParameterSegments() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
 
       try (var test = TestServer.start(app)) {
@@ -304,7 +305,7 @@ class MediaTypeResponseTest {
   @ParameterizedTest
   @MethodSource("emptyAcceptFields")
   void rejectsAnExplicitEmptyAcceptList(String accept) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
 
       try (var test = TestServer.start(app)) {
@@ -321,7 +322,7 @@ class MediaTypeResponseTest {
 
   @Test
   void rejectsTheExactRepresentationWhenAWildcardWithParametersHasHigherQuality() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().get("/negotiated", MediaTypeResponseTest::negotiateUtf8Text);
 
       try (var test = TestServer.start(app)) {
@@ -340,7 +341,7 @@ class MediaTypeResponseTest {
 
   @Test
   void selectsTheExactRepresentationOverAnExcludedWildcardWithParameters() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().get("/negotiated", MediaTypeResponseTest::negotiateUtf8Text);
 
       try (var test = TestServer.start(app)) {
@@ -359,7 +360,7 @@ class MediaTypeResponseTest {
 
   @Test
   void permitsTabsInsideQuotedParameters() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
 
       try (var test = TestServer.start(app)) {
@@ -381,7 +382,7 @@ class MediaTypeResponseTest {
   @MethodSource("acceptCases")
   void appliesAcceptWildcardsWeightsSpecificityParametersAndCallerOrder(
       String accept, MediaType expected) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
 
       try (var test = TestServer.start(app)) {
@@ -401,7 +402,7 @@ class MediaTypeResponseTest {
   @ParameterizedTest
   @MethodSource("malformedAcceptFields")
   void rejectsMalformedAcceptWithoutVary(String accept) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes().get("/negotiated", MediaTypeResponseTest::negotiate);
 
       try (var test = TestServer.start(app)) {
@@ -421,11 +422,11 @@ class MediaTypeResponseTest {
   void rejectsNegotiationAfterStreamingHasCommittedHeaders() throws Exception {
     var failure = new AtomicReference<Throwable>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/stream",
-              (_, response) -> {
+              (ignored11, response) -> {
                 response.startStream(MediaType.TEXT_PLAIN).write("ready");
                 failure.set(
                     assertThrows(
@@ -447,11 +448,11 @@ class MediaTypeResponseTest {
 
   @Test
   void rejectsARepresentationExcludedByASpecificZeroQualityRange() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/negotiated",
-              (_, response) -> {
+              (ignored12, response) -> {
                 response.addHeader("Vary", "Origin");
                 var type = response.negotiate(MediaType.APPLICATION_JSON);
                 response.body(type, new byte[] {1});
@@ -473,11 +474,11 @@ class MediaTypeResponseTest {
 
   @Test
   void negotiatesTheHighestWeightedAcceptCandidate() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/negotiated",
-              (_, response) -> {
+              (ignored13, response) -> {
                 var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
                 response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
               });
@@ -501,11 +502,11 @@ class MediaTypeResponseTest {
 
   @Test
   void negotiatesTheFirstCandidateWithoutAcceptAndAddsVary() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/negotiated",
-              (_, response) -> {
+              (ignored14, response) -> {
                 var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
                 response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
               });
@@ -525,11 +526,11 @@ class MediaTypeResponseTest {
 
   @Test
   void sendsFiniteBytesWithTheSelectedCharset() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/latin",
-              (_, response) -> {
+              (ignored15, response) -> {
                 var bytes = new byte[] {(byte) 0xe9};
                 response.body(MediaType.TEXT_PLAIN.withCharset(StandardCharsets.ISO_8859_1), bytes);
                 bytes[0] = 0;
@@ -551,11 +552,11 @@ class MediaTypeResponseTest {
     var release = new CountDownLatch(1);
     var retained = new AtomicReference<Response.Stream>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/stream",
-              (_, response) -> {
+              (ignored16, response) -> {
                 var stream =
                     response.startStream(MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
                 retained.set(stream);
@@ -596,11 +597,11 @@ class MediaTypeResponseTest {
 
   @Test
   void retainsParameterizedStringContentTypes() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/custom",
-              (_, response) ->
+              (ignored17, response) ->
                   response.body("application/example; note=\"a b\"", new byte[] {1, 2, 3}));
 
       try (var test = TestServer.start(app)) {

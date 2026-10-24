@@ -28,7 +28,7 @@ on:
 permissions: {}
 
 env:
-  JAVA_VERSION: '25.0.4'
+  JAVA_VERSION: '21.0.13'
 
 jobs:
   tracing:

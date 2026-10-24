@@ -4,7 +4,6 @@ import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -14,10 +13,9 @@ import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Response;
 import org.eclipse.jetty.util.Callback;
-import org.eclipse.jetty.util.component.ContainerLifeCycle;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
-import org.eclipse.jetty.util.thread.VirtualThreadPool;
 import org.eclipse.jetty.util.thread.strategy.AdaptiveExecutionStrategy;
+import org.jspecify.annotations.Nullable;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -49,7 +47,7 @@ import org.openjdk.jmh.annotations.Warmup;
 public class SchedulingBenchmark {
   private static final byte[] PAYLOAD = "Hello, World!".getBytes(StandardCharsets.UTF_8);
 
-  @Param({"queued", "virtual", "coalesced"})
+  @Param({"queued-platform", "queued-virtual"})
   public String pool;
 
   @Param({"1", "32", "4096"})
@@ -57,11 +55,11 @@ public class SchedulingBenchmark {
 
   private final LinkedBlockingQueue<Exchange> pending;
   private final Options options;
-  private ExecutorService virtualThreads;
-  private ContainerLifeCycle lifecycle;
+  private @Nullable ExecutorService virtualThreads;
+  private QueuedThreadPool nativePool;
   private CountDownLatch finished;
   private volatile Throwable failure;
-  AdaptiveExecutionStrategy strategy;
+  private AdaptiveExecutionStrategy strategy;
   Exchange[] exchanges;
 
   /** Creates the common producer queue and framework options outside timing. */
@@ -97,32 +95,26 @@ public class SchedulingBenchmark {
   }
 
   /**
-   * Creates the current or proposed executor wiring outside the timed operation.
+   * Creates native platform or virtual-delegate wiring outside the timed operation.
    *
    * @throws Exception if Jetty lifecycle startup fails
    * @throws IllegalArgumentException if a fixture parameter is invalid
    */
   @Setup
   public void setup() throws Exception {
-    if ((!"queued".equals(pool) && !"virtual".equals(pool) && !"coalesced".equals(pool))
+    if ((!"queued-platform".equals(pool) && !"queued-virtual".equals(pool))
         || (batchSize != 1 && batchSize != 32 && batchSize != 4096)) {
       throw new IllegalArgumentException(
-          "Expected queued/virtual/coalesced pool and batch size 1/32/4096");
+          "Expected queued-platform/queued-virtual pool and batch size 1/32/4096");
     }
 
-    virtualThreads = Executors.newVirtualThreadPerTaskExecutor();
-    if ("queued".equals(pool)) {
-      var queued = new QueuedThreadPool();
-      queued.setReservedThreads(0);
-      queued.setVirtualThreadsExecutor(virtualThreads);
-      lifecycle = queued;
-      strategy = new AdaptiveExecutionStrategy(this::produce, queued);
-    } else {
-      var virtual = "coalesced".equals(pool) ? new ProducerThreadPool() : new VirtualThreadPool(0);
-      virtual.setVirtualThreadsExecutor(virtualThreads);
-      lifecycle = virtual;
-      strategy = new AdaptiveExecutionStrategy(this::produce, virtual);
+    nativePool = new QueuedThreadPool();
+    if ("queued-virtual".equals(pool)) {
+      virtualThreads = Executors.newVirtualThreadPerTaskExecutor();
+      nativePool.setVirtualThreadsExecutor(virtualThreads);
     }
+
+    strategy = new AdaptiveExecutionStrategy(this::produce, nativePool);
 
     try {
       exchanges = new Exchange[batchSize];
@@ -130,9 +122,9 @@ public class SchedulingBenchmark {
         exchanges[index] = new Exchange();
       }
 
-      lifecycle.start();
+      nativePool.start();
       strategy.start();
-      ((Executor) lifecycle).execute(strategy::produce);
+      nativePool.execute(strategy::produce);
     } catch (Exception | Error startupFailure) {
       try {
         close();
@@ -154,7 +146,7 @@ public class SchedulingBenchmark {
       var exchange = pending.take();
       exchange.producedVirtually = Thread.currentThread().isVirtual();
       return exchange;
-    } catch (InterruptedException _) {
+    } catch (InterruptedException ignored) {
       Thread.currentThread().interrupt();
       return null;
     }
@@ -174,8 +166,8 @@ public class SchedulingBenchmark {
       }
     } finally {
       try {
-        if (lifecycle != null) {
-          lifecycle.stop();
+        if (nativePool != null) {
+          nativePool.stop();
         }
       } finally {
         if (virtualThreads != null) {
@@ -210,7 +202,7 @@ public class SchedulingBenchmark {
               Proxy.newProxyInstance(
                   getClass().getClassLoader(),
                   new Class<?>[] {Request.class},
-                  (_, method, _) ->
+                  (ignored2, method, ignored3) ->
                       switch (method.getName()) {
                         case "getMethod" -> "GET";
                         case "getHeaders" -> HttpFields.EMPTY;
@@ -221,7 +213,7 @@ public class SchedulingBenchmark {
               Proxy.newProxyInstance(
                   getClass().getClassLoader(),
                   new Class<?>[] {Response.class},
-                  (_, method, arguments) ->
+                  (ignored4, method, arguments) ->
                       switch (method.getName()) {
                         case "getStatus" -> 200;
                         case "getHeaders" -> headers;

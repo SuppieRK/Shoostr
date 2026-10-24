@@ -40,7 +40,7 @@ class TestClientTest {
   @Test
   void consumesTextThroughAnExplicitJdkBodyHandler() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/hello", (_, response) -> response.text("café"));
+    app.routes().get("/hello", (ignored, response) -> response.text("café"));
 
     try (var test = TestServer.start(app)) {
       assertEquals(
@@ -53,7 +53,7 @@ class TestClientTest {
   @Test
   void preservesEncodedPathAndRawQueryInTheOutgoingRequest() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/value/{id}", (_, response) -> response.text("ok"));
+    app.routes().get("/value/{id}", (ignored2, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/value/hello%20world?q=a%2Bb&x=a+b"));
@@ -66,7 +66,7 @@ class TestClientTest {
   @Test
   void appendsRepeatedHeadersAndAcceptsExistingHeaderNames() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/headers", (_, response) -> response.text("ok"));
+    app.routes().get("/headers", (ignored3, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
       var reply =
@@ -88,7 +88,7 @@ class TestClientTest {
       names = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "BASELINE_CONTROL"})
   void usesTheRegisteredMethodsWireValue(HttpMethods method) throws Exception {
     var app = new Shoostr();
-    app.routes().route(method, "/method", (_, response) -> response.status(204));
+    app.routes().route(method, "/method", (ignored4, response) -> response.status(204));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/method").method(method));
@@ -100,7 +100,7 @@ class TestClientTest {
   @Test
   void acceptsACustomMethodToken() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/method", (_, response) -> response.text("registered GET"));
+    app.routes().get("/method", (ignored5, response) -> response.text("registered GET"));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/method").method("CUSTOM"));
@@ -164,7 +164,7 @@ class TestClientTest {
   @Test
   void overridesTheRequestTimeout() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/value", (_, response) -> response.text("ok"));
+    app.routes().get("/value", (ignored6, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/value").timeout(Duration.ofSeconds(2)));
@@ -191,11 +191,11 @@ class TestClientTest {
   @Test
   void requiresAnExplicitPathForEachSend() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/value", (_, response) -> response.text("ok"));
+    app.routes().get("/value", (ignored7, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
       assertEquals(200, test.send(request -> request.path("/value")).statusCode());
-      assertThrows(IllegalStateException.class, () -> test.send(_ -> {}));
+      assertThrows(IllegalStateException.class, () -> test.send(ignored8 -> {}));
     }
   }
 
@@ -223,7 +223,7 @@ class TestClientTest {
   @Test
   void startsEachSendWithFreshMethodHeadersAndBody() throws Exception {
     var app = new Shoostr();
-    app.routes().post("/write", (_, response) -> response.text("written"));
+    app.routes().post("/write", (ignored9, response) -> response.text("written"));
     app.routes()
         .get(
             "/read",
@@ -276,7 +276,7 @@ class TestClientTest {
   @Test
   void closesRequestConfigurationAfterSuccessfulSending() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/value", (_, response) -> response.text("ok"));
+    app.routes().get("/value", (ignored10, response) -> response.text("ok"));
     var retained = new AtomicReference<TestRequest>();
 
     try (var test = TestServer.start(app)) {

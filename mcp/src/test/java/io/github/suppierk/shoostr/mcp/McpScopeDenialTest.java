@@ -51,7 +51,7 @@ class McpScopeDenialTest {
                         Map.of(
                             "initializeAllowed", request.header("X-Verified-Grants").isPresent())),
                     null),
-            (identity, _) -> {
+            (identity, ignored) -> {
               if (!Boolean.TRUE.equals(identity.context().get("initializeAllowed"))) {
                 throw McpHttpSecurity.scopeDenied(
                     Set.of("tools:write", "tools:read"),
@@ -158,7 +158,7 @@ class McpScopeDenialTest {
                         McpServerFeatures.SyncToolSpecification.builder()
                             .tool(McpSchema.Tool.builder("write", Map.of("type", "object")).build())
                             .callHandler(
-                                (_, _) -> {
+                                (ignored2, ignored3) -> {
                                   calls.incrementAndGet();
                                   return McpSchema.CallToolResult.builder()
                                       .addTextContent("write completed")
@@ -235,7 +235,7 @@ class McpScopeDenialTest {
     var mcp = refusingServer();
     var app = new Shoostr();
     app.extensions(mcp)
-        .exception(ForbiddenException.class, (_, _, response) -> response.text("app"))
+        .exception(ForbiddenException.class, (ignored4, ignored5, response) -> response.text("app"))
         .routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
@@ -288,8 +288,8 @@ class McpScopeDenialTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("alice:client", McpTransportContext.EMPTY, null),
-            (_, _) -> {
+            ignored6 -> new McpIdentity("alice:client", McpTransportContext.EMPTY, null),
+            (ignored7, ignored8) -> {
               throw McpHttpSecurity.scopeDenied(
                   Set.of("tools:read"),
                   URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));

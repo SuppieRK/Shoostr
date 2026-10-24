@@ -49,7 +49,7 @@ class NullAwayFixtureTest {
 
         final class UnsafeNull {
           static void reject(Response response) {
-            response.setHeader("X-Response").trim();
+            response.header("X-Response").trim();
           }
 
           static void acceptNullableInputs() {
@@ -66,7 +66,7 @@ class NullAwayFixtureTest {
             .buildAndFail();
 
     assertTrue(
-        result.getOutput().contains("[NullAway] dereferenced expression 'response.setHeader"),
+        result.getOutput().contains("[NullAway] dereferenced expression 'response.header"),
         result.getOutput());
     assertFalse(result.getOutput().contains("[NullAway] passing @Nullable"), result.getOutput());
   }

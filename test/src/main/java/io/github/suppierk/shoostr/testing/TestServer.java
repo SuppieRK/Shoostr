@@ -62,7 +62,7 @@ public final class TestServer implements Closeable {
    * @throws NullPointerException if app is null
    */
   public static TestServer start(Shoostr app) throws Exception {
-    return start(app, _ -> {});
+    return start(app, ignored -> {});
   }
 
   /**
@@ -93,7 +93,7 @@ public final class TestServer implements Closeable {
    * @throws NullPointerException if app is null
    */
   public static TestServer startOnPort(Shoostr app, int port) throws Exception {
-    return startOnPort(app, port, _ -> {});
+    return startOnPort(app, port, ignored2 -> {});
   }
 
   /**
@@ -131,7 +131,7 @@ public final class TestServer implements Closeable {
    */
   public static TestServer startOnPortRange(Shoostr app, int minimum, int maximum)
       throws Exception {
-    return startOnPortRange(app, minimum, maximum, _ -> {});
+    return startOnPortRange(app, minimum, maximum, ignored3 -> {});
   }
 
   /**
@@ -211,7 +211,7 @@ public final class TestServer implements Closeable {
             client,
             reservation.get());
       } catch (Exception | Error failure) {
-        try (var _ = reservation.get();
+        try (var ignored4 = reservation.get();
             app) {
           if (client != null) {
             closeClient(client);
@@ -392,7 +392,7 @@ public final class TestServer implements Closeable {
 
     closed = true;
 
-    try (var _ = reservation;
+    try (var ignored5 = reservation;
         app) {
       closeClient(client);
     }

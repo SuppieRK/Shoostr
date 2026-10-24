@@ -17,6 +17,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.RepeatedTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -25,7 +26,7 @@ import org.junit.jupiter.api.Timeout;
 class RoutesConcurrencyTest {
   @Test
   void preservesRegistrationsAcrossRootAndSharedPathScopes() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       var scopes = scopes(app);
       var ready = new CountDownLatch(1);
@@ -39,7 +40,7 @@ class RoutesConcurrencyTest {
                   for (int route = 0; route < 8; route++) {
                     String path = index + "/" + route;
                     var scope = scopes.get(index % scopes.size());
-                    scope.route("GET", prefix(index) + path, (_, res) -> res.text(path));
+                    scope.route("GET", prefix(index) + path, (ignored, res) -> res.text(path));
                   }
                 }));
       }
@@ -66,7 +67,7 @@ class RoutesConcurrencyTest {
 
   @Test
   void rejectsConcurrentDuplicateShapesAcrossDifferentScopes() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       var scopes = scopes(app);
       var ready = new CountDownLatch(1);
@@ -83,9 +84,9 @@ class RoutesConcurrencyTest {
                         .get(index % scopes.size())
                         .get(
                             prefix(index) + "{id" + index + "}",
-                            (_, res) -> res.text(Integer.toString(index)));
+                            (ignored2, res) -> res.text(Integer.toString(index)));
                     return true;
-                  } catch (IllegalArgumentException _) {
+                  } catch (IllegalArgumentException ignored3) {
                     return false;
                   }
                 }));
@@ -114,7 +115,7 @@ class RoutesConcurrencyTest {
 
   @Test
   void callbacksCanWaitForRegistrationsFromOtherThreads() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       app.routes()
           .path(
@@ -124,7 +125,8 @@ class RoutesConcurrencyTest {
                     workers.submit(
                         () ->
                             routes.path(
-                                "/nested", nested -> nested.get((_, res) -> res.text("ready"))));
+                                "/nested",
+                                nested -> nested.get((ignored4, res) -> res.text("ready"))));
                 assertDoesNotThrow(() -> task.get(3, TimeUnit.SECONDS));
                 var startup =
                     workers.submit(() -> assertThrows(IllegalStateException.class, app::start));
@@ -147,7 +149,7 @@ class RoutesConcurrencyTest {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       var callback =
           workers.submit(
@@ -156,7 +158,7 @@ class RoutesConcurrencyTest {
                       routes -> {
                         entered.countDown();
                         await(release);
-                        routes.get("/ready", (_, response) -> response.text("ready"));
+                        routes.get("/ready", (ignored5, response) -> response.text("ready"));
                       }));
 
       try {
@@ -184,7 +186,11 @@ class RoutesConcurrencyTest {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       var callback =
           workers.submit(
@@ -196,7 +202,8 @@ class RoutesConcurrencyTest {
                             entered.countDown();
                             await(release);
                             assertThrows(
-                                IllegalStateException.class, () -> routes.get((_, _) -> {}));
+                                IllegalStateException.class,
+                                () -> routes.get((ignored6, ignored7) -> {}));
                           }));
 
       try {
@@ -225,7 +232,11 @@ class RoutesConcurrencyTest {
     var firstRelease = new CountDownLatch(1);
     var secondRelease = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       var rootRoutes = app.routes();
       var first =
@@ -236,7 +247,7 @@ class RoutesConcurrencyTest {
                       () ->
                           rootRoutes.path(
                               "/first",
-                              _ -> {
+                              ignored8 -> {
                                 entered.countDown();
                                 await(firstRelease);
                                 throw new IllegalArgumentException("registration failed");
@@ -250,7 +261,7 @@ class RoutesConcurrencyTest {
                           routes -> {
                             entered.countDown();
                             await(secondRelease);
-                            routes.get((_, _) -> {});
+                            routes.get((ignored9, ignored10) -> {});
                           }));
 
       try {
@@ -271,7 +282,11 @@ class RoutesConcurrencyTest {
 
   @RepeatedTest(5)
   void racingStartupEitherIncludesOrRejectsEachRegistration() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var workers = Executors.newVirtualThreadPerTaskExecutor();
         var client = HttpClient.newHttpClient()) {
       var scopes = scopes(app);
@@ -287,9 +302,9 @@ class RoutesConcurrencyTest {
                   try {
                     scopes
                         .get(index % scopes.size())
-                        .get(prefix(index) + index, (_, res) -> res.text("registered"));
+                        .get(prefix(index) + index, (ignored11, res) -> res.text("registered"));
                     return true;
-                  } catch (IllegalStateException _) {
+                  } catch (IllegalStateException ignored12) {
                     return false;
                   }
                 }));

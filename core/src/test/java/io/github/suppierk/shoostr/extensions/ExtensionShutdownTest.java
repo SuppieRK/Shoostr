@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.ApplicationCallbacks;
 import io.github.suppierk.shoostr.Extension;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.RequestObservation;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
@@ -21,6 +20,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.component.LifeCycle;
 import org.junit.jupiter.api.Test;
 
@@ -43,7 +43,7 @@ class ExtensionShutdownTest {
             @Override
             public void install(ApplicationCallbacks callbacks) {
               callbacks.observe(
-                  _ ->
+                  ignored ->
                       new RequestObservation() {
                         @Override
                         public void close() {
@@ -80,7 +80,7 @@ class ExtensionShutdownTest {
       app.routes()
           .get(
               "/drain",
-              (_, response) -> {
+              (ignored2, response) -> {
                 entered.countDown();
                 assertTrue(release.await(5, TimeUnit.SECONDS));
                 response.body(
@@ -124,7 +124,10 @@ class ExtensionShutdownTest {
   @Test
   void signalsExtensionsBeforeNativeStopAndDisposesThemAfterward() throws Exception {
     var events = new CopyOnWriteArrayList<String>();
-    var app = new Shoostr(Options.defaults().withPort(0));
+    var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
     app.extensions(capability("first", events), capability("second", events));
     app.modifyServer(
         server ->
@@ -163,7 +166,10 @@ class ExtensionShutdownTest {
           }
         };
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(capability("first", events), broken);
       app.modifyServer(
           server ->

@@ -1,0 +1,39 @@
+---
+title: Handle WebSocket objects
+description: Decode complete binary WebSocket messages with onObject and send codec-backed object replies while keeping ordinary text and binary operations available.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/11-websockets/src/main/java/io/github/suppierk/shoostr/example/websocket/TypedWebSocketExample.java?raw';
+import test from '../../../../../examples/11-websockets/src/test/java/io/github/suppierk/shoostr/example/websocket/TypedWebSocketExampleTest.java?raw';
+
+## Description
+
+Configure a [codec](../../json/codec/) and register the endpoint through the returned typed view to receive `TypedWebSocket` configuration.
+`onObject(Class<T>, handler)` passes each decoded value to the callback, whose `TypedWebSocketConnection` provides `sendObject(value)` for the reply.
+Both operations use the configured codec, while ordinary text and byte-array sends bypass it.
+
+:::note[Object messages are binary]
+Object operations use complete binary WebSocket messages, not text messages, even when the codec produces JSON.
+Agree on the payload format with the client; Shoostr does not infer or negotiate it.
+`onObject(...)` and `onBinary(...)` share one callback slot, so the later registration replaces the earlier one; `onText(...)` remains independent.
+:::
+
+Callbacks follow the [managed WebSocket admission, lifecycle and sequential delivery rules](../managed/), and sends wait for transport completion rather than peer receipt.
+Decoding happens before the object callback runs, so that callback cannot catch a decode failure.
+An uncaught conversion failure follows the same terminal `onError(...)` and `1011` closure as other callback failures.
+Use a raw binary callback and decode inside it when your application needs to recover from individual invalid messages.
+
+## Example
+
+The `/counter` endpoint accepts a signed integer in four bytes, most significant byte first, and replies with the incremented value in the same format.
+Bytes `00 00 00 29` represent `41`; the binary reply `00 00 00 2a` represents `42`.
+The separate text callback replies to `hello` with `text: hello`, without calling the codec.
+
+<Code code={application} lang="java" title="TypedWebSocketExample.java" />
+
+## Test
+
+The JDK client sends the counter across two fragments and checks the complete binary reply before exchanging an independent text message.
+
+<Code code={test} lang="java" title="TypedWebSocketExampleTest.java" />

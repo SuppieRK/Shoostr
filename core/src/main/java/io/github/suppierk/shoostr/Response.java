@@ -14,6 +14,7 @@ import java.io.InputStream;
 import java.net.URI;
 import java.nio.ByteBuffer;
 import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
@@ -87,7 +88,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   }
 
   private static final byte[] EMPTY = new byte[0];
-  private static final String EVENT_STREAM_CONTENT_TYPE = "text/event-stream; charset=utf-8";
+  static final String EVENT_STREAM_CONTENT_TYPE = "text/event-stream; charset=utf-8";
   private static final List<HttpHeaders> CORS_RESPONSE_HEADERS =
       List.of(
           HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS,
@@ -277,7 +278,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @param session existing session
    */
   void renewSessionId(Session session) {
-    require(State.OPEN);
+    checkCookieMutation();
     session.renewId(nativeRequest(), delegate);
   }
 
@@ -286,10 +287,10 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    *
    * @throws IllegalStateException if response commitment has begun
    */
-  void checkSessionCreation() {
+  void checkCookieMutation() {
     require(State.OPEN);
     if (delegate.isCommitted()) {
-      throw new IllegalStateException("Session cookie cannot be sent after response commitment");
+      throw new IllegalStateException("Cookies cannot be changed after response commitment");
     }
   }
 
@@ -326,6 +327,30 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   public Response text(String value) {
     Objects.requireNonNull(value);
     return body(TEXT_CONTENT_TYPE, value.getBytes(StandardCharsets.UTF_8));
+  }
+
+  /**
+   * Stages plain text encoded with the selected charset and matching Content-Type metadata until
+   * the handler returns. Malformed and unmappable input uses the charset's replacement bytes, as
+   * defined by {@link String#getBytes(Charset)}.
+   *
+   * @param value response text
+   * @param charset encoding used for the response bytes
+   * @return this response
+   * @throws NullPointerException if value or charset is null
+   * @throws IllegalArgumentException if the charset name requires HTTP quoting or the encoded body
+   *     exceeds the configured limit
+   * @throws IllegalStateException if the response is unavailable for finite output
+   */
+  public Response text(String value, Charset charset) {
+    Objects.requireNonNull(value);
+    Objects.requireNonNull(charset);
+    var contentType =
+        StandardCharsets.UTF_8.equals(charset)
+            ? TEXT_CONTENT_TYPE
+            : MediaType.TEXT_PLAIN.withCharset(charset).value();
+    requireEncodedBody(contentType);
+    return body(contentType, value.getBytes(charset));
   }
 
   /**
@@ -406,7 +431,8 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   }
 
   /**
-   * Validates codec output admission before calling user conversion, without changing headers.
+   * Validates finite output admission before caller-supplied encoding or codec conversion, without
+   * changing headers.
    *
    * @param contentType caller-selected response media type
    * @throws IllegalStateException if the phase, thread or selected file prohibits finite output
@@ -752,7 +778,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @return first value, or null when absent
    * @throws IllegalStateException if accessed outside the response thread or lifetime
    */
-  public @Nullable String setHeader(String name) {
+  public @Nullable String header(String name) {
     checkReadable();
     return delegate.getHeaders().get(Objects.requireNonNull(name));
   }
@@ -782,7 +808,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     for (var field : delegate.getHeaders()) {
       fields.computeIfAbsent(field.getName(), ignored -> new ArrayList<>()).add(field.getValue());
     }
-    fields.replaceAll((_, values) -> List.copyOf(values));
+    fields.replaceAll((ignored2, values) -> List.copyOf(values));
     return Collections.unmodifiableMap(fields);
   }
 
@@ -884,6 +910,16 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    */
   public Response cookie(Cookie cookie) {
     require(State.OPEN);
+    putCookie(cookie);
+    return this;
+  }
+
+  /**
+   * Stages a cookie without reopening metadata during required-header restoration.
+   *
+   * @param cookie validated cookie
+   */
+  private void putCookie(Cookie cookie) {
     var value = Objects.requireNonNull(cookie).headerValue();
     var fields = delegate.getHeaders().listIterator();
     while (fields.hasNext()) {
@@ -894,7 +930,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       }
     }
     delegate.getHeaders().add(HttpHeaders.SET_COOKIE.value(), value);
-    return this;
   }
 
   /**
@@ -1715,7 +1750,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     if (channel != null) {
       try {
         channel.close();
-      } catch (IOException _) {
+      } catch (IOException ignored3) {
         // Response cleanup cannot safely report an unsubmitted descriptor close failure.
       }
     }
@@ -1758,7 +1793,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       }
 
       return explicitRange(length, value.substring(0, separator), value.substring(separator + 1));
-    } catch (NumberFormatException _) {
+    } catch (NumberFormatException ignored4) {
       return null;
     }
   }
@@ -2136,8 +2171,9 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     requiredCorsHeaders = headers;
   }
 
-  /** Restores required routing and authentication fields before bytes can be submitted. */
-  private void protectRequiredHeaders() {
+  /** Restores required security, routing and cache fields before transport submission. */
+  void protectRequiredHeaders() {
+
     if (requiredCorsHeaders != null) {
       protectCorsHeaders(requiredCorsHeaders);
     }
@@ -2265,6 +2301,11 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       buffer = EMPTY;
     }
 
+    /** Checks the response thread, lifetime and streaming state before caller conversion. */
+    private void checkWritable() {
+      require(State.STREAMING);
+    }
+
     /**
      * Writes text as UTF-8, flushing at the configured capacity as needed.
      *
@@ -2353,7 +2394,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   }
 
   /** Writes complete server-sent event frames through the response's bounded stream. */
-  public static final class EventStream {
+  public static sealed class EventStream permits TypedEventStream {
     private static final byte[] DATA_PREFIX = "data: ".getBytes(StandardCharsets.UTF_8);
     private static final byte[] EVENT_TERMINATOR = "\n\n".getBytes(StandardCharsets.UTF_8);
     private final Stream output;
@@ -2363,8 +2404,13 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
      *
      * @param output bounded response stream
      */
-    private EventStream(Stream output) {
-      this.output = output;
+    EventStream(Stream output) {
+      this.output = Objects.requireNonNull(output);
+    }
+
+    /** Checks the existing response-owned stream without writing any event bytes. */
+    final void requireWritable() {
+      output.checkWritable();
     }
 
     /**

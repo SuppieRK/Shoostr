@@ -92,7 +92,7 @@ public class TelemetryObservationBenchmark {
             Proxy.newProxyInstance(
                 getClass().getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Request.class},
-                (_, method, _) ->
+                (ignored, method, ignored2) ->
                     switch (method.getName()) {
                       case "getHeaders" -> fields;
                       case "getMethod" -> "GET";
@@ -104,7 +104,7 @@ public class TelemetryObservationBenchmark {
             Proxy.newProxyInstance(
                 getClass().getClassLoader(),
                 new Class<?>[] {Response.class},
-                (_, method, _) -> {
+                (ignored3, method, ignored4) -> {
                   throw new UnsupportedOperationException(method.getName());
                 });
     request = Request.create(delegate, sink, Options.defaults(), Callback.NOOP);
@@ -142,8 +142,8 @@ public class TelemetryObservationBenchmark {
     var propagators = ContextPropagators.create(W3CTraceContextPropagator.getInstance());
     switch (configuration) {
       case "minimal":
-        RequestObservation minimal = _ -> {};
-        return _ -> minimal;
+        RequestObservation minimal = ignored5 -> {};
+        return ignored6 -> minimal;
       case "micrometer":
         var registry = new SimpleMeterRegistry();
         resources.add(registry::close);

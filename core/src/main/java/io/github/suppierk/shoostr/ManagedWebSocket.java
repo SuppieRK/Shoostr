@@ -5,7 +5,9 @@ import java.nio.ByteBuffer;
 import java.security.Principal;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.websocket.api.Callback;
 import org.eclipse.jetty.websocket.api.Session;
 import org.jspecify.annotations.Nullable;
@@ -26,9 +28,13 @@ public final class ManagedWebSocket implements Session.Listener {
   private final @Nullable Principal principal;
   private @Nullable Session session;
   private @Nullable WebSocketConnection connection;
+  private @Nullable FutureTask<Void> task;
   private @Nullable Thread worker;
   private @Nullable Object message;
   private boolean demanded;
+  private boolean openingPending;
+  private boolean terminalNotified;
+  private boolean dispatchClosed;
   private boolean stopping;
   private boolean closing;
   private boolean closeReceived;
@@ -63,19 +69,18 @@ public final class ManagedWebSocket implements Session.Listener {
   public void onWebSocketOpen(Session opened) {
     synchronized (events) {
       session = opened;
-      connection = new WebSocketConnection(opened, path, parameters, principal, this);
+      connection = configuration.connection(opened, path, parameters, principal, this);
+      openingPending = true;
     }
     if (!runtime.register(this)) {
+      synchronized (events) {
+        terminalNotified = true;
+      }
       stop();
       return;
     }
 
-    try {
-      runtime.execute(this);
-    } catch (RejectedExecutionException _) {
-      stop();
-      runtime.remove(this);
-    }
+    schedule();
   }
 
   /**
@@ -92,11 +97,11 @@ public final class ManagedWebSocket implements Session.Listener {
       if (!closing) {
         message = text;
       }
-
-      events.notifyAll();
     }
     if (discard) {
       demand();
+    } else {
+      schedule();
     }
   }
 
@@ -130,11 +135,11 @@ public final class ManagedWebSocket implements Session.Listener {
       if (!closing) {
         message = bytes;
       }
-
-      events.notifyAll();
     }
     if (discard) {
       demand();
+    } else {
+      schedule();
     }
   }
 
@@ -151,10 +156,11 @@ public final class ManagedWebSocket implements Session.Listener {
       }
     }
     terminate(failure);
+    schedule();
   }
 
   /**
-   * Acknowledges native closure before waking the managed worker.
+   * Acknowledges native closure before admitting managed terminal observers.
    *
    * @param code native close code
    * @param reason native close reason
@@ -179,94 +185,177 @@ public final class ManagedWebSocket implements Session.Listener {
     if (first) {
       synchronized (events) {
         closeReady = true;
-        events.notifyAll();
       }
     }
 
-    runtime.remove(this);
+    schedule();
+    releaseIfFinished();
   }
 
-  /** Runs all application work for this connection on one managed virtual thread. */
-  void run() {
+  /** Schedules actual work once; idle connections retain state without occupying a worker. */
+  private void schedule() {
+    FutureTask<Void> pending;
     synchronized (events) {
-      worker = Thread.currentThread();
-      if (stopping) {
-        worker = null;
+      if (task != null || dispatchClosed || terminalNotified || !hasWork()) {
         return;
       }
+
+      var reference = new AtomicReference<FutureTask<Void>>();
+      pending = new FutureTask<>(() -> run(Objects.requireNonNull(reference.get())), null);
+      reference.set(pending);
+      task = pending;
     }
 
     try {
+      runtime.execute(pending);
+    } catch (RejectedExecutionException ignored) {
+      synchronized (events) {
+        pending.cancel(false);
+        if (task != pending) {
+          return;
+        }
+
+        task = null;
+        terminalNotified = true;
+      }
+      stop();
+      runtime.remove(this);
+    }
+  }
+
+  /**
+   * Reads pending work only while the event lock is held.
+   *
+   * @return whether an application callback is ready
+   */
+  private boolean hasWork() {
+    return closing ? closeReady : openingPending || message != null;
+  }
+
+  /**
+   * Runs one admitted callback and releases executor ownership before another native event.
+   *
+   * @param pending task whose ownership must still match this connection
+   */
+  @SuppressWarnings("java:S1181") // FutureTask would otherwise silently retain fatal failures.
+  private void run(FutureTask<Void> pending) {
+    synchronized (events) {
+      if (task != pending || dispatchClosed) {
+        return;
+      }
+
+      worker = Thread.currentThread();
+    }
+
+    try {
+      boolean completed = false;
+
+      try {
+        deliverPending();
+        completed = true;
+      } catch (InterruptedException ignored) {
+        Objects.requireNonNull(connection).close(1001, "Processing interrupted");
+        Thread.currentThread().interrupt();
+      } catch (Exception failure) {
+        WebSocketConnection opened;
+        boolean unexpected;
+        synchronized (events) {
+          opened = Objects.requireNonNull(connection);
+          unexpected = !closing && error == null;
+          if (unexpected) {
+            error = failure;
+          }
+        }
+        if (unexpected) {
+          LOGGER.warn("WebSocket application callback failed", failure);
+        }
+
+        opened.close(1011, "Processing failed");
+      } finally {
+        try {
+          if (!completed) {
+            Objects.requireNonNull(connection).close(1011, "Processing failed");
+          }
+        } finally {
+          finish(pending);
+        }
+      }
+    } catch (Error failure) {
+      // FutureTask captures Errors; report them instead of silently discarding its result.
+      LOGGER.error("WebSocket application work failed", failure);
+      throw failure;
+    }
+  }
+
+  /**
+   * Delivers the pending opening or complete message without waiting for later native events.
+   *
+   * @throws Exception if application handling fails
+   */
+  private void deliverPending() throws Exception {
+    boolean opening;
+    Object next;
+    synchronized (events) {
+      if (closing || dispatchClosed) {
+        return;
+      }
+
+      opening = openingPending;
+      openingPending = false;
+      next = message;
+      message = null;
+    }
+
+    if (opening) {
       var open = configuration.open();
       if (open != null) {
         open.handle(Objects.requireNonNull(connection));
       }
+    } else if (next != null) {
+      deliver(next);
+    }
 
-      receiveMessages();
-    } catch (InterruptedException _) {
-      Objects.requireNonNull(connection).close(1001, "Processing interrupted");
-      Thread.currentThread().interrupt();
-    } catch (Exception failure) {
-      WebSocketConnection opened;
-      boolean unexpected;
+    demand();
+  }
+
+  /**
+   * Completes active ownership before another item or terminal observer can be admitted.
+   *
+   * @param pending task completing its actual application work
+   */
+  private void finish(FutureTask<Void> pending) {
+    boolean notify;
+    synchronized (events) {
+      notify = closing && closeReady && !dispatchClosed && !terminalNotified;
+      if (notify) {
+        terminalNotified = true;
+      }
+    }
+
+    try {
+      if (notify) {
+        notifyTerminal();
+      }
+    } finally {
       synchronized (events) {
-        opened = Objects.requireNonNull(connection);
-        unexpected = !closing && error == null;
-        if (unexpected) {
-          error = failure;
+        // Cancellation uses this same lock; no task interrupt can arrive after ownership clears.
+        Thread.interrupted();
+        worker = null;
+        if (task == pending) {
+          task = null;
         }
       }
-      if (unexpected) {
-        LOGGER.warn("WebSocket application callback failed", failure);
-      }
-
-      opened.close(1011, "Processing failed");
-    } finally {
-      // Also close after an unchecked Error escapes application work, without swallowing it.
-      Objects.requireNonNull(connection).close(1011, "Processing failed");
-      notifyTerminal();
-      synchronized (events) {
-        worker = null;
-      }
+      schedule();
+      releaseIfFinished();
     }
   }
 
-  /**
-   * Delivers complete messages one at a time until application admission closes.
-   *
-   * @throws Exception if message handling fails or the worker is interrupted
-   */
-  private void receiveMessages() throws Exception {
-    demand();
-    while (true) {
-      var next = nextMessage();
-      if (next == null) {
-        return;
-      }
-
-      deliver(next);
-      demand();
-    }
-  }
-
-  /**
-   * Takes the single pending message without introducing an application mailbox.
-   *
-   * @return complete message, or null after closing begins
-   * @throws InterruptedException if managed work is canceled
-   */
-  private @Nullable Object nextMessage() throws InterruptedException {
+  /** Releases registry ownership only after queued and active managed work has ended. */
+  private void releaseIfFinished() {
     synchronized (events) {
-      while (message == null && !closing) {
-        events.wait();
+      if (task == null && (dispatchClosed || (closeReady && terminalNotified))) {
+        runtime.remove(this);
       }
-      if (closing) {
-        return null;
-      }
-
-      var next = Objects.requireNonNull(message);
-      message = null;
-      return next;
     }
   }
 
@@ -301,8 +390,24 @@ public final class ManagedWebSocket implements Session.Listener {
 
     try {
       opened.close(1001, "Server stopping", Callback.NOOP);
-    } catch (RuntimeException _) {
+    } catch (RuntimeException ignored3) {
       opened.disconnect();
+    }
+
+    schedule();
+    releaseIfFinished();
+  }
+
+  /** Cancels final queued work without mistaking cancellation for a running callback's return. */
+  void finishStop() {
+    synchronized (events) {
+      dispatchClosed = true;
+    }
+
+    try {
+      terminate(new IOException("Server stopped"));
+    } finally {
+      releaseIfFinished();
     }
   }
 
@@ -310,8 +415,9 @@ public final class ManagedWebSocket implements Session.Listener {
   void closing() {
     synchronized (events) {
       closing = true;
+      openingPending = false;
       message = null;
-      events.notifyAll();
+      cancelQueued();
     }
   }
 
@@ -354,31 +460,38 @@ public final class ManagedWebSocket implements Session.Listener {
    * @param failure terminal transport cause
    */
   private void terminate(Throwable failure) {
-    Thread running;
     synchronized (events) {
       closing = true;
+      openingPending = false;
       message = null;
-      running = worker;
       var opened = connection;
       if (opened != null) {
-        // Mark the connection terminal before the worker can wake and attempt its fallback close.
+        // Settle sends independently of application completion or cancellation.
         opened.terminate(failure);
       }
 
-      events.notifyAll();
+      if (worker == null) {
+        cancelQueued();
+      } else if (worker != Thread.currentThread()) {
+        worker.interrupt();
+      }
     }
+  }
 
-    if (running != null && running != Thread.currentThread()) {
-      running.interrupt();
+  /** Cancels unclaimed work and clears its captured connection before native queue removal. */
+  private void cancelQueued() {
+    if (worker == null && task != null) {
+      task.cancel(false);
+      task = null;
     }
   }
 
   /**
-   * Waits for native acknowledgment without treating cancellation as application completion.
+   * Delivers ready terminal observers without waiting for a future native acknowledgment.
    * Remembered interruption is restored after both observers, including exceptional exits.
    */
   private void notifyTerminal() {
-    boolean interrupted = Thread.interrupted();
+    boolean restore = Thread.interrupted();
 
     try {
       int code;
@@ -386,13 +499,6 @@ public final class ManagedWebSocket implements Session.Listener {
       Throwable failure;
       boolean ready;
       synchronized (events) {
-        while (!closeReady && !stopping) {
-          try {
-            events.wait();
-          } catch (InterruptedException _) {
-            interrupted = true;
-          }
-        }
         code = closeCode;
         reason = closeReason;
         failure = error;
@@ -406,7 +512,7 @@ public final class ManagedWebSocket implements Session.Listener {
         }
       } catch (Exception observerFailure) {
         if (observerFailure instanceof InterruptedException) {
-          interrupted = true;
+          restore = true;
         }
 
         LOGGER.warn("WebSocket error observer failed", observerFailure);
@@ -419,13 +525,13 @@ public final class ManagedWebSocket implements Session.Listener {
         }
       } catch (Exception observerFailure) {
         if (observerFailure instanceof InterruptedException) {
-          interrupted = true;
+          restore = true;
         }
 
         LOGGER.warn("WebSocket close observer failed", observerFailure);
       }
     } finally {
-      if (interrupted) {
+      if (restore) {
         Thread.currentThread().interrupt();
       }
     }

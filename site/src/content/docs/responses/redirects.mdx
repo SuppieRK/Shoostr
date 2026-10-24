@@ -1,0 +1,34 @@
+---
+title: Redirect a request
+description: Return a redirect, choose whether a following request preserves POST, and control the handler's remaining work.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/06-responses/src/main/java/io/github/suppierk/shoostr/example/responses/RedirectExample.java?raw';
+import test from '../../../../../examples/06-responses/src/test/java/io/github/suppierk/shoostr/example/responses/RedirectExampleTest.java?raw';
+
+## Description
+
+Use `redirect(location)` for a `302` response, or pass a navigation status when the next request needs different behavior.
+After a POST, `303 See Other` points the client to a retrieval request such as GET; `307 Temporary Redirect` preserves the method when the client follows it.
+A `302` does not guarantee that a client will preserve POST, as explained by the [redirect status semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4).
+
+Choose destinations in application code rather than passing an untrusted query parameter directly to `redirect(...)`.
+The method accepts relative references and non-HTTP schemes, so a syntactically valid destination is not necessarily one your application should allow.
+
+## Example
+
+The `/old` endpoint points to `/current`, while the POST routes distinguish a receipt fetched with GET from a receiver that needs the original POST body.
+All destinations are constant application-relative paths.
+
+A redirect replaces the staged body and clears its content metadata while retaining unrelated headers.
+It does not commit the response or end the handler: return from the handler when later work must not run, and do not rely on a redirect alone to reject a request.
+
+<Code code={application} lang="java" title="RedirectExample.java" />
+
+## Test
+
+The tests first inspect redirect status and `Location` with automatic following disabled, then use controlled local destinations to verify the GET after `303` and the preserved POST method and body after `307`.
+An additional handler checks that code after `redirect(...)` still runs.
+
+<Code code={test} lang="java" title="RedirectExampleTest.java" />

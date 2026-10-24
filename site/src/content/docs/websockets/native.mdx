@@ -1,0 +1,44 @@
+---
+title: Configure native WebSocket message limits and demand
+description: Select an offered WebSocket subprotocol, control native listener demand, copy borrowed binary buffers, and enforce incoming message limits.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/11-websockets/src/main/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExample.java?raw';
+import test from '../../../../../examples/11-websockets/src/test/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExampleTest.java?raw';
+
+## Description
+
+Use the native `routes.websocket(...)` overload when you need Jetty's `Session.Listener` API for explicit demand, subprotocol selection, or connection-specific limits.
+The factory runs during HTTP admission and creates a fresh listener for each accepted connection; copy any required path or identity values there rather than retaining the handshake request or upgrade response.
+For ordinary complete-message handling with sequential application callbacks, use [managed callbacks](../managed/) instead.
+
+Native callbacks retain [Jetty's execution contract](https://jetty.org/docs/jetty/12.1/programming-guide/client/websocket.html), so follow its callback and demand rules when sending asynchronously.
+A `Session.Listener` must demand the next event explicitly, and a binary receive callback controls the lifetime of its borrowed buffer.
+The [Jetty WebSocket architecture](https://jetty.org/docs/jetty/12.1/programming-guide/client/websocket.html) explains both contracts in more detail.
+
+## Example
+
+The `/native/{room}` route first requires exactly one trusted Origin, then requires an offered `chat.v2` subprotocol and selects it before returning the listener.
+Its listener prefixes text with the detached room name, echoes binary bytes, and requests another event only after the preceding write completes.
+Binary input is copied before its receive callback is completed, keeping the outgoing bytes valid after Jetty can reuse the receive buffer.
+A failed write disconnects the session rather than leaving the listener waiting indefinitely.
+
+The listener sets incoming text and binary message limits to 64 bytes each (UTF-8 bytes for text) and permits at most two pending outgoing data frames when the session opens.
+These limits do not provide an application producer queue; if external producers send concurrently, bound their pending work and serialize native writes yourself.
+Jetty owns the upgraded session and releases its transport resources when the connection or application closes.
+The native factory performs its Origin check before returning the listener, following the same admission rule as [managed WebSockets](../managed/).
+HTTP CORS and CSRF do not protect this handshake; authenticate private endpoints separately, because neither Origin nor a negotiated subprotocol establishes identity.
+
+`http2()` also enables negotiated HTTP/2 extended CONNECT for registered WebSocket routes, while HTTP/1.1 GET upgrades remain available.
+Only extended CONNECT with the `websocket` protocol enters that handshake path; ordinary CONNECT requests do not become WebSockets.
+The routing key remains GET for both transports, but a selected HTTP/2 request reports CONNECT through the public request and outcome APIs.
+
+<Code code={application} lang="java" title="NativeWebSocketExample.java" />
+
+## Test
+
+The JDK WebSocket client verifies Origin rejection, offered-subprotocol selection, repeated demand, fragmented binary transfer, incoming limits, and normal closure.
+These exchanges use HTTP/1.1; they do not prove HTTP/2 WebSocket negotiation.
+
+<Code code={test} lang="java" title="NativeWebSocketExampleTest.java" />

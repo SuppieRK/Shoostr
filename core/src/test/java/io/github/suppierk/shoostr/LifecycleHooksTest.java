@@ -40,6 +40,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,7 +55,10 @@ class LifecycleHooksTest {
 
   @BeforeEach
   void prepare() {
-    app = new Shoostr(Options.defaults().withPort(0));
+    app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
   }
 
   @AfterEach
@@ -67,14 +71,14 @@ class LifecycleHooksTest {
     var retained = new AtomicReference<Request>();
     app.exception(
         NotFoundException.class,
-        (_, request, response) -> response.text(request.routePattern().orElseThrow()));
+        (ignored, request, response) -> response.text(request.routePattern().orElseThrow()));
     app.routes()
         .path(
             "/accounts/{accountId}",
             routes ->
                 routes.get(
                     "/orders/{id}",
-                    (request, _) -> {
+                    (request, ignored2) -> {
                       retained.set(request);
                       assertEquals(
                           "/accounts/{accountId}/orders/{id}",
@@ -97,7 +101,8 @@ class LifecycleHooksTest {
   @Test
   void exposesDecodedPathParametersToTheMatchedHookBeforeTheHandler() throws Exception {
     app.onRouteMatched(
-        (request, _) -> request.attribute("matched-id", request.pathParam("id").orElseThrow()));
+        (request, ignored3) ->
+            request.attribute("matched-id", request.pathParam("id").orElseThrow()));
     app.routes()
         .get(
             "/users/{id}",
@@ -128,20 +133,20 @@ class LifecycleHooksTest {
           }
         });
     app.beforeRouteHandler(
-        (_, response) -> {
+        (ignored4, response) -> {
           calls.add("second");
           response.status(202).text("staged");
         });
     app.exception(
         UnauthorizedException.class,
-        (_, _, response) -> {
+        (ignored5, ignored6, response) -> {
           calls.add("error");
           response.setHeader("WWW-Authenticate", "Bearer").text("denied");
         });
     app.routes()
         .get(
             "/orders/{id}",
-            (_, response) -> {
+            (ignored7, response) -> {
               calls.add("route");
               response.text("accepted");
             });
@@ -175,7 +180,7 @@ class LifecycleHooksTest {
   void rejectsGateStreamingBeforeCommit(String operation) throws Exception {
     var entered = new AtomicBoolean();
     app.beforeRouteHandler(
-        (_, response) -> {
+        (ignored8, response) -> {
           switch (operation) {
             case "stream" -> response.startStream("text/plain");
             case "typed-stream" -> response.startStream(MediaType.TEXT_PLAIN);
@@ -184,9 +189,9 @@ class LifecycleHooksTest {
         });
     app.exception(
         IllegalStateException.class,
-        (_, _, response) ->
+        (ignored9, ignored10, response) ->
             response.startStream(MediaType.TEXT_PLAIN).write("rejected before commit"));
-    app.routes().get("/gate", (_, _) -> entered.set(true));
+    app.routes().get("/gate", (ignored11, ignored12) -> entered.set(true));
 
     try (var test = TestServer.start(app)) {
       var result =
@@ -244,7 +249,7 @@ class LifecycleHooksTest {
     app.afterRequest(outcomes::add);
     app.exception(
         NotFoundException.class,
-        (_, _, response) -> {
+        (ignored13, ignored14, response) -> {
           if (mapperFails) {
             throw secondary;
           }
@@ -254,7 +259,7 @@ class LifecycleHooksTest {
     app.routes()
         .get(
             "/failure",
-            (_, _) -> {
+            (ignored15, ignored16) -> {
               throw original;
             });
 
@@ -282,7 +287,7 @@ class LifecycleHooksTest {
     var calls = new CopyOnWriteArrayList<String>();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     app.afterRequest(
-        _ -> {
+        ignored17 -> {
           calls.add("first");
           throw new IllegalStateException("broken metrics sink");
         });
@@ -291,7 +296,7 @@ class LifecycleHooksTest {
           calls.add("second");
           outcomes.add(outcome);
         });
-    app.routes().get("/ok", (_, response) -> response.text("ok"));
+    app.routes().get("/ok", (ignored18, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
       assertEquals(
@@ -308,13 +313,21 @@ class LifecycleHooksTest {
   @Test
   void waitsForFiniteTransportAndReportsDisconnect() throws Exception {
     app.close();
-    app = new Shoostr(new Options("127.0.0.1", 0, 1024, 16 * 1024 * 1024, 1024, 30_000));
+    app =
+        new Shoostr(new Options(1024, 16 * 1024 * 1024, 1024, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(30_000);
+                });
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     app.afterRequest(outcomes::add);
     app.routes()
         .get(
             "/large",
-            (_, response) ->
+            (ignored19, response) ->
                 response.body(MediaType.APPLICATION_OCTET_STREAM, new byte[16 * 1024 * 1024]));
     app.start();
 
@@ -352,7 +365,7 @@ class LifecycleHooksTest {
     app.routes()
         .get(
             "/stream",
-            (_, response) -> {
+            (ignored20, response) -> {
               var stream = response.startStream(MediaType.TEXT_PLAIN);
               retained.set(stream);
               stream.write("hello");
@@ -401,8 +414,8 @@ class LifecycleHooksTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var gates = new AtomicInteger();
     app.afterRequest(outcomes::add);
-    app.beforeRouteHandler((_, _) -> gates.incrementAndGet());
-    app.routes().get("/known", (_, response) -> response.text("ok"));
+    app.beforeRouteHandler((ignored21, ignored22) -> gates.incrementAndGet());
+    app.routes().get("/known", (ignored23, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
       var result =
@@ -434,7 +447,7 @@ class LifecycleHooksTest {
     app.routes()
         .post(
             "/abort",
-            (_, response) -> {
+            (ignored24, response) -> {
               if (committed) {
                 response.startStream(MediaType.TEXT_PLAIN).write("pending");
                 throw (IllegalStateException) failure;
@@ -468,7 +481,7 @@ class LifecycleHooksTest {
     app.routes()
         .get(
             "/waiting",
-            (_, response) -> {
+            (ignored25, response) -> {
               var stream = response.startStream(MediaType.TEXT_PLAIN);
               entered.countDown();
               if (!release.await(5, TimeUnit.SECONDS)) {
@@ -518,15 +531,18 @@ class LifecycleHooksTest {
     assertThrows(NullPointerException.class, () -> app.beforeRouteHandler(null));
     assertThrows(NullPointerException.class, () -> app.afterRequest(null));
     app.start();
-    assertThrows(IllegalStateException.class, () -> app.beforeRouteHandler((_, _) -> {}));
-    assertThrows(IllegalStateException.class, () -> app.afterRequest(_ -> {}));
+    assertThrows(
+        IllegalStateException.class, () -> app.beforeRouteHandler((ignored26, ignored27) -> {}));
+    assertThrows(IllegalStateException.class, () -> app.afterRequest(ignored28 -> {}));
     app.close();
-    assertThrows(IllegalStateException.class, () -> app.beforeRouteHandler((_, _) -> {}));
-    assertThrows(IllegalStateException.class, () -> app.afterRequest(_ -> {}));
+    assertThrows(
+        IllegalStateException.class, () -> app.beforeRouteHandler((ignored29, ignored30) -> {}));
+    assertThrows(IllegalStateException.class, () -> app.afterRequest(ignored31 -> {}));
     app = new Shoostr();
     app.close();
-    assertThrows(IllegalStateException.class, () -> app.beforeRouteHandler((_, _) -> {}));
-    assertThrows(IllegalStateException.class, () -> app.afterRequest(_ -> {}));
+    assertThrows(
+        IllegalStateException.class, () -> app.beforeRouteHandler((ignored32, ignored33) -> {}));
+    assertThrows(IllegalStateException.class, () -> app.afterRequest(ignored34 -> {}));
   }
 
   @ParameterizedTest
@@ -534,7 +550,7 @@ class LifecycleHooksTest {
   void racesRegistrationWithStartup(boolean completion) throws Exception {
     var start = new CountDownLatch(1);
     var called = new CountDownLatch(1);
-    app.routes().get("/ok", (_, response) -> response.text("ok"));
+    app.routes().get("/ok", (ignored35, response) -> response.text("ok"));
 
     // Native startup must remain independent of the harness's additional app monitor.
 
@@ -547,13 +563,13 @@ class LifecycleHooksTest {
 
                 try {
                   if (completion) {
-                    app.afterRequest(_ -> called.countDown());
+                    app.afterRequest(ignored36 -> called.countDown());
                   } else {
-                    app.beforeRouteHandler((_, _) -> called.countDown());
+                    app.beforeRouteHandler((ignored37, ignored38) -> called.countDown());
                   }
 
                   return true;
-                } catch (IllegalStateException _) {
+                } catch (IllegalStateException ignored39) {
                   return false;
                 }
               });
@@ -590,7 +606,7 @@ class LifecycleHooksTest {
     app.routes()
         .get(
             "/method",
-            (_, response) -> {
+            (ignored40, response) -> {
               entered.incrementAndGet();
               response.text("GET");
             });
@@ -624,17 +640,25 @@ class LifecycleHooksTest {
     // Independent transport access is required by this test's wire/client behavior.
     try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
       app.close();
-      app = new Shoostr(new Options("127.0.0.1", 0, 4, 1024, 64, 30_000));
+      app =
+          new Shoostr(new Options(4, 1024, 64, 1000, MultipartOptions.defaults()))
+              .modifyServer(
+                  nativeServer -> {
+                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                    nativeConnector.setHost("127.0.0.1");
+                    nativeConnector.setPort(0);
+                    nativeConnector.setIdleTimeout(30_000);
+                  });
       var outcomes = new LinkedBlockingQueue<RequestOutcome>();
       var entered = new AtomicBoolean();
       var gate = new AtomicBoolean();
       app.afterRequest(outcomes::add);
       app.beforeRouteHandler(
-          (request, _) -> {
+          (request, ignored41) -> {
             gate.set(true);
             request.bodyBytes();
           });
-      app.routes().post("/limit", (_, _) -> entered.set(true));
+      app.routes().post("/limit", (ignored42, ignored43) -> entered.set(true));
       app.start();
       var publisher =
           chunked
@@ -658,10 +682,10 @@ class LifecycleHooksTest {
   void rejectsFromHeadersWithoutReadingBody() throws Exception {
     var entered = new AtomicBoolean();
     app.beforeRouteHandler(
-        (_, _) -> {
+        (ignored44, ignored45) -> {
           throw new UnauthorizedException();
         });
-    app.routes().post("/auth", (_, _) -> entered.set(true));
+    app.routes().post("/auth", (ignored46, ignored47) -> entered.set(true));
     app.start();
 
     try (var socket = socket()) {
@@ -686,13 +710,13 @@ class LifecycleHooksTest {
     app.afterRequest(outcomes::add);
     app.exception(
         NotFoundException.class,
-        (_, _, _) -> {
+        (ignored48, ignored49, ignored50) -> {
           throw secondary;
         });
     app.routes()
         .post(
             "/fatal-mapper",
-            (_, _) -> {
+            (ignored51, ignored52) -> {
               throw original;
             });
 
@@ -717,7 +741,7 @@ class LifecycleHooksTest {
   void honorsRepeatedRegistrationsAndCheckedGateFailures() throws Exception {
     var calls = new AtomicInteger();
     Handler gate =
-        (_, _) -> {
+        (ignored53, ignored54) -> {
           if (calls.incrementAndGet() == 2) {
             throw new IOException("checked rejection");
           }
@@ -726,8 +750,9 @@ class LifecycleHooksTest {
     Consumer<RequestOutcome> observer = outcomes::add;
     app.beforeRouteHandler(gate).beforeRouteHandler(gate);
     app.afterRequest(observer).afterRequest(observer);
-    app.exception(IOException.class, (_, _, response) -> response.status(403).text("denied"));
-    app.routes().get("/twice", (_, response) -> response.text("unexpected"));
+    app.exception(
+        IOException.class, (ignored55, ignored56, response) -> response.status(403).text("denied"));
+    app.routes().get("/twice", (ignored57, response) -> response.text("unexpected"));
 
     try (var test = TestServer.start(app)) {
       var result =
@@ -749,18 +774,18 @@ class LifecycleHooksTest {
   @Test
   void runsLiveStagesInRequestOrderForMatchedRoutes() throws Exception {
     var calls = new CopyOnWriteArrayList<String>();
-    app.onRequestHeaders((_, _) -> calls.add("headers"));
+    app.onRequestHeaders((ignored58, ignored59) -> calls.add("headers"));
     app.onRouteMatched(
-        (request, _) -> calls.add("matched:" + request.routePattern().orElseThrow()));
-    app.beforeRouteHandler((_, _) -> calls.add("before"));
+        (request, ignored60) -> calls.add("matched:" + request.routePattern().orElseThrow()));
+    app.beforeRouteHandler((ignored61, ignored62) -> calls.add("before"));
     app.routes()
         .get(
             "/stages",
-            (_, response) -> {
+            (ignored63, response) -> {
               calls.add("handler");
               response.text("ok");
             });
-    app.afterRouteHandler((_, _) -> calls.add("after"));
+    app.afterRouteHandler((ignored64, ignored65) -> calls.add("after"));
 
     try (var test = TestServer.start(app)) {
 
@@ -777,9 +802,10 @@ class LifecycleHooksTest {
   @Test
   void customizesGeneratedNotFoundWithoutRunningMatchedStages() throws Exception {
     var calls = new CopyOnWriteArrayList<String>();
-    app.onRequestHeaders((_, _) -> calls.add("headers"));
-    app.onRouteMatched((_, _) -> calls.add("matched"));
-    app.status(404, (_, response) -> response.setHeader("X-Status", "custom").text("missing"));
+    app.onRequestHeaders((ignored66, ignored67) -> calls.add("headers"));
+    app.onRouteMatched((ignored68, ignored69) -> calls.add("matched"));
+    app.status(
+        404, (ignored70, response) -> response.setHeader("X-Status", "custom").text("missing"));
 
     try (var test = TestServer.start(app)) {
 
@@ -799,12 +825,12 @@ class LifecycleHooksTest {
   void customizesGeneratedMethodNotAllowedWhilePreservingAllowedMethods() throws Exception {
     app.status(
         405,
-        (_, response) -> {
+        (ignored71, response) -> {
           response.removeHeader("Allow");
           response.setHeader("Allow", "POST");
           response.setHeader("X-Status", "custom-method").text("wrong method");
         });
-    app.routes().get("/known", (_, response) -> response.text("ok"));
+    app.routes().get("/known", (ignored72, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
 
@@ -824,16 +850,16 @@ class LifecycleHooksTest {
   void observesFiniteResponseFlushAfterTheRouteHandler() throws Exception {
     var calls = new CopyOnWriteArrayList<String>();
     var flushed = new CountDownLatch(1);
-    app.beforeResponseFlush((_, _) -> calls.add("before-flush"));
+    app.beforeResponseFlush((ignored73, ignored74) -> calls.add("before-flush"));
     app.afterResponseFlush(
-        (_, response) -> {
+        (ignored75, response) -> {
           calls.add("after-flush:" + response.status());
           flushed.countDown();
         });
     app.routes()
         .get(
             "/finite",
-            (_, response) -> {
+            (ignored76, response) -> {
               calls.add("handler");
               response.text("ok");
             });
@@ -855,13 +881,14 @@ class LifecycleHooksTest {
   void mapsBeforeFlushRejectionWithoutRetryingTheRejectingHook() throws Exception {
     var flushes = new AtomicInteger();
     app.beforeResponseFlush(
-        (_, _) -> {
+        (ignored77, ignored78) -> {
           if (flushes.incrementAndGet() == 1) {
             throw new UnauthorizedException();
           }
         });
-    app.exception(UnauthorizedException.class, (_, _, response) -> response.text("rejected"));
-    app.routes().get("/flush-rejection", (_, response) -> response.text("unreachable"));
+    app.exception(
+        UnauthorizedException.class, (ignored79, ignored80, response) -> response.text("rejected"));
+    app.routes().get("/flush-rejection", (ignored81, response) -> response.text("unreachable"));
 
     try (var test = TestServer.start(app)) {
 
@@ -881,18 +908,18 @@ class LifecycleHooksTest {
     var checked = new IOException("checked flush rejection");
     var flushes = new AtomicInteger();
     app.beforeResponseFlush(
-        (_, _) -> {
+        (ignored82, ignored83) -> {
           if (flushes.incrementAndGet() == 1) {
             throw checked;
           }
         });
     app.exception(
         IOException.class,
-        (failure, _, response) -> {
+        (failure, ignored84, response) -> {
           assertSame(checked, failure);
           response.status(409).text("mapped");
         });
-    app.routes().get("/checked-flush", (_, response) -> response.text("original"));
+    app.routes().get("/checked-flush", (ignored85, response) -> response.text("original"));
 
     try (var test = TestServer.start(app)) {
 
@@ -912,10 +939,10 @@ class LifecycleHooksTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     app.afterRequest(outcomes::add);
     app.afterResponseFlush(
-        (_, _) -> {
+        (ignored86, ignored87) -> {
           throw new IOException("after flush");
         });
-    app.routes().get("/after-failure", (_, response) -> response.text("submitted"));
+    app.routes().get("/after-failure", (ignored88, response) -> response.text("submitted"));
 
     try (var test = TestServer.start(app)) {
 
@@ -940,14 +967,16 @@ class LifecycleHooksTest {
     var postFlush = new IOException("after flush");
     app.afterRequest(outcomes::add);
     app.afterResponseFlush(
-        (_, _) -> {
+        (ignored89, ignored90) -> {
           throw postFlush;
         });
-    app.exception(NotFoundException.class, (_, _, response) -> response.status(409).text("mapped"));
+    app.exception(
+        NotFoundException.class,
+        (ignored91, ignored92, response) -> response.status(409).text("mapped"));
     app.routes()
         .get(
             "/mapped-after-failure",
-            (_, _) -> {
+            (ignored93, ignored94) -> {
               throw original;
             });
 
@@ -970,15 +999,16 @@ class LifecycleHooksTest {
   void disablesAlwaysFailingBeforeFlushHooksWhileRenderingMapperFallback() throws Exception {
     var flushes = new AtomicInteger();
     app.beforeResponseFlush(
-        (_, _) -> {
+        (ignored95, ignored96) -> {
           flushes.incrementAndGet();
           throw new IllegalStateException("flush");
         });
-    app.exception(NotFoundException.class, (_, _, response) -> response.text("mapped"));
+    app.exception(
+        NotFoundException.class, (ignored97, ignored98, response) -> response.text("mapped"));
     app.routes()
         .get(
             "/mapper-flush",
-            (_, _) -> {
+            (ignored99, ignored100) -> {
               throw new NotFoundException();
             });
 
@@ -999,7 +1029,7 @@ class LifecycleHooksTest {
     var stream = new AtomicReference<Response.Stream>();
     var rejected = new AtomicBoolean();
     app.beforeResponseFlush(
-        (_, response) -> {
+        (ignored101, response) -> {
           var retained = stream.get();
           if (retained == null) {
             return;
@@ -1012,7 +1042,7 @@ class LifecycleHooksTest {
     app.routes()
         .get(
             "/reentry",
-            (_, response) -> {
+            (ignored102, response) -> {
               stream.set(response.startStream(MediaType.TEXT_PLAIN));
               stream.get().write("ok");
             });
@@ -1034,12 +1064,12 @@ class LifecycleHooksTest {
     var rejected = new AtomicBoolean();
     var flushed = new CountDownLatch(1);
     app.afterResponseFlush(
-        (_, response) -> {
+        (ignored103, response) -> {
           assertThrows(IllegalStateException.class, () -> response.setHeader("X-Late", "value"));
           rejected.set(true);
           flushed.countDown();
         });
-    app.routes().get("/immutable", (_, response) -> response.text("ok"));
+    app.routes().get("/immutable", (ignored104, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
 
@@ -1059,16 +1089,16 @@ class LifecycleHooksTest {
   void invokesFlushHooksForEachStreamingFlushAndTerminalCompletion() throws Exception {
     var calls = new CopyOnWriteArrayList<String>();
     var afterFlushes = new CountDownLatch(3);
-    app.beforeResponseFlush((_, _) -> calls.add("before"));
+    app.beforeResponseFlush((ignored105, ignored106) -> calls.add("before"));
     app.afterResponseFlush(
-        (_, _) -> {
+        (ignored107, ignored108) -> {
           calls.add("after");
           afterFlushes.countDown();
         });
     app.routes()
         .get(
             "/stream-flush",
-            (_, response) -> {
+            (ignored109, response) -> {
               var stream = response.startStream(MediaType.TEXT_PLAIN);
               stream.write("first");
               stream.flush();
@@ -1092,21 +1122,21 @@ class LifecycleHooksTest {
   void mapsHeaderMatchedPostRouteAndStatusCallbackFailures() throws Exception {
     var calls = new CopyOnWriteArrayList<String>();
     app.onRequestHeaders(
-        (request, _) -> {
+        (request, ignored110) -> {
           calls.add("headers:" + request.path());
           if ("/header".equals(request.path())) {
             throw new IllegalStateException("header");
           }
         });
     app.onRouteMatched(
-        (request, _) -> {
+        (request, ignored111) -> {
           calls.add("matched:" + request.path());
           if ("/matched".equals(request.path())) {
             throw new IllegalStateException("matched");
           }
         });
     app.afterRouteHandler(
-        (request, _) -> {
+        (request, ignored112) -> {
           calls.add("after:" + request.path());
           if ("/after".equals(request.path())) {
             throw new IllegalStateException("after");
@@ -1114,14 +1144,14 @@ class LifecycleHooksTest {
         });
     app.exception(
         IllegalStateException.class,
-        (failure, _, response) ->
+        (failure, ignored113, response) ->
             response.status(409).text(Objects.requireNonNull(failure.getMessage())));
     app.status(
         404,
-        (_, _) -> {
+        (ignored114, ignored115) -> {
           throw new IllegalStateException("status");
         });
-    app.routes().get("/{stage}", (_, response) -> response.text("ok"));
+    app.routes().get("/{stage}", (ignored116, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
 
@@ -1155,8 +1185,9 @@ class LifecycleHooksTest {
   @Test
   void bypassesGeneratedStatusRenderersForApplicationSelectedStatuses() throws Exception {
     var rendered = new AtomicBoolean();
-    app.status(404, (_, _) -> rendered.set(true));
-    app.routes().get("/selected", (_, response) -> response.status(404).text("application"));
+    app.status(404, (ignored117, ignored118) -> rendered.set(true));
+    app.routes()
+        .get("/selected", (ignored119, response) -> response.status(404).text("application"));
 
     try (var test = TestServer.start(app)) {
 
@@ -1174,8 +1205,8 @@ class LifecycleHooksTest {
   void invokesFlushHooksForFileResponses(@TempDir Path temporary) throws Exception {
     var file = Files.writeString(temporary.resolve("response.txt"), "file");
     var flushed = new CountDownLatch(1);
-    app.afterResponseFlush((_, _) -> flushed.countDown());
-    app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    app.afterResponseFlush((ignored120, ignored121) -> flushed.countDown());
+    app.routes().get("/file", (ignored122, response) -> response.file(file, "text/plain"));
 
     try (var test = TestServer.start(app)) {
 

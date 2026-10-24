@@ -11,8 +11,10 @@ import java.io.Serializable;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
@@ -23,11 +25,11 @@ import org.jspecify.annotations.Nullable;
 /**
  * Session-bound synchronizer tokens for explicitly protected browser routes. Create one instance
  * per application, enable {@link Shoostr#sessions()}, install with {@code app.extensions(csrf)},
- * then select {@code extensions.get(csrf).required()} on browser routes. Installation alone does
- * not enable protection or sessions. Token values are never put in a cookie or URL; an application
- * embeds {@link #token(Request)} in a page or response body.
+ * then select {@code extensions.with(csrf)} on browser routes. Installation alone does not enable
+ * protection or sessions. Token values are never put in a cookie or URL; an application embeds
+ * {@link #token(Request)} in a page or response body.
  */
-public final class Csrf implements Extension<Csrf.Requirement> {
+public final class Csrf implements Extension<Csrf> {
   /** A token is valid only while its issuing session keeps the same identifier. */
   private record Token(String sessionId, String value) implements Serializable {
     @Serial private static final long serialVersionUID = 1L;
@@ -71,54 +73,27 @@ public final class Csrf implements Extension<Csrf.Requirement> {
         throw new IllegalArgumentException("CSRF requires explicit HTTP(S) origins");
       }
 
-      CorsPolicy.validateOrigin(origin);
+      Origins.validateOrigin(origin);
     }
 
     random = new SecureRandom();
   }
 
-  /** {@inheritDoc} */
-  @Override
-  public Requirement configure(Extensions endpoint, @Nullable Requirement inherited) {
-    var requirement = new Requirement(endpoint, this);
-    if (inherited != null && inherited.required) {
-      requirement.required();
-    }
-
-    return requirement;
+  /**
+   * Creates a builder for immutable browser-origin permissions.
+   *
+   * @return independent builder
+   */
+  public static Builder builder() {
+    return new Builder();
   }
 
-  /** Opt-in protection for one route or group, inherited independently by child bindings. */
-  public static final class Requirement {
-    private final Extensions endpoint;
-    private final Csrf csrf;
-    private boolean required;
-
-    /**
-     * Creates independently inherited protection settings for a binding.
-     *
-     * @param endpoint contribution collector
-     * @param csrf installed protection extension
-     */
-    private Requirement(Extensions endpoint, Csrf csrf) {
-      this.endpoint = Objects.requireNonNull(endpoint);
-      this.csrf = Objects.requireNonNull(csrf);
-    }
-
-    /**
-     * Adds one verification callback in this extension's first-selection position.
-     *
-     * @return this configuration
-     */
-    public Requirement required() {
-      endpoint.requireMutable();
-      if (!required) {
-        endpoint.beforeRouteHandler(csrf::verify);
-        required = true;
-      }
-
-      return this;
-    }
+  /** {@inheritDoc} */
+  @Override
+  public Csrf configure(Extensions endpoint, @Nullable Csrf inherited) {
+    endpoint.csrf(this);
+    endpoint.lifecycle().beforeRouteHandler(this::verify);
+    return this;
   }
 
   /**
@@ -130,10 +105,7 @@ public final class Csrf implements Extension<Csrf.Requirement> {
    * @throws IllegalStateException if sessions are not enabled
    */
   public String token(Request request) {
-    var session =
-        Objects.requireNonNull(request)
-            .session(true)
-            .orElseThrow(() -> new IllegalStateException("CSRF requires enabled sessions"));
+    var session = Objects.requireNonNull(request).getOrCreateSession();
 
     synchronized (session) {
       var current = session.getAttribute(ATTRIBUTE);
@@ -153,7 +125,8 @@ public final class Csrf implements Extension<Csrf.Requirement> {
   /**
    * Rejects unsafe operations unless an existing session supplies its token in exactly one {@code
    * X-CSRF-Token} header or {@code _csrf} form field and the request comes from the same origin.
-   * Safe methods pass. This method is a route policy, not a bearer-token policy.
+   * Safe methods and recognized WebSocket bindings pass. WebSocket Origin admission belongs in an
+   * explicit pre-upgrade check.
    *
    * @param request current request
    * @param response output reserved for the protected route
@@ -162,7 +135,7 @@ public final class Csrf implements Extension<Csrf.Requirement> {
    */
   public void verify(Request request, Response response) throws IOException {
     Objects.requireNonNull(response);
-    if (safe(request.method())) {
+    if (request.webSocket() || safe(request.method())) {
       return;
     }
 
@@ -170,7 +143,7 @@ public final class Csrf implements Extension<Csrf.Requirement> {
       throw new ForbiddenException();
     }
 
-    Session session = request.session(false).orElseThrow(ForbiddenException::new);
+    Session session = request.getSession().orElseThrow(ForbiddenException::new);
 
     List<String> presented = presented(request);
     if (presented.size() != 1) {
@@ -249,7 +222,7 @@ public final class Csrf implements Extension<Csrf.Requirement> {
           return false;
         }
 
-        var referer = CorsPolicy.effectiveOrigin(referers.getFirst());
+        var referer = Origins.effectiveOrigin(referers.getFirst());
         if (referer == null) {
           return false;
         }
@@ -263,11 +236,57 @@ public final class Csrf implements Extension<Csrf.Requirement> {
         return false;
       }
 
-      CorsPolicy.validateOrigin(origin);
-      return trustedOrigins.contains(origin)
-          || CorsPolicy.sameOrigin(origin, request.effectiveUrl());
-    } catch (IllegalArgumentException _) {
+      Origins.validateOrigin(origin);
+      return trustedOrigins.contains(origin) || Origins.sameOrigin(origin, request.effectiveUrl());
+    } catch (IllegalArgumentException ignored) {
       return false;
+    }
+  }
+
+  /** Builds immutable CSRF protection without enabling native sessions or selecting endpoints. */
+  public static final class Builder {
+    private Set<String> trustedOrigins;
+
+    /** Creates same-origin permissions. */
+    private Builder() {
+      trustedOrigins = Set.of();
+    }
+
+    /**
+     * Sets additional trusted origins with a required first value.
+     *
+     * @param first first additional exact HTTP(S) origin
+     * @param additional remaining origins; null means none
+     * @return this builder
+     */
+    public Builder trustedOrigins(String first, String @Nullable ... additional) {
+      var origins = new HashSet<String>();
+      origins.add(Objects.requireNonNull(first));
+      if (additional != null) {
+        origins.addAll(Arrays.asList(additional));
+      }
+
+      return trustedOrigins(origins);
+    }
+
+    /**
+     * Sets additional exact browser origins, copying the supplied collection.
+     *
+     * @param origins additional trusted HTTP(S) origins
+     * @return this builder
+     */
+    public Builder trustedOrigins(Set<String> origins) {
+      trustedOrigins = Set.copyOf(origins);
+      return this;
+    }
+
+    /**
+     * Constructs protection and validates all configured origins.
+     *
+     * @return immutable origin policy with an independent random source
+     */
+    public Csrf build() {
+      return new Csrf(trustedOrigins);
     }
   }
 }

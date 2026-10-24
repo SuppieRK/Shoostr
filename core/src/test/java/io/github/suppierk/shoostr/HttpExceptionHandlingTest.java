@@ -30,6 +30,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -44,7 +45,7 @@ class HttpExceptionHandlingTest {
     var retainedRequest = new AtomicReference<Request>();
     var retainedResponse = new AtomicReference<Response>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/error",
@@ -82,11 +83,14 @@ class HttpExceptionHandlingTest {
 
   @Test
   void keepsQuotedAndCrLfBearingDiagnosticsOutOfTheEntireHttpResponse() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.routes()
           .get(
               "/error",
-              (_, _) -> {
+              (ignored, ignored2) -> {
                 throw new BadRequestException(
                     "\"private-diagnostic\"\r\nX-Injected: secret\r\n\r\nHTTP/1.1 200 Injected");
               });
@@ -116,11 +120,11 @@ class HttpExceptionHandlingTest {
 
   @Test
   void doesNotUnwrapAnHttpExceptionCause() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/error",
-              (_, _) -> {
+              (ignored3, ignored4) -> {
                 throw new CompletionException(new NotFoundException("secret"));
               });
 
@@ -138,13 +142,21 @@ class HttpExceptionHandlingTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void omitsReasonPhraseWhenItExceedsTheResponseLimit(boolean httpFailure) throws Exception {
-    var options = new Options("127.0.0.1", 0, 16, 1, 8, 5000);
+    var options = new Options(16, 1, 8, 1000, MultipartOptions.defaults());
 
-    try (var app = new Shoostr(options)) {
+    try (var app =
+        new Shoostr(options)
+            .modifyServer(
+                listenerServer -> {
+                  var listener = (ServerConnector) listenerServer.getConnectors()[0];
+                  listener.setHost("127.0.0.1");
+                  listener.setPort(0);
+                  listener.setIdleTimeout(5000);
+                })) {
       app.routes()
           .get(
               "/error",
-              (_, response) -> {
+              (ignored5, response) -> {
                 response.text("x");
                 if (httpFailure) {
                   throw new ServiceUnavailableException("secret");
@@ -172,11 +184,11 @@ class HttpExceptionHandlingTest {
     var release = new CountDownLatch(1);
     var retainedStream = new AtomicReference<Response.Stream>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/stream",
-              (_, response) -> {
+              (ignored6, response) -> {
                 var stream = response.startStream("text/plain; charset=utf-8");
                 retainedStream.set(stream);
                 stream.write("partial\n");
@@ -229,9 +241,17 @@ class HttpExceptionHandlingTest {
 
   @Test
   void handlersCanCatchBodyLimitErrorsThroughThePublicHierarchy() throws Exception {
-    var options = new Options("127.0.0.1", 0, 4, 1024, 8, 5000);
+    var options = new Options(4, 1024, 8, 1000, MultipartOptions.defaults());
 
-    try (var app = new Shoostr(options);
+    try (var app =
+            new Shoostr(options)
+                .modifyServer(
+                    listenerServer -> {
+                      var listener = (ServerConnector) listenerServer.getConnectors()[0];
+                      listener.setHost("127.0.0.1");
+                      listener.setPort(0);
+                      listener.setIdleTimeout(5000);
+                    });
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .post(
@@ -253,11 +273,11 @@ class HttpExceptionHandlingTest {
 
   @Test
   void suppressesErrorBodyForHeadRequests() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .head(
               "/error",
-              (_, _) -> {
+              (ignored7, ignored8) -> {
                 throw new NotFoundException("secret");
               });
 

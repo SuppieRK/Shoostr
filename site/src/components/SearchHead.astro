@@ -1,0 +1,18 @@
+---
+import DefaultHead from '@astrojs/starlight/components/Head.astro';
+
+const { title, description } = Astro.locals.starlightRoute.entry.data;
+const searchTitle = title.replaceAll('-', ' ');
+---
+
+<DefaultHead />
+<meta name="pagefind:title" content={searchTitle} data-pagefind-meta="title[content]" />
+{
+  description && (
+    <meta
+      name="pagefind:description"
+      content={description}
+      data-pagefind-meta="description[content]"
+    />
+  )
+}

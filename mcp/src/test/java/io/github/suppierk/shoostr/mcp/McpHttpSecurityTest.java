@@ -27,8 +27,8 @@ class McpHttpSecurityTest {
   void rejectsInvalidDiscoveryMetadataBeforeTheAdapterCanBeCreated(String metadata) {
     Set<String> origins = Set.of();
     Function<Request, McpIdentity> identity =
-        _ -> new McpIdentity("public", McpTransportContext.EMPTY, null);
-    BiConsumer<McpIdentity, McpSchema.JSONRPCMessage> authorize = (_, _) -> {};
+        ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null);
+    BiConsumer<McpIdentity, McpSchema.JSONRPCMessage> authorize = (ignored2, ignored3) -> {};
     var uri = URI.create(metadata);
 
     assertThrows(

@@ -22,6 +22,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.websocket.api.Session;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -33,10 +34,16 @@ class AccessLogTest {
     var lines = new LinkedBlockingQueue<String>();
     var privateId = "private-id-" + "x".repeat(1024);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.afterRequest(new AccessLog(lines::add));
-      app.routes().websocket("/socket/{id}", (_, _) -> new Session.Listener.AutoDemanding() {});
+      app.routes()
+          .websocket(
+              "/socket/{id}", (ignored, ignored2) -> new Session.Listener.AutoDemanding() {});
       app.start();
       var socket =
           client
@@ -79,17 +86,21 @@ class AccessLogTest {
     var factoryCalls = new AtomicInteger();
     var privateId = "private-id-" + "x".repeat(1024);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.afterRequest(new AccessLog(lines::add));
       app.beforeRouteHandler(
-          (_, _) -> {
+          (ignored3, ignored4) -> {
             throw new ForbiddenException("private failure details");
           });
       app.routes()
           .websocket(
               "/socket/{id}",
-              (_, _) -> {
+              (ignored5, ignored6) -> {
                 factoryCalls.incrementAndGet();
                 return new Session.Listener.AutoDemanding() {};
               });
@@ -135,12 +146,12 @@ class AccessLogTest {
   void logsTerminalMetadataWithoutCredentialsIdentifiersBodiesOrFailureMessages() throws Exception {
     var lines = new LinkedBlockingQueue<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.afterRequest(new AccessLog(lines::add));
       app.routes()
           .post(
               "/orders/{id}",
-              (_, _) -> {
+              (ignored7, ignored8) -> {
                 throw new IllegalStateException("private failure details");
               });
 

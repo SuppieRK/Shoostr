@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.Extension;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -17,6 +16,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.component.LifeCycle;
 import org.junit.jupiter.api.Test;
 
@@ -27,16 +27,18 @@ class OpenApiLifecycleTest {
     var called = new AtomicInteger();
     var retained = new AtomicReference<OpenApiOperation>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
                 routes.get(
                     "/endpoint",
-                    (_, _) -> called.incrementAndGet(),
-                    e -> retained.set(e.get(docs).summary("Endpoint")));
+                    (ignored, ignored2) -> called.incrementAndGet(),
+                    e -> retained.set(e.with(docs).summary("Endpoint")));
                 routes.get(
-                    "/openapi.json", docs.handler(), e -> e.get(docs).summary("Own specification"));
+                    "/openapi.json",
+                    docs.handler(),
+                    e -> e.with(docs).summary("Own specification"));
               });
 
       try (var test = TestServer.start(app);
@@ -64,7 +66,10 @@ class OpenApiLifecycleTest {
     var observer = new ClosingExtension(closed);
     var docs = new OpenApi("API", "1");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(observer, docs)
           .modifyServer(
               server ->
@@ -79,9 +84,9 @@ class OpenApiLifecycleTest {
               routes ->
                   routes.get(
                       "/broken",
-                      (_, _) -> {},
+                      (ignored3, ignored4) -> {},
                       e ->
-                          e.get(docs)
+                          e.with(docs)
                               .response(
                                   200,
                                   "Broken",

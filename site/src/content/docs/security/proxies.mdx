@@ -1,0 +1,36 @@
+---
+title: Trust proxy headers and resolve forwarded metadata
+description: Select trusted physical proxy peers and one forwarding header family to read the effective client address, URL, and security state without changing transport TLS.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/14-security/src/main/java/io/github/suppierk/shoostr/example/authentication/TrustedProxyExample.java?raw';
+import test from '../../../../../examples/14-security/src/test/java/io/github/suppierk/shoostr/example/authentication/TrustedProxyExampleTest.java?raw';
+
+## Description
+
+Configure `trustedProxies(...)` with the addresses of proxies you control and one `ForwardedHeaders` family before startup.
+Shoostr checks the physical peer before interpreting forwarding metadata, ignoring those assertions when the peer is untrusted.
+`RFC7239` selects the standardized [Forwarded field](https://www.rfc-editor.org/rfc/rfc7239.html), while `X_FORWARDED` selects the legacy X-Forwarded fields; assertions from the other family are not merged into the result.
+
+The trust walk proceeds from the rightmost entry through known proxies and stops at the first untrusted node rather than accepting an arbitrary leftmost address.
+Your edge proxy must remove untrusted forwarding input or append truthful entries, because trusting its address does not make client-supplied assertions true.
+Malformed selected metadata from a trusted peer receives `400`; any supplied legacy host, protocol, or port lists must align with the X-Forwarded-For hop count.
+
+## Example
+
+The factory captures a peer-address snapshot and the chosen family, then exposes `clientAddress()` and `effectiveUrl()` at `/metadata`.
+These are proxy-aware values, unlike the [direct request metadata](../../request/metadata/) used to describe the transport itself.
+
+`isSecure()` reports actual transport TLS only.
+`isEffectivelySecure()` instead uses an explicitly trusted forwarding protocol when present and otherwise falls back to transport TLS; an effective URL scheme alone is not proof of security.
+This distinction matters when a trusted proxy receives HTTPS but forwards to Shoostr over HTTP, and is the security accessor used by the [pac4j adapter](../pac4j/).
+
+<Code code={application} lang="java" title="TrustedProxyExample.java" />
+
+## Test
+
+The tests cover both header families, conflicting unselected assertions, trusted-hop selection, ignored untrusted input, malformed selected metadata, and a stable peer snapshot.
+Their HTTP exchanges distinguish a trusted HTTPS assertion from the plain underlying connection without claiming that forwarded headers establish TLS.
+
+<Code code={test} lang="java" title="TrustedProxyExampleTest.java" />

@@ -23,10 +23,10 @@ class McpOwnershipTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
 
-    try (var attempt = new ConstructionAttempt(() -> Mcp.sync(security, _ -> null))) {
+    try (var attempt = new ConstructionAttempt(() -> Mcp.sync(security, ignored4 -> null))) {
       assertThrows(NullPointerException.class, attempt::construct);
     }
   }
@@ -36,8 +36,8 @@ class McpOwnershipTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored5 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored6, ignored7) -> {});
 
     try (var attempt =
         new ConstructionAttempt(
@@ -57,8 +57,8 @@ class McpOwnershipTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored8 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored9, ignored10) -> {});
     var mcp =
         Mcp.sync(
             security, transport -> McpServer.sync(transport).serverInfo("owner", "1.0").build());
@@ -74,7 +74,8 @@ class McpOwnershipTest {
                 .requestTimeout(Duration.ofSeconds(5))
                 .initializationTimeout(Duration.ofSeconds(5))
                 .build()) {
-      try (var attempt = new ConstructionAttempt(() -> Mcp.sync(security, _ -> mcp.server()))) {
+      try (var attempt =
+          new ConstructionAttempt(() -> Mcp.sync(security, ignored11 -> mcp.server()))) {
         assertThrows(IllegalArgumentException.class, attempt::construct);
       }
 
@@ -89,8 +90,8 @@ class McpOwnershipTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (_, _) -> {}),
+                ignored12 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+                (ignored13, ignored14) -> {}),
             transport -> McpServer.sync(transport).serverInfo("ownership", "1.0").build());
     mcp.close();
 

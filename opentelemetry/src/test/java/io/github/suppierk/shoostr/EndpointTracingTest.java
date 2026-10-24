@@ -35,28 +35,40 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.ValueSource;
 
 class EndpointTracingTest {
-  @ParameterizedTest(name = "{0}, appWide={1}")
+  @ParameterizedTest(name = "{0}, appWide={1}, virtualApplication={2}")
   @CsvSource({
-    "platform,false",
-    "platform,true",
-    "virtual,false",
-    "virtual,true",
-    "fork-join,false",
-    "fork-join,true",
-    "fork-join-2,false",
-    "fork-join-2,true",
-    "wrapped-fork-join,false",
-    "wrapped-fork-join,true",
-    "context-wrapped-fork-join,false",
-    "context-wrapped-fork-join,true"
+    "platform,false,false",
+    "platform,false,true",
+    "platform,true,false",
+    "platform,true,true",
+    "virtual,false,false",
+    "virtual,false,true",
+    "virtual,true,false",
+    "virtual,true,true",
+    "fork-join,false,false",
+    "fork-join,false,true",
+    "fork-join,true,false",
+    "fork-join,true,true",
+    "fork-join-2,false,false",
+    "fork-join-2,false,true",
+    "fork-join-2,true,false",
+    "fork-join-2,true,true",
+    "wrapped-fork-join,false,false",
+    "wrapped-fork-join,false,true",
+    "wrapped-fork-join,true,false",
+    "wrapped-fork-join,true,true",
+    "context-wrapped-fork-join,false,false",
+    "context-wrapped-fork-join,false,true",
+    "context-wrapped-fork-join,true,false",
+    "context-wrapped-fork-join,true,true"
   })
-  void preservesServerSpanAndRemoteParentAcrossExecutorHandoff(String executorType, boolean appWide)
-      throws Exception {
+  void preservesServerSpanAndRemoteParentAcrossExecutorHandoff(
+      String executorType, boolean appWide, boolean virtualApplication) throws Exception {
     var owned = ConcurrentHashMap.<Thread>newKeySet();
     var handled = new CompletableFuture<Thread>();
     var exporter = InMemorySpanExporter.create();
@@ -73,7 +85,7 @@ class EndpointTracingTest {
               .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
               .build();
       Handler endpoint =
-          (_, response) -> {
+          (ignored, response) -> {
             handled.complete(Thread.currentThread());
             var child = telemetry.getTracer("test").spanBuilder("child").startSpan();
             child.end();
@@ -81,11 +93,11 @@ class EndpointTracingTest {
           };
 
       try (workers;
-          var app = new Shoostr(Options.defaults().withPort(0))) {
+          var app = withExecutionMode(new Shoostr(), virtualApplication)) {
         var tracing = new OpenTelemetryTracing(telemetry);
         app.extensions(appWide ? tracing.allRequests() : tracing);
-        app.afterRequest(_ -> completed.complete(null));
-        app.routes().get("/trace", workers, endpoint, e -> e.get(tracing).enabled());
+        app.afterRequest(ignored2 -> completed.complete(null));
+        app.routes().get("/trace", workers, endpoint, e -> e.with(tracing));
 
         try (var test = TestServer.start(app)) {
           var response =
@@ -125,9 +137,18 @@ class EndpointTracingTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"1,false", "1,true", "2,false", "2,true"})
-  void keepsConcurrentForkJoinRequestTracesSeparate(int parallelism, boolean appWide)
-      throws Exception {
+  @CsvSource({
+    "1,false,false",
+    "1,false,true",
+    "1,true,false",
+    "1,true,true",
+    "2,false,false",
+    "2,false,true",
+    "2,true,false",
+    "2,true,true"
+  })
+  void keepsConcurrentForkJoinRequestTracesSeparate(
+      int parallelism, boolean appWide, boolean virtualApplication) throws Exception {
     var exporter = InMemorySpanExporter.create();
     var completed = new CountDownLatch(20);
 
@@ -137,7 +158,7 @@ class EndpointTracingTest {
                 .build();
         var workers = new ForkJoinPool(parallelism);
         var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -145,13 +166,13 @@ class EndpointTracingTest {
               .build();
       var tracing = new OpenTelemetryTracing(telemetry);
       app.extensions(appWide ? tracing.allRequests() : tracing)
-          .afterRequest(_ -> completed.countDown());
+          .afterRequest(ignored3 -> completed.countDown());
       app.routes()
           .get(
               "/trace",
               workers,
-              (_, response) -> response.text(Span.current().getSpanContext().getTraceId()),
-              e -> e.get(tracing).enabled());
+              (ignored4, response) -> response.text(Span.current().getSpanContext().getTraceId()),
+              e -> e.with(tracing));
 
       try (var test = TestServer.start(app)) {
         var sent = new ArrayList<Future<HttpResponse<String>>>();
@@ -184,9 +205,9 @@ class EndpointTracingTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void restoresOuterRequestTraceAfterHelpingAnotherMatchedRequest(boolean appWide)
-      throws Exception {
+  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  void restoresOuterRequestTraceAfterHelpingAnotherMatchedRequest(
+      boolean appWide, boolean virtualApplication) throws Exception {
     var entered = new CountDownLatch(1);
     var allowHelping = new CountDownLatch(1);
     var completed = new CountDownLatch(2);
@@ -198,7 +219,7 @@ class EndpointTracingTest {
                 .build();
         var workers = new ForkJoinPool(1);
         var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -206,12 +227,12 @@ class EndpointTracingTest {
               .build();
       var tracing = new OpenTelemetryTracing(telemetry);
       app.extensions(appWide ? tracing.allRequests() : tracing)
-          .afterRequest(_ -> completed.countDown());
+          .afterRequest(ignored5 -> completed.countDown());
       app.routes()
           .get(
               "/outer",
               workers,
-              (_, response) -> {
+              (ignored6, response) -> {
                 entered.countDown();
                 if (!allowHelping.await(5, TimeUnit.SECONDS)) {
                   throw new IllegalStateException("Helping was not enabled");
@@ -220,12 +241,12 @@ class EndpointTracingTest {
                 assertTrue(workers.awaitQuiescence(5, TimeUnit.SECONDS));
                 response.text(Span.current().getSpanContext().getTraceId());
               },
-              e -> e.get(tracing).enabled())
+              e -> e.with(tracing))
           .get(
               "/inner",
               workers,
-              (_, response) -> response.text(Span.current().getSpanContext().getTraceId()),
-              e -> e.get(tracing).enabled());
+              (ignored7, response) -> response.text(Span.current().getSpanContext().getTraceId()),
+              e -> e.with(tracing));
 
       try (var test = TestServer.start(app)) {
         var outer =
@@ -271,8 +292,9 @@ class EndpointTracingTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void closesForkJoinTraceOnceAfterMappedHandlerFailure(boolean appWide) throws Exception {
+  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  void closesForkJoinTraceOnceAfterMappedHandlerFailure(boolean appWide, boolean virtualApplication)
+      throws Exception {
     var exporter = InMemorySpanExporter.create();
     var completed = new CompletableFuture<RequestOutcome>();
 
@@ -281,7 +303,7 @@ class EndpointTracingTest {
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
         var workers = new ForkJoinPool(1);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -295,15 +317,15 @@ class EndpointTracingTest {
               routes -> {
                 routes.exception(
                     IllegalArgumentException.class,
-                    (_, _, response) ->
+                    (ignored8, ignored9, response) ->
                         response.status(422).text(Span.current().getSpanContext().getTraceId()));
                 routes.get(
                     workers,
-                    (_, _) -> {
+                    (ignored10, ignored11) -> {
                       throw new IllegalArgumentException("failed");
                     });
               },
-              e -> e.get(tracing).enabled());
+              e -> e.with(tracing));
 
       try (var test = TestServer.start(app)) {
         var response =
@@ -330,9 +352,9 @@ class EndpointTracingTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void reattachesServerSpanForRejectedSubmissionAndCompletesItOnce(boolean appWide)
-      throws Exception {
+  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  void reattachesServerSpanForRejectedSubmissionAndCompletesItOnce(
+      boolean appWide, boolean virtualApplication) throws Exception {
     var exporter = InMemorySpanExporter.create();
     var completed = new CompletableFuture<RequestOutcome>();
     var invoked = new AtomicBoolean();
@@ -342,7 +364,7 @@ class EndpointTracingTest {
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
         var workers = new ForkJoinPool(1);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -356,11 +378,11 @@ class EndpointTracingTest {
               routes -> {
                 routes.exception(
                     RejectedExecutionException.class,
-                    (_, _, response) ->
+                    (ignored12, ignored13, response) ->
                         response.status(503).text(Span.current().getSpanContext().getTraceId()));
-                routes.get(workers, (_, _) -> invoked.set(true));
+                routes.get(workers, (ignored14, ignored15) -> invoked.set(true));
               },
-              e -> e.get(tracing).enabled());
+              e -> e.with(tracing));
 
       try (var test = TestServer.start(app)) {
         workers.shutdown();
@@ -388,9 +410,18 @@ class EndpointTracingTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  @CsvSource({
+    "false,false,false",
+    "false,false,true",
+    "false,true,false",
+    "false,true,true",
+    "true,false,false",
+    "true,false,true",
+    "true,true,false",
+    "true,true,true"
+  })
   void completesForkJoinTraceExactlyOnceWhenClosingWithQueuedOrRunningRequest(
-      boolean queued, boolean appWide) throws Exception {
+      boolean queued, boolean appWide, boolean virtualApplication) throws Exception {
     var exporter = InMemorySpanExporter.create();
     var blocked = new CountDownLatch(1);
     var entered = new CountDownLatch(1);
@@ -406,7 +437,11 @@ class EndpointTracingTest {
                 .build();
         var workers = new ForkJoinPool(1);
         var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app =
+            withExecutionMode(new Shoostr(), virtualApplication)
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -424,7 +459,7 @@ class EndpointTracingTest {
           .get(
               "/closing",
               workers,
-              (_, _) -> {
+              (ignored16, ignored17) -> {
                 invoked.set(true);
                 entered.countDown();
                 if (!release.await(10, TimeUnit.SECONDS)) {
@@ -433,7 +468,7 @@ class EndpointTracingTest {
 
                 restoredTrace.complete(Span.current().getSpanContext().getTraceId());
               },
-              e -> e.get(tracing).enabled());
+              e -> e.with(tracing));
       Future<Boolean> blocker = null;
       if (queued) {
         blocker =
@@ -540,5 +575,15 @@ class EndpointTracingTest {
         },
         null,
         false);
+  }
+
+  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
+    if (virtualApplication) {
+      app.virtualThreads();
+    }
+
+    return app.onRequestHeaders(
+        (request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

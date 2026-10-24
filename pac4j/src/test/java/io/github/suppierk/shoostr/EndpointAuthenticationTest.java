@@ -38,7 +38,7 @@ class EndpointAuthenticationTest {
     var authorized = new CompletableFuture<Thread>();
     var client =
         new DirectBasicAuthClient(
-            (_, supplied) -> {
+            (ignored, supplied) -> {
               authenticated.complete(Thread.currentThread());
               if (!(supplied instanceof UsernamePasswordCredentials credentials)
                   || !"alice".equals(credentials.getUsername())
@@ -53,12 +53,12 @@ class EndpointAuthenticationTest {
             });
 
     try (var workers = executor(executorType, owned);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       var auth =
           new Pac4j(
               client,
               "Basic",
-              (_, _, _) -> {
+              (ignored2, ignored3, ignored4) -> {
                 authorized.complete(Thread.currentThread());
                 return false;
               });
@@ -67,11 +67,11 @@ class EndpointAuthenticationTest {
           .get(
               "/me",
               workers,
-              (_, response) -> {
+              (ignored5, response) -> {
                 invoked.set(true);
                 response.text("wrong");
               },
-              extensions -> extensions.get(auth).enabled());
+              extensions -> extensions.with(auth));
       var credentials =
           "wrong".equals(rejection) ? "Basic YWxpY2U6d3Jvbmc=" : "Basic YWxpY2U6Y29ycmVjdA==";
 
@@ -102,7 +102,7 @@ class EndpointAuthenticationTest {
     var handled = new CompletableFuture<Thread>();
     var client =
         new DirectBasicAuthClient(
-            (_, supplied) -> {
+            (ignored6, supplied) -> {
               authenticated.complete(Thread.currentThread());
               if (!(supplied instanceof UsernamePasswordCredentials credentials)
                   || !"alice".equals(credentials.getUsername())
@@ -117,12 +117,12 @@ class EndpointAuthenticationTest {
             });
 
     try (var workers = executor(executorType, owned);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       var auth =
           new Pac4j(
               client,
               "Basic",
-              (_, _, _) -> {
+              (ignored7, ignored8, ignored9) -> {
                 authorized.complete(Thread.currentThread());
                 return true;
               });
@@ -135,7 +135,7 @@ class EndpointAuthenticationTest {
                 handled.complete(Thread.currentThread());
                 response.text(request.principal().orElseThrow().getName());
               },
-              extensions -> extensions.get(auth).enabled());
+              extensions -> extensions.with(auth));
 
       try (var test = TestServer.start(app)) {
         var result =

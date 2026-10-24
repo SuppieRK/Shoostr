@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.MultipartOptions;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
@@ -37,6 +38,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -58,18 +60,21 @@ class Pac4jTest {
   @Test
   @Timeout(10)
   void authenticatesWithoutCreatingASessionWhenSessionsAreEnabled() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var auth = new Pac4j(authenticatedAliceClient(), "Basic");
+
       app.sessions()
           .authentication(auth)
           .routes()
           .get(
               "/me",
               (request, response) -> {
-                assertTrue(request.session(false).isEmpty());
+                assertTrue(request.getSession().isEmpty());
                 response.text(request.principal().orElseThrow().getName());
               },
-              e -> e.get(auth).enabled());
+              e -> {
+                e.with(auth);
+              });
 
       try (var test =
           TestServer.start(
@@ -95,8 +100,9 @@ class Pac4jTest {
   @Test
   @Timeout(15)
   void createsAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var auth = new Pac4j(authenticatedAliceClient(), "Basic");
+
       app.sessions()
           .authentication(auth)
           .routes()
@@ -104,16 +110,18 @@ class Pac4jTest {
               "/session",
               (request, response) -> {
                 var identity = request.principal().orElseThrow().getName();
-                var existing = request.session(false);
+                var existing = request.getSession();
                 if (existing.isPresent()) {
                   assertEquals("handler-owned", existing.orElseThrow().getAttribute("marker"));
                   response.text(identity + ":resumed");
                 } else {
-                  request.session(true).orElseThrow().setAttribute("marker", "handler-owned");
+                  request.getOrCreateSession().setAttribute("marker", "handler-owned");
                   response.text(identity + ":created");
                 }
               },
-              e -> e.get(auth).enabled());
+              e -> {
+                e.with(auth);
+              });
 
       try (var test =
           TestServer.start(
@@ -167,15 +175,15 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var security = new Pac4j(provider, "Basic");
       app.authentication(security)
           .routes(
               routes ->
                   routes.get(
                       "/me",
-                      (_, response) -> response.text("authenticated"),
-                      e -> e.get(security).enabled()));
+                      (ignored, response) -> response.text("authenticated"),
+                      e -> e.with(security)));
 
       try (var test =
           TestServer.start(
@@ -222,14 +230,14 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
           .path(
               "/",
-              routes -> routes.get("/me", (_, response) -> response.text("authenticated")),
-              e -> e.get(auth).enabled());
+              routes -> routes.get("/me", (ignored2, response) -> response.text("authenticated")),
+              e -> e.with(auth));
 
       try (var test = TestServer.start(app)) {
         expectedPort.set(app.port());
@@ -258,7 +266,7 @@ class Pac4jTest {
   void rejectsAnExpiredProviderProfileBeforeEstablishingAPrincipal() throws Exception {
     var provider =
         new DirectBasicAuthClient(
-            (_, supplied) -> {
+            (ignored3, supplied) -> {
               var profile =
                   new CommonProfile() {
                     @Override
@@ -271,18 +279,18 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.exception(
           AuthenticationRequiredException.class,
-          (_, request, response) ->
+          (ignored4, request, response) ->
               response.text(request.principal().map(Object::toString).orElse("null")));
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
           .path(
               "/",
-              routes -> routes.get("/me", (_, response) -> response.text("private")),
-              e -> e.get(auth).enabled());
+              routes -> routes.get("/me", (ignored5, response) -> response.text("private")),
+              e -> e.with(auth));
 
       try (var test = TestServer.start(app)) {
 
@@ -306,18 +314,18 @@ class Pac4jTest {
   void mapsProviderFailuresToServerErrorsWithoutLeakingDetailsOrChallenges() throws Exception {
     var provider =
         new DirectBasicAuthClient(
-            (_, _) -> {
+            (ignored6, ignored7) -> {
               throw new IllegalStateException("sensitive identity-store diagnostic");
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
           .path(
               "/",
-              routes -> routes.get("/me", (_, response) -> response.text("private")),
-              e -> e.get(auth).enabled());
+              routes -> routes.get("/me", (ignored8, response) -> response.text("private")),
+              e -> e.with(auth));
 
       try (var test = TestServer.start(app)) {
 
@@ -342,21 +350,21 @@ class Pac4jTest {
   void rejectsAmbiguousAuthorizationHeaders() throws Exception {
     var provider =
         new DirectBasicAuthClient(
-            (_, supplied) -> {
+            (ignored9, supplied) -> {
               var profile = new CommonProfile();
               profile.setId("alice");
               supplied.setUserProfile(profile);
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
           .path(
               "/",
-              routes -> routes.get("/me", (_, response) -> response.text("private")),
-              e -> e.get(auth).enabled());
+              routes -> routes.get("/me", (ignored10, response) -> response.text("private")),
+              e -> e.with(auth));
 
       try (var test = TestServer.start(app)) {
 
@@ -393,14 +401,14 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
           .path(
               "/",
-              routes -> routes.post("/me", (_, response) -> response.text("authenticated")),
-              e -> e.get(auth).enabled());
+              routes -> routes.post("/me", (ignored11, response) -> response.text("authenticated")),
+              e -> e.with(auth));
 
       try (var test = TestServer.start(app)) {
         var encoded =
@@ -435,7 +443,7 @@ class Pac4jTest {
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
@@ -443,7 +451,7 @@ class Pac4jTest {
               "/",
               routes ->
                   routes.post("/me", (request, response) -> response.text(request.bodyText())),
-              e -> e.get(auth).enabled());
+              e -> e.with(auth));
 
       try (var test = TestServer.start(app)) {
         var encoded =
@@ -475,20 +483,21 @@ class Pac4jTest {
               assertEquals(
                   Optional.of("present"), context.webContext().getResponseHeader("X-Provider"));
               context.webContext().setResponseHeader("X-Provider", "");
+              assertEquals(Optional.empty(), context.webContext().getResponseHeader("X-Provider"));
               var profile = new CommonProfile();
               profile.setId("alice");
               supplied.setUserProfile(profile);
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
           .routes()
           .path(
               "/",
-              routes -> routes.get("/me", (_, response) -> response.text("authenticated")),
-              e -> e.get(auth).enabled());
+              routes -> routes.get("/me", (ignored12, response) -> response.text("authenticated")),
+              e -> e.with(auth));
 
       try (var test = TestServer.start(app)) {
         var encoded =
@@ -513,7 +522,7 @@ class Pac4jTest {
         new ParameterClient(
             "token",
             (Authenticator)
-                (_, supplied) -> {
+                (ignored13, supplied) -> {
                   var credentials = (TokenCredentials) supplied;
                   if (!"allowed".equals(credentials.getToken())) {
                     return Optional.empty();
@@ -527,7 +536,15 @@ class Pac4jTest {
     provider.setSupportPostRequest(true);
     provider.setSupportGetRequest(false);
 
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 16, 1024, 1024, 5000));
+    try (var app =
+            new Shoostr(new Options(16, 1024, 1024, 1000, MultipartOptions.defaults()))
+                .modifyServer(
+                    nativeServer -> {
+                      var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                      nativeConnector.setHost("127.0.0.1");
+                      nativeConnector.setPort(0);
+                      nativeConnector.setIdleTimeout(5000);
+                    });
         var client = HttpClient.newHttpClient()) {
       var auth = new Pac4j(provider, "Bearer");
       app.authentication(auth)
@@ -536,7 +553,7 @@ class Pac4jTest {
               "/",
               routes ->
                   routes.post("/me", (request, response) -> response.text(request.bodyText())),
-              e -> e.get(auth).enabled());
+              e -> e.with(auth));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -571,9 +588,12 @@ class Pac4jTest {
 
   @Test
   void rejectsMissingHeaderCredentialsBeforeReadingTheRequestBody() throws Exception {
-    var provider = new DirectBasicAuthClient((_, _) -> Optional.empty());
+    var provider = new DirectBasicAuthClient((ignored14, ignored15) -> Optional.empty());
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       var auth = new Pac4j(provider, "Basic realm=\"api\"");
       app.authentication(auth)
           .routes()
@@ -581,7 +601,7 @@ class Pac4jTest {
               "/",
               routes ->
                   routes.post("/upload", (request, response) -> response.text(request.bodyText())),
-              e -> e.get(auth).enabled());
+              e -> e.with(auth));
       app.start();
 
       try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
@@ -611,21 +631,25 @@ class Pac4jTest {
   void rejectsForgedHttpsAbsoluteTargetOnPlainConnectionWhenTlsIsRequired() throws Exception {
     var provider =
         new DirectBasicAuthClient(
-            (_, supplied) -> {
+            (ignored16, supplied) -> {
               var profile = new CommonProfile();
               profile.setId("alice");
               supplied.setUserProfile(profile);
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      var auth = new Pac4j(provider, "Basic", (context, _, _) -> context.isSecure());
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
+      var auth =
+          new Pac4j(provider, "Basic", (context, ignored17, ignored18) -> context.isSecure());
       app.authentication(auth)
           .routes()
           .path(
               "/",
-              routes -> routes.get("/secure", (_, response) -> response.text("private")),
-              e -> e.get(auth).enabled());
+              routes -> routes.get("/secure", (ignored19, response) -> response.text("private")),
+              e -> e.with(auth));
       app.start();
 
       var encoded =
@@ -672,26 +696,27 @@ class Pac4jTest {
 
     var provider =
         new DirectBasicAuthClient(
-            (_, supplied) -> {
+            (ignored20, supplied) -> {
               var profile = new CommonProfile();
               profile.setId("alice");
               supplied.setUserProfile(profile);
               return Optional.of(supplied);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.tls(
           server -> {
             server.setKeyStorePath(keyStorePath.toString());
             server.setKeyStorePassword("changeit");
           });
-      var auth = new Pac4j(provider, "Basic", (context, _, _) -> context.isSecure());
+      var auth =
+          new Pac4j(provider, "Basic", (context, ignored21, ignored22) -> context.isSecure());
       app.authentication(auth)
           .routes()
           .path(
               "/",
-              routes -> routes.get("/secure", (_, response) -> response.text("private")),
-              e -> e.get(auth).enabled());
+              routes -> routes.get("/secure", (ignored23, response) -> response.text("private")),
+              e -> e.with(auth));
 
       try (var test = TestServer.start(app, client -> client.sslContext(tls))) {
 
@@ -715,7 +740,7 @@ class Pac4jTest {
   void keepsPrincipalsIsolatedAcrossConcurrentRequestsAndPublicRoutes() throws Exception {
     var provider =
         new DirectBasicAuthClient(
-            (_, supplied) -> {
+            (ignored24, supplied) -> {
               var credentials = (UsernamePasswordCredentials) supplied;
               if (!"test-password".equals(credentials.getPassword())) {
                 return Optional.empty();
@@ -727,7 +752,7 @@ class Pac4jTest {
               return Optional.of(credentials);
             });
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
       var auth = new Pac4j(provider, "Basic");
       app.authentication(auth)
@@ -739,7 +764,7 @@ class Pac4jTest {
                       "/me",
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName())),
-              e -> e.get(auth).enabled());
+              e -> e.with(auth));
       app.routes()
           .get(
               "/public",
@@ -801,7 +826,7 @@ class Pac4jTest {
     var expired = generator.generate(profile);
     var provider = new HeaderClient("Authorization", "Bearer ", new JwtAuthenticator(signing));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var auth = new Pac4j(provider, "Bearer");
       app.authentication(auth)
           .routes()
@@ -812,7 +837,7 @@ class Pac4jTest {
                       "/me",
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName())),
-              e -> e.get(auth).enabled());
+              e -> e.with(auth));
 
       try (var test = TestServer.start(app)) {
 
@@ -846,7 +871,7 @@ class Pac4jTest {
   void distinguishesMissingAndInvalidCredentialsFromDeniedPermissions() throws Exception {
     var provider =
         new DirectBasicAuthClient(
-            (_, supplied) -> {
+            (ignored25, supplied) -> {
               var credentials = (UsernamePasswordCredentials) supplied;
               if (!"alice".equals(credentials.getUsername())
                   || !"correct".equals(credentials.getPassword())) {
@@ -858,15 +883,16 @@ class Pac4jTest {
               credentials.setUserProfile(profile);
               return Optional.of(credentials);
             });
-    var security = new Pac4j(provider, "Basic realm=\"api\"", (_, _, _) -> false);
+    var security =
+        new Pac4j(provider, "Basic realm=\"api\"", (ignored26, ignored27, ignored28) -> false);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.authentication(security)
           .routes()
           .path(
               "/",
-              routes -> routes.get("/private", (_, response) -> response.text("secret")),
-              e -> e.get(security).enabled());
+              routes -> routes.get("/private", (ignored29, response) -> response.text("secret")),
+              e -> e.with(security));
 
       try (var test = TestServer.start(app)) {
 
@@ -900,7 +926,7 @@ class Pac4jTest {
   void validatesCredentialsWithPac4jBeforePropagatingThePrincipal() throws Exception {
     var provider =
         new DirectBasicAuthClient(
-            (_, supplied) -> {
+            (ignored30, supplied) -> {
               var credentials = (UsernamePasswordCredentials) supplied;
               if (!"alice".equals(credentials.getUsername())
                   || !"correct".equals(credentials.getPassword())) {
@@ -914,7 +940,7 @@ class Pac4jTest {
             });
     var security = new Pac4j(provider, "Basic realm=\"api\"");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.authentication(security)
           .routes()
           .path(
@@ -924,7 +950,7 @@ class Pac4jTest {
                       "/me",
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName())),
-              e -> e.get(security).enabled());
+              e -> e.with(security));
 
       try (var test = TestServer.start(app)) {
 
@@ -950,7 +976,7 @@ class Pac4jTest {
 
   private static DirectBasicAuthClient authenticatedAliceClient() {
     return new DirectBasicAuthClient(
-        (_, supplied) -> {
+        (ignored31, supplied) -> {
           if (!(supplied instanceof UsernamePasswordCredentials credentials)
               || !"alice".equals(credentials.getUsername())
               || !"correct".equals(credentials.getPassword())) {

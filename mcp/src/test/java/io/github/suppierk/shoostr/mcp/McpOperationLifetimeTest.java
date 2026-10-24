@@ -41,8 +41,8 @@ class McpOperationLifetimeTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
     var mcp =
         Mcp.async(
@@ -56,11 +56,11 @@ class McpOperationLifetimeTest {
                         McpServerFeatures.AsyncToolSpecification.builder()
                             .tool(tool)
                             .callHandler(
-                                (exchange, _) -> {
+                                (exchange, ignored4) -> {
                                   var ping =
                                       exchange
                                           .ping()
-                                          .doOnSuccess(_ -> nativeCompleted.countDown())
+                                          .doOnSuccess(ignored5 -> nativeCompleted.countDown())
                                           .doOnCancel(cancelled::incrementAndGet);
                                   var notification =
                                       breakResponse
@@ -71,7 +71,7 @@ class McpOperationLifetimeTest {
                                                           McpSchema.LoggingLevel.INFO,
                                                           "trigger failed HTTP flush")
                                                       .build()))
-                                          .onErrorResume(_ -> Mono.empty());
+                                          .onErrorResume(ignored6 -> Mono.empty());
                                   return Mono.when(ping, notification)
                                       .thenReturn(
                                           McpSchema.CallToolResult.builder()
@@ -83,7 +83,7 @@ class McpOperationLifetimeTest {
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
-        (request, _) -> {
+        (request, ignored7) -> {
           if (request.header("X-Fail-Response").isPresent() && failResponse.get()) {
             throw new IOException("fixture HTTP response failure after the native ping was sent");
           }

@@ -47,7 +47,7 @@ class McpExecutorExpiryTest {
 
                   return new McpIdentity("alice:client", McpTransportContext.EMPTY, null);
                 },
-                (_, _) -> {}),
+                (ignored, ignored2) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp)
@@ -57,7 +57,7 @@ class McpExecutorExpiryTest {
               routes.get(
                   "/probe",
                   selected,
-                  (_, response) ->
+                  (ignored3, response) ->
                       response.text(
                           (Thread.currentThread() == owner.get())
                               + ":"
@@ -101,7 +101,7 @@ class McpExecutorExpiryTest {
                 () -> {
                   try {
                     input.readAllBytes();
-                  } catch (IOException _) {
+                  } catch (IOException ignored4) {
                     // A committed stream may end with transport failure rather than clean EOF.
                   }
 

@@ -69,7 +69,7 @@ export default function () {
 }
 
 export function setup() {
-  if (http.get(`${base}/virtual`).body !== 'true') fail('Expected virtual-thread handler execution');
+  if (http.get(`${base}/virtual`).body !== 'false') fail('Expected platform thread execution');
   for (const name of Object.keys(fixtures)) {
     const response = send(name);
     if (response.status !== (fixtures[name][2] || 200) || response.body !== fixtures[name][0]

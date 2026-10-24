@@ -60,10 +60,10 @@ class McpReplyAuthorizationTest {
                                 McpSchema.Tool.builder("ping-client", Map.of("type", "object"))
                                     .build())
                             .callHandler(
-                                (exchange, _) ->
+                                (exchange, ignored) ->
                                     exchange
                                         .ping()
-                                        .doOnSuccess(_ -> completed.countDown())
+                                        .doOnSuccess(ignored2 -> completed.countDown())
                                         .thenReturn(
                                             McpSchema.CallToolResult.builder()
                                                 .addTextContent("reply accepted")

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -15,7 +16,15 @@ import org.junit.jupiter.params.provider.ValueSource;
 class ConstrainedRoutingTest {
   @Test
   void dispatchesByNamedSegmentConstraintAndExposesItsCapture() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
       app.routes()
           .get(
               "/users/{id:[0-9]+}",
@@ -47,8 +56,16 @@ class ConstrainedRoutingTest {
 
   @Test
   void completedRangeEndpointDoesNotStartAnotherRange() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
-      app.routes().get("/letters/{id:[a-c-e]}", (_, response) -> response.text("matched"));
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
+      app.routes().get("/letters/{id:[a-c-e]}", (ignored, response) -> response.text("matched"));
 
       try (var test = TestServer.start(app)) {
 
@@ -76,21 +93,33 @@ class ConstrainedRoutingTest {
 
   @Test
   void rejectsAnInvalidConstraintAtRegistration() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       var routes = app.routes();
       assertThrows(
-          IllegalArgumentException.class, () -> routes.get("/users/{id:[0-9+}", (_, _) -> {}));
+          IllegalArgumentException.class,
+          () -> routes.get("/users/{id:[0-9+}", (ignored2, ignored3) -> {}));
     }
   }
 
   @Test
   void prefersLiteralThenConstrainedThenPlainThenCatchAllAndFallsBackByMethod() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
-      app.routes().get("/users/{*tail}", (_, response) -> response.text("tail"));
-      app.routes().get("/users/{name}", (_, response) -> response.text("plain"));
-      app.routes().get("/users/{id:[0-9]+}", (_, response) -> response.text("constrained"));
-      app.routes().get("/users/123", (_, response) -> response.text("literal"));
-      app.routes().post("/users/{id:[0-9]+}", (_, response) -> response.text("post"));
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
+      app.routes().get("/users/{*tail}", (ignored4, response) -> response.text("tail"));
+      app.routes().get("/users/{name}", (ignored5, response) -> response.text("plain"));
+      app.routes().get("/users/{id:[0-9]+}", (ignored6, response) -> response.text("constrained"));
+      app.routes().get("/users/123", (ignored7, response) -> response.text("literal"));
+      app.routes().post("/users/{id:[0-9]+}", (ignored8, response) -> response.text("post"));
 
       try (var test = TestServer.start(app)) {
 
@@ -147,10 +176,18 @@ class ConstrainedRoutingTest {
 
   @Test
   void firstMatchingConstrainedRouteForTheRequestedMethodWins() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
-      app.routes().post("/items/{id:[0-9]+}", (_, response) -> response.text("first-post"));
-      app.routes().get("/items/{id:[0-9]}", (_, response) -> response.text("first-get"));
-      app.routes().get("/items/{id:[0-9]+}", (_, response) -> response.text("later-get"));
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
+      app.routes().post("/items/{id:[0-9]+}", (ignored9, response) -> response.text("first-post"));
+      app.routes().get("/items/{id:[0-9]}", (ignored10, response) -> response.text("first-get"));
+      app.routes().get("/items/{id:[0-9]+}", (ignored11, response) -> response.text("later-get"));
 
       try (var test = TestServer.start(app)) {
 
@@ -179,8 +216,16 @@ class ConstrainedRoutingTest {
 
   @Test
   void constraintTestsCanonicalEncodedSegmentBeforePathParameterDecoding() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
-      app.routes().get("/users/{id:[0-9]+}", (_, response) -> response.text("digits"));
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
+      app.routes().get("/users/{id:[0-9]+}", (ignored12, response) -> response.text("digits"));
       app.routes()
           .get(
               "/digits/{id:[0-9]+}",
@@ -236,23 +281,36 @@ class ConstrainedRoutingTest {
         "/users/{bad name:[0-9]+}"
       })
   void rejectsUnsupportedOrMalformedConstraintSyntax(String pattern) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       var routes = app.routes();
-      assertThrows(IllegalArgumentException.class, () -> routes.get(pattern, (_, _) -> {}));
+      assertThrows(
+          IllegalArgumentException.class, () -> routes.get(pattern, (ignored13, ignored14) -> {}));
     }
   }
 
   @Test
   void acceptsBoundedRepetitionAndRejectsEquivalentConstraintShapes() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
       var routes = app.routes();
       routes.path(
           "/api",
           nestedRoutes ->
-              nestedRoutes.get("/users/{id:[0-9]{1,3}}", (_, response) -> response.text("ok")));
+              nestedRoutes.get(
+                  "/users/{id:[0-9]{1,3}}", (ignored15, response) -> response.text("ok")));
       assertThrows(
           IllegalArgumentException.class,
-          () -> routes.get("/api/users/{other:[0-9]{1,3}}", (_, _) -> {}));
+          () -> routes.get("/api/users/{other:[0-9]{1,3}}", (ignored16, ignored17) -> {}));
 
       try (var test = TestServer.start(app)) {
 
@@ -274,7 +332,15 @@ class ConstrainedRoutingTest {
 
   @Test
   void serverSentEventRouteUsesTheSameConstraint() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
       app.routes()
           .sse(
               "/events/{id:[0-9]+}",
@@ -301,7 +367,15 @@ class ConstrainedRoutingTest {
 
   @Test
   void composesConstrainedSegmentsBeforeAndAfterLiteralSuffixes() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
       app.routes()
           .path(
               "/orders/{orderId:[0-9]+}",
@@ -342,7 +416,15 @@ class ConstrainedRoutingTest {
 
   @Test
   void simpleRepetitionNeverMatchesAnEmptySegment() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 128, 5000))) {
+    try (var app =
+        new Shoostr(new Options(1024, 1024, 128, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                })) {
       app.routes()
           .get(
               "/flags/{letter:[A-Z]?}",

@@ -13,7 +13,7 @@ public final class RouteFootprint {
    *
    * @param args unused
    */
-  static void main(String[] args) {
+  public static void main(String[] args) {
     System.out.println(VM.current().details());
     for (String shape : new String[] {"shared", "divergent", "prefix"}) {
       for (int count : new int[] {5, 50, 500, 5000}) {

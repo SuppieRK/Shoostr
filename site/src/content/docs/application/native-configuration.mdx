@@ -1,0 +1,56 @@
+---
+title: Configure the Jetty listener and server
+description: Configure the listener, HTTP parsing, native thread pool, and shutdown through Jetty hooks with clear startup ordering and resource ownership.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/02-application/src/main/java/io/github/suppierk/shoostr/example/application/NativeConfigurationExample.java?raw';
+import test from '../../../../../examples/02-application/src/test/java/io/github/suppierk/shoostr/example/application/NativeConfigurationExampleTest.java?raw';
+
+## Description
+
+Use Shoostr's native hooks to configure Jetty's own objects before startup.
+The table identifies the hook for each setting and links to Jetty's configuration reference.
+
+| Setting | Native hook and reference |
+| --- | --- |
+| Bind address, port, and connection idle timeout | Default <code>Server<wbr />Connector</code> in <code>modify<wbr />Server</code>. See [connectors](https://jetty.org/docs/jetty/12.1/programming-guide/server/http.html#connector) and the [connector reference](https://javadoc.jetty.org/jetty-12.1/org/eclipse/jetty/server/ServerConnector.html). |
+| Request headers, HTTP parsing, and native buffers | <code>Http<wbr />Configuration</code> in <code>modify<wbr />Http<wbr />Configuration</code>. See [Jetty's HTTP settings](https://javadoc.jetty.org/jetty-12.1/org/eclipse/jetty/server/HttpConfiguration.html). |
+| Native platform pool settings | Existing <code>Queued<wbr />Thread<wbr />Pool</code> in <code>modify<wbr />Server</code>. See the [threading guide](https://jetty.org/docs/jetty/12.1/programming-guide/arch/threads.html). |
+| Native shutdown timeouts | `Server` and existing <code>Queued<wbr />Thread<wbr />Pool</code> in <code>modify<wbr />Server</code>. See the [server](https://javadoc.jetty.org/jetty-12.1/org/eclipse/jetty/server/Server.html) and [pool references](https://javadoc.jetty.org/jetty-12.1/org/eclipse/jetty/util/thread/QueuedThreadPool.html). |
+
+Keep Shoostr's [request and response limits](../server-options/) in `Options`.
+For execution mode, use [platform execution or virtual-thread opt-in](../../lifecycle/executors/); native pool configuration remains authoritative.
+
+Register these callbacks before `app.start()`; Shoostr stores them until startup rather than running them immediately.
+HTTP callbacks run first, followed by server callbacks, with registration order preserved within each category.
+The default connector and application handler are installed before server callbacks run, and native settings can override those initial transport values.
+These callbacks do not replace the limits enforced by `Options`; further registration is rejected after startup or application closure.
+
+## Example
+
+This application binds to loopback and serves `ready` at `/health` with a 1,024-byte request-header limit.
+Pass a port to `application(...)`, or use `0` to let the operating system choose one; read the bound port through `app.port()` after startup.
+The existing default connector is available as the first connector when this callback runs.
+
+Without customization, Shoostr binds to `0.0.0.0:8080` with a 30-second connection idle timeout.
+The example changes that timeout to 10 seconds, sets the native platform pool maximum to 32 threads, and uses a 1-second native stop timeout.
+These values demonstrate configuration rather than recommended production sizing; follow Jetty's threading guidance for your workload.
+
+The connection timeout measures inactivity, while native stop timeouts control shutdown; neither is an application request deadline.
+Jetty's server drain and platform-worker shutdown have separate timeout settings, so a server stop timeout alone is not a total shutdown deadline.
+
+Server callbacks must preserve Shoostr's application handler and default connector; they must not start or stop Jetty or enable its separate JVM shutdown hook.
+Handler wrapping and additional connectors are supported, and `app.port()` continues to identify the default connector.
+Shoostr owns native startup and shutdown. An executor supplied through a native setter remains caller-owned unless its lifecycle is explicitly registered with Jetty.
+Cancellation of Shoostr's own [managed WebSocket work](../../websockets/managed/) still applies when that work uses a supplied executor.
+The factory returns an unstarted application whose caller must close it, including when startup is never attempted.
+
+<Code code={application} lang="java" title="NativeConfigurationExample.java" />
+
+## Test
+
+The test uses a real HTTP client so it exercises the configured listener directly.
+It checks callback timing, listener and pool settings, ordinary requests, a `431` response for oversized headers, and rejection of configuration after startup or closure.
+
+<Code code={test} lang="java" title="NativeConfigurationExampleTest.java" />

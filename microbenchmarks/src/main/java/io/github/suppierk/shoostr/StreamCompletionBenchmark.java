@@ -78,7 +78,7 @@ public class StreamCompletionBenchmark {
                         writes++;
                         callback.succeeded();
                       }
-                    } catch (InterruptedException _) {
+                    } catch (InterruptedException ignored) {
                       Thread.currentThread().interrupt();
                     }
                   });

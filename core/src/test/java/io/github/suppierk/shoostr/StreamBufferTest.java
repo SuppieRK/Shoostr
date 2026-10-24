@@ -297,7 +297,7 @@ class StreamBufferTest {
                             128,
                             writes,
                             -1,
-                            (_, callback) -> callback.succeeded(),
+                            (ignored, callback) -> callback.succeeded(),
                             2,
                             (source, callback) -> {
                               submitted.add(source);
@@ -395,7 +395,7 @@ class StreamBufferTest {
   }
 
   private Response response(int capacity, List<Write> writes, int failureWrite) {
-    return response(capacity, writes, failureWrite, (_, callback) -> callback.succeeded());
+    return response(capacity, writes, failureWrite, (ignored2, callback) -> callback.succeeded());
   }
 
   private Response response(
@@ -403,7 +403,7 @@ class StreamBufferTest {
       List<Write> writes,
       int failureWrite,
       BiConsumer<Integer, Callback> completeWrite) {
-    return response(capacity, writes, failureWrite, completeWrite, -1, (_, _) -> {});
+    return response(capacity, writes, failureWrite, completeWrite, -1, (ignored3, ignored4) -> {});
   }
 
   private Response response(
@@ -419,7 +419,7 @@ class StreamBufferTest {
             Proxy.newProxyInstance(
                 getClass().getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (_, method, arguments) ->
+                (ignored5, method, arguments) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "getHeaders" -> headers;
@@ -448,18 +448,17 @@ class StreamBufferTest {
     var defaults = Options.defaults();
     var options =
         new Options(
-            defaults.host(),
-            defaults.port(),
             defaults.maxRequestBytes(),
             defaults.maxResponseBytes(),
             capacity,
-            defaults.idleTimeoutMillis());
+            1000,
+            MultipartOptions.defaults());
     var nativeRequest =
         (Request)
             Proxy.newProxyInstance(
                 StreamBufferTest.class.getClassLoader(),
                 new Class<?>[] {Request.class},
-                (_, method, _) ->
+                (ignored6, method, ignored7) ->
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> HttpFields.EMPTY;

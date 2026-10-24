@@ -1,16 +1,20 @@
 package io.github.suppierk.shoostr;
 
+import java.security.Principal;
+import java.util.Map;
 import java.util.Objects;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.server.ServerUpgradeResponse;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Eager route configuration for complete WebSocket messages on managed virtual threads. Each event
- * has one callback; later configuration replaces the earlier callback before registration freezes.
- * Captured application state is shared across this route's connections and must be thread-safe.
+ * Eager route configuration for complete WebSocket messages with serialized managed callbacks. Each
+ * event has one callback; later configuration replaces the earlier callback before registration
+ * freezes. Captured application state is shared across this route's connections and must be
+ * thread-safe. Callbacks for one connection can use different threads; idle connections retain no
+ * worker.
  */
-public final class WebSocket {
+public sealed class WebSocket permits TypedWebSocket {
   private @Nullable MessageHandler<String> text;
   private @Nullable Handler beforeUpgrade;
   private @Nullable ConnectionHandler open;
@@ -21,6 +25,25 @@ public final class WebSocket {
 
   /** Creates a configuration owned by route registration. */
   WebSocket() {}
+
+  /**
+   * Creates the one public connection used by every managed callback.
+   *
+   * @param session opened native session
+   * @param path detached handshake path
+   * @param parameters detached route parameters
+   * @param principal detached identity reference
+   * @param listener managed delivery owner
+   * @return connection sharing the existing transport lifecycle
+   */
+  WebSocketConnection connection(
+      Session session,
+      String path,
+      Map<String, String> parameters,
+      @Nullable Principal principal,
+      ManagedWebSocket listener) {
+    return new WebSocketConnection(session, path, parameters, principal, listener);
+  }
 
   /**
    * Validates admission before upgrading. Throw to reject through ordinary HTTP exception handling;
@@ -38,7 +61,7 @@ public final class WebSocket {
   /**
    * Registers an opening callback, completed before admitting application messages.
    *
-   * @param handler callback on a managed virtual thread
+   * @param handler callback using the application's configured execution mode
    * @return this configuration
    */
   public synchronized WebSocket onOpen(ConnectionHandler handler) {
@@ -50,7 +73,7 @@ public final class WebSocket {
   /**
    * Registers complete binary handling with an owned array safe to retain after callback return.
    *
-   * @param handler sequential callback on a managed virtual thread
+   * @param handler sequential callback using the application's configured execution mode
    * @return this configuration
    */
   public synchronized WebSocket onBinary(MessageHandler<byte[]> handler) {
@@ -64,7 +87,7 @@ public final class WebSocket {
    * release does not depend on this observer, which may not run during shutdown or rejected
    * dispatch.
    *
-   * @param handler close code and reason observer on the connection's virtual worker
+   * @param handler close code and reason observer serialized with the connection's other callbacks
    * @return this configuration
    */
   public synchronized WebSocket onClose(CloseHandler handler) {
@@ -189,7 +212,8 @@ public final class WebSocket {
   @FunctionalInterface
   public interface MessageHandler<T> {
     /**
-     * Handles a message on a virtual thread, serialized with this connection's other callbacks.
+     * Handles a message using the configured execution mode, serialized with this connection's
+     * other callbacks.
      *
      * <p>S112 is suppressed because application callbacks may propagate checked failures from their
      * own dependencies without wrapping them or declaring a framework-specific exception.

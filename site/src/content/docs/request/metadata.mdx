@@ -1,0 +1,38 @@
+---
+title: Inspect the client address and request metadata
+description: Distinguish raw URLs and logical authority from the direct connection, effective client address, and assigned identity.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/04-request/src/main/java/io/github/suppierk/shoostr/example/request/MetadataExample.java?raw';
+import test from '../../../../../examples/04-request/src/test/java/io/github/suppierk/shoostr/example/request/MetadataExampleTest.java?raw';
+
+## Description
+
+Use `method()` and `protocol()` for the HTTP method and version, `path()` for the canonical routing path, and `routePattern()` for the selected template before captured values are substituted.
+For URL inspection, `url()` excludes the query and fragment, `fullUrl()` preserves the raw query, and `queryString()` returns that query without `?`.
+Keep those raw URL accessors separate from decoded parameters: the canonical `path()` can differ from the encoded URL spelling, as `/inspect/caf%C3%A9` does in the test.
+
+The request authority, server name, and server port describe the logical destination, which can differ from `localAddress()` and `remoteAddress()` on the actual connection.
+Neither the request authority nor an effective URL establishes a trusted application origin.
+Use `isSecure()` for direct transport security: a URI scheme or forwarding header alone does not prove that this connection uses TLS.
+
+## Example
+
+This inspection endpoint reports the metadata without consuming the body or decoding the query.
+Keep diagnostic endpoints restricted if you add sensitive application data to their output.
+
+Trusted forwarding is disabled by default, so `effectiveUrl()` equals `fullUrl()` and `isForwarded()` is false.
+The effective client address from `clientAddress()` then defaults to the direct IP peer; forwarding headers do not change it without an explicit trust policy.
+Configure [trusted proxy metadata](../../security/proxies/) explicitly when the application sits behind a proxy.
+Likewise, `principal()` only reads an identity explicitly assigned by [authentication logic](../../security/authentication/)—it does not authenticate credentials or infer a user from headers.
+
+<Code code={application} lang="java" title="MetadataExample.java" />
+
+## Test
+
+The tests compare raw URL spelling with decoded captures, verify ignored forwarding and identity-like headers, and distinguish a requested authority from the listener address.
+They select HTTP/1.1 explicitly when asserting that protocol name.
+Copy needed values or [snapshots](../state/) before the request's handler lifetime ends.
+
+<Code code={test} lang="java" title="MetadataExampleTest.java" />

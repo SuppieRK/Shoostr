@@ -52,11 +52,15 @@ out/
 ### Local AI workflow ###
 /AGENTS.md
 /.agents/
-/docs/
+/docs/*
+!/docs/maintainers/
 /.scratch/
 /skills-lock.json
 CONTEXT.md
 
 ### Local measurements ###
 /benchmark-results/
+/site/node_modules/
+/site/dist/
+/site/.astro/
 __pycache__/

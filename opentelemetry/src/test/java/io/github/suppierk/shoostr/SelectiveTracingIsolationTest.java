@@ -26,13 +26,13 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class SelectiveTracingIsolationTest {
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void preservesGlobalSpanWithSelectiveTracingInstalledInEitherOrder(boolean globalFirst)
-      throws Exception {
+  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  void preservesGlobalSpanWithSelectiveTracingInstalledInEitherOrder(
+      boolean globalFirst, boolean virtualApplication) throws Exception {
     var exporter = InMemorySpanExporter.create();
     var completed = new CompletableFuture<Void>();
 
@@ -41,7 +41,7 @@ class SelectiveTracingIsolationTest {
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
         var workers = new ForkJoinPool(1);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -50,12 +50,12 @@ class SelectiveTracingIsolationTest {
       var global = new OpenTelemetryTracing(telemetry).allRequests();
       var selective = new OpenTelemetryTracing(telemetry);
       app.extensions(globalFirst ? global : selective, globalFirst ? selective : global)
-          .afterRequest(_ -> completed.complete(null));
+          .afterRequest(ignored -> completed.complete(null));
       app.routes()
           .get(
               "/unselected",
               workers,
-              (_, response) -> response.text(Span.current().getSpanContext().getTraceId()));
+              (ignored2, response) -> response.text(Span.current().getSpanContext().getTraceId()));
 
       try (var test = TestServer.start(app)) {
         var response =
@@ -79,9 +79,9 @@ class SelectiveTracingIsolationTest {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void doesNotInheritAnotherRequestTraceWhileHelpingAnUnselectedRequest(boolean applicationChild)
-      throws Exception {
+  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  void doesNotInheritAnotherRequestTraceWhileHelpingAnUnselectedRequest(
+      boolean applicationChild, boolean virtualApplication) throws Exception {
     var entered = new CountDownLatch(1);
     var allowHelping = new CountDownLatch(1);
     var completed = new CountDownLatch(2);
@@ -96,26 +96,26 @@ class SelectiveTracingIsolationTest {
                 .build();
         var workers = new ForkJoinPool(1);
         var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
               .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
               .build();
       var tracing = new OpenTelemetryTracing(telemetry);
-      app.extensions(tracing).afterRequest(_ -> completed.countDown());
+      app.extensions(tracing).afterRequest(ignored3 -> completed.countDown());
       app.routes()
           .get(
               "/outer",
               workers,
-              (_, response) -> {
+              (ignored4, response) -> {
                 var child =
                     applicationChild
                         ? telemetry.getTracer("test").spanBuilder("outer-business").startSpan()
                         : null;
                 var current = child == null ? Span.current() : child;
 
-                try (var _ = current.makeCurrent()) {
+                try (var ignored5 = current.makeCurrent()) {
                   outerThread.complete(Thread.currentThread());
                   outerSpan.complete(current.getSpanContext().getSpanId());
                   entered.countDown();
@@ -131,11 +131,11 @@ class SelectiveTracingIsolationTest {
                   }
                 }
               },
-              e -> e.get(tracing).enabled())
+              e -> e.with(tracing))
           .get(
               "/inner",
               workers,
-              (_, response) -> {
+              (ignored6, response) -> {
                 innerThread.complete(Thread.currentThread());
                 var inherited = Span.current().getSpanContext();
                 var business =
@@ -191,5 +191,15 @@ class SelectiveTracingIsolationTest {
         }
       }
     }
+  }
+
+  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
+    if (virtualApplication) {
+      app.virtualThreads();
+    }
+
+    return app.onRequestHeaders(
+        (request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

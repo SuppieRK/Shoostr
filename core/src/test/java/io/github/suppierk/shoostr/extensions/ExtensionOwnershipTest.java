@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.ApplicationCallbacks;
 import io.github.suppierk.shoostr.AuthenticationExtension;
 import io.github.suppierk.shoostr.Extension;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Shoostr;
@@ -22,6 +21,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 
 class ExtensionOwnershipTest {
@@ -29,8 +29,8 @@ class ExtensionOwnershipTest {
   void rejectedReuseLeavesTheOwningApplicationOperational() throws Exception {
     var capability = new OwnedCapability();
 
-    try (var owner = new Shoostr(Options.defaults().withPort(0))) {
-      owner.extensions(capability).routes().get("/", (_, response) -> response.text("ok"));
+    try (var owner = new Shoostr()) {
+      owner.extensions(capability).routes().get("/", (ignored, response) -> response.text("ok"));
 
       try (var test = TestServer.start(owner);
           var rejected = new Shoostr()) {
@@ -131,8 +131,16 @@ class ExtensionOwnershipTest {
     var ready = new CountDownLatch(2);
     var release = new CountDownLatch(1);
 
-    try (var first = new Shoostr(Options.defaults().withPort(0));
-        var second = new Shoostr(Options.defaults().withPort(0));
+    try (var first =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+        var second =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
       var firstAttempt =
           workers.submit(() -> installAfterRelease(first, capability, ready, release));
@@ -148,7 +156,7 @@ class ExtensionOwnershipTest {
       var firstWon = firstAttempt.get(5, TimeUnit.SECONDS);
       assertEquals(!firstWon, secondAttempt.get(5, TimeUnit.SECONDS));
       var owner = firstWon ? first : second;
-      owner.routes().get("/", (_, response) -> response.text("ok"));
+      owner.routes().get("/", (ignored2, response) -> response.text("ok"));
 
       try (var test = TestServer.start(owner)) {
         assertEquals(200, test.send(request -> request.path("/")).statusCode());
@@ -255,22 +263,24 @@ class ExtensionOwnershipTest {
     var first = new OwnedCapability();
     var last = new OwnedCapability();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var routes = app.routes();
       class CheckingClaim implements Extension<Void> {
         @Override
         public void claimOwnership() {
           assertThrows(
               IllegalArgumentException.class,
-              () -> routes.get("/first", (_, _) -> {}, e -> e.requireInstalled(first)));
+              () ->
+                  routes.get("/first", (ignored3, ignored4) -> {}, e -> e.requireInstalled(first)));
           assertThrows(
               IllegalArgumentException.class,
-              () -> routes.get("/last", (_, _) -> {}, e -> e.requireInstalled(last)));
+              () -> routes.get("/last", (ignored5, ignored6) -> {}, e -> e.requireInstalled(last)));
         }
       }
       Extension<Void> checking = new CheckingClaim();
       app.extensions(first, checking, last);
-      routes.get("/first", (_, response) -> response.text("ok"), e -> e.requireInstalled(first));
+      routes.get(
+          "/first", (ignored7, response) -> response.text("ok"), e -> e.requireInstalled(first));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/first")).statusCode());
@@ -282,12 +292,12 @@ class ExtensionOwnershipTest {
   void installationCanUseClaimedProvidersWhoseSetupHasNotRunYet() throws Exception {
     var last = new OwnedCapability();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       class InstallingRoute implements Extension<Void> {
         @Override
         public void install(ApplicationCallbacks callbacks) {
           app.routes()
-              .get("/", (_, response) -> response.text("ok"), e -> e.requireInstalled(last));
+              .get("/", (ignored8, response) -> response.text("ok"), e -> e.requireInstalled(last));
         }
       }
       Extension<Void> first = new InstallingRoute();
@@ -303,7 +313,7 @@ class ExtensionOwnershipTest {
   void rejectsReentrantExtensionInstallationDuringOwnershipClaims() throws Exception {
     var nested = new OwnedCapability();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       class ReentrantInstallation implements Extension<Void> {
         @Override
         public void claimOwnership() {
@@ -312,7 +322,7 @@ class ExtensionOwnershipTest {
       }
       Extension<Void> first = new ReentrantInstallation();
       app.extensions(first);
-      app.extensions(nested).routes().get("/", (_, response) -> response.text("ok"));
+      app.extensions(nested).routes().get("/", (ignored9, response) -> response.text("ok"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/")).statusCode());
@@ -327,7 +337,7 @@ class ExtensionOwnershipTest {
     var owned = new OwnedCapability();
     var nested = owningAuthenticator(owned);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       class ReentrantAuthentication implements Extension<Void> {
         @Override
         public void claimOwnership() {
@@ -336,7 +346,7 @@ class ExtensionOwnershipTest {
       }
       Extension<Void> first = new ReentrantAuthentication();
       app.extensions(first);
-      app.authentication(nested).routes().get("/", (_, response) -> response.text("ok"));
+      app.authentication(nested).routes().get("/", (ignored10, response) -> response.text("ok"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/")).statusCode());
@@ -348,7 +358,7 @@ class ExtensionOwnershipTest {
 
   @Test
   void rejectsReentrantStartupDuringOwnershipClaims() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       class ReentrantStartup implements Extension<Void> {
         @Override
         public void claimOwnership() {
@@ -356,7 +366,7 @@ class ExtensionOwnershipTest {
         }
       }
       Extension<Void> first = new ReentrantStartup();
-      app.extensions(first).routes().get("/", (_, response) -> response.text("ok"));
+      app.extensions(first).routes().get("/", (ignored11, response) -> response.text("ok"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/")).statusCode());
@@ -417,7 +427,7 @@ class ExtensionOwnershipTest {
     try {
       app.extensions(capability);
       return true;
-    } catch (IllegalStateException _) {
+    } catch (IllegalStateException ignored12) {
       return false;
     }
   }
@@ -464,7 +474,7 @@ class ExtensionOwnershipTest {
     @Override
     public void install(ApplicationCallbacks callbacks) {
       callbacks.beforeRouteHandler(
-          (_, _) -> {
+          (ignored13, ignored14) -> {
             if (closes.get() != 0) {
               throw new IllegalStateException("The owned resource is closed");
             }

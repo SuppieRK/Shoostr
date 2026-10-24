@@ -32,8 +32,8 @@ class McpResourceUnsubscribeTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     var mcp =
         Mcp.sync(
             security,
@@ -44,7 +44,7 @@ class McpResourceUnsubscribeTest {
                     .resources(
                         new McpServerFeatures.SyncResourceSpecification(
                             McpSchema.Resource.builder("fixture://alpha", "alpha").build(),
-                            (_, _) ->
+                            (ignored4, ignored5) ->
                                 McpSchema.ReadResourceResult.builder(
                                         List.of(
                                             McpSchema.TextResourceContents.builder(
@@ -54,7 +54,7 @@ class McpResourceUnsubscribeTest {
                                     .build()),
                         new McpServerFeatures.SyncResourceSpecification(
                             McpSchema.Resource.builder("fixture://control", "control").build(),
-                            (_, _) ->
+                            (ignored6, ignored7) ->
                                 McpSchema.ReadResourceResult.builder(
                                         List.of(
                                             McpSchema.TextResourceContents.builder(
@@ -66,7 +66,7 @@ class McpResourceUnsubscribeTest {
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
-        (request, _) -> {
+        (request, ignored8) -> {
           if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
             listening.countDown();
           }

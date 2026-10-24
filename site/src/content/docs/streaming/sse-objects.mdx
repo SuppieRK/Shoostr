@@ -1,0 +1,37 @@
+---
+title: Send objects as server-sent events
+description: Send codec-backed objects as UTF-8 SSE event data while keeping ordinary events, comments and heartbeats available.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/10-streaming/sse/src/main/java/io/github/suppierk/shoostr/example/sse/TypedSseExample.java?raw';
+import test from '../../../../../examples/10-streaming/sse/src/test/java/io/github/suppierk/shoostr/example/sse/TypedSseExampleTest.java?raw';
+
+## Description
+
+Configure a [codec](../../json/codec/) and register `routes.sse(...)` through the returned typed view.
+`TypedResponse.startEventStream()` returns a `TypedEventStream`, whose `sendObject(value)` encodes the payload before the stream adds its data fields and flushes the event.
+Ordinary `send(String)`, `send(SseEvent)`, comments and heartbeats remain available without calling the codec.
+For event names, IDs and replay, see [server-sent events](../sse/).
+
+:::note[Object events require UTF-8 text]
+Use a codec that produces UTF-8 text, such as JSON, for SSE object output.
+Unlike binary WebSocket messages, an SSE event cannot carry an arbitrary binary serialization directly.
+The client still receives text event data and must decode that representation itself.
+:::
+
+Malformed UTF-8 or a codec failure writes no part of that event, but `startEventStream()` has already committed the HTTP headers and any earlier events remain sent.
+The writer belongs to the handler thread and cannot be retained after the handler returns; the [streaming lifetime and backpressure rules](../output/) also apply.
+
+## Example
+
+The `/progress` endpoint sends `Progress(10)` and `Progress(100)` as JSON data events, with an initial comment and a heartbeat between the data frames.
+Its output-only codec supports this numeric model, not arbitrary JSON objects, and the record constructor rejects percentages outside `0`–`100`.
+
+<Code code={application} lang="java" title="TypedSseExample.java" />
+
+## Test
+
+The test checks the HTTP status, event-stream content type, and exact JSON data frames alongside the comment and heartbeat.
+
+<Code code={test} lang="java" title="TypedSseExampleTest.java" />

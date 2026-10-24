@@ -31,8 +31,8 @@ class McpInitialWriteFailureTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
     var mcp =
         Mcp.async(
@@ -45,11 +45,12 @@ class McpInitialWriteFailureTest {
                         McpServerFeatures.AsyncToolSpecification.builder()
                             .tool(tool)
                             .callHandler(
-                                (exchange, _) ->
+                                (exchange, ignored4) ->
                                     Mono.when(
                                             exchange
                                                 .ping()
-                                                .doOnError(_ -> nativeSendFailed.countDown()),
+                                                .doOnError(
+                                                    ignored5 -> nativeSendFailed.countDown()),
                                             Mono.fromRunnable(queued::countDown))
                                         .thenReturn(
                                             McpSchema.CallToolResult.builder()
@@ -60,7 +61,7 @@ class McpInitialWriteFailureTest {
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
-        (request, _) -> {
+        (request, ignored6) -> {
           if (request.header("X-Fail-Initial-Flush").isPresent()
               && failFirstFlush.getAndSet(false)) {
             if (!queued.await(5, TimeUnit.SECONDS)) {

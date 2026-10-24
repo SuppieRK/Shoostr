@@ -1,0 +1,37 @@
+---
+title: Stream a finite response
+description: Stream response chunks or an input source through a bounded buffer, flush output before handler completion, and release the source on success or failure.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/10-streaming/finite/src/main/java/io/github/suppierk/shoostr/example/streaming/FiniteStreamingExample.java?raw';
+import test from '../../../../../examples/10-streaming/finite/src/test/java/io/github/suppierk/shoostr/example/streaming/FiniteStreamingExampleTest.java?raw';
+
+## Description
+
+Use `startStream(...)` to write a response incrementally, or `response.input(...)` to transfer an input source through the same bounded output buffer.
+Streaming bypasses the finite-body limit; `Options.streamBufferBytes()` bounds the application buffer, not the total transfer or its duration.
+Writes flush when the buffer fills, and `flush()` sends pending bytes explicitly; both wait for the transport before the buffer is reused, providing backpressure to the handler.
+
+Starting the stream commits the response, so select its status and headers first and do not mix streaming with a staged body or file transfer.
+Text writes use UTF-8 even if different charset metadata was supplied; encode other charsets yourself and write matching bytes instead.
+For replaceable, buffered output, use [finite response bodies](../../responses/bodies/), or use [file downloads](../../resources/downloads/) for a transfer staged from a path.
+
+## Example
+
+The `/chunks` handler flushes the CSV header before writing two records; returning from the handler finishes the stream and sends any remaining bytes.
+The `/input` handler opens a report and passes it to `response.input(...)`, which closes that source before returning, including when reading or output fails.
+
+Keep the response and stream on the handler thread and within its lifetime; retaining either for background work does not keep the HTTP response open.
+Do not close `Response` yourself, and release any other application-owned resource when the handler ends.
+A disconnected client or a failure after commitment aborts output rather than producing a replacement error body; see [exception recovery](../../errors/exceptions/) for that boundary.
+For event framing and client replay, use [server-sent events](../sse/).
+
+<Code code={application} lang="java" title="FiniteStreamingExample.java" />
+
+## Test
+
+The tests transfer more than the default finite-body limit and coordinate a client with a paused handler to prove that a flushed chunk is visible before handler completion.
+Public input-stream fixtures also verify source closure after successful transfer and after a read failure aborts committed output.
+
+<Code code={test} lang="java" title="FiniteStreamingExampleTest.java" />

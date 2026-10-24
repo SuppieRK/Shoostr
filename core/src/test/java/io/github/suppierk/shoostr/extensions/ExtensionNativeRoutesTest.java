@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.AuthenticationExtension;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Shoostr;
@@ -40,7 +39,7 @@ class ExtensionNativeRoutesTest {
           }
         };
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         // The caller owns the WebSocket client; ordinary HTTP uses the harness below.
         var client = HttpClient.newHttpClient()) {
       app.authentication(auth)
@@ -54,17 +53,22 @@ class ExtensionNativeRoutesTest {
                               conditional -> {
                                 conditional.sse(
                                     "/events",
-                                    (_, response) -> response.startEventStream().send("hello"));
+                                    (ignored, response) ->
+                                        response.startEventStream().send("hello"));
                                 conditional.websocket(
-                                    "/socket", (_, _) -> new Session.Listener.AutoDemanding() {});
+                                    "/socket",
+                                    (ignored2, ignored3) ->
+                                        new Session.Listener.AutoDemanding() {});
                                 conditional.classpathResources("/files", "/");
                               }),
                       e -> {
-                        e.get(auth).enabled();
-                        e.beforeRouteHandler(
-                            (request, response) ->
-                                response.setHeader(
-                                    "X-Principal", request.principal().orElseThrow().getName()));
+                        e.with(auth);
+                        e.lifecycle()
+                            .beforeRouteHandler(
+                                (request, response) ->
+                                    response.setHeader(
+                                        "X-Principal",
+                                        request.principal().orElseThrow().getName()));
                         e.onRoute((method, path) -> facts.add(method.value() + " " + path));
                       }));
 

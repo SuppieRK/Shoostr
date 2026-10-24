@@ -1,0 +1,41 @@
+---
+title: Java, without the ceremony.
+description: Shoostr is an experimental Java 21 HTTP framework with explicit routes and optional integrations.
+template: splash
+hero:
+  title: Java, without<br />the ceremony.
+  tagline: Build HTTP applications with explicit routes, ordinary Java, and the integrations you choose.
+  actions:
+    - text: Documentation
+      link: start/libraries/
+      icon: right-arrow
+      variant: primary
+pagefind: false
+---
+
+<div class="landing-content not-content">
+  <p class="eyebrow">JAVA 21 · EXPLICIT ROUTES · NATIVE JETTY</p>
+  <div class="landing-grid">
+    <section class="landing-intro" aria-labelledby="start-small">
+      <p class="section-number" aria-hidden="true">01 / START SMALL</p>
+      <h2 id="start-small">One request.<br />A working application.</h2>
+      <p>Add an endpoint to your application. Verify it with an HTTP test.</p>
+      <p>Start with library selection. Then use a full application class and its full test class, with all imports.</p>
+    </section>
+    <section class="terminal" aria-label="Request and response">
+      <div class="terminal-bar"><span class="terminal-dot" aria-hidden="true"></span>HTTP / localhost:8080</div>
+      <div class="terminal-body">
+        <span class="terminal-label">REQUEST</span>
+        <pre><code>GET /hello</code></pre>
+        <span class="terminal-label">RESPONSE BODY</span>
+        <pre class="terminal-result"><code>Hello, Shoostr!</code></pre>
+      </div>
+    </section>
+  </div>
+  <dl class="principles">
+    <div><dt>Explicit routes</dt><dd>Register handlers with Java calls. Keep application behavior visible.</dd></div>
+    <div><dt>Choose your integrations</dt><dd>Add metrics, tracing, authentication, OpenAPI, or MCP when you need them.</dd></div>
+    <div><dt>Working examples</dt><dd>Use the code in your project. Verify the behavior with its test.</dd></div>
+  </dl>
+  <p class="project-status">Shoostr is experimental. Its public interfaces can change.</p>
+</div>

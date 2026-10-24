@@ -14,10 +14,11 @@ public final class TypedShoostr {
    * Creates the codec-backed view without acquiring any application resources.
    *
    * @param app original application
+   * @param codec configured application conversion
    */
-  TypedShoostr(Shoostr app) {
+  TypedShoostr(Shoostr app, Codec codec) {
     this.app = Objects.requireNonNull(app);
-    routes = new TypedRoutes(app.routes());
+    routes = new TypedRoutes(app.routes(), codec);
   }
 
   /**
@@ -38,7 +39,7 @@ public final class TypedShoostr {
    */
   public Shoostr routes(Consumer<TypedRoutes> registration) {
     Objects.requireNonNull(registration);
-    app.routes(_ -> registration.accept(routes));
+    app.routes(ignored -> registration.accept(routes));
     return app;
   }
 }

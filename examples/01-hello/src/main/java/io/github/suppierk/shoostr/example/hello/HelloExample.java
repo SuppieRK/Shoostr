@@ -6,7 +6,7 @@ import org.slf4j.LoggerFactory;
 
 /** Composes the hello application; Shoostr owns the listener and shutdown hook. */
 public final class HelloExample {
-  // SLF4J is the logging API; this example supplies Logback as its runtime backend.
+  // SLF4J uses the application's logging configuration.
   private static final Logger LOGGER = LoggerFactory.getLogger(HelloExample.class);
 
   /** Prevents construction of the launcher. */
@@ -15,9 +15,10 @@ public final class HelloExample {
   /**
    * Starts a server on all IPv4 interfaces using the default listener settings.
    *
+   * @param args unused command-line arguments
    * @throws Exception if the listener cannot start
    */
-  static void main() throws Exception {
+  public static void main(String[] args) throws Exception {
     var app = application();
     // Start the listener; Shoostr already registers the JVM shutdown hook.
     app.start();
@@ -27,16 +28,14 @@ public final class HelloExample {
   /**
    * Returns an unstarted app; callers or TestServer own its eventual lifetime.
    *
-   * <p>S2095 is suppressed because this factory transfers app ownership to its caller; closing it
-   * here would return an unusable app.
-   *
    * @return configured application
    */
-  @SuppressWarnings("java:S2095")
   public static Shoostr application() {
     // Shoostr comes from the core module; construction configures the app without starting it.
     return new Shoostr()
         // Routes registers the GET handler; Shoostr supplies its Request and Response arguments.
-        .routes(routes -> routes.get("/hello", (_, response) -> response.text("Hello, Shoostr!")));
+        .routes(
+            routes ->
+                routes.get("/hello", (ignored, response) -> response.text("Hello, Shoostr!")));
   }
 }

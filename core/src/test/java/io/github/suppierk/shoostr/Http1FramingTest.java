@@ -18,6 +18,7 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jetty.http.HttpTester;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -43,10 +44,10 @@ class Http1FramingTest {
 
     try (var app = app()) {
       // Jetty 12.1.14's default RFC9110 policy rejects both ambiguous framing forms.
-      app.onRequestHeaders((_, _) -> admissions.incrementAndGet());
+      app.onRequestHeaders((ignored, ignored2) -> admissions.incrementAndGet());
       protectedRoute(app, authenticationCalls, protectedCalls);
       app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
-      app.routes().get("/healthy", (_, response) -> response.text("healthy"));
+      app.routes().get("/healthy", (ignored3, response) -> response.text("healthy"));
       app.start();
 
       try (var socket = connect(app.port())) {
@@ -74,7 +75,7 @@ class Http1FramingTest {
   void acceptsAChunkedBodyAndReusesTheSameHttp1Connection() throws Exception {
     try (var app = app()) {
       app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
-      app.routes().get("/healthy", (_, response) -> response.text("healthy"));
+      app.routes().get("/healthy", (ignored4, response) -> response.text("healthy"));
       app.start();
 
       try (var socket = connect(app.port())) {
@@ -115,11 +116,12 @@ class Http1FramingTest {
       app.afterRequest(outcomes::add);
       protectedRoute(app, authenticationCalls, protectedCalls);
       app.exception(
-          AuthenticationRequiredException.class, (_, _, response) -> response.text("denied"));
+          AuthenticationRequiredException.class,
+          (ignored5, ignored6, response) -> response.text("denied"));
       app.routes()
           .get(
               "/slow",
-              (_, response) -> {
+              (ignored7, response) -> {
                 entered.countDown();
                 assertTrue(release.await(3, TimeUnit.SECONDS));
                 response.text("first");
@@ -176,13 +178,13 @@ class Http1FramingTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
     try (var app = app()) {
-      app.onRequestHeaders((_, _) -> admissions.incrementAndGet());
+      app.onRequestHeaders((ignored8, ignored9) -> admissions.incrementAndGet());
       app.afterRequest(outcomes::add);
       protectedRoute(app, authenticationCalls, protectedCalls);
       app.routes()
           .post(
               "/body",
-              (request, _) -> {
+              (request, ignored10) -> {
                 var source = request.input();
                 assertEquals('a', source.read());
                 initialRead.countDown();
@@ -190,7 +192,7 @@ class Http1FramingTest {
                 failures.add(failure);
                 throw failure;
               });
-      app.routes().get("/healthy", (_, response) -> response.text("healthy"));
+      app.routes().get("/healthy", (ignored11, response) -> response.text("healthy"));
       app.start();
 
       try (var socket = connect(app.port())) {
@@ -226,7 +228,14 @@ class Http1FramingTest {
   }
 
   private static Shoostr app() {
-    return new Shoostr(new Options("127.0.0.1", 0, 1024, 1024, 256, 30_000));
+    return new Shoostr(new Options(1024, 1024, 256, 1000, MultipartOptions.defaults()))
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(30_000);
+            });
   }
 
   private static void protectedRoute(
@@ -248,11 +257,11 @@ class Http1FramingTest {
             routes ->
                 routes.get(
                     "/value",
-                    (_, response) -> {
+                    (ignored12, response) -> {
                       protectedCalls.incrementAndGet();
                       response.text("permitted");
                     }),
-            extensions -> extensions.get(authentication).enabled());
+            extensions -> extensions.with(authentication));
   }
 
   private static Socket connect(int port) throws IOException {

@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertTimeout;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import java.io.IOException;
 import java.net.URI;
@@ -21,6 +20,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.component.LifeCycle;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -37,7 +37,7 @@ class FixtureLifecycleTest {
     app.routes()
         .sse(
             "/events",
-            (_, response) -> {
+            (ignored, response) -> {
               var events = response.startEventStream();
               while (!Thread.currentThread().isInterrupted()) {
                 events.send(payload);
@@ -65,7 +65,7 @@ class FixtureLifecycleTest {
     app.routes()
         .sse(
             "/events",
-            (_, response) -> {
+            (ignored2, response) -> {
               response.startEventStream().send("open");
               release.await();
             });
@@ -164,7 +164,7 @@ class FixtureLifecycleTest {
       Consumer<HttpClient.Builder> configureClient) throws Exception {
     try (var app = new Shoostr()) {
       assertThrows(NullPointerException.class, () -> TestServer.start(app, configureClient));
-      app.routes().get("/value", (_, response) -> response.text("not closed"));
+      app.routes().get("/value", (ignored3, response) -> response.text("not closed"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/value")).statusCode());
@@ -174,13 +174,18 @@ class FixtureLifecycleTest {
 
   @Test
   void rejectsARunningAppBeforeClientConfigurationWithoutStoppingIt() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/value", (_, response) -> response.text("still running"));
+      app.routes().get("/value", (ignored4, response) -> response.text("still running"));
       app.start();
       assertThrows(
           IllegalStateException.class,
-          () -> TestServer.start(app, _ -> fail("Rejected apps must not configure a client")));
+          () ->
+              TestServer.start(app, ignored5 -> fail("Rejected apps must not configure a client")));
       var target = URI.create("http://127.0.0.1:" + app.port() + "/value");
       assertEquals(
           "still running",

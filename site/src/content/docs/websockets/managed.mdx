@@ -1,0 +1,54 @@
+---
+title: Handle WebSocket messages
+description: Handle complete WebSocket text and binary messages with sequential callbacks, per-connection state, Origin admission, and safe failure and close handling.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/11-websockets/src/main/java/io/github/suppierk/shoostr/example/websocket/ManagedWebSocketExample.java?raw';
+import test from '../../../../../examples/11-websockets/src/test/java/io/github/suppierk/shoostr/example/websocket/ManagedWebSocketExampleTest.java?raw';
+
+## Description
+
+Register `routes.websocket(...)` with managed callbacks to receive complete text messages as `String` values and binary messages as owned `byte[]` values.
+Each connection runs its callbacks sequentially using the [application's execution mode](../../lifecycle/executors/), while different connections can run concurrently.
+An idle connection keeps its state without occupying a thread.
+Successive callbacks can use different threads; keep connection state explicitly rather than in a thread-local value.
+The configuration callback runs once when you register the route, so captured mutable state must be safe to share; the example keeps a separate message counter for each connection in a concurrent map.
+For codec-backed messages, use [WebSocket objects](../objects/).
+
+Use `beforeUpgrade(...)` to reject a handshake through ordinary HTTP exception handling before the connection opens.
+This route requires exactly one `Origin` header matching `https://app.example`, rejecting missing or ambiguous values rather than treating them as trusted.
+
+:::note[Origin checks are not CORS]
+[CORS](../../security/cors/) controls which cross-origin HTTP responses browser scripts can read.
+The [WebSocket handshake](https://websockets.spec.whatwg.org/#opening-handshake) does not use CORS preflights or browser enforcement of `Access-Control-Allow-*` headers, so validate `Origin` on the server before upgrading.
+
+Shoostr skips HTTP CORS and HTTP CSRF for recognized WebSocket routes, including HTTP/2 extended CONNECT.
+Use an explicit `beforeUpgrade(...)` Origin check for browser admission; inherited authentication and native session handling still run before upgrade.
+
+Origin checking helps prevent connections initiated by untrusted browser pages, but it is not authentication: a non-browser client can supply that header.
+Protect private data with a separately [verified identity](../../security/authentication/); see the [WebSocket origin security model](https://www.rfc-editor.org/rfc/rfc6455.html#section-10.2) for the protocol distinction.
+:::
+
+## Example
+
+The `/rooms/{room}` endpoint replies with the room, that connection's text-message count, and the message; binary messages are echoed without changing the counter.
+Blank text receives `error: message required` without closing the connection or incrementing its counter.
+`WebSocketConnection` contains detached path and identity data and can outlive the handshake, but the handshake request and response cannot.
+`send(...)` waits for transport completion, not peer receipt, and copies outgoing binary arrays; an open-state check cannot guarantee that a later send will succeed.
+
+Catch recoverable message errors inside the message callback so the connection can continue.
+An uncaught callback failure closes the connection with `1011` and a safe reason; `onError(...)` observes terminal failure rather than recovering it or rendering an HTTP response.
+Close and error observers remove counters during normal operation, and `afterClose(...)` clears any entries left when shutdown prevents those observers from running.
+Application shutdown cancels queued managed work and interrupts active callbacks without closing a caller-supplied native executor.
+Callbacks that ignore interruption can outlive application closure, so use the [lifecycle hooks](../../lifecycle/shutdown/) to signal waiting work before final resource disposal.
+For native demand, subprotocol selection, or message limits, use a [native WebSocket listener](../native/).
+
+<Code code={application} lang="java" title="ManagedWebSocketExample.java" />
+
+## Test
+
+The tests exchange fragmented messages through the JDK WebSocket client, check independent counters and continued handling after invalid input, and verify handshake denial and close frames.
+The failure fixture registers an extra route that throws, proving that private exception text does not reach the peer; these checks do not establish browser cookie delivery or Origin enforcement by a browser.
+
+<Code code={test} lang="java" title="ManagedWebSocketExampleTest.java" />

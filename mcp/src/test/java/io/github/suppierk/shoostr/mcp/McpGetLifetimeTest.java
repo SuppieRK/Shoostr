@@ -45,13 +45,13 @@ class McpGetLifetimeTest {
                         request.header("X-Old-Token").isPresent()
                             ? Instant.now().plusSeconds(2)
                             : null),
-                (_, _) -> {}),
+                (ignored, ignored2) -> {}),
             new McpSessionLimits(1, 1, Duration.ofSeconds(1)),
             transport ->
                 McpServer.sync(transport)
                     .requestTimeout(Duration.ofSeconds(15))
                     .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                    .rootsChangeHandler((_, changed) -> roots.complete(changed))
+                    .rootsChangeHandler((ignored3, changed) -> roots.complete(changed))
                     .build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
@@ -121,7 +121,7 @@ class McpGetLifetimeTest {
                     while (reader.readLine() != null) {
                       // Drain the superseded connection before answering its native request.
                     }
-                  } catch (IOException _) {
+                  } catch (IOException ignored4) {
                     // EOF and a closed transport both end the original HTTP owner.
                   }
 
@@ -141,7 +141,7 @@ class McpGetLifetimeTest {
                         .header("MCP-Protocol-Version", "2025-11-25"),
                 HttpResponse.BodyHandlers.ofInputStream());
 
-        try (var _ = refreshed.body()) {
+        try (var ignored5 = refreshed.body()) {
           assertEquals(200, refreshed.statusCode());
           oldEnded.get(5, TimeUnit.SECONDS);
           var expected = new McpSchema.Root("file:///workspace/refreshed", "refreshed");

@@ -2,17 +2,18 @@ package io.github.suppierk.shoostr;
 
 /**
  * Application-provided finite byte/object conversion. Configure before registration and share
- * safely between concurrent requests, including requests on caller-owned executors. Shoostr neither
- * configures nor closes the codec and does not infer media types or schemas. Checked failures
- * retain their original identity for the application's existing exception handling.
+ * safely between concurrent HTTP handlers and WebSocket callbacks. Shoostr neither configures nor
+ * closes the codec and does not infer media types or schemas. Checked failures retain their
+ * original identity for the application's existing exception handling.
  */
 public interface Codec {
   /**
-   * Decodes bounded, caller-owned bytes to the requested concrete class. The source is independent
-   * of the framework's cached body; changing it cannot change a later body read. Each typed read
-   * invokes this method again; decoded objects are not cached.
+   * Decodes owned bytes to the requested concrete class. For HTTP bodies, the source is independent
+   * of the framework's cached body; changing it cannot change a later body read. WebSocket object
+   * handlers receive a complete binary message. Each conversion invokes this method again; decoded
+   * objects are not cached.
    *
-   * @param source request body bytes
+   * @param source HTTP body or complete binary WebSocket message bytes
    * @param type concrete result class; parameterized types are not described by Class
    * @param <T> decoded result type
    * @return nonnull decoded value
@@ -23,8 +24,10 @@ public interface Codec {
   <T> T read(byte[] source, Class<T> type) throws Exception;
 
   /**
-   * Encodes a nonnull value to finite bytes. The framework copies accepted output and applies its
-   * response-byte limit after this call; that limit cannot bound allocations inside the codec.
+   * Encodes a nonnull value to finite bytes. WebSocket object sends use binary messages; SSE object
+   * sends require bytes representing UTF-8 text. The framework copies accepted output. The finite
+   * HTTP response-byte limit applies only to HTTP body helpers, after this call; transport
+   * buffering cannot bound allocations or execution time inside the codec.
    *
    * @param value application representation
    * @return nonnull encoded bytes

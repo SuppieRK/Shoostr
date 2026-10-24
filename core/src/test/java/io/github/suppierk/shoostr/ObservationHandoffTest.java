@@ -15,13 +15,15 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class ObservationHandoffTest {
-  @Test
-  void restoresNestedObservationScopesToPreviousWorkerContext() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void restoresNestedObservationScopesToPreviousWorkerContext(boolean virtualApplication)
+      throws Exception {
     var context = new ThreadLocal<String>();
     var events = new ArrayList<String>();
     var completions = new AtomicInteger();
@@ -30,10 +32,10 @@ class ObservationHandoffTest {
     workers.submit(() -> context.set("worker-base")).get(5, TimeUnit.SECONDS);
 
     try (workers;
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       for (var value : List.of("alpha", "beta")) {
         app.observe(
-            _ -> {
+            ignored -> {
               var original = context.get();
               context.set(value);
               return new RequestObservation() {
@@ -60,12 +62,12 @@ class ObservationHandoffTest {
               };
             });
       }
-      app.afterRequest(_ -> finished.complete(null));
+      app.afterRequest(ignored2 -> finished.complete(null));
       app.routes()
           .get(
               "/nested",
               workers,
-              (_, response) -> response.text(Objects.requireNonNull(context.get())));
+              (ignored3, response) -> response.text(Objects.requireNonNull(context.get())));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -81,9 +83,9 @@ class ObservationHandoffTest {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"attach", "close"})
-  void isolatesObservationScopeFailureFromLaterCleanupAndCompletion(String failurePhase)
-      throws Exception {
+  @CsvSource({"attach,false", "attach,true", "close,false", "close,true"})
+  void isolatesObservationScopeFailureFromLaterCleanupAndCompletion(
+      String failurePhase, boolean virtualApplication) throws Exception {
     var finished = new CompletableFuture<Void>();
     var completions = new AtomicInteger();
     var laterClosed = new AtomicBoolean();
@@ -91,9 +93,9 @@ class ObservationHandoffTest {
     var workers = Executors.newFixedThreadPool(1);
 
     try (workers;
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       app.observe(
-          _ ->
+          ignored4 ->
               new RequestObservation() {
                 @Override
                 public AutoCloseable attach() {
@@ -106,7 +108,7 @@ class ObservationHandoffTest {
                 }
               });
       app.observe(
-          _ ->
+          ignored5 ->
               new RequestObservation() {
                 @Override
                 public AutoCloseable attach() {
@@ -125,7 +127,7 @@ class ObservationHandoffTest {
                 }
               });
       app.observe(
-          _ ->
+          ignored6 ->
               new RequestObservation() {
                 @Override
                 public AutoCloseable attach() {
@@ -138,8 +140,8 @@ class ObservationHandoffTest {
                   completions.incrementAndGet();
                 }
               });
-      app.afterRequest(_ -> finished.complete(null));
-      app.routes().get("/failure", workers, (_, response) -> response.text("ok"));
+      app.afterRequest(ignored7 -> finished.complete(null));
+      app.routes().get("/failure", workers, (ignored8, response) -> response.text("ok"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/failure")).statusCode());
@@ -151,8 +153,10 @@ class ObservationHandoffTest {
     }
   }
 
-  @Test
-  void reattachesRejectedSubmissionContextOnAdmissionOwner() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void reattachesRejectedSubmissionContextOnAdmissionOwner(boolean virtualApplication)
+      throws Exception {
     var context = new ThreadLocal<String>();
     var events = new ArrayList<String>();
     var sameOwner = new AtomicBoolean();
@@ -160,9 +164,9 @@ class ObservationHandoffTest {
     var workers = Executors.newFixedThreadPool(1);
 
     try (workers;
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       app.observe(
-          _ -> {
+          ignored9 -> {
             var owner = Thread.currentThread();
             context.set("observation");
             return new RequestObservation() {
@@ -192,8 +196,9 @@ class ObservationHandoffTest {
           });
       app.exception(
           RejectedExecutionException.class,
-          (_, _, response) -> response.status(503).text(Objects.requireNonNull(context.get())));
-      app.routes().get("/rejected", workers, (_, response) -> response.text("wrong"));
+          (ignored10, ignored11, response) ->
+              response.status(503).text(Objects.requireNonNull(context.get())));
+      app.routes().get("/rejected", workers, (ignored12, response) -> response.text("wrong"));
 
       try (var test = TestServer.start(app)) {
         workers.shutdown();
@@ -206,5 +211,15 @@ class ObservationHandoffTest {
         assertEquals(List.of("original-close", "attach", "attached-close", "complete"), events);
       }
     }
+  }
+
+  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
+    if (virtualApplication) {
+      app.virtualThreads();
+    }
+
+    return app.onRequestHeaders(
+        (request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

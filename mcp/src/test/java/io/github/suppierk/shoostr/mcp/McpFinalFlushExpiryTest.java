@@ -46,18 +46,18 @@ class McpFinalFlushExpiryTest {
                         request.header("X-Expiring").isPresent()
                             ? Instant.now().plusSeconds(2)
                             : null),
-                (_, _) -> {}),
+                (ignored, ignored2) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
     app.afterRouteHandler(
-        (request, _) -> {
+        (request, ignored3) -> {
           if (request.header("X-Expiring").isPresent()) {
             request.attribute("handler-returned", true);
           }
         });
     app.beforeResponseFlush(
-        (request, _) -> {
+        (request, ignored4) -> {
           if (request.attribute("handler-returned").filter(Boolean.TRUE::equals).isPresent()) {
             finalFlush.countDown();
 
@@ -120,7 +120,7 @@ class McpFinalFlushExpiryTest {
                   () -> {
                     try {
                       body.readAllBytes();
-                    } catch (IOException _) {
+                    } catch (IOException ignored5) {
                       // Expiry aborts an already committed stream rather than replacing its status.
                     }
 

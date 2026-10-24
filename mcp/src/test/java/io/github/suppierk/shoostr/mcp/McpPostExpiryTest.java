@@ -52,7 +52,7 @@ class McpPostExpiryTest {
                     "alice:client",
                     McpTransportContext.EMPTY,
                     Instant.now().plusSeconds(request.header("X-Old-Token").isPresent() ? 2 : 10)),
-            (_, _) -> {});
+            (ignored, ignored2) -> {});
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
     var mcp =
         Mcp.async(
@@ -65,10 +65,10 @@ class McpPostExpiryTest {
                         McpServerFeatures.AsyncToolSpecification.builder()
                             .tool(tool)
                             .callHandler(
-                                (exchange, _) ->
+                                (exchange, ignored3) ->
                                     exchange
                                         .ping()
-                                        .doOnSuccess(_ -> nativeCompleted.countDown())
+                                        .doOnSuccess(ignored4 -> nativeCompleted.countDown())
                                         .doOnCancel(cancellations::incrementAndGet)
                                         .thenReturn(
                                             McpSchema.CallToolResult.builder()
@@ -143,7 +143,7 @@ class McpPostExpiryTest {
                     while (reader.readLine() != null) {
                       // Read until the committed response ends or its transport fails.
                     }
-                  } catch (IOException _) {
+                  } catch (IOException ignored5) {
                     // A token deadline cannot replace already committed200 with a401.
                   }
 

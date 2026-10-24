@@ -191,7 +191,7 @@ final class McpRequestLifetime implements RequestObservation {
 
   /** Rechecks the verified expiry before signaling the mailbox and interrupting its owner. */
   private synchronized void expire() {
-    if (completed || owner == null) {
+    if (completed || owner == null || expiryRejected) {
       return;
     }
 

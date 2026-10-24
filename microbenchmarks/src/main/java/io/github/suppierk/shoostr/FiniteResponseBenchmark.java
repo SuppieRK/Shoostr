@@ -91,7 +91,7 @@ public class FiniteResponseBenchmark {
             Proxy.newProxyInstance(
                 getClass().getClassLoader(),
                 new Class<?>[] {Request.class},
-                (_, method, _) ->
+                (ignored, method, ignored2) ->
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> HttpFields.EMPTY;
@@ -104,7 +104,7 @@ public class FiniteResponseBenchmark {
             Proxy.newProxyInstance(
                 getClass().getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (_, method, arguments) ->
+                (ignored3, method, arguments) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "getHeaders" -> headers;

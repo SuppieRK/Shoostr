@@ -1,0 +1,35 @@
+---
+title: Return Problem Details JSON
+description: Return RFC 9457 Problem Details as application/problem+json with an explicit HTTP status and safe public error fields.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/08-errors/src/main/java/io/github/suppierk/shoostr/example/errors/ProblemDetailsExample.java?raw';
+import test from '../../../../../examples/08-errors/src/test/java/io/github/suppierk/shoostr/example/errors/ProblemDetailsExampleTest.java?raw';
+
+## Description
+
+Use `ProblemDetails` to describe an API error, then encode its `toMap()` result and send the bytes with `application/problem+json`.
+The model does not render a response or select its HTTP status: when a problem includes a `status` member, set the same status on the actual response.
+This example uses Jackson 2's `jackson-databind` library to encode the map without installing a codec.
+
+Standard members are optional, and `toMap()` omits members that were not supplied.
+Custom members appear at the top level but cannot replace standard names.
+Use public explanations rather than exception messages or internal diagnostics; see [RFC 9457](https://www.rfc-editor.org/rfc/rfc9457.html) for the field semantics and security considerations.
+
+## Example
+
+The missing `/items/42` resource throws `NotFoundException`, and its renderer creates a problem with matching HTTP and JSON statuses of `404`.
+It supplies a type, title, public detail, instance URI, and numeric `itemId` extension, then sends the encoded bytes explicitly.
+For renderer selection, see [exception handling](../exceptions/); ordinary typed object conversion belongs to the [JSON codec recipe](../../json/codec/).
+
+`ProblemDetails` copies map and list extension containers, but arbitrary objects and map keys remain shared references; it does not guarantee that custom values can be encoded as JSON.
+Keep extensions JSON-compatible, and treat the fresh top-level map from `toMap()` as an encoding projection rather than the stored problem itself.
+
+<Code code={application} lang="java" title="ProblemDetailsExample.java" />
+
+## Test
+
+The test checks the HTTP status, problem media type, parsed standard and custom members, and correct quoting without exposing the private failure message.
+
+<Code code={test} lang="java" title="ProblemDetailsExampleTest.java" />

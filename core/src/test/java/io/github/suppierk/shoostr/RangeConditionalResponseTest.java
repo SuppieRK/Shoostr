@@ -38,8 +38,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored2, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -62,8 +62,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored3, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -84,8 +84,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "cached", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored4, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var first =
@@ -109,8 +109,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored5, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -131,8 +131,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored6, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -153,8 +153,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored7, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var commaSeparated =
@@ -180,11 +180,11 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/file",
-              (_, response) ->
+              (ignored8, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
@@ -211,8 +211,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().head("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().head("/file", (ignored9, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -234,8 +234,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "cached", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored10, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var first =
@@ -259,8 +259,8 @@ class RangeConditionalResponseTest {
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
     Files.setLastModifiedTime(file, FileTime.from(Instant.parse("2024-01-02T00:00:00Z")));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored11, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -282,8 +282,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored12, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -306,11 +306,11 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/file",
-              (_, response) ->
+              (ignored13, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
@@ -347,11 +347,11 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/file",
-              (_, response) ->
+              (ignored14, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision,1\"")
                       .file(file, "text/plain"));
@@ -374,11 +374,11 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/file",
-              (_, response) ->
+              (ignored15, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
@@ -402,11 +402,11 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "file", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/file",
-              (_, response) -> {
+              (ignored16, response) -> {
                 response.text("staged");
                 assertThrows(IllegalStateException.class, () -> response.file(file, "text/plain"));
               });
@@ -427,8 +427,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored17, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var first =
@@ -455,8 +455,9 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "missing", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.status(404).file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes()
+          .get("/file", (ignored18, response) -> response.status(404).file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -476,11 +477,11 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "file", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/file",
-              (_, response) -> {
+              (ignored19, response) -> {
                 response.file(file, "text/plain");
                 assertThrows(IllegalStateException.class, () -> response.text("replacement"));
                 assertThrows(IllegalStateException.class, () -> response.startStream("text/plain"));
@@ -502,8 +503,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored20, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -523,8 +524,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored21, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         for (var range :
@@ -547,8 +548,9 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "created", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().post("/file", (_, response) -> response.status(201).file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes()
+          .post("/file", (ignored22, response) -> response.status(201).file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -568,11 +570,11 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "file", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/file",
-              (_, response) -> {
+              (ignored23, response) -> {
                 response.file(file, "text/plain");
                 assertThrows(IllegalStateException.class, () -> response.text("replacement"));
                 assertThrows(IllegalStateException.class, () -> response.startStream("text/plain"));
@@ -596,11 +598,11 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/file",
-              (_, response) ->
+              (ignored24, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision 1\"")
                       .file(file, "text/plain"));
@@ -620,8 +622,8 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored25, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var zeroSuffix =
@@ -653,11 +655,11 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/file",
-              (_, response) ->
+              (ignored26, response) ->
                   response
                       .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
                       .file(file, "text/plain"));
@@ -685,8 +687,8 @@ class RangeConditionalResponseTest {
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
     Files.setLastModifiedTime(file, FileTime.from(Instant.now().plusSeconds(86_400)));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored27, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -719,8 +721,8 @@ class RangeConditionalResponseTest {
   void rejectsRangesForAnEmptyFileAndReleasesItAfterTheResponse() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored28, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -744,12 +746,12 @@ class RangeConditionalResponseTest {
     var release = new CountDownLatch(1);
     var waitTimedOut = new AtomicBoolean();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
       app.routes()
           .get(
               "/file",
-              (_, response) -> {
+              (ignored29, response) -> {
                 response.file(file, "text/plain");
                 staged.countDown();
                 if (!release.await(5, TimeUnit.SECONDS)) {
@@ -792,13 +794,14 @@ class RangeConditionalResponseTest {
     var completed = new CountDownLatch(1);
     var outcome = new AtomicReference<RequestOutcome>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.afterRequest(
           value -> {
             outcome.set(value);
             completed.countDown();
           });
-      app.routes().get("/file", (_, response) -> response.file(file, "application/octet-stream"));
+      app.routes()
+          .get("/file", (ignored30, response) -> response.file(file, "application/octet-stream"));
 
       try (var test = TestServer.start(app)) {
 
@@ -840,9 +843,9 @@ class RangeConditionalResponseTest {
     Files.writeString(file, "complete", StandardCharsets.US_ASCII);
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.afterRequest(ignored -> completed.countDown());
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (ignored31, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -864,7 +867,7 @@ class RangeConditionalResponseTest {
     var completed = new CountDownLatch(1);
     var outcome = new AtomicReference<RequestOutcome>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.afterRequest(
           value -> {
             outcome.set(value);
@@ -873,7 +876,7 @@ class RangeConditionalResponseTest {
       app.routes()
           .get(
               "/file",
-              (_, response) -> {
+              (ignored32, response) -> {
                 response.file(file, "text/plain");
                 Files.delete(file);
               });
@@ -884,7 +887,7 @@ class RangeConditionalResponseTest {
           test.send(
               request -> request.path("/file").header("Range", "bytes=0-2"),
               HttpResponse.BodyHandlers.ofString());
-        } catch (IOException _) {
+        } catch (IOException ignored33) {
           // The transport can fail before a complete response reaches the client.
         }
 
@@ -901,10 +904,10 @@ class RangeConditionalResponseTest {
     try (var filesystem =
             java.nio.file.FileSystems.newFileSystem(
                 URI.create("jar:" + archive.toUri()), Map.of("create", "true"));
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       var file = filesystem.getPath("/file.txt");
       Files.writeString(file, "archive", StandardCharsets.US_ASCII);
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+      app.routes().get("/file", (ignored34, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =

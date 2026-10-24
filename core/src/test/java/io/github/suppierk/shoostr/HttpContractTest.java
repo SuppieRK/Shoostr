@@ -26,6 +26,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -55,17 +56,26 @@ class HttpContractTest {
 
   @BeforeEach
   void startServer() throws Exception {
-    app = new Shoostr(new Options("127.0.0.1", 0, 16, 1024, 8, 5000));
+    app =
+        new Shoostr(new Options(16, 1024, 8, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                });
 
-    app.routes().get("/plain", (_, res) -> res.text("hello"));
+    app.routes().get("/plain", (ignored2, res) -> res.text("hello"));
     app.routes()
         .get(
-            "/virtual", (_, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
+            "/thread",
+            (ignored3, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
     app.routes().post("/echo", (req, res) -> res.text(req.bodyText()));
     app.routes()
         .get(
             "/failure",
-            (_, res) -> {
+            (ignored4, res) -> {
               res.status(201).setHeader("X-Leak", "secret").text("must not escape");
               throw new IllegalArgumentException("secret details");
             });
@@ -86,7 +96,7 @@ class HttpContractTest {
     app.routes()
         .get(
             "/stream",
-            (_, res) -> {
+            (ignored5, res) -> {
               var stream = res.startStream("text/plain; charset=utf-8");
               stream.write("first\n");
               stream.flush();
@@ -99,7 +109,7 @@ class HttpContractTest {
     app.routes()
         .get(
             "/fluent-stream",
-            (_, res) -> {
+            (ignored6, res) -> {
               var stream = res.startStream("text/plain; charset=utf-8");
               assertSame(stream, stream.write("café"));
               assertSame(stream, stream.write(new byte[] {'!'}));
@@ -111,17 +121,17 @@ class HttpContractTest {
     app.routes()
         .get(
             "/broken-stream",
-            (_, res) -> {
+            (ignored7, res) -> {
               var stream = res.startStream("text/plain; charset=utf-8");
               stream.write("partial\n");
               stream.flush();
               throw new IOException("failed after commitment");
             });
-    app.routes().get("/close", (_, res) -> res.close());
+    app.routes().get("/close", (ignored8, res) -> res.close());
     app.routes()
         .get(
             "/cross-thread",
-            (_, res) -> {
+            (ignored9, res) -> {
               var failure = new AtomicReference<Throwable>();
               var thread =
                   Thread.startVirtualThread(
@@ -135,16 +145,22 @@ class HttpContractTest {
               thread.join();
               res.text(Boolean.toString(failure.get() instanceof IllegalStateException));
             });
-    app.routes().get("/empty", (_, res) -> res.status(204));
-    app.routes().get("/invalid-empty", (_, res) -> res.status(204).text("bad"));
+    app.routes().get("/empty", (ignored10, res) -> res.status(204));
+    app.routes().get("/invalid-empty", (ignored11, res) -> res.status(204).text("bad"));
     app.routes()
-        .get("/invalid-type", (_, res) -> res.body("text/plain\r\nX-Leak: injected", new byte[0]));
+        .get(
+            "/invalid-type",
+            (ignored12, res) -> res.body("text/plain\r\nX-Leak: injected", new byte[0]));
     app.routes()
-        .get("/invalid-stream-type", (_, res) -> res.startStream("text/plain\nX-Leak: injected"));
-    app.routes().get("/invalid-header", (_, res) -> res.setHeader("Bad Header", "value"));
-    app.routes().get("/invalid-framing", (_, res) -> res.setHeader("content-length", "12"));
+        .get(
+            "/invalid-stream-type",
+            (ignored13, res) -> res.startStream("text/plain\nX-Leak: injected"));
+    app.routes().get("/invalid-header", (ignored14, res) -> res.setHeader("Bad Header", "value"));
+    app.routes().get("/invalid-framing", (ignored15, res) -> res.setHeader("content-length", "12"));
     app.routes()
-        .get("/custom-type", (_, res) -> res.body("application/vnd.example+json", new byte[0]));
+        .get(
+            "/custom-type",
+            (ignored16, res) -> res.body("application/vnd.example+json", new byte[0]));
     test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1));
   }
 
@@ -175,11 +191,11 @@ class HttpContractTest {
   }
 
   @Test
-  void dispatchesOnVirtualThread() throws Exception {
+  void dispatchesOnPlatformThreadByDefault() throws Exception {
     assertEquals(
-        "true",
+        "false",
         test.send(
-                request -> request.path("/virtual").timeout(Duration.ofSeconds(5)),
+                request -> request.path("/thread").timeout(Duration.ofSeconds(5)),
                 HttpResponse.BodyHandlers.ofString())
             .body());
   }
@@ -392,7 +408,8 @@ class HttpContractTest {
   @Test
   void freezesRoutesAfterStartup() {
     var routes = app.routes();
-    assertThrows(IllegalStateException.class, () -> routes.get("/later", (_, _) -> {}));
+    assertThrows(
+        IllegalStateException.class, () -> routes.get("/later", (ignored17, ignored18) -> {}));
   }
 
   @ParameterizedTest
@@ -421,7 +438,7 @@ class HttpContractTest {
             Proxy.newProxyInstance(
                 HttpContractTest.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (_, method, args) ->
+                (ignored19, method, args) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "getHeaders" -> headers;
@@ -515,7 +532,7 @@ class HttpContractTest {
             Proxy.newProxyInstance(
                 HttpContractTest.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (_, method, args) ->
+                (ignored20, method, args) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "getHeaders" -> headers;
@@ -550,7 +567,7 @@ class HttpContractTest {
             Proxy.newProxyInstance(
                 HttpContractTest.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Request.class},
-                (_, method, _) ->
+                (ignored21, method, ignored22) ->
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> HttpFields.EMPTY;

@@ -35,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.http.HttpTester;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -52,7 +53,7 @@ class MultipartRequestTest {
       strings = {"", "text/plain", "application/json", "application/x-www-form-urlencoded"})
   void preservesNonmultipartBodyBytesWhenFileAccessorsAreCalledFirst(String contentType)
       throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/files",
@@ -86,7 +87,7 @@ class MultipartRequestTest {
       strings = {"", "text/plain", "application/json", "application/x-www-form-urlencoded"})
   void allowsNonmultipartFileAccessAfterBufferedBodyConsumption(String contentType)
       throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/files",
@@ -119,7 +120,7 @@ class MultipartRequestTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void preservesNonmultipartInputRegardlessOfFileAccessOrder(boolean filesFirst) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/files",
@@ -157,7 +158,7 @@ class MultipartRequestTest {
 
   @Test
   void returnsNoUploadsForABodylessRequestWithoutAContentType() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/files",
@@ -181,7 +182,7 @@ class MultipartRequestTest {
   void preservesNonmultipartUtf8TextAfterFileLookup() throws Exception {
     var content = "café + %23\n";
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/files",
@@ -209,7 +210,7 @@ class MultipartRequestTest {
 
   @Test
   void keepsMultipartWithoutFilesExclusiveFromRawBodyAccess() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/files",
@@ -244,7 +245,7 @@ class MultipartRequestTest {
         "multipart/form-data; boundary=\"unterminated"
       })
   void rejectsDeclaredMalformedMultipartDuringFileLookup(String contentType) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/files",
@@ -271,7 +272,10 @@ class MultipartRequestTest {
   void sendsContinueBeforeReceivingAndPreservingABinaryMultipartUpload() throws Exception {
     var body = binaryBody();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.routes()
           .post(
               "/upload",
@@ -335,8 +339,8 @@ class MultipartRequestTest {
                 + "--\r\n")
             .getBytes(StandardCharsets.UTF_8);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0).withMultipart(multipart))) {
-      app.afterRequest(_ -> completed.complete(null));
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+      app.afterRequest(ignored -> completed.complete(null));
       app.routes()
           .post(
               "/upload",
@@ -379,8 +383,8 @@ class MultipartRequestTest {
     var multipart = new MultipartOptions(300_000, 250_000, 2, 8192, 1024, directory);
     var completed = new CompletableFuture<Void>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0).withMultipart(multipart))) {
-      app.afterRequest(_ -> completed.complete(null));
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+      app.afterRequest(ignored2 -> completed.complete(null));
       app.routes()
           .post(
               "/upload",
@@ -424,7 +428,7 @@ class MultipartRequestTest {
 
   @Test
   void readsMultipartTextAndFileFields() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -462,7 +466,7 @@ class MultipartRequestTest {
   void preservesBinaryUploadContent() throws Exception {
     var body = binaryBody();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -495,7 +499,7 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-threshold-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 8, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
       app.routes()
           .post(
               "/upload",
@@ -546,7 +550,7 @@ class MultipartRequestTest {
     var destination = directory.resolve("saved.bin");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
       app.routes()
           .post(
               "/upload",
@@ -583,7 +587,7 @@ class MultipartRequestTest {
 
   @Test
   void rejectsMultipartAccessAfterRawBodyAccess() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -612,7 +616,7 @@ class MultipartRequestTest {
 
   @Test
   void rejectsRawBodyAccessAfterMultipartAccess() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -641,7 +645,7 @@ class MultipartRequestTest {
 
   @Test
   void preservesRepeatedMultipartTextFieldsInArrivalOrder() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -670,7 +674,7 @@ class MultipartRequestTest {
     var destination = directory.resolve("saved.txt");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
       app.routes()
           .post(
               "/upload",
@@ -707,7 +711,7 @@ class MultipartRequestTest {
   void rejectsReadingRetainedUploadContentAfterHandlerCompletion() throws Exception {
     var retained = new AtomicReference<InputStream>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -737,7 +741,7 @@ class MultipartRequestTest {
   void rejectsSkippingUploadContentOutsideItsHandlerLifetime() throws Exception {
     var retained = new AtomicReference<InputStream>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -788,7 +792,7 @@ class MultipartRequestTest {
   void rejectsMultipartBodiesExceedingTheAggregateLimit() throws Exception {
     var multipart = new MultipartOptions(100, 100, 100, 8192, 16_384, null);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
       app.routes()
           .post(
               "/upload",
@@ -815,7 +819,7 @@ class MultipartRequestTest {
   void acceptsFixedLengthMultipartBodiesWithinTheMultipartAggregateLimit() throws Exception {
     var content = "x".repeat(2_000_000);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -843,7 +847,11 @@ class MultipartRequestTest {
   void rejectsChunkedMultipartBodiesExceedingTheAggregateLimit() throws Exception {
     var multipart = new MultipartOptions(100, 100, 100, 8192, 16_384, null);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0));
+    try (var app =
+            new Shoostr(Options.defaults().withMultipart(multipart))
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .post(
@@ -870,7 +878,11 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-limit-test");
     var multipart = new MultipartOptions(100, 100, 100, 8192, 0, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0));
+    try (var app =
+            new Shoostr(Options.defaults().withMultipart(multipart))
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .post(
@@ -908,7 +920,10 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-chunked-limit-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app =
+        new Shoostr(Options.defaults().withMultipart(multipart))
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.routes()
           .post(
               "/upload",
@@ -957,7 +972,7 @@ class MultipartRequestTest {
   void rejectsFilesExceedingThePerFileLimit() throws Exception {
     var multipart = new MultipartOptions(1000, 3, 100, 8192, 16_384, null);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
       app.routes()
           .post(
               "/upload",
@@ -985,7 +1000,7 @@ class MultipartRequestTest {
   void rejectsMultipartRequestsExceedingThePartLimit() throws Exception {
     var multipart = new MultipartOptions(1000, 1000, 1, 8192, 16_384, null);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
       app.routes()
           .post(
               "/upload",
@@ -1012,7 +1027,7 @@ class MultipartRequestTest {
   void rejectsMultipartPartsExceedingTheHeaderLimit() throws Exception {
     var multipart = new MultipartOptions(1000, 1000, 100, 10, 16_384, null);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
       app.routes()
           .post(
               "/upload",
@@ -1038,7 +1053,7 @@ class MultipartRequestTest {
 
   @Test
   void rejectsMultipartRequestsWithoutABoundary() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -1063,7 +1078,7 @@ class MultipartRequestTest {
 
   @Test
   void rejectsMultipartTextFieldsWithANonUtf8Charset() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -1088,7 +1103,7 @@ class MultipartRequestTest {
 
   @Test
   void rejectsEveryAccessorAfterMultipartMetadataValidationFails() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -1121,7 +1136,7 @@ class MultipartRequestTest {
 
   @Test
   void rejectsEachRequiredMultipartMetadataBranch() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -1161,7 +1176,7 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
       app.routes()
           .post(
               "/upload",
@@ -1198,11 +1213,11 @@ class MultipartRequestTest {
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
     var firstByte = new AtomicInteger(-1);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
       app.routes()
           .post(
               "/upload",
-              (request, _) -> {
+              (request, ignored3) -> {
                 var content = request.file("document").orElseThrow().content();
                 firstByte.set(content.read());
                 throw new IllegalStateException("expected failure");
@@ -1238,7 +1253,7 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
       app.routes()
           .post(
               "/upload",
@@ -1274,7 +1289,7 @@ class MultipartRequestTest {
     var storage = Files.createTempFile(temporaryDirectory, "multipart-storage-test", ".tmp");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, storage);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
       app.routes()
           .post(
               "/upload",
@@ -1305,7 +1320,10 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+    try (var app =
+        new Shoostr(Options.defaults().withMultipart(multipart))
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.routes()
           .post(
               "/upload",
@@ -1349,7 +1367,7 @@ class MultipartRequestTest {
       var survivorBody = fileBody("survivor.txt", "survivor".repeat(1024));
       var closingBoundary = ("\r\n--" + BOUNDARY + "--\r\n").getBytes(StandardCharsets.US_ASCII);
 
-      try (var app = new Shoostr(Options.defaults().withMultipart(multipart).withPort(0))) {
+      try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
         app.afterRequest(
             outcome -> {
               if ("/abandon".equals(outcome.routePattern())) {
@@ -1380,7 +1398,7 @@ class MultipartRequestTest {
                         .body("application/octet-stream", content.readAllBytes());
                   }
                 });
-        app.routes().get("/healthy", (_, response) -> response.text("healthy"));
+        app.routes().get("/healthy", (ignored4, response) -> response.text("healthy"));
 
         try (var test = TestServer.start(app)) {
           try (var abandoned = new Socket();
@@ -1436,7 +1454,7 @@ class MultipartRequestTest {
 
   @Test
   void retainsRepeatedUploadsInArrivalOrder() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",
@@ -1465,7 +1483,7 @@ class MultipartRequestTest {
 
   @Test
   void treatsAnEmptyFilenameAsAnUpload() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/upload",

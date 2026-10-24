@@ -35,7 +35,7 @@ public final class ApplicationCallbacks {
   }
 
   /**
-   * Runs before route lookup. Registration order is preserved within this phase.
+   * Runs before matched-route processing. Registration order is preserved within this phase.
    *
    * @param handler callback
    * @return this collector
@@ -108,8 +108,8 @@ public final class ApplicationCallbacks {
   }
 
   /**
-   * Registers observation beginning before lookup, including misses and errors. RuntimeException
-   * failures retain the application's observation isolation and cleanup rules.
+   * Registers observation beginning before matched-route processing, including misses and errors.
+   * RuntimeException failures retain the application's observation isolation and cleanup rules.
    *
    * @param factory observation factory
    * @return this collector

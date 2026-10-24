@@ -29,26 +29,30 @@ class RoutePolicyTest {
       var routes = app.routes();
       routes.close();
       assertThrows(
-          IllegalStateException.class, () -> routes.get("/", (_, _) -> {}, _ -> invoked.set(true)));
+          IllegalStateException.class,
+          () -> routes.get("/", (ignored, ignored2) -> {}, ignored3 -> invoked.set(true)));
       assertFalse(invoked.get());
     }
   }
 
   @Test
   void protectionPreservesTheAlreadyComposedGroupEndpoint() throws Exception {
-    try (var plain = new Shoostr(Options.defaults().withPort(0));
-        var guarded = new Shoostr(Options.defaults().withPort(0))) {
+    try (var plain = new Shoostr();
+        var guarded = new Shoostr()) {
       plain
           .routes()
-          .path("/api//", routes -> routes.get("", (_, response) -> response.text("plain")));
-      var admission = new AdmissionExtension((_, _) -> {});
+          .path("/api//", routes -> routes.get("", (ignored4, response) -> response.text("plain")));
+      var admission = new AdmissionExtension((ignored5, ignored6) -> {});
       guarded
           .extensions(admission)
           .routes()
           .path(
               "/api//",
               routes ->
-                  routes.get("", (_, response) -> response.text("guarded"), e -> e.get(admission)));
+                  routes.get(
+                      "",
+                      (ignored7, response) -> response.text("guarded"),
+                      e -> e.with(admission)));
 
       try (var plainTest = TestServer.start(plain);
           var guardedTest = TestServer.start(guarded)) {
@@ -87,13 +91,13 @@ class RoutePolicyTest {
 
   @Test
   void runsInheritedExtensionAdmissionInSelectionOrderBeforeTheHandler() throws Exception {
-    var outer = new AdmissionExtension((request, _) -> request.attribute("order", "outer"));
+    var outer = new AdmissionExtension((request, ignored8) -> request.attribute("order", "outer"));
     var inner =
         new AdmissionExtension(
-            (request, _) ->
+            (request, ignored9) ->
                 request.attribute("order", request.attribute("order").orElseThrow() + ",inner"));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(outer, inner)
           .routes()
           .path(
@@ -103,8 +107,8 @@ class RoutePolicyTest {
                       "/order",
                       (request, response) ->
                           response.text(request.attribute("order").orElseThrow() + ",handler"),
-                      e -> e.get(inner)),
-              e -> e.get(outer));
+                      e -> e.with(inner)),
+              e -> e.with(outer));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -121,14 +125,14 @@ class RoutePolicyTest {
   void preventsExtensionAdmissionFromStartingAStream() throws Exception {
     var admission =
         new AdmissionExtension(
-            (_, response) ->
+            (ignored10, response) ->
                 assertThrows(
                     IllegalStateException.class, () -> response.startStream("text/plain")));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(admission)
           .routes()
-          .get("/stream", (_, response) -> response.text("finite"), e -> e.get(admission));
+          .get("/stream", (ignored11, response) -> response.text("finite"), e -> e.with(admission));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -143,10 +147,10 @@ class RoutePolicyTest {
 
   @Test
   void retainsAuthenticationChallengesThroughGlobalErrorRendering() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.exception(
           AuthenticationRequiredException.class,
-          (_, _, response) -> response.text("login required"));
+          (ignored12, ignored13, response) -> response.text("login required"));
       var auth =
           new AuthenticationExtension() {
             @Override
@@ -156,7 +160,7 @@ class RoutePolicyTest {
           };
       app.authentication(auth)
           .routes()
-          .get("/private", (_, response) -> response.text("secret"), e -> e.get(auth).enabled());
+          .get("/private", (ignored14, response) -> response.text("secret"), e -> e.with(auth));
 
       try (var test = TestServer.start(app)) {
 
@@ -182,15 +186,15 @@ class RoutePolicyTest {
 
     Files.writeString(directory.resolve("secret.txt"), "secret");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var admission =
           new AdmissionExtension(
-              (_, _) -> {
+              (ignored15, ignored16) -> {
                 throw new ForbiddenException();
               });
       app.extensions(admission)
           .routes()
-          .path("/", secured -> secured.staticFiles("/files", directory), e -> e.get(admission));
+          .path("/", secured -> secured.staticFiles("/files", directory), e -> e.with(admission));
 
       try (var test = TestServer.start(app)) {
 
@@ -206,10 +210,10 @@ class RoutePolicyTest {
 
   @Test
   void protectsScopedRoutesWithoutProtectingPublicSiblings() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var admission =
           new AdmissionExtension(
-              (_, _) -> {
+              (ignored17, ignored18) -> {
                 throw new ForbiddenException();
               });
       app.extensions(admission)
@@ -218,8 +222,10 @@ class RoutePolicyTest {
               "/api",
               routes -> {
                 routes.get(
-                    "/private", (_, response) -> response.text("secret"), e -> e.get(admission));
-                routes.get("/public", (_, response) -> response.text("public"));
+                    "/private",
+                    (ignored19, response) -> response.text("secret"),
+                    e -> e.with(admission));
+                routes.get("/public", (ignored20, response) -> response.text("public"));
               });
 
       try (var test = TestServer.start(app)) {

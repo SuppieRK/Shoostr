@@ -1,0 +1,35 @@
+---
+title: Read request cookie and header values
+description: Read individual and repeated request headers or cookies while preserving their different naming and decoding rules.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/04-request/src/main/java/io/github/suppierk/shoostr/example/request/HeadersCookiesExample.java?raw';
+import test from '../../../../../examples/04-request/src/test/java/io/github/suppierk/shoostr/example/request/HeadersCookiesExampleTest.java?raw';
+
+## Description
+
+Read request cookies through `cookie(...)`, `cookies(...)` and `cookieMap()`, and request headers through `header(...)`, `headers(...)` and `headerMap()`.
+Use the singular accessor for the first value, the plural accessor for repeated values, and the map when you need the full collection.
+Header names are case-insensitive, including map lookup, while cookie names are case-sensitive: `theme` and `Theme` are different cookies.
+
+Repeated header fields retain their order without splitting comma-separated content.
+Cookie values are not URL-decoded, so `a+b%2F` remains unchanged.
+Duplicate cookie names remain visible; reject ambiguous duplicates when a value affects security rather than silently trusting the first one.
+
+## Example
+
+The preferences endpoint shows all three accessor forms for `X-Label` and the nonsecurity `theme` preference.
+It only reads incoming cookies; [setting and deleting response cookies](../../responses/cookies/) is a separate operation.
+
+Header collections capture construction-time fields after native customization, and cookie parsing follows the configured transport policy.
+The default cookie policy can discard malformed fragments or unquote values, so do not rely on every malformed cookie being rejected.
+Retain a [snapshot](../state/) rather than the live request when values are needed after handling ends.
+
+<Code code={application} lang="java" title="HeadersCookiesExample.java" />
+
+## Test
+
+The tests distinguish repeated field lines from comma-separated text, compare header and cookie name handling, and verify that returned collections cannot be changed.
+
+<Code code={test} lang="java" title="HeadersCookiesExampleTest.java" />

@@ -1,0 +1,33 @@
+---
+title: Select a response representation
+description: Use content negotiation to select JSON or text from the Accept header, preserve Vary, and return 406 when no representation is acceptable.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/07-json/src/main/java/io/github/suppierk/shoostr/example/json/NegotiationExample.java?raw';
+import test from '../../../../../examples/07-json/src/test/java/io/github/suppierk/shoostr/example/json/NegotiationExampleTest.java?raw';
+
+## Description
+
+Use `response.negotiate(...)` for content negotiation: select a response media type from the request's `Accept` header, then generate the matching representation.
+Selection respects the client's quality values and wildcards; when preferences are equal, the candidates retain server order.
+A missing `Accept` header selects the first candidate, while an explicit empty list or an unsupported preference produces `406`.
+Malformed syntax produces `400` instead.
+
+Negotiation adds `Accept` to `Vary` without discarding existing fields, including when the result is `406`.
+A malformed header fails before this addition.
+For the underlying HTTP rules, see [Accept](https://www.rfc-editor.org/rfc/rfc9110.html#section-12.5.1) and [Vary](https://www.rfc-editor.org/rfc/rfc9110.html#section-12.5.5).
+
+## Example
+
+The `/greeting` endpoint offers JSON first and UTF-8 text second.
+Both branches provide their own bytes: negotiation selects metadata, but does not serialize objects or change their encoding.
+For object conversion, use an [explicit JSON codec](../codec/); the usual [finite response rules](../../responses/bodies/) still apply.
+
+<Code code={application} lang="java" title="NegotiationExample.java" />
+
+## Test
+
+The tests verify the default representation, weighted and wildcard preferences, explicit exclusions, failure statuses, and preservation of an existing `Vary` field.
+
+<Code code={test} lang="java" title="NegotiationExampleTest.java" />

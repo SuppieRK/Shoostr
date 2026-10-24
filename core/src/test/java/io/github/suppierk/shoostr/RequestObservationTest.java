@@ -18,22 +18,35 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
-import org.junit.jupiter.api.Test;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class RequestObservationTest {
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void keepsTheObservationOpenAfterInvocationUntilTheSlowTransportTerminates(boolean local)
-      throws Exception {
+  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  void keepsTheObservationOpenAfterInvocationUntilTheSlowTransportTerminates(
+      boolean local, boolean virtualApplication) throws Exception {
     var scopeClosed = new CountDownLatch(1);
     var terminal = new CompletableFuture<RequestOutcome>();
 
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 1024, 16 * 1024 * 1024, 1024, 10000));
+    try (var app =
+            withExecutionMode(
+                    new Shoostr(
+                        new Options(
+                            1024, 16 * 1024 * 1024, 1024, 1000, MultipartOptions.defaults())),
+                    virtualApplication)
+                .modifyServer(
+                    nativeServer -> {
+                      var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                      nativeConnector.setHost("127.0.0.1");
+                      nativeConnector.setPort(0);
+                      nativeConnector.setIdleTimeout(10000);
+                    });
         var socket = new Socket()) {
       Function<Request, RequestObservation> factory =
-          _ ->
+          ignored ->
               new RequestObservation() {
                 @Override
                 public void close() {
@@ -52,11 +65,11 @@ class RequestObservationTest {
       app.routes()
           .get(
               "/large",
-              (_, response) ->
+              (ignored2, response) ->
                   response.body("application/octet-stream", new byte[16 * 1024 * 1024]),
               e -> {
                 if (local) {
-                  e.observe(factory);
+                  e.lifecycle().observe(factory);
                 }
               });
       app.start();
@@ -78,18 +91,20 @@ class RequestObservationTest {
     }
   }
 
-  @Test
-  void isolatesFactoryScopeAndCompletionFailuresWithoutRejectingTraffic() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void isolatesFactoryScopeAndCompletionFailuresWithoutRejectingTraffic(boolean virtualApplication)
+      throws Exception {
     var result = new CompletableFuture<RequestOutcome>();
     var closed = new AtomicBoolean();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       app.observe(
-          _ -> {
+          ignored3 -> {
             throw new IllegalStateException("factory failed");
           });
       app.observe(
-          _ ->
+          ignored4 ->
               new RequestObservation() {
                 @Override
                 public void close() {
@@ -102,7 +117,7 @@ class RequestObservationTest {
                 }
               });
       app.observe(
-          _ ->
+          ignored5 ->
               new RequestObservation() {
                 @Override
                 public void close() {
@@ -114,7 +129,7 @@ class RequestObservationTest {
                   result.complete(outcome);
                 }
               });
-      app.routes().get("/ok", (_, response) -> response.text("ok"));
+      app.routes().get("/ok", (ignored6, response) -> response.text("ok"));
 
       try (var test = TestServer.start(app)) {
         var response =
@@ -128,15 +143,17 @@ class RequestObservationTest {
     }
   }
 
-  @Test
-  void scopesTheInvocationAndCompletesAfterCleanupForUnmatchedRequests() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void scopesTheInvocationAndCompletesAfterCleanupForUnmatchedRequests(boolean virtualApplication)
+      throws Exception {
     var current = new ThreadLocal<String>();
     var closed = new AtomicBoolean();
     var result = new CompletableFuture<RequestOutcome>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = withExecutionMode(new Shoostr(), virtualApplication)) {
       app.observe(
-          _ -> {
+          ignored7 -> {
             current.set("observed");
             return new RequestObservation() {
               @Override
@@ -153,7 +170,7 @@ class RequestObservationTest {
               }
             };
           });
-      app.onRequestHeaders((_, _) -> assertEquals("observed", current.get()));
+      app.onRequestHeaders((ignored8, ignored9) -> assertEquals("observed", current.get()));
 
       try (var test = TestServer.start(app)) {
 
@@ -162,8 +179,18 @@ class RequestObservationTest {
         assertEquals(404, response.statusCode());
         assertEquals(404, result.get(5, TimeUnit.SECONDS).statusCode());
         assertNull(result.get().routePattern());
-        assertThrows(IllegalStateException.class, () -> app.observe(_ -> _ -> {}));
+        assertThrows(IllegalStateException.class, () -> app.observe(ignored10 -> ignored11 -> {}));
       }
     }
+  }
+
+  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
+    if (virtualApplication) {
+      app.virtualThreads();
+    }
+
+    return app.onRequestHeaders(
+        (request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

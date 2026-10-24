@@ -35,7 +35,7 @@ class ServerSentEventsTest {
   @Timeout(10)
   void emitsTheQueryParameterAsExactEventBytesForPositiveAcceptHeaders(String accept)
       throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .sse(
               "/events",
@@ -63,11 +63,11 @@ class ServerSentEventsTest {
 
   @Test
   void sendsEmptyAsciiUnicodeAndMalformedSurrogateDataAsExactUtf8Bytes() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .sse(
               "/events",
-              (_, response) -> {
+              (ignored, response) -> {
                 var events = response.startEventStream();
                 events.send("");
                 events.send("plain");
@@ -88,11 +88,11 @@ class ServerSentEventsTest {
 
   @Test
   void rejectsNullDataWithoutWritingAFrame() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .sse(
               "/events",
-              (_, response) -> {
+              (ignored2, response) -> {
                 var events = response.startEventStream();
                 assertThrows(NullPointerException.class, () -> events.send((String) null));
                 events.send("valid");
@@ -112,19 +112,18 @@ class ServerSentEventsTest {
     var defaults = Options.defaults();
     var options =
         new Options(
-            defaults.host(),
-            0,
             defaults.maxRequestBytes(),
             defaults.maxResponseBytes(),
             8,
-            defaults.idleTimeoutMillis());
+            1000,
+            MultipartOptions.defaults());
     var before = new AtomicInteger();
     var after = new AtomicInteger();
 
     try (var app = new Shoostr(options)) {
-      app.beforeResponseFlush((_, _) -> before.incrementAndGet());
-      app.afterResponseFlush((_, _) -> after.incrementAndGet());
-      app.routes().sse("/events", (_, response) -> response.startEventStream().send("abcd"));
+      app.beforeResponseFlush((ignored3, ignored4) -> before.incrementAndGet());
+      app.afterResponseFlush((ignored5, ignored6) -> after.incrementAndGet());
+      app.routes().sse("/events", (ignored7, response) -> response.startEventStream().send("abcd"));
 
       try (var test = TestServer.start(app)) {
 
@@ -141,8 +140,9 @@ class ServerSentEventsTest {
   void sendsLargeSingleLinePayloadAsOneExactUtf8Frame() throws Exception {
     var payload = "x".repeat(65_536);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().sse("/events", (_, response) -> response.startEventStream().send(payload));
+    try (var app = new Shoostr()) {
+      app.routes()
+          .sse("/events", (ignored8, response) -> response.startEventStream().send(payload));
 
       try (var test = TestServer.start(app)) {
 
@@ -163,11 +163,11 @@ class ServerSentEventsTest {
       expected.append("data: ").append(sequence).append(':').append(payload).append("\n\n");
     }
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .sse(
               "/events",
-              (_, response) -> {
+              (ignored9, response) -> {
                 var events = response.startEventStream();
                 for (int sequence = 0; sequence < 100; sequence++) {
                   events.send(sequence + ":" + payload);
@@ -189,8 +189,9 @@ class ServerSentEventsTest {
 
   @Test
   void sendsUtf8MultilineDataAsOneCompleteEvent() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().sse("/events", (_, response) -> response.startEventStream().send("café\nnext"));
+    try (var app = new Shoostr()) {
+      app.routes()
+          .sse("/events", (ignored10, response) -> response.startEventStream().send("café\nnext"));
 
       try (var test = TestServer.start(app)) {
 
@@ -209,8 +210,9 @@ class ServerSentEventsTest {
   @Test
   @Timeout(10)
   void preservesLeadingWhitespaceInMultilineEventDataOnTheWire() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().sse("/events", (_, response) -> response.startEventStream().send("café\n next"));
+    try (var app = new Shoostr()) {
+      app.routes()
+          .sse("/events", (ignored11, response) -> response.startEventStream().send("café\n next"));
 
       try (var test = TestServer.start(app)) {
 
@@ -228,11 +230,11 @@ class ServerSentEventsTest {
 
   @Test
   void chainsEventsCommentsAndHeartbeatsOnTheSameWriter() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .sse(
               "/events",
-              (_, response) -> {
+              (ignored12, response) -> {
                 var events = response.startEventStream();
                 var event =
                     SseEvent.of("ready")
@@ -283,8 +285,8 @@ class ServerSentEventsTest {
 
   @Test
   void rejectsFiniteOutputFromAnSseRoute() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().sse("/events", (_, response) -> response.text("not an event stream"));
+    try (var app = new Shoostr()) {
+      app.routes().sse("/events", (ignored13, response) -> response.text("not an event stream"));
 
       try (var test = TestServer.start(app)) {
 
@@ -298,9 +300,11 @@ class ServerSentEventsTest {
 
   @Test
   void rejectsAnIncompatibleStreamBeforeCommittingTheSseResponse() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
-          .sse("/events", (_, response) -> response.startStream("application/json").write("wrong"));
+          .sse(
+              "/events",
+              (ignored14, response) -> response.startStream("application/json").write("wrong"));
 
       try (var test = TestServer.start(app)) {
 
@@ -314,13 +318,14 @@ class ServerSentEventsTest {
 
   @Test
   void composesAnSseRouteInsidePathScopes() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .path(
               "/api",
               routes ->
                   routes.sse(
-                      "/events", (_, response) -> response.startEventStream().send("scoped")));
+                      "/events",
+                      (ignored15, response) -> response.startEventStream().send("scoped")));
 
       try (var test = TestServer.start(app)) {
 
@@ -334,20 +339,23 @@ class ServerSentEventsTest {
 
   @Test
   void treatsAnSseRouteAndGetAtTheSamePathAsDuplicates() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       var routes = app.routes();
-      routes.sse("/events", (_, response) -> response.startEventStream().send("ok"));
+      routes.sse("/events", (ignored16, response) -> response.startEventStream().send("ok"));
 
       assertThrows(
           IllegalArgumentException.class,
-          () -> routes.get("/events", (_, response) -> response.text("other")));
+          () -> routes.get("/events", (ignored17, response) -> response.text("other")));
     }
   }
 
   @Test
   void allowsNoContentToStopEventSourceReconnection() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().sse("/events", (_, response) -> response.status(204));
+    try (var app = new Shoostr()) {
+      app.routes().sse("/events", (ignored18, response) -> response.status(204));
 
       try (var test = TestServer.start(app)) {
 
@@ -362,10 +370,10 @@ class ServerSentEventsTest {
 
   @Test
   void globalExceptionHandlerCanStreamAReplacementErrorForAnSseRoute() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.exception(
           IllegalArgumentException.class,
-          (_, _, response) ->
+          (ignored19, ignored20, response) ->
               response
                   .status(422)
                   .startStream("application/json")
@@ -373,7 +381,7 @@ class ServerSentEventsTest {
       app.routes()
           .sse(
               "/events",
-              (_, _) -> {
+              (ignored21, ignored22) -> {
                 throw new IllegalArgumentException("invalid subscription");
               });
 
@@ -395,11 +403,11 @@ class ServerSentEventsTest {
     var release = new CountDownLatch(1);
     var exited = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .sse(
               "/events",
-              (_, response) -> {
+              (ignored23, response) -> {
                 try {
                   var events = response.startEventStream();
                   events.send("");
@@ -445,11 +453,11 @@ class ServerSentEventsTest {
 
   @Test
   void sendsEventNameIdAndRetryBeforeData() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/events",
-              (_, response) -> {
+              (ignored24, response) -> {
                 var event =
                     SseEvent.of("ready")
                         .withEvent("update")
@@ -472,11 +480,11 @@ class ServerSentEventsTest {
 
   @Test
   void prefixesEveryNormalizedDataAndCommentLineIncludingTrailingEmptyLines() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/events",
-              (_, response) -> {
+              (ignored25, response) -> {
                 var events = response.startEventStream();
                 events.send(SseEvent.of("first\r\nid: forged\rtail\n").withId("good"));
                 events.comment("note\rretry: 1\n");
@@ -500,11 +508,11 @@ class ServerSentEventsTest {
 
   @Test
   void normalizesCrOnlyDataForStringAndMetadataEventsWithoutFieldInjection() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .sse(
               "/events",
-              (_, response) -> {
+              (ignored26, response) -> {
                 var events = response.startEventStream();
                 var payload = "first\rid: forged\r";
                 events.send(payload);
@@ -554,7 +562,7 @@ class ServerSentEventsTest {
   void exposesLastEventIdOnReconnectWithoutImplicitHistory() throws Exception {
     var lastEventId = new AtomicReference<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/events",
@@ -588,9 +596,9 @@ class ServerSentEventsTest {
 
   @Test
   void sendsEventsOverClearTextHttp2() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.http2();
-      app.routes().get("/events", (_, response) -> response.startEventStream().send("h2"));
+      app.routes().get("/events", (ignored27, response) -> response.startEventStream().send("h2"));
 
       try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_2))) {
 
@@ -612,12 +620,16 @@ class ServerSentEventsTest {
     var cleaned = new CountDownLatch(1);
     var writeFailed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var socket = new Socket()) {
       app.routes()
           .get(
               "/events",
-              (_, response) -> {
+              (ignored28, response) -> {
                 var events = response.startEventStream();
 
                 try {
@@ -659,12 +671,16 @@ class ServerSentEventsTest {
     var sent = new AtomicInteger();
     var payload = "x".repeat(64 * 1024);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var socket = new Socket()) {
       app.routes()
           .get(
               "/events",
-              (_, response) -> {
+              (ignored29, response) -> {
                 var events = response.startEventStream();
 
                 try {
@@ -707,7 +723,11 @@ class ServerSentEventsTest {
   void forcedAppCloseReleasesAnActiveEventSource() throws Exception {
     var cleaned = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.modifyServer(
           server -> {
@@ -717,7 +737,7 @@ class ServerSentEventsTest {
       app.routes()
           .get(
               "/events",
-              (_, response) -> {
+              (ignored30, response) -> {
                 try {
                   response.startEventStream().send("ready");
                   new CountDownLatch(1).await();

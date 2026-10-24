@@ -41,8 +41,8 @@ class McpSharedResourceTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     mcp =
         Mcp.sync(
             security,
@@ -53,7 +53,7 @@ class McpSharedResourceTest {
                     .resources(
                         new McpServerFeatures.SyncResourceSpecification(
                             McpSchema.Resource.builder("fixture://shared", "shared").build(),
-                            (_, _) ->
+                            (ignored4, ignored5) ->
                                 McpSchema.ReadResourceResult.builder(
                                         List.of(
                                             McpSchema.TextResourceContents.builder(
@@ -65,7 +65,7 @@ class McpSharedResourceTest {
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
-        (request, _) -> {
+        (request, ignored6) -> {
           if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
             var session = request.header("Mcp-Session-Id").orElseThrow();
             if (attached.add(session)) {

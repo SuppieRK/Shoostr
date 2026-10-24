@@ -39,8 +39,8 @@ class McpDetachedOperationCleanupTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     var tool = McpSchema.Tool.builder("wait", Map.of("type", "object")).build();
     var mcp =
         Mcp.async(
@@ -54,7 +54,7 @@ class McpDetachedOperationCleanupTest {
                         McpServerFeatures.AsyncToolSpecification.builder()
                             .tool(tool)
                             .callHandler(
-                                (exchange, _) ->
+                                (exchange, ignored4) ->
                                     breakResponse
                                         .asMono()
                                         .then(
@@ -63,10 +63,11 @@ class McpDetachedOperationCleanupTest {
                                                         McpSchema.LoggingLevel.INFO,
                                                         "end original HTTP exchange")
                                                     .build()))
-                                        .onErrorResume(_ -> Mono.empty())
+                                        .onErrorResume(ignored5 -> Mono.empty())
                                         .then(
                                             Mono.<McpSchema.CallToolResult>never()
-                                                .doOnSubscribe(_ -> nativePending.countDown())
+                                                .doOnSubscribe(
+                                                    ignored6 -> nativePending.countDown())
                                                 .doOnCancel(
                                                     () -> {
                                                       cancellations.incrementAndGet();
@@ -77,7 +78,7 @@ class McpDetachedOperationCleanupTest {
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
-        (request, _) -> {
+        (request, ignored7) -> {
           if (request.header("X-Fail-Response").isPresent() && failResponse.get()) {
             throw new IOException("fixture HTTP failure while native work remains pending");
           }

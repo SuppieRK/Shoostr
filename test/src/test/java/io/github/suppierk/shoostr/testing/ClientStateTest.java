@@ -38,9 +38,9 @@ class ClientStateTest {
     app.routes()
         .get(
             "/redirect",
-            (_, response) ->
+            (ignored, response) ->
                 response.status(302).setHeader("Location", "/target").text("redirect"));
-    app.routes().get("/target", (_, response) -> response.text("target"));
+    app.routes().get("/target", (ignored2, response) -> response.text("target"));
 
     try (var test = TestServer.start(app)) {
       var reply =
@@ -52,7 +52,7 @@ class ClientStateTest {
 
   private static Shoostr cookieApp() {
     var app = new Shoostr();
-    app.routes().get("/set", (_, response) -> response.cookie("token", "value").text("set"));
+    app.routes().get("/set", (ignored3, response) -> response.cookie("token", "value").text("set"));
     app.routes()
         .get(
             "/read",
