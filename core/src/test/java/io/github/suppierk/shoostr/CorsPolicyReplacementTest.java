@@ -72,7 +72,8 @@ class CorsPolicyReplacementTest {
                 retained.set(configuration);
               })
           .get("/sibling", (request, response) -> response.text("sibling"));
-      assertThrows(IllegalStateException.class, () -> retained.get().policy(parent));
+      var configuration = retained.get();
+      assertThrows(IllegalStateException.class, () -> configuration.policy(parent));
 
       try (var test = TestServer.start(app)) {
         var origin = "wildcard".equals(mode) ? "https://unlisted.example" : "https://child.example";

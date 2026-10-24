@@ -317,6 +317,8 @@ public final class Extensions {
    * @param <C> configuration type
    * @return provider data and its own contributions
    */
+  @SuppressWarnings(
+      "java:S1181") // Freeze retained configuration on failure, then rethrow unchanged.
   private <C> Selection select(Extension<C> extension, @Nullable C inherited) {
     var contribution = new Extensions(installed, null);
     contribution.provider = true;

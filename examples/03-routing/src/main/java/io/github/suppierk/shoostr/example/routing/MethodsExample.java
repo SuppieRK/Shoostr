@@ -5,6 +5,8 @@ import io.github.suppierk.shoostr.http.HttpMethods;
 
 /** Registers explicit handlers for individual HTTP methods. */
 public final class MethodsExample {
+  private static final String NOTES_PATH = "/notes";
+
   private static final String ALLOWED = "GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS";
 
   /** Prevents construction of this example factory. */
@@ -20,17 +22,17 @@ public final class MethodsExample {
         .routes(
             routes -> {
               routes
-                  .get("/notes", (ignored, response) -> response.text("notes"))
-                  .post("/notes", (ignored2, response) -> response.status(201).text("created"))
-                  .put("/notes", (ignored3, response) -> response.text("replaced"))
-                  .patch("/notes", (ignored4, response) -> response.text("updated"))
-                  .delete("/notes", (ignored5, response) -> response.status(204))
+                  .get(NOTES_PATH, (ignored, response) -> response.text("notes"))
+                  .post(NOTES_PATH, (ignored2, response) -> response.status(201).text("created"))
+                  .put(NOTES_PATH, (ignored3, response) -> response.text("replaced"))
+                  .patch(NOTES_PATH, (ignored4, response) -> response.text("updated"))
+                  .delete(NOTES_PATH, (ignored5, response) -> response.status(204))
                   // GET does not register HEAD or OPTIONS; select each method explicitly.
                   .head(
-                      "/notes",
+                      NOTES_PATH,
                       (ignored6, response) -> response.setHeader("X-Notes-Mode", "metadata"))
                   .options(
-                      "/notes",
+                      NOTES_PATH,
                       (ignored7, response) -> response.status(204).setHeader("Allow", ALLOWED))
                   // Use the generic form for a method without a convenience helper.
                   .route(

@@ -16,6 +16,8 @@ import java.util.Set;
 
 /** Describes selected operations with explicit schemas and registration metadata. */
 public final class OpenApiDocumentExample {
+  private static final String ITEMS_TAG = "items";
+
   /** Prevents construction of the factory. */
   private OpenApiDocumentExample() {}
 
@@ -25,7 +27,7 @@ public final class OpenApiDocumentExample {
    * @return unstarted application
    */
   public static Shoostr application() {
-    var docs = new OpenApi("Items API", "1.0").tag("items", "Item operations");
+    var docs = new OpenApi("Items API", "1.0").tag(ITEMS_TAG, "Item operations");
     // Each instance owns its own document; route selection decides which receives an operation.
     var internal = new OpenApi("Operations API", "1.0");
     // This schema describes input; it does not install runtime validation on the handler.
@@ -65,7 +67,7 @@ public final class OpenApiDocumentExample {
                               .with(docs)
                               .summary("Create an item")
                               .operationId("createItem")
-                              .tag("items")
+                              .tag(ITEMS_TAG)
                               .requestBody("Item to create", MediaType.APPLICATION_JSON, item, true)
                               .response(201, "Created", MediaType.APPLICATION_JSON, item))
                   .path(
@@ -90,7 +92,7 @@ public final class OpenApiDocumentExample {
                                       .pathParameter("id", "Numeric item identifier")
                                       .response(
                                           200, "Item found", MediaType.APPLICATION_JSON, item)),
-                      extensions -> extensions.with(docs).tag("items"));
+                      extensions -> extensions.with(docs).tag(ITEMS_TAG));
             });
   }
 

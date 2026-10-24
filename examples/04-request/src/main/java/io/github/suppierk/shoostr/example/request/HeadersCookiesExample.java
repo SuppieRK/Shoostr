@@ -5,6 +5,9 @@ import java.util.List;
 
 /** Reads repeated headers and cookies without changing their representation. */
 public final class HeadersCookiesExample {
+  private static final String MISSING_VALUE = "(missing)";
+  private static final String THEME_COOKIE = "theme";
+
   /** Prevents construction of this example factory. */
   private HeadersCookiesExample() {}
 
@@ -24,18 +27,19 @@ public final class HeadersCookiesExample {
                             String.join(
                                 "\n",
                                 // Header lookup ignores case and preserves repeated field values.
-                                "header=" + request.header("x-label").orElse("(missing)"),
+                                "header=" + request.header("x-label").orElse(MISSING_VALUE),
                                 "headers=" + String.join("|", request.headers("X-LABEL")),
                                 "headerMap="
                                     + String.join(
                                         "|",
                                         request.headerMap().getOrDefault("x-LaBeL", List.of())),
                                 // Cookie names stay case-sensitive; duplicates are not collapsed.
-                                "cookie=" + request.cookie("theme").orElse("(missing)"),
-                                "cookies=" + String.join("|", request.cookies("theme")),
+                                "cookie=" + request.cookie(THEME_COOKIE).orElse(MISSING_VALUE),
+                                "cookies=" + String.join("|", request.cookies(THEME_COOKIE)),
                                 "cookieMap="
                                     + String.join(
-                                        "|", request.cookieMap().getOrDefault("theme", List.of())),
-                                "otherCookie=" + request.cookie("Theme").orElse("(missing)")))));
+                                        "|",
+                                        request.cookieMap().getOrDefault(THEME_COOKIE, List.of())),
+                                "otherCookie=" + request.cookie("Theme").orElse(MISSING_VALUE)))));
   }
 }

@@ -176,7 +176,9 @@ class TypedEventStreamTest {
             .submit(
                 () -> {
                   assertSame(owner.get(), Thread.currentThread());
-                  assertThrows(IllegalStateException.class, () -> stream.get().sendObject("late"));
+                  var completedStream = stream.get();
+                  assertThrows(
+                      IllegalStateException.class, () -> completedStream.sendObject("late"));
                 })
             .get(3, TimeUnit.SECONDS);
         assertEquals(0, writes.get());

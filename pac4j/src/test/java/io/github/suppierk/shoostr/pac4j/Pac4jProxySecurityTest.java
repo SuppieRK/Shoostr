@@ -57,7 +57,7 @@ class Pac4jProxySecurityTest {
     try (var app = new Shoostr()) {
       var family = "direct".equals(source) ? null : ForwardedHeaders.valueOf(source);
       if (family != null) {
-        app.trustedProxies(address -> address.isLoopbackAddress(), family);
+        app.trustedProxies(InetAddress::isLoopbackAddress, family);
       }
 
       var auth = new Pac4j(provider, "Basic");

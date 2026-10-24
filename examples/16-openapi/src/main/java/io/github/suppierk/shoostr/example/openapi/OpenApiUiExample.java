@@ -12,6 +12,8 @@ import org.pac4j.http.client.direct.DirectBasicAuthClient;
 
 /** Protects the local documentation page, its assets and its specification together. */
 public final class OpenApiUiExample {
+  private static final String BASIC_SECURITY_SCHEME = "basic";
+
   /** Prevents construction of the factory. */
   private OpenApiUiExample() {}
 
@@ -41,7 +43,8 @@ public final class OpenApiUiExample {
     var docs =
         new OpenApi("Account API", "1.0")
             .securityScheme(
-                "basic", new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme("basic"));
+                BASIC_SECURITY_SCHEME,
+                new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme(BASIC_SECURITY_SCHEME));
     var ui = docs.uiHandler("/docs/", "/openapi.json");
     return new Shoostr()
         .authentication(authentication)
@@ -71,7 +74,7 @@ public final class OpenApiUiExample {
                         extensions
                             .with(docs)
                             .summary("Read the authenticated identity")
-                            .security("basic")
+                            .security(BASIC_SECURITY_SCHEME)
                             .response(200, "Identity", MediaType.TEXT_PLAIN);
                       });
             });

@@ -64,6 +64,8 @@ public final class TypedWebSocket extends WebSocket {
    * @param handler opening callback completed before message delivery
    * @return this configuration
    */
+  @SuppressWarnings(
+      "java:S2177") // Typed callback overload; the base signature is overridden below.
   public TypedWebSocket onOpen(ConnectionHandler handler) {
     super.onOpen(handler);
     return this;
@@ -82,6 +84,8 @@ public final class TypedWebSocket extends WebSocket {
    * @param handler complete text callback; input bypasses the codec
    * @return this configuration
    */
+  @SuppressWarnings(
+      "java:S2177") // Typed callback overload; the base signature is overridden below.
   public TypedWebSocket onText(MessageHandler<String> handler) {
     super.onText(handler);
     return this;
@@ -100,6 +104,8 @@ public final class TypedWebSocket extends WebSocket {
    * @param handler owned binary callback; input bypasses the codec
    * @return this configuration
    */
+  @SuppressWarnings(
+      "java:S2177") // Typed callback overload; the base signature is overridden below.
   public TypedWebSocket onBinary(MessageHandler<byte[]> handler) {
     super.onBinary(handler);
     return this;
@@ -118,6 +124,8 @@ public final class TypedWebSocket extends WebSocket {
    * @param handler failure observer, not a recovery callback
    * @return this configuration
    */
+  @SuppressWarnings(
+      "java:S2177") // Typed callback overload; the base signature is overridden below.
   public TypedWebSocket onError(MessageHandler<Throwable> handler) {
     super.onError(handler);
     return this;
@@ -136,6 +144,8 @@ public final class TypedWebSocket extends WebSocket {
    * @param handler terminal close observer
    * @return this configuration
    */
+  @SuppressWarnings(
+      "java:S2177") // Typed callback overload; the base signature is overridden below.
   public TypedWebSocket onClose(CloseHandler handler) {
     super.onClose(handler);
     return this;

@@ -78,9 +78,10 @@ class PathPatternsExampleTest {
       })
   void rejectsUnsupportedPatternSyntaxAtRegistration(String pattern) throws Exception {
     try (var app = PathPatternsExample.application()) {
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
-          () -> app.routes().get(pattern, (ignored, response) -> response.text("unused")));
+          () -> routes.get(pattern, (ignored, response) -> response.text("unused")));
     }
   }
 
@@ -88,9 +89,10 @@ class PathPatternsExampleTest {
   @ValueSource(strings = {"/items/{other}", "/items/{other:[0-9]+}", "/items/{*other}"})
   void rejectsEquivalentShapesEvenWithDifferentParameterNames(String pattern) throws Exception {
     try (var app = PathPatternsExample.application()) {
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
-          () -> app.routes().get(pattern, (ignored2, response) -> response.text("unused")));
+          () -> routes.get(pattern, (ignored2, response) -> response.text("unused")));
     }
   }
 }

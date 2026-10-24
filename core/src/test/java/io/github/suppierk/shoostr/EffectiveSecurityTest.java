@@ -207,8 +207,8 @@ class EffectiveSecurityTest {
             .submit(
                 () -> {
                   assertSame(thread.get(), Thread.currentThread());
-                  assertThrows(
-                      IllegalStateException.class, () -> saved.get().isEffectivelySecure());
+                  var request = saved.get();
+                  assertThrows(IllegalStateException.class, request::isEffectivelySecure);
                 })
             .get(3, TimeUnit.SECONDS);
       }
@@ -218,7 +218,7 @@ class EffectiveSecurityTest {
   @Test
   void inheritsEffectiveSecurityInTypedRoutes() throws Exception {
     try (var app = new Shoostr()) {
-      app.trustedProxies(address -> address.isLoopbackAddress())
+      app.trustedProxies(InetAddress::isLoopbackAddress)
           .codec(new TestCodec())
           .routes()
           .get(

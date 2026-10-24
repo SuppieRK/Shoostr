@@ -17,6 +17,7 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.HttpCookie;
+import java.net.InetAddress;
 import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.security.KeyStore;
@@ -30,6 +31,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
+import org.eclipse.jetty.server.Session;
 import org.eclipse.jetty.server.handler.ContextHandler;
 import org.eclipse.jetty.server.handler.DefaultHandler;
 import org.eclipse.jetty.session.DefaultSessionCache;
@@ -84,8 +86,7 @@ class NativeSessionLifecycleTest {
           .get(
               "/state",
               (request, response) ->
-                  response.text(
-                      request.getSession().map(session -> session.getId()).orElse("absent")));
+                  response.text(request.getSession().map(Session::getId).orElse("absent")));
 
       try (var test = TestServer.start(app)) {
         var created = test.send(r -> r.path("/create"), HttpResponse.BodyHandlers.ofString());
@@ -134,7 +135,7 @@ class NativeSessionLifecycleTest {
                 nativeHandler.setSessionIdManager(
                     new DefaultSessionIdManager(nativeHandler.getServer()));
               });
-      var failure = assertThrows(IllegalStateException.class, () -> TestServer.start(app).close());
+      var failure = assertThrows(IllegalStateException.class, app::start);
       assertTrue(failure.getMessage().contains("SessionIdManager"));
       assertEquals(0, starts.get());
     }
@@ -188,7 +189,7 @@ class NativeSessionLifecycleTest {
                   handler.setSecureCookies(true);
                 }
               })
-          .trustedProxies(address -> address.isLoopbackAddress(), family);
+          .trustedProxies(InetAddress::isLoopbackAddress, family);
       app.routes()
           .get(
               "/session",

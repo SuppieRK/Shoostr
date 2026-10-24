@@ -14,6 +14,7 @@ import java.util.TreeSet;
 import org.jspecify.annotations.Nullable;
 
 /** Scoped browser response sharing, resolved before authentication and request admission. */
+@SuppressWarnings("java:S6206") // Extension instances identify owners, even with the same policy.
 public final class Cors implements Extension<Cors.Configuration> {
   private static final Map<String, String> VARIATION =
       Map.of(HttpHeaders.VARY.value(), HttpHeaders.ORIGIN.value());

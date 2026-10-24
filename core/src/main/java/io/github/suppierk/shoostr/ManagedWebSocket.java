@@ -237,7 +237,10 @@ public final class ManagedWebSocket implements Session.Listener {
    *
    * @param pending task whose ownership must still match this connection
    */
-  @SuppressWarnings("java:S1181") // FutureTask would otherwise silently retain fatal failures.
+  @SuppressWarnings({
+    "java:S1181",
+    "java:S2139"
+  }) // FutureTask otherwise silently retains fatal failures.
   private void run(FutureTask<Void> pending) {
     synchronized (events) {
       if (task != pending || dispatchClosed) {
@@ -248,42 +251,51 @@ public final class ManagedWebSocket implements Session.Listener {
     }
 
     try {
-      boolean completed = false;
-
-      try {
-        deliverPending();
-        completed = true;
-      } catch (InterruptedException ignored) {
-        Objects.requireNonNull(connection).close(1001, "Processing interrupted");
-        Thread.currentThread().interrupt();
-      } catch (Exception failure) {
-        WebSocketConnection opened;
-        boolean unexpected;
-        synchronized (events) {
-          opened = Objects.requireNonNull(connection);
-          unexpected = !closing && error == null;
-          if (unexpected) {
-            error = failure;
-          }
-        }
-        if (unexpected) {
-          LOGGER.warn("WebSocket application callback failed", failure);
-        }
-
-        opened.close(1011, "Processing failed");
-      } finally {
-        try {
-          if (!completed) {
-            Objects.requireNonNull(connection).close(1011, "Processing failed");
-          }
-        } finally {
-          finish(pending);
-        }
-      }
+      deliverAndFinish(pending);
     } catch (Error failure) {
       // FutureTask captures Errors; report them instead of silently discarding its result.
       LOGGER.error("WebSocket application work failed", failure);
       throw failure;
+    }
+  }
+
+  /**
+   * Delivers one callback and releases its task ownership even when delivery or closure fails.
+   *
+   * @param pending task whose worker ownership must be released
+   */
+  private void deliverAndFinish(FutureTask<Void> pending) {
+    boolean completed = false;
+
+    try {
+      deliverPending();
+      completed = true;
+    } catch (InterruptedException ignored) {
+      Objects.requireNonNull(connection).close(1001, "Processing interrupted");
+      Thread.currentThread().interrupt();
+    } catch (Exception failure) {
+      WebSocketConnection opened;
+      boolean unexpected;
+      synchronized (events) {
+        opened = Objects.requireNonNull(connection);
+        unexpected = !closing && error == null;
+        if (unexpected) {
+          error = failure;
+        }
+      }
+      if (unexpected) {
+        LOGGER.warn("WebSocket application callback failed", failure);
+      }
+
+      opened.close(1011, "Processing failed");
+    } finally {
+      try {
+        if (!completed) {
+          Objects.requireNonNull(connection).close(1011, "Processing failed");
+        }
+      } finally {
+        finish(pending);
+      }
     }
   }
 

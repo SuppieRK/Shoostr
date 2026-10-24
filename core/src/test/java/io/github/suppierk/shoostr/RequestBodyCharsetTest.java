@@ -330,9 +330,10 @@ class RequestBodyCharsetTest {
             .submit(
                 () -> {
                   assertSame(thread.get(), Thread.currentThread());
+                  var request = saved.get();
                   assertThrows(
                       IllegalStateException.class,
-                      () -> saved.get().bodyText(StandardCharsets.ISO_8859_1));
+                      () -> request.bodyText(StandardCharsets.ISO_8859_1));
                 })
             .get(3, TimeUnit.SECONDS);
       }

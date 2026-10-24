@@ -42,16 +42,16 @@ class HeadersCookiesExampleTest {
                 var cookies = request.cookieMap();
                 assertEquals(List.of("one,two", "three"), headers.get("X-LABEL"));
                 assertEquals(List.of("light", "dark"), cookies.get("theme"));
+                var headerValues = headers.get("x-label");
+                var selectedHeaders = request.headers("X-Label");
+                var cookieValues = cookies.get("theme");
+                var selectedCookies = request.cookies("theme");
                 assertThrows(UnsupportedOperationException.class, headers::clear);
-                assertThrows(
-                    UnsupportedOperationException.class, () -> headers.get("x-label").add("bad"));
-                assertThrows(
-                    UnsupportedOperationException.class, () -> request.headers("X-Label").clear());
+                assertThrows(UnsupportedOperationException.class, () -> headerValues.add("bad"));
+                assertThrows(UnsupportedOperationException.class, selectedHeaders::clear);
                 assertThrows(UnsupportedOperationException.class, cookies::clear);
-                assertThrows(
-                    UnsupportedOperationException.class, () -> cookies.get("theme").add("bad"));
-                assertThrows(
-                    UnsupportedOperationException.class, () -> request.cookies("theme").clear());
+                assertThrows(UnsupportedOperationException.class, () -> cookieValues.add("bad"));
+                assertThrows(UnsupportedOperationException.class, selectedCookies::clear);
                 response.text("checked");
               });
 
@@ -86,8 +86,15 @@ class HeadersCookiesExampleTest {
 
       assertEquals(200, response.statusCode());
       assertEquals(
-          "header=first,second\nheaders=first,second|third\nheaderMap=first,second|third"
-              + "\ncookie=a+b%2F\ncookies=a+b%2F|dark\ncookieMap=a+b%2F|dark\notherCookie=upper",
+          """
+          header=first,second
+          headers=first,second|third
+          headerMap=first,second|third
+          cookie=a+b%2F
+          cookies=a+b%2F|dark
+          cookieMap=a+b%2F|dark
+          otherCookie=upper\
+          """,
           response.body());
     }
   }
