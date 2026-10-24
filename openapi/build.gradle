@@ -14,12 +14,12 @@ configurations {
 
 dependencies {
 	api project(':core')
-	api platform('com.fasterxml.jackson:jackson-bom:2.22.3')
+	api platform('com.fasterxml.jackson:jackson-bom:2.22.4')
 	api 'io.swagger.core.v3:swagger-core:2.2.55'
 	// Explicit patched dependencies also protect consumers using only the published Maven POM.
-	api 'com.fasterxml.jackson.core:jackson-core:2.22.3'
-	api 'com.fasterxml.jackson.core:jackson-databind:2.22.3'
-	swaggerUiAssets 'org.webjars:swagger-ui:5.33.2'
+	api 'com.fasterxml.jackson.core:jackson-core:2.22.4'
+	api 'com.fasterxml.jackson.core:jackson-databind:2.22.4'
+	swaggerUiAssets 'org.webjars:swagger-ui:5.34.0'
 	testImplementation project(':test')
 }
 
@@ -27,15 +27,15 @@ tasks.named('processResources') {
 	doFirst {
 		def artifact = configurations.swaggerUiAssets.singleFile
 		def digest = MessageDigest.getInstance('SHA-256').digest(artifact.bytes)
-		assert HexFormat.of().formatHex(digest) == 'f7816953f7df2c01757a89d73579596374d5bff1e85210eb98f1dca81e0cbf6d' : 'Pinned Swagger UI artifact checksum mismatch'
+		assert HexFormat.of().formatHex(digest) == 'a439f1bd0d0c69667e97fac5a8cdfb3cc599ed9bdb31fbf40602c648dd2e1a63' : 'Pinned Swagger UI artifact checksum mismatch'
 	}
 	from({ zipTree(configurations.swaggerUiAssets.singleFile) }) {
-		include 'META-INF/resources/webjars/swagger-ui/5.33.2/swagger-ui.css'
-		include 'META-INF/resources/webjars/swagger-ui/5.33.2/swagger-ui-bundle.js'
-		include 'META-INF/resources/webjars/swagger-ui/5.33.2/swagger-ui-bundle.js.LICENSE.txt'
+		include 'META-INF/resources/webjars/swagger-ui/5.34.0/swagger-ui.css'
+		include 'META-INF/resources/webjars/swagger-ui/5.34.0/swagger-ui-bundle.js'
+		include 'META-INF/resources/webjars/swagger-ui/5.34.0/swagger-ui-bundle.js.LICENSE.txt'
 		eachFile { details ->
 			details.path = details.name.endsWith('.LICENSE.txt') ?
-					"META-INF/licenses/swagger-ui-5.33.2/${details.name}" :
+					"META-INF/licenses/swagger-ui-5.34.0/${details.name}" :
 					"io/github/suppierk/shoostr/openapi/ui/${details.name}"
 		}
 		includeEmptyDirs = false

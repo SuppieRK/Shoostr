@@ -110,9 +110,9 @@ models and its OpenAPI 3.1 `Json31` serializer. That dependency includes Jackson
 library dependencies; this optional artifact is not dependency-free.
 
 UI CSS/bundle are extracted at build time from
-[`org.webjars:swagger-ui:5.33.2`](https://repo.maven.apache.org/maven2/org/webjars/swagger-ui/5.33.2/),
-with SHA-256 `f7816953f7df2c01757a89d73579596374d5bff1e85210eb98f1dca81e0cbf6d`
+[`org.webjars:swagger-ui:5.34.0`](https://repo.maven.apache.org/maven2/org/webjars/swagger-ui/5.34.0/),
+with SHA-256 `a439f1bd0d0c69667e97fac5a8cdfb3cc599ed9bdb31fbf40602c648dd2e1a63`
 enforced before packaging. The WebJar is build-only, not a runtime or published dependency.
 No browser CDN or runtime downloads are required. The own minimal page uses only the normal
 bundle, not the standalone preset. Upstream Apache LICENSE/NOTICE and bundle third-party notices
-are preserved under `META-INF/licenses/swagger-ui-5.33.2/`.
+are preserved under `META-INF/licenses/swagger-ui-5.34.0/`.
