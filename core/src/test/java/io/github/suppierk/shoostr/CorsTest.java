@@ -31,30 +31,54 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class CorsTest {
+  @Test
+  void buildsCompletePolicyValuesWithStandaloneDefaults() {
+    var implicit = CorsPolicy.builder().origins(Set.of("https://client.example")).build();
+    var explicit =
+        new CorsPolicy(
+            Set.of("https://client.example"),
+            Set.of(HttpMethods.GET, HttpMethods.HEAD),
+            Set.of(),
+            false,
+            Set.of(),
+            5);
+    assertEquals(explicit, implicit);
+    assertEquals(explicit.hashCode(), implicit.hashCode());
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   @Timeout(10)
   void preservesCorsSharingWhenFormParsingRejectsUnsupportedMedia(boolean withOrigin)
       throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(
-          new CorsPolicy(
-              Set.of("https://client.example"),
-              Set.of(HttpMethods.POST),
-              Set.of(),
-              false,
-              Set.of(),
-              5));
+    try (var app = new Shoostr()) {
+      var cors =
+          new Cors(
+              new CorsPolicy(
+                  Set.of("https://client.example"),
+                  Set.of(HttpMethods.POST),
+                  Set.of(),
+                  false,
+                  Set.of(),
+                  5));
+      app.extensions(cors);
       app.routes()
-          .post(
-              "/form",
-              (request, response) -> response.text(request.formParam("name").orElseThrow()));
+          .path(
+              "/",
+              scoped ->
+                  scoped.post(
+                      "/form",
+                      (request, response) ->
+                          response.text(request.formParam("name").orElseThrow())),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
 
@@ -88,19 +112,26 @@ class CorsTest {
   @Timeout(10)
   void sharesAcceptedFormResponsesOnlyWhenAnAllowedOriginIsPresent(boolean withOrigin)
       throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(
-          new CorsPolicy(
-              Set.of("https://client.example"),
-              Set.of(HttpMethods.POST),
-              Set.of(),
-              false,
-              Set.of(),
-              5));
+    try (var app = new Shoostr()) {
+      var cors =
+          new Cors(
+              new CorsPolicy(
+                  Set.of("https://client.example"),
+                  Set.of(HttpMethods.POST),
+                  Set.of(),
+                  false,
+                  Set.of(),
+                  5));
+      app.extensions(cors);
       app.routes()
-          .post(
-              "/form",
-              (request, response) -> response.text(request.formParam("name").orElseThrow()));
+          .path(
+              "/",
+              scoped ->
+                  scoped.post(
+                      "/form",
+                      (request, response) ->
+                          response.text(request.formParam("name").orElseThrow())),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
 
@@ -131,11 +162,18 @@ class CorsTest {
 
   @Test
   void sharesAnAllowedActualResponseAndPreservesItsVaryFields() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(new CorsPolicy(Set.of("https://client.example")));
+    try (var app = new Shoostr()) {
+      var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+      app.extensions(cors);
       app.routes()
-          .get(
-              "/data", (_, response) -> response.setHeader("Vary", "Accept-Encoding").text("data"));
+          .path(
+              "/",
+              scoped ->
+                  scoped.get(
+                      "/data",
+                      (ignored, response) ->
+                          response.setHeader("Vary", "Accept-Encoding").text("data")),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -165,18 +203,20 @@ class CorsTest {
     var authentications = new AtomicInteger();
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(
-          new CorsPolicy(
-              Set.of("https://client.example"),
-              Set.of(HttpMethods.GET),
-              Set.of(),
-              true,
-              Set.of(),
-              5));
-      app.beforeRouteHandler((_, _) -> gates.incrementAndGet());
+    try (var app = new Shoostr()) {
+      var cors =
+          new Cors(
+              new CorsPolicy(
+                  Set.of("https://client.example"),
+                  Set.of(HttpMethods.GET),
+                  Set.of(),
+                  true,
+                  Set.of(),
+                  5));
+      app.extensions(cors);
+      app.beforeRouteHandler((ignored2, ignored3) -> gates.incrementAndGet());
       app.afterRequest(completions::add);
-      app.onRequestHeaders((_, _) -> admissions.incrementAndGet());
+      app.onRequestHeaders((ignored4, ignored5) -> admissions.incrementAndGet());
       var admission =
           new AuthenticationExtension() {
             @Override
@@ -190,8 +230,11 @@ class CorsTest {
           .routes()
           .path(
               "/",
-              routes -> routes.get("/data", (_, _) -> executions.incrementAndGet()),
-              e -> e.get(admission).enabled());
+              routes -> routes.get("/data", (ignored6, ignored7) -> executions.incrementAndGet()),
+              e -> {
+                e.with(admission);
+                e.with(cors);
+              });
 
       try (var test = TestServer.start(app)) {
         var preflight =
@@ -244,16 +287,22 @@ class CorsTest {
 
   @Test
   void answersCredentialedPreflightWithExplicitMethodAndHeaderPermissions() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(
-          new CorsPolicy(
-              Set.of("https://client.example"),
-              Set.of(HttpMethods.PUT),
-              Set.of(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE),
-              true,
-              Set.of(HttpHeaders.ETAG),
-              600));
-      app.routes().put("/data", (_, response) -> response.text("updated"));
+    try (var app = new Shoostr()) {
+      var cors =
+          new Cors(
+              new CorsPolicy(
+                  Set.of("https://client.example"),
+                  Set.of(HttpMethods.PUT),
+                  Set.of(HttpHeaders.AUTHORIZATION, HttpHeaders.CONTENT_TYPE),
+                  true,
+                  Set.of(HttpHeaders.ETAG),
+                  600));
+      app.extensions(cors);
+      app.routes()
+          .path(
+              "/",
+              scoped -> scoped.put("/data", (ignored8, response) -> response.text("updated")),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -313,12 +362,13 @@ class CorsTest {
     assertThrows(
         IllegalArgumentException.class,
         () -> new CorsPolicy(validOrigin, getMethod, emptyHeaders, false, emptyHeaders, -1));
-    assertThrows(
-        IllegalArgumentException.class,
+    assertDoesNotThrow(
         () -> new CorsPolicy(validOrigin, getMethod, wildcardHeader, false, emptyHeaders, 5));
+    assertDoesNotThrow(
+        () -> new CorsPolicy(validOrigin, getMethod, emptyHeaders, false, wildcardHeader, 5));
     assertThrows(
         IllegalArgumentException.class,
-        () -> new CorsPolicy(validOrigin, getMethod, emptyHeaders, false, wildcardHeader, 5));
+        () -> new CorsPolicy(validOrigin, getMethod, emptyHeaders, true, wildcardHeader, 5));
     for (var origin :
         Set.of(
             "",
@@ -341,10 +391,19 @@ class CorsTest {
     var admissions = new AtomicInteger();
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(new CorsPolicy(Set.of("https://client.example")));
-      app.onRequestHeaders((_, _) -> admissions.incrementAndGet());
-      app.routes().options("/data", (_, _) -> executions.incrementAndGet());
+    try (var app = new Shoostr()) {
+      var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+      app.extensions(cors);
+      app.onRequestHeaders((ignored9, ignored10) -> admissions.incrementAndGet());
+      app.routes()
+          .path(
+              "/",
+              scoped ->
+                  scoped
+                      .options("/data", (ignored11, ignored12) -> executions.incrementAndGet())
+                      .get("/data", (request, response) -> executions.incrementAndGet())
+                      .post("/data", (request, response) -> executions.incrementAndGet()),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
         String[][] invalidFields = {
@@ -401,7 +460,6 @@ class CorsTest {
           {"Origin", "null", "Access-Control-Request-Method", "GET"},
           {"Origin", "https://other.example", "Access-Control-Request-Method", "GET"},
           {"Origin", "https://client.example", "Access-Control-Request-Method", "POST"},
-          {"Origin", "https://client.example", "Access-Control-Request-Method", "get"},
           {
             "Origin",
             "https://client.example",
@@ -424,7 +482,18 @@ class CorsTest {
           assertEquals(403, result.statusCode(), Arrays.toString(fields));
           assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
         }
-        assertEquals(invalidFields.length + deniedFields.length, admissions.get());
+        var unsupported =
+            test.send(
+                request ->
+                    request
+                        .path("/data")
+                        .method("OPTIONS")
+                        .header("Origin", "https://client.example")
+                        .header("Access-Control-Request-Method", "get"));
+        assertEquals(405, unsupported.statusCode());
+        assertTrue(unsupported.headers().firstValue("Allow").orElseThrow().contains("GET"));
+        assertTrue(unsupported.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
+        assertEquals(invalidFields.length + deniedFields.length + 1, admissions.get());
         assertEquals(0, executions.get());
       }
     }
@@ -432,9 +501,14 @@ class CorsTest {
 
   @Test
   void preservesSameOriginAndAbsentOriginDispatchWithoutCrossOriginPermissions() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(new CorsPolicy(Set.of()));
-      app.routes().post("/data", (_, response) -> response.text("local"));
+    try (var app = new Shoostr()) {
+      var cors = new Cors(new CorsPolicy(Set.of()));
+      app.extensions(cors);
+      app.routes()
+          .path(
+              "/",
+              scoped -> scoped.post("/data", (ignored13, response) -> response.text("local")),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
         var sameOrigin =
@@ -463,9 +537,14 @@ class CorsTest {
   @ValueSource(strings = {"*", "null"})
   void sharesWildcardAndExplicitOpaqueOriginsWithoutCredentialReflection(String allowed)
       throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(new CorsPolicy(Set.of(allowed)));
-      app.routes().get("/data", (_, response) -> response.text("shared"));
+    try (var app = new Shoostr()) {
+      var cors = new Cors(new CorsPolicy(Set.of(allowed)));
+      app.extensions(cors);
+      app.routes()
+          .path(
+              "/",
+              scoped -> scoped.get("/data", (ignored14, response) -> response.text("shared")),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -484,10 +563,11 @@ class CorsTest {
   @Test
   void protectsSharingAndCacheFieldsAcrossFiniteStreamingPreflightAndErrorResponses()
       throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(new CorsPolicy(Set.of("https://client.example")));
+    try (var app = new Shoostr()) {
+      var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+      app.extensions(cors);
       Handler conflictingHeaders =
-          (_, response) -> {
+          (ignored15, response) -> {
             response
                 .setHeader("Vary", "Accept-Encoding, origin")
                 .addHeader("Vary", "Accept-Language");
@@ -503,24 +583,28 @@ class CorsTest {
       app.onRequestHeaders(conflictingHeaders);
       app.exception(
           RuntimeException.class,
-          (_, request, response) -> {
+          (ignored16, request, response) -> {
             conflictingHeaders.handle(request, response);
             response.text("mapped");
           });
       app.routes()
-          .get(
-              "/data",
-              (request, response) -> {
-                if (request.header("X-Test-Mode").filter("error"::equals).isPresent()) {
-                  throw new IllegalStateException("failure");
-                }
+          .path(
+              "/",
+              scoped ->
+                  scoped.get(
+                      "/data",
+                      (request, response) -> {
+                        if (request.header("X-Test-Mode").filter("error"::equals).isPresent()) {
+                          throw new IllegalStateException("failure");
+                        }
 
-                if (request.header("X-Test-Mode").filter("stream"::equals).isPresent()) {
-                  response.startStream("text/plain").write("stream");
-                } else {
-                  response.text("finite");
-                }
-              });
+                        if (request.header("X-Test-Mode").filter("stream"::equals).isPresent()) {
+                          response.startStream("text/plain").write("stream");
+                        } else {
+                          response.text("finite");
+                        }
+                      }),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
         for (var scenario :
@@ -603,8 +687,9 @@ class CorsTest {
 
   @Test
   void preventsAdmissionFromCommittingBeforeAnInterceptedPreflightDecision() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(new CorsPolicy(Set.of("https://client.example")));
+    try (var app = new Shoostr()) {
+      var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+      app.extensions(cors);
       app.onRequestHeaders(
           (request, response) -> {
             assertThrows(IllegalStateException.class, () -> response.startStream("text/plain"));
@@ -612,6 +697,12 @@ class CorsTest {
               throw new ForbiddenException();
             }
           });
+
+      app.routes()
+          .path(
+              "/",
+              scoped -> scoped.get("/data", (request, response) -> response.text("target")),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
         var allowed =
@@ -655,10 +746,17 @@ class CorsTest {
 
   @Test
   void replacesAdmissionBodyWithAnEmptyPreflightWhilePreservingAdmissionHeaders() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(new CorsPolicy(Set.of("https://client.example")));
+    try (var app = new Shoostr()) {
+      var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+      app.extensions(cors);
       app.onRequestHeaders(
-          (_, response) -> response.setHeader("X-Admission", "checked").text("staged"));
+          (ignored17, response) -> response.setHeader("X-Admission", "checked").text("staged"));
+
+      app.routes()
+          .path(
+              "/",
+              scoped -> scoped.get("/data", (request, response) -> response.text("target")),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -682,23 +780,35 @@ class CorsTest {
   @ValueSource(booleans = {false, true})
   void preservesExplicitOptionsWithDisabledCorsAndOrdinaryOptionsWithEnabledCors(boolean enabled)
       throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
+      var cors =
+          new Cors(
+              new CorsPolicy(
+                  Set.of("https://client.example"),
+                  Set.of(HttpMethods.OPTIONS),
+                  Set.of(),
+                  false,
+                  Set.of(),
+                  0));
       if (enabled) {
-        app.cors(
-            new CorsPolicy(
-                Set.of("https://client.example"),
-                Set.of(HttpMethods.OPTIONS),
-                Set.of(),
-                false,
-                Set.of(),
-                0));
+        app.extensions(cors);
       }
 
       app.routes()
-          .options(
-              "/data",
-              (_, response) ->
-                  response.setHeader("Access-Control-Allow-Origin", "manual").text("explicit"));
+          .path(
+              "/",
+              scoped ->
+                  scoped.options(
+                      "/data",
+                      (ignored18, response) ->
+                          response
+                              .setHeader("Access-Control-Allow-Origin", "manual")
+                              .text("explicit")),
+              scope -> {
+                if (enabled) {
+                  scope.with(cors);
+                }
+              });
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -745,17 +855,22 @@ class CorsTest {
     exposed.clear();
     var retainedOrigins = policy.origins();
     var retainedMethods = policy.methods();
-    var retainedHeaders = policy.headers();
+    var retainedHeaders = policy.allowedHeaders();
     var retainedExposedHeaders = policy.exposedHeaders();
     assertThrows(UnsupportedOperationException.class, retainedOrigins::clear);
     assertThrows(UnsupportedOperationException.class, retainedMethods::clear);
     assertThrows(UnsupportedOperationException.class, retainedHeaders::clear);
     assertThrows(UnsupportedOperationException.class, retainedExposedHeaders::clear);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-      app.cors(policy);
-      app.routes().get("/data", (_, response) -> response.text("shared"));
+      var cors = new Cors(policy);
+      app.extensions(cors);
+      app.routes()
+          .path(
+              "/",
+              scoped -> scoped.get("/data", (ignored19, response) -> response.text("shared")),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
         var futures = new ArrayList<Future<Map.Entry<String, HttpResponse<String>>>>();
@@ -814,10 +929,15 @@ class CorsTest {
 
   @Test
   void usesOnlyTrustedEffectiveOriginsForSameOriginDispatch() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.trustedProxies(InetAddress::isLoopbackAddress);
-      app.cors(new CorsPolicy(Set.of()));
-      app.routes().post("/data", (_, response) -> response.text("local"));
+      var cors = new Cors(new CorsPolicy(Set.of()));
+      app.extensions(cors);
+      app.routes()
+          .path(
+              "/",
+              scoped -> scoped.post("/data", (ignored20, response) -> response.text("local")),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -893,9 +1013,14 @@ class CorsTest {
             "https://client.example.",
             "https://client.example:8443");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(new CorsPolicy(origins));
-      app.routes().get("/data", (_, response) -> response.text("shared"));
+    try (var app = new Shoostr()) {
+      var cors = new Cors(new CorsPolicy(origins));
+      app.extensions(cors);
+      app.routes()
+          .path(
+              "/",
+              scoped -> scoped.get("/data", (ignored21, response) -> response.text("shared")),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
         for (var origin : origins) {
@@ -924,19 +1049,24 @@ class CorsTest {
 
   @ParameterizedTest
   @ValueSource(ints = {404, 405})
-  void preservesWildcardVaryAndCredentialedSharingOnGeneratedErrors(int expected) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(
-          new CorsPolicy(
-              Set.of("https://client.example"),
-              Set.of(HttpMethods.GET),
-              Set.of(),
-              true,
-              Set.of(),
-              5));
-      app.onRequestHeaders((_, response) -> response.setHeader("Vary", "*"));
+  void doesNotGrantCorsForUnmatchedRoutesWithoutGroupFallbackAndPreservesAdmissionVary(int expected)
+      throws Exception {
+    try (var app = new Shoostr()) {
+      var cors =
+          new Cors(
+              new CorsPolicy(
+                  Set.of("https://client.example"),
+                  Set.of(HttpMethods.GET),
+                  Set.of(),
+                  true,
+                  Set.of(),
+                  5));
+      app.extensions(cors);
+      app.onRequestHeaders((ignored22, response) -> response.setHeader("Vary", "*"));
       if (expected == 405) {
-        app.routes().post("/data", (_, response) -> response.text("post"));
+        app.routes()
+            .post(
+                "/data", (ignored23, response) -> response.text("post"), scope -> scope.with(cors));
       }
 
       try (var test = TestServer.start(app)) {
@@ -949,47 +1079,57 @@ class CorsTest {
                         .header("Origin", "https://client.example"),
                 HttpResponse.BodyHandlers.ofString());
         assertEquals(expected, result.statusCode());
-        assertEquals(
-            "https://client.example",
-            result.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
-        assertEquals(
-            "true", result.headers().firstValue("Access-Control-Allow-Credentials").orElseThrow());
+        assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
+        assertTrue(result.headers().firstValue("Access-Control-Allow-Credentials").isEmpty());
         assertEquals(List.of("*"), result.headers().allValues("Vary"));
       }
     }
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Null policy is the invalid registration under test.
-  void freezesCorsRegistrationAtStartupAndRejectsRepeatedConfiguration() throws Exception {
+  @SuppressWarnings("NullAway") // Null is the invalid policy under test.
+  void freezesScopedCorsConfigurationAndRejectsInstallationAfterStartupOrClose() throws Exception {
     var policy = new CorsPolicy(Set.of("https://client.example"));
+    assertThrows(NullPointerException.class, () -> new Cors(null));
+    var retained = new AtomicReference<Cors.Configuration>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      assertThrows(NullPointerException.class, () -> app.cors(null));
-      app.cors(policy);
-      assertThrows(IllegalStateException.class, () -> app.cors(policy));
+    try (var app = new Shoostr()) {
+      var cors = new Cors(policy);
+      app.extensions(cors);
+      app.routes()
+          .get(
+              "/configured",
+              (request, response) -> response.text("ready"),
+              extensions -> retained.set(extensions.with(cors)));
+      assertThrows(IllegalStateException.class, () -> retained.get().policy(policy));
+
+      try (var test = TestServer.start(app)) {
+        assertThrows(IllegalStateException.class, () -> app.extensions(new Cors(policy)));
+      }
     }
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.start();
-      assertThrows(IllegalStateException.class, () -> app.cors(policy));
-    }
-
-    var closed = new Shoostr(Options.defaults().withPort(0));
+    var closed = new Shoostr();
     closed.close();
-    assertThrows(IllegalStateException.class, () -> closed.cors(policy));
+    assertThrows(IllegalStateException.class, () -> closed.extensions(new Cors(policy)));
   }
 
   @ParameterizedTest
   @ValueSource(strings = {"Accept-Language", "*"})
   void retainsAdmissionVaryOnBuiltInCorsErrorResponses(String vary) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(new CorsPolicy(Set.of("https://client.example")));
+    try (var app = new Shoostr()) {
+      var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+      app.extensions(cors);
       app.onRequestHeaders(
-          (_, response) -> {
+          (ignored24, response) -> {
             response.setHeader("Vary", vary);
             throw new ForbiddenException();
           });
+
+      app.routes()
+          .path(
+              "/",
+              scoped -> scoped.get("/data", (request, response) -> response.text("target")),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
 
@@ -1018,17 +1158,22 @@ class CorsTest {
 
   @Test
   void preservesCorsHeadersAcrossExplicitStreamingFlushAndFrameworkClosure() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(new CorsPolicy(Set.of("https://client.example")));
+    try (var app = new Shoostr()) {
+      var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
+      app.extensions(cors);
       app.routes()
-          .get(
-              "/data",
-              (_, response) -> {
-                var stream = response.startStream("text/plain");
-                stream.write("first");
-                stream.flush();
-                stream.write("second");
-              });
+          .path(
+              "/",
+              scoped ->
+                  scoped.get(
+                      "/data",
+                      (ignored25, response) -> {
+                        var stream = response.startStream("text/plain");
+                        stream.write("first");
+                        stream.flush();
+                        stream.write("second");
+                      }),
+              scope -> scope.with(cors));
 
       try (var test = TestServer.start(app)) {
 
@@ -1055,16 +1200,24 @@ class CorsTest {
     var admissions = new AtomicInteger();
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.cors(new CorsPolicy(Set.of("http://example.test", "https://client.example")));
-      app.onRequestHeaders((_, _) -> admissions.incrementAndGet());
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
+      var cors = new Cors(new CorsPolicy(Set.of("http://example.test", "https://client.example")));
+      app.extensions(cors);
+      app.onRequestHeaders((ignored26, ignored27) -> admissions.incrementAndGet());
       app.routes()
-          .get(
-              "/raw",
-              (request, response) -> {
-                executions.incrementAndGet();
-                response.text(request.queryString().orElseThrow());
-              });
+          .path(
+              "/",
+              scoped ->
+                  scoped.get(
+                      "/raw",
+                      (request, response) -> {
+                        executions.incrementAndGet();
+                        response.text(request.queryString().orElseThrow());
+                      }),
+              scope -> scope.with(cors));
       app.start();
 
       String withoutOrigin;

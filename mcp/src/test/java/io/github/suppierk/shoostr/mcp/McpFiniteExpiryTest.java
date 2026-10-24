@@ -54,7 +54,7 @@ class McpFiniteExpiryTest {
                   extracted.countDown();
                   return new McpIdentity("alice:client", McpTransportContext.EMPTY, deadline);
                 },
-                (_, _) -> authorizations.incrementAndGet()),
+                (ignored, ignored2) -> authorizations.incrementAndGet()),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
@@ -141,10 +141,10 @@ class McpFiniteExpiryTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ ->
+                ignored3 ->
                     new McpIdentity(
                         "alice:client", McpTransportContext.EMPTY, Instant.now().plusSeconds(1)),
-                (_, _) -> {
+                (ignored4, ignored5) -> {
                   try {
                     // Keep authorization interruptible so the deadline can abort it.
                     new CountDownLatch(1).await(5, TimeUnit.SECONDS);

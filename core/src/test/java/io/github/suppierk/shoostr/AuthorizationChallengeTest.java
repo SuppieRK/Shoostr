@@ -17,7 +17,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class AuthorizationChallengeTest {
   private static final String CHALLENGE = "Bearer error=\"insufficient_scope\", scope=\"write\"";
   private static final Handler DENY =
-      (_, _) -> {
+      (ignored, ignored2) -> {
         throw new AuthorizationDeniedException(CHALLENGE);
       };
 
@@ -27,9 +27,11 @@ class AuthorizationChallengeTest {
       throws Exception {
     try (var app = new Shoostr()) {
       if ("app".equals(renderer)) {
-        app.exception(ForbiddenException.class, (_, _, response) -> response.text("custom"));
+        app.exception(
+            ForbiddenException.class, (ignored3, ignored4, response) -> response.text("custom"));
       } else if ("scope".equals(renderer)) {
-        app.routes().exception(Exception.class, (_, _, response) -> response.text("custom"));
+        app.routes()
+            .exception(Exception.class, (ignored5, ignored6, response) -> response.text("custom"));
       }
 
       app.routes().get("/denied", DENY);
@@ -53,7 +55,7 @@ class AuthorizationChallengeTest {
     try (var app = new Shoostr()) {
       app.exception(
           ForbiddenException.class,
-          (_, _, response) ->
+          (ignored7, ignored8, response) ->
               response
                   .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Basic realm=\"wrong\"")
                   .text("custom"));
@@ -74,7 +76,8 @@ class AuthorizationChallengeTest {
       app.routes()
           .exception(
               AuthorizationDeniedException.class,
-              (_, _, response) -> response.startStream("text/plain").write("streamed denial"))
+              (ignored9, ignored10, response) ->
+                  response.startStream("text/plain").write("streamed denial"))
           .get("/denied", DENY);
 
       try (var test = TestServer.start(app)) {
@@ -92,7 +95,8 @@ class AuthorizationChallengeTest {
   @Test
   void doesNotAddTheDenialChallengeWhenTheRendererDeliberatelyChangesStatus() throws Exception {
     try (var app = new Shoostr()) {
-      app.exception(ForbiddenException.class, (_, _, response) -> response.status(404));
+      app.exception(
+          ForbiddenException.class, (ignored11, ignored12, response) -> response.status(404));
       app.routes().get("/denied", DENY);
 
       try (var test = TestServer.start(app)) {
@@ -109,7 +113,7 @@ class AuthorizationChallengeTest {
       app.routes()
           .get(
               "/denied",
-              (_, _) -> {
+              (ignored13, ignored14) -> {
                 throw new ForbiddenException();
               });
 

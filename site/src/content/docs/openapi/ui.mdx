@@ -1,0 +1,36 @@
+---
+title: Serve a protected local OpenAPI UI
+description: Serve Swagger UI with local assets, protect the page and OpenAPI specification together, and authorize API calls without forwarding browser cookies or cached credentials.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/16-openapi/src/main/java/io/github/suppierk/shoostr/example/openapi/OpenApiUiExample.java?raw';
+import test from '../../../../../examples/16-openapi/src/test/java/io/github/suppierk/shoostr/example/openapi/OpenApiUiExampleTest.java?raw';
+
+## Description
+
+Use `OpenApi.uiHandler()` from `shoostr-openapi` to serve the documentation page and its bundled assets from your application, without a CDN or external specification validator.
+Register the specification, the page path ending in `/`, and a catch-all asset route explicitly; installing the document does not register those routes.
+The handler serves only its four prepared resources and returns 404 for other asset paths.
+
+Protect all three registrations when the API description is private, rather than protecting only the HTML page.
+This example uses `shoostr-pac4j` with `pac4j-http` to apply the same Basic authentication policy to the page, assets and specification.
+Its fixed credentials are for local demonstration only; use a real credential verifier and HTTPS for deployed Basic authentication, as described in the [pac4j recipe](../../security/pac4j/).
+
+## Example
+
+The API's `/me` operation requires authentication independently of its OpenAPI security description.
+Use the UI's **Authorize** action to supply API credentials explicitly: API calls omit browser cookies and cached HTTP credentials, while the same-origin specification request can use the documentation login.
+Authorization is not saved across page loads. This UI policy does not support API authentication that depends on browser session cookies; use another client for those operations.
+
+Keep the UI base path and specification path literal and same-origin, and hide the UI group from the document if a parent group selects it.
+For schemas and operation metadata, see [Describe HTTP operations with OpenAPI](../documents/).
+
+<Code code={application} lang="java" title="OpenApiUiExample.java" />
+
+## Test
+
+The tests check authentication on every resource and the actual API, inspect the published UI settings, and retrieve the bundled assets, including the large JavaScript bundle.
+They verify the HTTP responses and bootstrap configuration, not execution of Swagger UI in a browser.
+
+<Code code={test} lang="java" title="OpenApiUiExampleTest.java" />

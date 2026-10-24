@@ -12,7 +12,7 @@ public record AdmissionExtension(Handler callback) implements Extension<Handler>
 
   @Override
   public Handler configure(Extensions endpoint, Handler inherited) {
-    endpoint.beforeRouteHandler(callback);
+    endpoint.lifecycle().beforeRouteHandler(callback);
     return callback;
   }
 }

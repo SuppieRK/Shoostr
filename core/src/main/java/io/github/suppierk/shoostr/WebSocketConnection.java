@@ -17,7 +17,7 @@ import org.eclipse.jetty.websocket.core.CloseStatus;
 import org.jspecify.annotations.Nullable;
 
 /** A connection with serialized, interruptible, transport-completing writes. */
-public final class WebSocketConnection implements AutoCloseable {
+public sealed class WebSocketConnection implements AutoCloseable permits TypedWebSocketConnection {
   private final Session session;
   private final String path;
   private final Map<String, String> parameters;
@@ -170,6 +170,32 @@ public final class WebSocketConnection implements AutoCloseable {
   public void send(byte[] bytes) throws IOException, InterruptedException {
     Objects.requireNonNull(bytes);
     write(callback -> session.sendBinary(ByteBuffer.wrap(bytes.clone()), callback));
+  }
+
+  /**
+   * Encodes within existing write admission without blocking independent closure.
+   *
+   * @param codec configured finite conversion
+   * @param value nonnull application value
+   * @throws IOException if the connection has closed
+   * @throws Exception if encoding or transport completion fails
+   */
+  @SuppressWarnings("java:S112")
+  final void sendEncoded(Codec codec, Object value) throws Exception {
+    Objects.requireNonNull(value);
+    writes.lockInterruptibly();
+
+    try {
+      synchronized (lifecycle) {
+        if (terminal || !session.isOpen()) {
+          throw new IOException("WebSocket is closed");
+        }
+      }
+      // The raw send rechecks closure after conversion and owns the copied binary bytes.
+      send(Objects.requireNonNull(codec.write(value), "Codec returned null bytes"));
+    } finally {
+      writes.unlock();
+    }
   }
 
   /**

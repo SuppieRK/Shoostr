@@ -34,7 +34,8 @@ import org.jspecify.annotations.Nullable;
  * caller-runs, discard or discard-oldest policy classes. Custom policies (including subclasses) and
  * executor wrappers must honor the same contract. Shoostr never shuts these executors down or
  * interrupts their running workers. The caller must keep them usable until the app has closed and
- * its running handlers have finished. Default registrations retain virtual-thread execution.
+ * its running handlers have finished. Default registrations use the application's native execution
+ * mode: platform threads by default, with {@link Shoostr#virtualThreads()} for virtual execution.
  * Request observation context is explicitly attached; arbitrary thread-local state and
  * application-created child tasks are not propagated.
  */
@@ -48,7 +49,7 @@ public final class Routes implements Closeable {
   private final int scopeDepth;
   private final ThreadLocal<Integer> activeGroupDepth;
   private final List<Predicate<Request>> conditions;
-  private final @Nullable Extensions configuration;
+  private @Nullable Extensions configuration;
   private final Set<Extension<?>> installed;
   private final List<Runnable> notifications;
   private boolean localObservers;
@@ -62,6 +63,8 @@ public final class Routes implements Closeable {
   private final Set<String> websocketRouteKeys;
   private @Nullable RadixRoutes websocketRouter;
   private int activeRegistrations;
+  private boolean registrationStarted;
+  private boolean configuringDefaults;
   private boolean closed;
 
   /** Creates the root scope, which owns registration state and the lock shared by all scopes. */
@@ -128,7 +131,7 @@ public final class Routes implements Closeable {
    */
   void register(Consumer<Routes> registration) {
     synchronized (lock) {
-      requireMutable();
+      beginRegistration();
       Objects.requireNonNull(registration);
       root.activeRegistrations++;
     }
@@ -137,6 +140,44 @@ public final class Routes implements Closeable {
       registration.accept(this);
     } finally {
       synchronized (lock) {
+        root.activeRegistrations--;
+      }
+    }
+  }
+
+  /**
+   * Publishes one frozen default scope before registration begins.
+   *
+   * @param configure application defaults callback
+   * @throws IllegalStateException if defaults or registration have begun, or registration has
+   *     closed
+   */
+  void configureDefaults(Consumer<Extensions> configure) {
+    Objects.requireNonNull(configure);
+    Extensions defaults;
+    synchronized (lock) {
+      requireMutable();
+      if (root.configuringDefaults || root.registrationStarted || configuration != null) {
+        throw new IllegalStateException(
+            "Configure extension defaults once before registering routes");
+      }
+
+      root.configuringDefaults = true;
+      root.activeRegistrations++;
+      defaults = new Extensions(installed, null);
+    }
+
+    try {
+      configure.accept(defaults);
+      defaults.freeze();
+      synchronized (lock) {
+        requireMutable();
+        configuration = defaults;
+      }
+    } finally {
+      defaults.freeze();
+      synchronized (lock) {
+        root.configuringDefaults = false;
         root.activeRegistrations--;
       }
     }
@@ -211,7 +252,7 @@ public final class Routes implements Closeable {
     int previousDepth = groupDepth();
     int nextDepth = nextGroupDepth(previousDepth);
     synchronized (lock) {
-      requireMutable();
+      beginRegistration();
       Objects.requireNonNull(registration);
       group = join(prefix, path);
       RadixRoutes.parameters(group);
@@ -242,7 +283,15 @@ public final class Routes implements Closeable {
         }
       }
 
-      registration.accept(new Routes(this, group, conditions, local, nextDepth));
+      if (local != null) {
+        local.freeze();
+      }
+
+      var child = new Routes(this, group, conditions, local, nextDepth);
+      synchronized (lock) {
+        requireMutable();
+      }
+      registration.accept(child);
     } finally {
       if (local != null) {
         local.freeze();
@@ -1183,7 +1232,7 @@ public final class Routes implements Closeable {
    */
   public Routes when(BooleanSupplier condition, Consumer<Routes> registration) {
     Objects.requireNonNull(condition);
-    return when(_ -> condition.getAsBoolean(), registration);
+    return when(ignored -> condition.getAsBoolean(), registration);
   }
 
   /**
@@ -1199,7 +1248,7 @@ public final class Routes implements Closeable {
     int previousDepth = groupDepth();
     int nextDepth = nextGroupDepth(previousDepth);
     synchronized (lock) {
-      requireMutable();
+      beginRegistration();
       Objects.requireNonNull(registration);
       var inherited = new ArrayList<>(conditions);
       inherited.add(Objects.requireNonNull(condition));
@@ -1380,8 +1429,8 @@ public final class Routes implements Closeable {
       endpoint =
           RadixRoutes.websocketEndpoint(
                   join(prefix, path),
-                  (_, _) -> {},
-                  (request, response, _) ->
+                  (ignored2, ignored3) -> {},
+                  (request, response, ignored4) ->
                       Objects.requireNonNull(listenerFactory).apply(request, response))
               .withExecutor(executor);
     }
@@ -1390,7 +1439,8 @@ public final class Routes implements Closeable {
 
   /**
    * Registers complete-message callbacks configured once, running sequentially per connection on
-   * Shoostr-managed virtual threads. Existing native factories retain their own execution.
+   * the application's configured execution facility. Existing native factories retain their own
+   * execution.
    *
    * @param path relative endpoint path
    * @param configuration eager callback configuration
@@ -1436,7 +1486,7 @@ public final class Routes implements Closeable {
 
   /**
    * Runs the matched HTTP handshake on a borrowed executor. All subsequent WebSocket callbacks run
-   * on managed virtual threads; executor thread-local bindings are not propagated.
+   * using the application's execution mode; executor thread-local bindings are not propagated.
    *
    * @param path relative endpoint path
    * @param executor asynchronous borrowed handshake executor
@@ -1450,7 +1500,7 @@ public final class Routes implements Closeable {
 
   /**
    * Selects a borrowed HTTP handshake executor and local extensions. Subsequent WebSocket callbacks
-   * remain on managed virtual threads, without propagating arbitrary executor-local bindings.
+   * use the application's execution mode, without propagating arbitrary executor-local bindings.
    *
    * @param path relative endpoint path
    * @param executor asynchronous borrowed handshake executor
@@ -1481,7 +1531,7 @@ public final class Routes implements Closeable {
 
   /**
    * Configures this group's handshake on a borrowed executor with local HTTP extensions. Subsequent
-   * WebSocket callbacks remain on managed virtual threads without executor-local bindings.
+   * WebSocket callbacks use the application's execution mode without executor-local bindings.
    *
    * @param executor asynchronous borrowed handshake executor
    * @param configuration eager callback configuration
@@ -1509,8 +1559,27 @@ public final class Routes implements Closeable {
       @Nullable ExecutorService executor,
       Consumer<WebSocket> configuration,
       @Nullable Consumer<Extensions> extensions) {
+    return registerManagedWebsocket(path, executor, new WebSocket(), configuration, extensions);
+  }
+
+  /**
+   * Shares route reservation and publication between ordinary and codec-enabled callbacks.
+   *
+   * @param path relative endpoint path
+   * @param executor optional borrowed handshake executor
+   * @param callbacks framework-owned callback configuration
+   * @param configuration eager callback registration
+   * @param extensions optional local handshake extensions
+   * @return this scope
+   */
+  Routes registerManagedWebsocket(
+      String path,
+      @Nullable ExecutorService executor,
+      WebSocket callbacks,
+      Consumer<WebSocket> configuration,
+      @Nullable Consumer<Extensions> extensions) {
     Objects.requireNonNull(configuration);
-    var callbacks = new WebSocket();
+    Objects.requireNonNull(callbacks);
     RadixRoutes.Endpoint endpoint;
     synchronized (lock) {
       requireMutable();
@@ -1518,7 +1587,7 @@ public final class Routes implements Closeable {
           RadixRoutes.websocketEndpoint(
                   join(prefix, path),
                   callbacks::admit,
-                  (request, _, runtime) -> {
+                  (request, ignored5, runtime) -> {
                     request.response().requireWebSocketUpgrade();
                     return new ManagedWebSocket(callbacks, request, runtime);
                   })
@@ -1738,7 +1807,7 @@ public final class Routes implements Closeable {
     var entries = websocket ? websocketRegistrations : registrations;
     String key = websocket ? endpoint.pattern() : endpoint.method() + " " + endpoint.pattern();
     synchronized (lock) {
-      requireMutable();
+      beginRegistration();
       if (!keys.add(key)) {
         throw new IllegalArgumentException("Duplicate route shape: " + key);
       }
@@ -1941,7 +2010,7 @@ public final class Routes implements Closeable {
   private Routes staticSource(String path, Function<String, StaticFiles> source) {
     String mount;
     synchronized (lock) {
-      requireMutable();
+      beginRegistration();
       mount = staticMount(path);
       root.activeRegistrations++;
     }
@@ -1980,15 +2049,24 @@ public final class Routes implements Closeable {
    * Static mounts transfer to the compiled router; other registration data is released. Active
    * callbacks are rejected before compilation, allowing startup to be retried once they finish.
    *
+   * @param sessions whether native application sessions are configured
    * @return the completed router with literal-first endpoint matching
    * @throws IllegalStateException if registration is closed or a route registration callback is
    *     active
    */
-  RadixRoutes compile() {
+  RadixRoutes compile(boolean sessions) {
     synchronized (lock) {
       requireMutable();
       if (root.activeRegistrations != 0) {
         throw new IllegalStateException("Finish route registration callbacks before starting");
+      }
+
+      if (!sessions
+          && (registrations.stream()
+                  .anyMatch(
+                      endpoint -> endpoint.behavior() != null && endpoint.behavior().csrf() != null)
+              || staticFiles.stream().anyMatch(StaticFiles::requiresSessions))) {
+        throw new IllegalStateException("CSRF protection requires application sessions");
       }
 
       var resolved =
@@ -2118,6 +2196,20 @@ public final class Routes implements Closeable {
     if (root.closed) {
       throw new IllegalStateException("Register routes before starting or closing the app");
     }
+  }
+
+  /**
+   * Starts registration while excluding an unfinished application-default callback.
+   *
+   * @throws IllegalStateException if registration has closed or defaults are still being configured
+   */
+  private void beginRegistration() {
+    requireMutable();
+    if (root.configuringDefaults) {
+      throw new IllegalStateException("Finish configuring extension defaults before registration");
+    }
+
+    root.registrationStarted = true;
   }
 
   /**

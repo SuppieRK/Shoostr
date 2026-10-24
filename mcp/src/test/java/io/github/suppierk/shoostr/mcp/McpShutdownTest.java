@@ -27,8 +27,8 @@ class McpShutdownTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
@@ -73,8 +73,8 @@ class McpShutdownTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored4 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored5, ignored6) -> {});
     var tool =
         McpSchema.Tool.builder("wait", Map.of("type", "object", "properties", Map.of())).build();
     var mcp =
@@ -86,7 +86,7 @@ class McpShutdownTest {
                     .tools(
                         McpServerFeatures.AsyncToolSpecification.builder()
                             .tool(tool)
-                            .callHandler((_, _) -> Mono.never())
+                            .callHandler((ignored7, ignored8) -> Mono.never())
                             .build())
                     .build());
     var app = new Shoostr();
@@ -158,7 +158,7 @@ class McpShutdownTest {
 
               return new McpIdentity("public", McpTransportContext.EMPTY, null);
             },
-            (_, _) -> {});
+            (ignored9, ignored10) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     class ShutdownWitness implements Extension<Void> {
       @Override

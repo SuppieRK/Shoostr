@@ -116,7 +116,9 @@ class TypedCodecTest {
   void rejectsNullCodecWithoutConsumingConfiguration() throws Exception {
     try (var app = new Shoostr()) {
       assertThrows(NullPointerException.class, () -> app.codec(null));
-      app.codec(new TestCodec()).routes().get("/valid", (_, response) -> response.text("valid"));
+      app.codec(new TestCodec())
+          .routes()
+          .get("/valid", (ignored, response) -> response.text("valid"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/valid")).statusCode());

@@ -2,9 +2,11 @@ package io.github.suppierk.shoostr;
 
 import io.github.suppierk.shoostr.http.ForwardedHeaders;
 import io.github.suppierk.shoostr.http.HttpCharacters;
+import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException;
+import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import io.github.suppierk.shoostr.http.exceptions.HttpException;
 import java.io.Closeable;
 import java.io.IOException;
@@ -40,8 +42,12 @@ import org.eclipse.jetty.server.SslConnectionFactory;
 import org.eclipse.jetty.server.handler.ContextHandler;
 import org.eclipse.jetty.server.handler.GracefulHandler;
 import org.eclipse.jetty.session.SessionHandler;
+import org.eclipse.jetty.session.SessionIdManager;
 import org.eclipse.jetty.util.Callback;
+import org.eclipse.jetty.util.VirtualThreads;
+import org.eclipse.jetty.util.component.LifeCycle;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
+import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.websocket.core.WebSocketConstants;
 import org.eclipse.jetty.websocket.server.ServerWebSocketContainer;
 import org.jspecify.annotations.Nullable;
@@ -80,16 +86,16 @@ public final class Shoostr implements Closeable {
   private final List<Runnable> beforeCloseCallbacks;
   private final List<Runnable> afterCloseCallbacks;
   private @Nullable TrustedProxy trustedProxy;
-  private @Nullable CorsPolicy corsPolicy;
-  private @Nullable Consumer<SessionHandler> sessionConfiguration;
   private @Nullable Consumer<SslContextFactory.Server> tlsConfiguration;
   private boolean http2;
   private boolean compression;
+  private boolean virtualThreadsEnabled;
+  private @Nullable Consumer<SessionHandler> sessionConfiguration;
   private @Nullable Server server;
   private @Nullable ServerConnector connector;
   private @Nullable RadixRoutes router;
   private @Nullable RadixRoutes websocketRouter;
-  private @Nullable ExecutorService virtualThreads;
+  private @Nullable ExecutorService ownedVirtualThreads;
   private @Nullable WebSocketRuntime managedWebSockets;
   private @Nullable Thread shutdownHook;
   private boolean started;
@@ -178,6 +184,27 @@ public final class Shoostr implements Closeable {
   }
 
   /**
+   * Enables virtual execution for blocking request handlers and managed WebSocket callbacks. Jetty
+   * retains its native platform pool for transport work. Explicit endpoint executors and later
+   * native pool configuration take precedence. Repeated calls before startup are harmless.
+   *
+   * <p>The application's dedicated virtual executor is acquired during startup and closed with the
+   * application. A replacement delegate supplied through native configuration remains caller-owned.
+   * Choose this mode after measuring the application's workload and downstream capacity.
+   *
+   * @return this application
+   * @throws IllegalStateException if startup has begun or the application is closed
+   */
+  public synchronized Shoostr virtualThreads() {
+    if (started || closed) {
+      throw new IllegalStateException("Thread execution must be configured before startup");
+    }
+
+    virtualThreadsEnabled = true;
+    return this;
+  }
+
+  /**
    * Enables TLS on the default listener. The callback configures Jetty's native, unstarted TLS
    * context, including its key store. Shoostr owns the context and connector lifecycle. Configure
    * before startup; the default listener remains HTTP/1.1 unless HTTP/2 is also enabled.
@@ -259,7 +286,7 @@ public final class Shoostr implements Closeable {
     }
 
     this.codec = Objects.requireNonNull(codec);
-    return new TypedShoostr(this);
+    return new TypedShoostr(this, codec);
   }
 
   /**
@@ -289,8 +316,21 @@ public final class Shoostr implements Closeable {
   }
 
   /**
+   * Configures inherited extension defaults once before route or group registration.
+   *
+   * @param configuration defaults applied to independently configured endpoint scopes
+   * @return this application
+   * @throws IllegalStateException if defaults or route registration have already begun
+   * @throws NullPointerException if the configuration is null
+   */
+  public Shoostr configureExtensionsDefaults(Consumer<Extensions> configuration) {
+    routes.configureDefaults(configuration);
+    return this;
+  }
+
+  /**
    * Installs one managed identity source. Routes/groups explicitly require it using
-   * extensions.get(instance).enabled(); installation itself leaves routes public.
+   * extensions.with(instance); installation itself leaves routes public.
    *
    * @param extension identity source
    * @return this application
@@ -514,7 +554,8 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Registers an admission callback after request headers are available and before route lookup.
+   * Registers an admission callback after request headers are available and before matched-route
+   * processing.
    *
    * @param handler callback on the request thread
    * @return this application
@@ -564,33 +605,13 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Enables an immutable application-wide CORS policy before startup. Recognized preflights run
-   * header admission, then finish without route authentication or business handlers. Actual
-   * requests retain normal authentication. CORS is response-sharing permission, not CSRF
-   * protection.
-   *
-   * @param policy explicit cross-origin permissions
-   * @return this application
-   * @throws IllegalStateException if startup has begun, the app is closed or CORS is already set
-   * @throws NullPointerException if policy is null
-   */
-  public synchronized Shoostr cors(CorsPolicy policy) {
-    if (started || closed || corsPolicy != null) {
-      throw new IllegalStateException("CORS must be configured once before startup");
-    }
-
-    corsPolicy = Objects.requireNonNull(policy);
-    return this;
-  }
-
-  /**
    * Enables Jetty's in-memory HTTP sessions with its default configuration.
    *
    * @return this application
    * @throws IllegalStateException if startup has begun, the app is closed, or sessions are enabled
    */
   public synchronized Shoostr sessions() {
-    return sessions(_ -> {});
+    return sessions(ignored -> {});
   }
 
   /**
@@ -768,7 +789,7 @@ public final class Shoostr implements Closeable {
       throw new IllegalStateException("Shoostr can only start once and cannot start after close");
     }
 
-    router = routes.compile();
+    router = routes.compile(sessionConfiguration != null);
     websocketRouter = routes.websocketRouter();
 
     try {
@@ -807,10 +828,10 @@ public final class Shoostr implements Closeable {
 
   /**
    * Signals installed extensions before draining and stopping Jetty using its configured native
-   * timeouts, then interrupts remaining owned virtual-thread tasks and removes the shutdown hook.
-   * Does not wait for application code that ignores interruption. Repeated calls are harmless,
-   * including a call before startup. Caller-owned endpoint executors are never closed or
-   * interrupted. Unstarted selected requests are canceled after draining; running handlers may
+   * timeouts, then interrupts remaining framework-created virtual tasks and removes the shutdown
+   * hook. Does not wait indefinitely for application code that ignores interruption. Repeated calls
+   * are harmless, including a call before startup. Caller-owned endpoint executors are never closed
+   * or interrupted. Unstarted selected requests are canceled after draining; running handlers may
    * finish and release their resources after this method returns. The caller must coordinate their
    * completion before closing supplied dependencies. Final extension resource cleanup follows
    * native drain; ordinary signalling failures are collected without skipping subsequent shutdown
@@ -853,8 +874,8 @@ public final class Shoostr implements Closeable {
 
     serverConfigurations.clear();
     httpConfigurations.clear();
-    sessionConfiguration = null;
     tlsConfiguration = null;
+    sessionConfiguration = null;
 
     failure = signalManagedWebSocketsBeforeStop(failure);
 
@@ -871,6 +892,7 @@ public final class Shoostr implements Closeable {
 
       failure = appendCloseFailure(failure, "Could not stop HTTP server", stopFailure);
     } finally {
+      failure = finishManagedWebSocketDispatch(failure);
       if (router != null) {
         try {
           router.close();
@@ -881,9 +903,16 @@ public final class Shoostr implements Closeable {
         }
       }
 
-      if (virtualThreads != null) {
+      if (ownedVirtualThreads != null) {
         try {
-          virtualThreads.shutdownNow();
+          if (server != null
+              && server.getThreadPool() instanceof QueuedThreadPool pool
+              && pool.getVirtualThreadsExecutor() == ownedVirtualThreads) {
+            // Let native late cleanup use Jetty's policy instead of a closed virtual delegate.
+            pool.setVirtualThreadsExecutor(null);
+          }
+
+          ownedVirtualThreads.shutdownNow();
         } catch (RuntimeException executorFailure) {
           failure = appendCloseFailure(failure, "Could not close HTTP executor", executorFailure);
         }
@@ -941,6 +970,25 @@ public final class Shoostr implements Closeable {
         managedWebSockets.stop();
       } catch (IOException | RuntimeException stopFailure) {
         return appendCloseFailure(failure, "Could not signal managed WebSockets", stopFailure);
+      }
+    }
+
+    return failure;
+  }
+
+  /**
+   * Permanently closes managed dispatch after native stop, including failed shutdown.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException finishManagedWebSocketDispatch(@Nullable IOException failure) {
+    if (managedWebSockets != null) {
+      try {
+        managedWebSockets.finishStop();
+      } catch (IOException | RuntimeException stopFailure) {
+        return appendCloseFailure(
+            failure, "Could not finish managed WebSocket dispatch", stopFailure);
       }
     }
 
@@ -1038,52 +1086,62 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Creates the configured transport and virtual-thread executor, installs dispatch, and binds the
-   * listener. Fields retain each acquired resource so start's failure path can clean it up.
+   * Creates the configured native transport, installs dispatch, and binds the listener. Fields
+   * retain each acquired resource so start's failure path can clean it up.
    *
    * @throws Exception if transport initialization or listener binding fails
    * @throws IllegalStateException if configuration closes Shoostr or changes its owned wiring
    */
   private void startServer() throws Exception {
     var dispatch = DispatchConfiguration.capture(this);
-    virtualThreads = Executors.newVirtualThreadPerTaskExecutor();
-    var pool = new ProducerThreadPool();
-    pool.setVirtualThreadsExecutor(virtualThreads);
+    var pool = new QueuedThreadPool();
+    if (virtualThreadsEnabled) {
+      ownedVirtualThreads = Executors.newVirtualThreadPerTaskExecutor();
+      pool.setVirtualThreadsExecutor(ownedVirtualThreads);
+    }
+
     server = new Server(pool);
     server.setStopTimeout(DEFAULT_STOP_TIMEOUT_MILLIS);
     var proxy = trustedProxy;
-    var cors = corsPolicy;
     var websocketRoutes = websocketRouter;
     managedWebSockets =
         websocketRoutes == null
             ? null
-            : new WebSocketRuntime(Objects.requireNonNull(virtualThreads));
+            : new WebSocketRuntime(task -> VirtualThreads.execute(pool, task));
     var http = configureHttp();
     connector = createConnector(Objects.requireNonNull(server), http);
     tlsConfiguration = null;
-    connector.setHost(options.host());
-    connector.setPort(options.port());
-    connector.setIdleTimeout(options.idleTimeoutMillis());
+    connector.setHost("0.0.0.0");
+    connector.setPort(8080);
+    connector.setIdleTimeout(30_000);
     server.addConnector(connector);
     var graceful = new GracefulHandler();
     server.setHandler(graceful);
     var compressionHandler = compression ? new CompressionHandler() : null;
     var applicationHandler =
         new ApplicationHandler(
-            dispatch, proxy, cors, websocketRoutes, compressionHandler, managedWebSockets);
-    var installedSessionHandler =
-        installHandlers(
-            Objects.requireNonNull(server),
-            graceful,
-            applicationHandler,
-            websocketRoutes,
-            compressionHandler);
+            dispatch, proxy, websocketRoutes, compressionHandler, managedWebSockets);
+    installHandlers(
+        Objects.requireNonNull(server),
+        graceful,
+        applicationHandler,
+        websocketRoutes,
+        compressionHandler);
     configureNativeServer(
         Objects.requireNonNull(server),
         graceful,
         applicationHandler,
-        installedSessionHandler,
         Objects.requireNonNull(connector));
+    for (var listener : server.getConnectors()) {
+      listener.addEventListener(
+          new LifeCycle.Listener() {
+            /** {@inheritDoc} */
+            @Override
+            public void lifeCycleStarting(LifeCycle event) {
+              applicationHandler.validateSessions(true);
+            }
+          });
+    }
     server.start();
   }
 
@@ -1155,31 +1213,19 @@ public final class Shoostr implements Closeable {
    * @param applicationHandler request dispatcher
    * @param websocketRoutes compiled WebSocket routes, or null
    * @param compressionHandler native compression wrapper, or null
-   * @return installed session handler, or null
    */
-  private @Nullable SessionHandler installHandlers(
+  private void installHandlers(
       Server server,
       GracefulHandler graceful,
       org.eclipse.jetty.server.Handler applicationHandler,
       @Nullable RadixRoutes websocketRoutes,
       @Nullable CompressionHandler compressionHandler) {
-    SessionHandler installedSessionHandler = null;
     ContextHandler context = null;
     if (sessionConfiguration != null || websocketRoutes != null) {
       context = new ContextHandler(HttpCharacters.PATH_SEPARATOR_STRING);
     }
 
-    if (sessionConfiguration != null) {
-      var sessionHandler = new SessionHandler();
-      sessionHandler.setMaxInactiveInterval(1800);
-      sessionHandler.setHttpOnly(true);
-      sessionHandler.setSameSite(HttpCookie.SameSite.LAX);
-      sessionHandler.setSecureRequestOnly(true);
-      sessionHandler.setUsingUriParameters(false);
-      sessionHandler.setHandler(applicationHandler);
-      Objects.requireNonNull(context).setHandler(sessionHandler);
-      installedSessionHandler = sessionHandler;
-    } else if (context != null) {
+    if (context != null) {
       context.setHandler(applicationHandler);
     }
 
@@ -1196,8 +1242,6 @@ public final class Shoostr implements Closeable {
           "/*", CompressionConfig.builder().defaults().decompressExcludePath("/*").build());
       graceful.setHandler(compressionHandler);
     }
-
-    return installedSessionHandler;
   }
 
   /**
@@ -1206,7 +1250,6 @@ public final class Shoostr implements Closeable {
    * @param server unstarted transport server
    * @param graceful root graceful-shutdown handler
    * @param applicationHandler request dispatcher
-   * @param installedSessionHandler installed session handler, or null
    * @param connector default listener owned by Shoostr
    * @throws IllegalStateException if native configuration changes owned wiring or closes Shoostr
    */
@@ -1214,7 +1257,6 @@ public final class Shoostr implements Closeable {
       Server server,
       GracefulHandler graceful,
       org.eclipse.jetty.server.Handler applicationHandler,
-      @Nullable SessionHandler installedSessionHandler,
       ServerConnector connector) {
     var installedHandler = graceful.getHandler();
     for (var configuration : List.copyOf(serverConfigurations)) {
@@ -1225,22 +1267,22 @@ public final class Shoostr implements Closeable {
     }
 
     serverConfigurations.clear();
-    if (installedSessionHandler != null) {
-      Objects.requireNonNull(sessionConfiguration).accept(installedSessionHandler);
+    var application = (ApplicationHandler) applicationHandler;
+    application.validateApplicationWiring();
+    if (application.applicationSessions != null) {
+      Objects.requireNonNull(sessionConfiguration).accept(application.applicationSessions);
+      sessionConfiguration = null;
       if (closed) {
         throw new IllegalStateException("Shoostr was closed during session configuration");
       }
-
-      sessionConfiguration = null;
     }
+
+    ((ApplicationHandler) applicationHandler).validateSessions(false);
 
     if (!server.isStopped()
         || server.getStopAtShutdown()
         || server.getDescendant(GracefulHandler.class) != graceful
         || graceful.getHandler() != installedHandler
-        || (installedSessionHandler != null
-            && (server.getDescendant(SessionHandler.class) != installedSessionHandler
-                || installedSessionHandler.getHandler() != applicationHandler))
         || !List.of(server.getConnectors()).contains(connector)) {
       throw new IllegalStateException(
           "Jetty configuration must preserve Shoostr lifecycle, handler and default connector");
@@ -1281,7 +1323,10 @@ public final class Shoostr implements Closeable {
         (upgradeRequest, upgradeResponse, upgradeCallback) -> {
           try {
             request.webSocketProtocols(upgradeRequest.getSubProtocols());
-            return Objects.requireNonNull(factory.create(request, upgradeResponse, runtime));
+            var listener =
+                Objects.requireNonNull(factory.create(request, upgradeResponse, runtime));
+            response.protectRequiredHeaders();
+            return listener;
           } catch (Exception failure) {
             if (observation != null) {
               observation.recordApplicationFailure(failure);
@@ -1580,7 +1625,7 @@ public final class Shoostr implements Closeable {
 
     try {
       Runtime.getRuntime().removeShutdownHook(shutdownHook);
-    } catch (IllegalStateException _) {
+    } catch (IllegalStateException ignored2) {
       // Hooks cannot be removed once JVM shutdown has begun.
     } finally {
       shutdownHook = null;
@@ -1588,7 +1633,7 @@ public final class Shoostr implements Closeable {
   }
 
   /** Request dispatcher with one immutable startup snapshot and no registration locks. */
-  private final class ApplicationHandler extends org.eclipse.jetty.server.Handler.Abstract {
+  private final class ApplicationHandler extends org.eclipse.jetty.server.Handler.Wrapper {
     private final RadixRoutes compiledRoutes;
     private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors;
     private final Map<Integer, Handler> statuses;
@@ -1602,17 +1647,30 @@ public final class Shoostr implements Closeable {
     private final List<Function<Request, RequestObservation>> instrumentation;
     private final boolean localObservers;
     private final @Nullable TrustedProxy proxy;
-    private final @Nullable CorsPolicy cors;
     private final @Nullable RadixRoutes websocketRoutes;
     private final @Nullable CompressionHandler compressionHandler;
     private final @Nullable WebSocketRuntime websocketRuntime;
+
+    private final boolean interceptPreflights;
+    private final org.eclipse.jetty.server.Handler sessionContinuation;
+    private final @Nullable SessionHandler applicationSessions;
+    private static final String SELECTION = ApplicationHandler.class.getName() + ".selection";
+
+    /**
+     * A cached pure lookup, kept separate from publicly matched route metadata.
+     *
+     * @param endpoint selected target, or null
+     * @param preflight whether lookup used the CORS target method
+     * @param cors selected endpoint permissions, or null
+     */
+    private record Selection(
+        RadixRoutes.@Nullable Endpoint endpoint, boolean preflight, @Nullable CorsPolicy cors) {}
 
     /**
      * Retains the immutable registration snapshot and startup policies for all requests.
      *
      * @param dispatch immutable application registrations
      * @param proxy trusted proxy policy, or null
-     * @param cors cross-origin policy, or null
      * @param websocketRoutes compiled WebSocket routes, or null
      * @param compressionHandler native compression wrapper, or null
      * @param websocketRuntime app-owned message dispatch, or null without WebSocket routes
@@ -1620,7 +1678,6 @@ public final class Shoostr implements Closeable {
     private ApplicationHandler(
         DispatchConfiguration dispatch,
         @Nullable TrustedProxy proxy,
-        @Nullable CorsPolicy cors,
         @Nullable RadixRoutes websocketRoutes,
         @Nullable CompressionHandler compressionHandler,
         @Nullable WebSocketRuntime websocketRuntime) {
@@ -1637,10 +1694,36 @@ public final class Shoostr implements Closeable {
       instrumentation = dispatch.instrumentation();
       localObservers = dispatch.localObservers();
       this.proxy = proxy;
-      this.cors = cors;
       this.websocketRoutes = websocketRoutes;
       this.compressionHandler = compressionHandler;
       this.websocketRuntime = websocketRuntime;
+      interceptPreflights = extensions.stream().anyMatch(Cors.class::isInstance);
+
+      sessionContinuation =
+          new org.eclipse.jetty.server.Handler.Abstract() {
+            /** {@inheritDoc} */
+            @Override
+            public boolean handle(
+                org.eclipse.jetty.server.Request input,
+                org.eclipse.jetty.server.Response output,
+                Callback completion) {
+              return dispatch(input, output, completion);
+            }
+          };
+      if (sessionConfiguration == null) {
+        applicationSessions = null;
+        setHandler(sessionContinuation);
+      } else {
+        var handler = new SessionHandler();
+        handler.setMaxInactiveInterval(1800);
+        handler.setHttpOnly(true);
+        handler.setSameSite(HttpCookie.SameSite.LAX);
+        handler.setSecureRequestOnly(true);
+        handler.setUsingUriParameters(false);
+        handler.setHandler(sessionContinuation);
+        applicationSessions = handler;
+        setHandler(handler);
+      }
     }
 
     /**
@@ -1659,6 +1742,49 @@ public final class Shoostr implements Closeable {
       "java:S3516"
     }) // Jetty owns every exchange and must finalize every throwable.
     public boolean handle(
+        org.eclipse.jetty.server.Request rawRequest,
+        org.eclipse.jetty.server.Response rawResponse,
+        Callback callback) {
+      boolean preflight =
+          interceptPreflights
+              && HttpMethods.OPTIONS.value().equals(rawRequest.getMethod())
+              && rawRequest.getHeaders().contains(HttpHeaders.ORIGIN.value())
+              && rawRequest
+                  .getHeaders()
+                  .contains(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
+      var targetMethod =
+          preflight
+              ? rawRequest.getHeaders().get(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value())
+              : rawRequest.getMethod();
+      var endpoint = matchEndpoint(rawRequest, targetMethod, !preflight);
+      var behavior = endpoint == null ? null : endpoint.behavior();
+      var cors =
+          endpoint != null && endpoint.websocketFactory() == null && behavior != null
+              ? behavior.cors()
+              : null;
+      rawRequest.setAttribute(SELECTION, new Selection(endpoint, preflight, cors));
+      if (!preflight && applicationSessions != null) {
+        try {
+          return applicationSessions.handle(rawRequest, rawResponse, callback);
+        } catch (Exception failure) {
+          callback.failed(failure);
+          return true;
+        }
+      }
+
+      return dispatch(rawRequest, rawResponse, callback);
+    }
+
+    /**
+     * Dispatches the selected native request without reconstructing its session wrapper.
+     *
+     * @param rawRequest selected wrapped input
+     * @param rawResponse same native output
+     * @param callback same completion owner
+     * @return whether this dispatcher owns the exchange
+     */
+    @SuppressWarnings({"java:S1181", "java:S3516"})
+    private boolean dispatch(
         org.eclipse.jetty.server.Request rawRequest,
         org.eclipse.jetty.server.Response rawResponse,
         Callback callback) {
@@ -1706,6 +1832,45 @@ public final class Shoostr implements Closeable {
       }
 
       return true;
+    }
+
+    /**
+     * Rejects native callbacks that detach or replace the owned application dispatcher.
+     *
+     * @throws IllegalStateException if native configuration changes the owned handler chain
+     */
+    private void validateApplicationWiring() {
+      var owner = Objects.requireNonNull(server);
+      if (owner.getDescendant(ApplicationHandler.class) != this
+          || getServer() != owner
+          || getHandler()
+              != (applicationSessions == null ? sessionContinuation : applicationSessions)) {
+        throw new IllegalStateException(
+            "Native configuration must preserve the application handler chain");
+      }
+    }
+
+    /**
+     * Checks the owned native handler lifecycle and shared server session identifier manager.
+     *
+     * @param started whether native managers have completed startup
+     * @throws IllegalStateException if native configuration changes owned wiring or lifecycle
+     */
+    private void validateSessions(boolean started) {
+      validateApplicationWiring();
+      if (applicationSessions != null) {
+        if (applicationSessions.getServer() != server
+            || applicationSessions.getHandler() != sessionContinuation
+            || (started ? !applicationSessions.isStarted() : !applicationSessions.isStopped())) {
+          throw new IllegalStateException(
+              "Session configuration must preserve owned native wiring");
+        }
+
+        var ids = server.getBean(SessionIdManager.class);
+        if (started && (ids == null || applicationSessions.getSessionIdManager() != ids)) {
+          throw new IllegalStateException("Sessions must use the server's native SessionIdManager");
+        }
+      }
     }
 
     /**
@@ -1875,7 +2040,7 @@ public final class Shoostr implements Closeable {
         return false;
       }
 
-      var endpoint = matchEndpoint(rawRequest, request);
+      var endpoint = ((Selection) rawRequest.getAttribute(SELECTION)).endpoint();
       if (endpoint != null && observation != null && endpoint.behavior() != null) {
         request.route(endpoint);
         observation.begin(request, endpoint.behavior().instrumentation());
@@ -2144,17 +2309,29 @@ public final class Shoostr implements Closeable {
         proxy.apply(request);
       }
 
+      var selection = (Selection) request.nativeRequest().getAttribute(SELECTION);
+      var endpoint = selection.endpoint();
+      var cors = selection.cors();
       boolean preflight = false;
       HttpException corsFailure = null;
-      if (cors != null) {
-        try {
-          preflight = cors.prepare(request, response);
-        } catch (HttpException failure) {
-          corsFailure = failure;
+
+      try {
+        if (selection.preflight()) {
+          response.corsHeaders(Cors.OPTIONS_VARIATION);
+          Cors.validatePreflight(request);
+          if (endpoint != null && cors == null) {
+            throw new ForbiddenException();
+          }
         }
+
+        if (cors != null) {
+          preflight = Cors.prepare(cors, request, response);
+        }
+      } catch (HttpException failure) {
+        corsFailure = failure;
       }
 
-      response.gating(preflight || corsFailure != null);
+      response.gating(selection.preflight() || corsFailure != null);
 
       try {
         for (var hook : headerHooks) {
@@ -2175,14 +2352,16 @@ public final class Shoostr implements Closeable {
      * Resolves upgrades, ordinary routes and static resources in precedence order.
      *
      * @param rawRequest transport request with upgrade headers or an extended CONNECT tunnel
-     * @param request parsed framework request
+     * @param methodName wire method or preflight target method
+     * @param upgrades whether native upgrades may participate
      * @return matched endpoint, or null
      */
     private RadixRoutes.@Nullable Endpoint matchEndpoint(
-        org.eclipse.jetty.server.Request rawRequest, Request request) {
-      var method = HttpMethods.httpMethod(request.method()).orElse(null);
+        org.eclipse.jetty.server.Request rawRequest, String methodName, boolean upgrades) {
+      var method = HttpMethods.httpMethod(methodName).orElse(null);
+      var path = org.eclipse.jetty.server.Request.getPathInContext(rawRequest);
       RadixRoutes.Endpoint endpoint = null;
-      if (websocketRoutes != null) {
+      if (upgrades && websocketRoutes != null) {
         var tunnel = rawRequest.getTunnelSupport();
         boolean extendedWebSocket =
             method == HttpMethods.CONNECT
@@ -2191,16 +2370,15 @@ public final class Shoostr implements Closeable {
                 && WEBSOCKET_PROTOCOL.equals(tunnel.getProtocol());
         if (extendedWebSocket
             || rawRequest.getHeaders().contains(HttpHeader.UPGRADE, WEBSOCKET_PROTOCOL)) {
-          endpoint =
-              websocketRoutes.match(request.path(), extendedWebSocket ? HttpMethods.GET : method);
+          endpoint = websocketRoutes.match(path, extendedWebSocket ? HttpMethods.GET : method);
         }
       }
 
       if (endpoint == null) {
-        endpoint = compiledRoutes.match(request.path(), method);
+        endpoint = compiledRoutes.match(path, method);
       }
 
-      return endpoint == null ? compiledRoutes.staticEndpoint(request.path(), method) : endpoint;
+      return endpoint == null ? compiledRoutes.staticEndpoint(path, method) : endpoint;
     }
 
     /**

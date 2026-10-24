@@ -1,0 +1,41 @@
+---
+title: Send server-sent events
+description: Send server-sent events as text, with names, IDs, retry hints and heartbeats, then resume SSE from Last-Event-ID using an application-owned feed.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/10-streaming/sse/src/main/java/io/github/suppierk/shoostr/example/sse/SseFeedExample.java?raw';
+import test from '../../../../../examples/10-streaming/sse/src/test/java/io/github/suppierk/shoostr/example/sse/SseFeedExampleTest.java?raw';
+
+## Description
+
+Register a GET event endpoint with `routes.sse(...)`, then call `startEventStream()` after validating any input needed before commitment.
+Use `send(String)` for a data-only event, or `SseEvent` to add an event name, ID and client retry hint; multiline data becomes separate data fields within the same frame.
+Payloads are UTF-8 text, not automatically encoded JSON.
+For codec-backed payloads, use [object events](../sse-objects/).
+
+Comments and heartbeats do not dispatch data events, and each call sends its frame immediately.
+They are explicit writes rather than an automatic timer: the handler must remain active for further output, and returning finishes this finite stream.
+The [streaming lifetime and backpressure rules](../output/) also apply to event streams.
+
+Event names and IDs must fit on one line without NUL characters, while retry durations must be nonnegative and are sent in milliseconds.
+The model permits text IDs; the integer cursor used below is this application's replay policy, not a framework restriction.
+Shoostr does not retain event history or replay it automatically.
+
+## Example
+
+The `/events` endpoint demonstrates data, comments, a heartbeat and named events with IDs and a retry hint.
+The `/replay` endpoint instead uses a fixed three-entry feed: it validates `Last-Event-ID` before opening the stream and sends only entries after that cursor.
+An absent cursor starts at the beginning; invalid cursors receive `400`, while cursor `3` receives `204` without opening a stream, telling [EventSource](https://html.spec.whatwg.org/multipage/server-sent-events.html) to stop reconnecting.
+
+This feed is not durable storage and does not promise exactly-once delivery.
+The framing-only `/events` endpoint does not implement replay, so a reconnecting browser can receive its demonstration events again.
+Once a stream is committed, a transport failure aborts it rather than allowing a replacement HTTP error; see [exception recovery](../../errors/exceptions/) for that boundary.
+
+<Code code={application} lang="java" title="SseFeedExample.java" />
+
+## Test
+
+The tests check complete wire frames and replay from a supplied cursor, then distinguish a rejected cursor from a completed feed that must not start another event stream.
+
+<Code code={test} lang="java" title="SseFeedExampleTest.java" />

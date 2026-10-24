@@ -34,8 +34,8 @@ class McpCompletionTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (_, _) -> {}),
+                ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+                (ignored2, ignored3) -> {}),
             transport ->
                 McpServer.sync(transport)
                     .capabilities(
@@ -54,17 +54,19 @@ class McpCompletionTest {
                                             .required(true)
                                             .build()))
                                 .build(),
-                            (_, _) -> McpSchema.GetPromptResult.builder(List.of()).build()))
+                            (ignored4, ignored5) ->
+                                McpSchema.GetPromptResult.builder(List.of()).build()))
                     .resourceTemplates(
                         new McpServerFeatures.SyncResourceTemplateSpecification(
                             McpSchema.ResourceTemplate.builder(
                                     "languages://{language}", "languages")
                                 .build(),
-                            (_, _) -> McpSchema.ReadResourceResult.builder(List.of()).build()))
+                            (ignored6, ignored7) ->
+                                McpSchema.ReadResourceResult.builder(List.of()).build()))
                     .completions(
                         new McpServerFeatures.SyncCompletionSpecification(
                             reference,
-                            (_, request) -> {
+                            (ignored8, request) -> {
                               received.complete(request);
                               return new McpSchema.CompleteResult(
                                   new McpSchema.CompleteResult.CompleteCompletion(

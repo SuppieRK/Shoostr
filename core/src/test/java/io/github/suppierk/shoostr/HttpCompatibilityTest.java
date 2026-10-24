@@ -17,6 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,7 +32,15 @@ class HttpCompatibilityTest {
 
   @BeforeEach
   void prepare() {
-    app = new Shoostr(new Options("127.0.0.1", 0, 16, 1024, 8, 5000));
+    app =
+        new Shoostr(new Options(16, 1024, 8, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(5000);
+                });
   }
 
   @AfterEach

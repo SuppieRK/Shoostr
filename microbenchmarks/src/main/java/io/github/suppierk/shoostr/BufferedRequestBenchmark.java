@@ -76,12 +76,11 @@ public class BufferedRequestBenchmark {
     var defaults = Options.defaults();
     options =
         new Options(
-            defaults.host(),
-            defaults.port(),
             LIMIT,
             defaults.maxResponseBytes(),
             defaults.streamBufferBytes(),
-            defaults.idleTimeoutMillis());
+            1000,
+            MultipartOptions.defaults());
     var fields = HttpFields.build();
     for (int index = 0; index < headers; index++) {
       fields.add("X-Benchmark-" + index, "value-" + index);
@@ -93,7 +92,7 @@ public class BufferedRequestBenchmark {
             Proxy.newProxyInstance(
                 BufferedRequestBenchmark.class.getClassLoader(),
                 new Class<?>[] {Request.class},
-                (_, method, arguments) ->
+                (ignored, method, arguments) ->
                     switch (method.getName()) {
                       case "getHeaders" -> inboundHeaders;
                       case "getMethod" -> "GET";
@@ -111,7 +110,7 @@ public class BufferedRequestBenchmark {
             Proxy.newProxyInstance(
                 BufferedRequestBenchmark.class.getClassLoader(),
                 new Class<?>[] {Response.class},
-                (_, method, _) -> {
+                (ignored2, method, ignored3) -> {
                   throw new UnsupportedOperationException(method.getName());
                 });
 

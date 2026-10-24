@@ -1,0 +1,45 @@
+---
+title: Select endpoint executors and carry observation context
+description: Use native platform execution or opt into virtual threads, select caller-owned endpoint executors, and carry observation context across dispatch.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/ExecutorExample.java?raw';
+import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/ExecutorExampleTest.java?raw';
+
+## Description
+
+Ordinary handlers run through Jetty's native platform-thread pool by default.
+Call `app.virtualThreads()` before startup to opt into virtual execution for those handlers and managed WebSocket callbacks; Jetty keeps its platform pool for transport work.
+Native [pool configuration](../../application/native-configuration/) remains authoritative, and the convenience method does not override native callbacks based on the order of fluent calls.
+
+Choose the mode after measuring your request mix and downstream limits.
+Virtual threads can help when concurrent tasks wait on resources that have spare capacity, but they do not remove CPU, database connection, or service capacity limits; see [Webtide's workload analysis](https://webtide.com/if-virtual-threads-are-the-solution-what-is-the-problem/).
+Jetty's [threading guide](https://jetty.org/docs/jetty/12.1/programming-guide/arch/threads.html) explains native pool sizing and virtual execution.
+
+An explicit endpoint `ExecutorService` selects that endpoint's matched work independently of the application mode.
+Pass that executor to the route overload when the matched lifecycle needs a separate worker pool; headers and lookup happen before handoff, while matched hooks, admission and the handler run on its worker.
+The executor must dispatch asynchronously rather than running work on the submitting thread, and remains owned by its caller.
+
+Shoostr transfers exclusive request ownership to the selected worker, not permission to share `Request` or `Response` across arbitrary tasks.
+Do not retain either object for concurrent or later use, and do not assume arbitrary thread-local values follow the handoff.
+For instrumentation context, an observation can explicitly reattach its captured value through `RequestObservation.attach()` and restore each scope on the thread that opened it.
+
+## Example
+
+`/default` reports whether its handler uses a virtual thread, while `/selected` runs on the supplied pool in either mode and reads the attached request identifier.
+The observation captures only a string and the context carrier, restoring the original admission scope before handoff and the worker's previous value after invocation.
+The identifier is caller-supplied diagnostic data, not a verified identity.
+
+A rejected submission reattaches observation context on the admission thread for error rendering; the example maps it to 503 without invoking the endpoint.
+Observation `close()` restores an invocation scope rather than marking the request complete, and `complete(...)` receives the terminal summary separately.
+Application closure does not shut down this pool or interrupt a running borrowed worker; coordinate outstanding tasks before releasing resources they still need.
+
+<Code code={application} lang="java" title="ExecutorExample.java" />
+
+## Test
+
+The tests exercise default platform execution, explicit virtual opt-in, a named platform worker with an existing context value, pool reuse after application closure, and rejection by a stopped executor.
+Terminal outcomes verify the rejection is an application failure, while a subsequent task on the same worker checks that its previous context was restored.
+
+<Code code={test} lang="java" title="ExecutorExampleTest.java" />

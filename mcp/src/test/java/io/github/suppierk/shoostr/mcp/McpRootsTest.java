@@ -32,15 +32,15 @@ class McpRootsTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (_, _) -> {}),
+                ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+                (ignored2, ignored3) -> {}),
             transport ->
                 McpServer.sync(transport)
                     .serverInfo("roots", "1.0")
                     .requestTimeout(Duration.ofSeconds(5))
                     .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
                     .rootsChangeHandler(
-                        (_, roots) -> {
+                        (ignored4, roots) -> {
                           if (roots.contains(second)) {
                             changed.complete(roots);
                           }
@@ -49,7 +49,7 @@ class McpRootsTest {
                         McpServerFeatures.SyncToolSpecification.builder()
                             .tool(McpSchema.Tool.builder("roots", Map.of("type", "object")).build())
                             .callHandler(
-                                (exchange, _) ->
+                                (exchange, ignored5) ->
                                     McpSchema.CallToolResult.builder()
                                         .addTextContent(exchange.listRoots().roots().toString())
                                         .build())

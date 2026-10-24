@@ -1,0 +1,39 @@
+---
+title: Set or delete a response cookie
+description: Set cookies with an explicit response scope, then delete them with the same name, path and domain.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/06-responses/src/main/java/io/github/suppierk/shoostr/example/responses/ResponseCookiesExample.java?raw';
+import test from '../../../../../examples/06-responses/src/test/java/io/github/suppierk/shoostr/example/responses/ResponseCookiesExampleTest.java?raw';
+
+## Description
+
+Set cookies with `response.cookie(...)`, which sends a `Set-Cookie` field for the selected scope.
+Read them from later requests through the [request cookie accessors](../../request/headers-cookies/).
+Cookie values must already be encoded for cookie syntax; Shoostr does not URL-encode or decode application data.
+
+Delete a cookie with its original name, path and domain, because the incoming `Cookie` field does not disclose that scope.
+Keeping the original `Cookie` value lets `removeCookie(cookie)` preserve both scope and security attributes while sending an empty value, zero `Max-Age` and an expiry in the past.
+The [cookie specification](https://www.rfc-editor.org/rfc/rfc6265.html#section-4.1.2) explains scope and expiry in more detail.
+
+## Example
+
+The `/preferences/theme` handlers set, read and delete a harmless theme preference scoped to `/preferences`.
+The cookie is host-only and lasts up to an hour; it is not an authentication token or a server-side session.
+Use [server-side sessions](../../security/sessions/) for retained session state and [CSRF protection](../../security/csrf/) for cookie-authenticated writes.
+Setting another cookie with the same name, domain and path replaces that scope, while cookies with other scopes remain separate.
+
+The secure-preference handlers show `Secure`, `HttpOnly` and `SameSite` metadata for HTTPS use.
+Their `__Host-` cookie name requires `Secure`, path `/` and no `Domain` attribute.
+Start with `Cookie.secure(...)` before selecting `SameSite.NONE`, since each immutable copy validates its own attributes immediately.
+`Max-Age` takes precedence when an explicit `Expires` value is also supplied; neither attribute adds response cache-control headers.
+
+<Code code={application} lang="java" title="ResponseCookiesExample.java" />
+
+## Test
+
+The tests use the client's cookie store for the ordinary preference roundtrip and inspect the emitted fields for scope, expiry and security attributes.
+Those header checks do not verify browser enforcement of `Secure`, `HttpOnly` or `SameSite`.
+
+<Code code={test} lang="java" title="ResponseCookiesExampleTest.java" />

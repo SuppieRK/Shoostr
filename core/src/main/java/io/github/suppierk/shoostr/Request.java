@@ -54,7 +54,7 @@ import org.jspecify.annotations.Nullable;
  * present empty string is distinct from absence.
  */
 public sealed class Request permits TypedRequest {
-  // Java 25 readNBytes(int) starts with this much temporary storage.
+  // Read small known bodies into their final storage instead of a temporary readNBytes buffer.
   private static final int DIRECT_BODY_READ_LIMIT = 16_384;
   private static final String CHARSET_PARAMETER = "charset";
 
@@ -86,6 +86,7 @@ public sealed class Request permits TypedRequest {
   private @Nullable Map<String, Object> attributes;
   private @Nullable Principal principal;
   private @Nullable String effectiveUrl;
+  private @Nullable String forwardedProtocol;
   private @Nullable InetSocketAddress clientAddress;
   private List<String> webSocketProtocols;
   private BodyRepresentation representation;
@@ -138,7 +139,8 @@ public sealed class Request permits TypedRequest {
                 this,
                 codec);
     if (isMultipart()) {
-      org.eclipse.jetty.server.Request.addCompletionListener(delegate, _ -> closeMultipart());
+      org.eclipse.jetty.server.Request.addCompletionListener(
+          delegate, ignored2 -> closeMultipart());
     }
   }
 
@@ -241,22 +243,37 @@ public sealed class Request permits TypedRequest {
   }
 
   /**
-   * Returns the Jetty session attached to this request, creating it only when requested. Sessions
-   * are available only when enabled on the application.
+   * Returns the Jetty session attached to this request without creating one.
    *
-   * @param create whether an absent session should be created
    * @return the session, or empty when absent or session support is disabled
-   * @throws IllegalStateException if creation is requested after response commitment
    */
-  public Optional<Session> session(boolean create) {
+  public Optional<Session> getSession() {
+    check();
+    return Optional.ofNullable(delegate.getSession(false));
+  }
+
+  /**
+   * Returns the current Jetty session or creates one before the response commits. An existing
+   * session remains accessible after commitment.
+   *
+   * @return the current or newly created session
+   * @throws IllegalStateException if session creation is unavailable, or an absent session is
+   *     requested after response commitment
+   */
+  public Session getOrCreateSession() {
     check();
     var existing = delegate.getSession(false);
-    if (existing != null || !create) {
-      return Optional.ofNullable(existing);
+    if (existing != null) {
+      return existing;
     }
 
-    response.checkSessionCreation();
-    return Optional.ofNullable(delegate.getSession(true));
+    response.checkCookieMutation();
+    var created = delegate.getSession(true);
+    if (created == null) {
+      throw new IllegalStateException("Session creation is unavailable for this request");
+    }
+
+    return created;
   }
 
   /**
@@ -280,7 +297,8 @@ public sealed class Request permits TypedRequest {
   /**
    * Reads the path used for route matching.
    *
-   * @return Jetty's canonically encoded path without query or fragment
+   * @return Jetty's canonical routing path without query or fragment; its spelling can differ from
+   *     the raw URL path
    */
   public String path() {
     check();
@@ -370,6 +388,19 @@ public sealed class Request permits TypedRequest {
   public boolean isSecure() {
     check();
     return delegate.getConnectionMetaData().getConnection().getEndPoint().isSecure();
+  }
+
+  /**
+   * Reports security from the explicitly selected trusted forwarding protocol, falling back to
+   * actual transport TLS when that protocol is absent. A trusted HTTP assertion overrides backend
+   * TLS. Request-target and effective-URL schemes are never used as security evidence.
+   *
+   * @return true for a selected HTTPS assertion, or for direct TLS when no protocol was asserted
+   * @throws IllegalStateException if accessed outside the request thread or lifetime
+   */
+  public boolean isEffectivelySecure() {
+    check();
+    return forwardedProtocol == null ? isSecure() : "https".equals(forwardedProtocol);
   }
 
   /**
@@ -754,7 +785,23 @@ public sealed class Request permits TypedRequest {
    * @throws ContentTooLargeException if the body exceeds the configured limit
    */
   public String bodyText() throws IOException {
-    return new String(bodyBytes(), StandardCharsets.UTF_8);
+    return bodyText(StandardCharsets.UTF_8);
+  }
+
+  /**
+   * Reads the bounded body using an explicit charset, independently of Content-Type metadata.
+   * Malformed input uses the charset's replacement text. Repeated reads decode the same cached
+   * bytes, and the configured limit remains a byte limit rather than a character limit.
+   *
+   * @param charset charset used to decode the request body
+   * @return decoded request body
+   * @throws NullPointerException if the charset is null, before reading or selecting a body mode
+   * @throws IOException if input fails
+   * @throws ContentTooLargeException if the body exceeds the configured limit
+   */
+  public String bodyText(Charset charset) throws IOException {
+    Objects.requireNonNull(charset);
+    return new String(bodyBytes(), charset);
   }
 
   /**
@@ -908,7 +955,7 @@ public sealed class Request permits TypedRequest {
           grouped.computeIfAbsent(part.getName(), ignored -> new ArrayList<>()).add(upload);
         }
       }
-      grouped.replaceAll((_, values) -> List.copyOf(values));
+      grouped.replaceAll((ignored3, values) -> List.copyOf(values));
       files = Collections.unmodifiableMap(grouped);
     }
 
@@ -931,6 +978,16 @@ public sealed class Request permits TypedRequest {
    */
   @Nullable EndpointBehavior behavior() {
     return endpoint == null ? null : endpoint.behavior();
+  }
+
+  /**
+   * Identifies the matched upgrade binding without trusting client-supplied Upgrade headers.
+   *
+   * @return whether routing selected a managed or native WebSocket handshake
+   */
+  boolean webSocket() {
+    check();
+    return endpoint != null && endpoint.websocketFactory() != null;
   }
 
   /**
@@ -957,10 +1014,12 @@ public sealed class Request permits TypedRequest {
    *
    * @param address selected client, or null when undisclosed
    * @param url full URL preserving the raw path and query
+   * @param protocol selected validated forwarding protocol, or null when absent
    */
-  void forwarded(@Nullable InetSocketAddress address, String url) {
+  void forwarded(@Nullable InetSocketAddress address, String url, @Nullable String protocol) {
     clientAddress = address;
     effectiveUrl = url;
+    forwardedProtocol = protocol;
   }
 
   /** Revokes access and releases local application state without closing transport-owned input. */
@@ -976,7 +1035,7 @@ public sealed class Request permits TypedRequest {
     if (input != null) {
       try {
         input.close();
-      } catch (IOException _) {
+      } catch (IOException ignored4) {
         // Transport cleanup continues after input-close failure.
       }
     }
@@ -1078,7 +1137,7 @@ public sealed class Request permits TypedRequest {
             .add(part.getContentAsString(StandardCharsets.UTF_8));
       }
     }
-    fields.replaceAll((_, values) -> List.copyOf(values));
+    fields.replaceAll((ignored5, values) -> List.copyOf(values));
     return Collections.unmodifiableMap(fields);
   }
 
@@ -1363,7 +1422,7 @@ public sealed class Request permits TypedRequest {
       }
     }
 
-    parsed.replaceAll((_, values) -> List.copyOf(values));
+    parsed.replaceAll((ignored6, values) -> List.copyOf(values));
     return Collections.unmodifiableMap(parsed);
   }
 
@@ -1397,7 +1456,7 @@ public sealed class Request permits TypedRequest {
     for (var field : nativeHeaders) {
       fields.computeIfAbsent(field.getName(), ignored -> new ArrayList<>()).add(field.getValue());
     }
-    fields.replaceAll((_, values) -> List.copyOf(values));
+    fields.replaceAll((ignored7, values) -> List.copyOf(values));
     return Collections.unmodifiableMap(fields);
   }
 
@@ -1419,7 +1478,7 @@ public sealed class Request permits TypedRequest {
     for (var cookie : nativeCookies) {
       parsed.computeIfAbsent(cookie.getName(), ignored -> new ArrayList<>()).add(cookie.getValue());
     }
-    parsed.replaceAll((_, values) -> List.copyOf(values));
+    parsed.replaceAll((ignored8, values) -> List.copyOf(values));
     return Collections.unmodifiableMap(parsed);
   }
 

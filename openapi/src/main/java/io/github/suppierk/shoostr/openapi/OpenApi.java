@@ -229,7 +229,7 @@ public final class OpenApi implements Extension<OpenApiOperation> {
             "Conflicting OpenAPI path names: " + previous + " and " + template);
       }
 
-      var path = paths.computeIfAbsent(template, _ -> new PathItem());
+      var path = paths.computeIfAbsent(template, ignored -> new PathItem());
       var method = PathItem.HttpMethod.valueOf(binding.route().method().value());
       if (path.readOperationsMap().containsKey(method)) {
         throw new IllegalArgumentException(
@@ -273,7 +273,7 @@ public final class OpenApi implements Extension<OpenApiOperation> {
    * @return handler serving startup-prepared bytes
    */
   public Handler handler() {
-    return (_, response) -> {
+    return (ignored2, response) -> {
       var bytes = document.get();
       if (bytes == null) {
         throw new IllegalStateException("OpenAPI document is not prepared");

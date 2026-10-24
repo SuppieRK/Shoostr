@@ -4,7 +4,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Codec;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.swagger.v3.core.util.Json31;
@@ -36,14 +35,14 @@ class OpenApiConditionalTest {
           }
         };
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
                 routes.path(
                     "/api",
                     group -> {
-                      group.get("/public", (_, _) -> {});
+                      group.get("/public", (ignored, ignored2) -> {});
                       group.when(
                           () -> {
                             calls.incrementAndGet();
@@ -51,10 +50,11 @@ class OpenApiConditionalTest {
                           },
                           conditional ->
                               conditional.path(
-                                  "/nested", nested -> nested.get("/private", (_, _) -> {})));
+                                  "/nested",
+                                  nested -> nested.get("/private", (ignored3, ignored4) -> {})));
                     },
                     e -> {
-                      e.get(docs).summary("Default");
+                      e.with(docs).summary("Default");
                       e.onRoute((method, path) -> facts.add(method.value() + " " + path));
                     });
                 routes.get("/openapi.json", docs.handler());
@@ -69,7 +69,9 @@ class OpenApiConditionalTest {
                       },
                       conditional ->
                           conditional.get(
-                              "/typed", (_, _) -> {}, e -> e.get(docs).summary("Typed"))));
+                              "/typed",
+                              (ignored5, ignored6) -> {},
+                              e -> e.with(docs).summary("Typed"))));
 
       try (var test = TestServer.start(app)) {
         var document =

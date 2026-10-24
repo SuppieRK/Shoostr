@@ -11,6 +11,7 @@ import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 import org.eclipse.jetty.server.LocalConnector;
+import org.eclipse.jetty.server.ServerConnector;
 import org.jspecify.annotations.Nullable;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
@@ -97,7 +98,10 @@ public class ExtensionRequestBenchmark {
    */
   @Setup
   public void setup() throws Exception {
-    app = new Shoostr(Options.defaults().withPort(0));
+    app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
     executor =
         switch (execution) {
           case "default" -> null;
@@ -151,11 +155,11 @@ public class ExtensionRequestBenchmark {
     for (int group = 0; group < groups; group++) {
       var path = "/api/" + group + "/users/{id}";
       if (executor == null) {
-        app.routes().get(path, (_, response) -> response.text("ok"));
-        app.routes().post(path, (_, response) -> response.text("ok"));
+        app.routes().get(path, (ignored, response) -> response.text("ok"));
+        app.routes().post(path, (ignored2, response) -> response.text("ok"));
       } else {
-        app.routes().get(path, executor, (_, response) -> response.text("ok"));
-        app.routes().post(path, executor, (_, response) -> response.text("ok"));
+        app.routes().get(path, executor, (ignored3, response) -> response.text("ok"));
+        app.routes().post(path, executor, (ignored4, response) -> response.text("ok"));
       }
     }
   }
@@ -194,12 +198,12 @@ public class ExtensionRequestBenchmark {
           return;
         }
         case "appObserver" -> {
-          benchmark.app.afterRequest(_ -> {});
+          benchmark.app.afterRequest(ignored5 -> {});
           benchmark.registerPlain();
           return;
         }
         case "appInstrumentation" -> {
-          benchmark.app.observe(_ -> _ -> {});
+          benchmark.app.observe(ignored6 -> ignored7 -> {});
           benchmark.registerPlain();
           return;
         }
@@ -215,7 +219,7 @@ public class ExtensionRequestBenchmark {
 
       for (int group = 0; group < benchmark.groups; group++) {
         var path = "/api/" + group + "/users/{id}";
-        Handler handler = (_, response) -> response.text("ok");
+        Handler handler = (ignored8, response) -> response.text("ok");
         Consumer<Extensions> get =
             e -> {
               if (!"unselectedInstrumentation".equals(benchmark.configuration)) {
@@ -253,10 +257,10 @@ public class ExtensionRequestBenchmark {
                 if ("otelSelected".equals(benchmark.configuration)
                     || ("otelUnselected".equals(benchmark.configuration)
                         && "POST".equals(method))) {
-                  e.get(tracing).enabled();
+                  e.with(tracing);
                 }
               };
-          Handler handler = (_, response) -> response.text("ok");
+          Handler handler = (ignored9, response) -> response.text("ok");
           if (benchmark.executor == null) {
             benchmark.app.routes().route(method, path, handler, configure);
           } else {
@@ -276,12 +280,18 @@ public class ExtensionRequestBenchmark {
     private static void configure(
         Extensions endpoint, Identity authentication, String configuration) {
       switch (configuration) {
-        case "authentication" -> endpoint.get(authentication).enabled();
-        case "localObserver" -> endpoint.afterRequest(_ -> {});
-        case "localInstrumentation", "unselectedInstrumentation" -> endpoint.observe(_ -> _ -> {});
+        case "authentication" -> endpoint.with(authentication);
+        case "localObserver" -> endpoint.lifecycle().afterRequest(ignored10 -> {});
+        case "localInstrumentation", "unselectedInstrumentation" ->
+            endpoint.lifecycle().observe(ignored11 -> ignored12 -> {});
         default -> {
-          endpoint.beforeRouteHandler((request, _) -> request.attribute("admitted", Boolean.TRUE));
-          endpoint.afterRouteHandler((request, _) -> request.attribute("admitted", null));
+          endpoint
+              .lifecycle()
+              .beforeRouteHandler(
+                  (request, ignored13) -> request.attribute("admitted", Boolean.TRUE));
+          endpoint
+              .lifecycle()
+              .afterRouteHandler((request, ignored14) -> request.attribute("admitted", null));
         }
       }
     }

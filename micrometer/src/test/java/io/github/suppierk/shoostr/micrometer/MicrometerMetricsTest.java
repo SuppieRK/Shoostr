@@ -9,7 +9,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Extension;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -47,7 +46,7 @@ class MicrometerMetricsTest {
     var consumed = new AtomicBoolean();
     var registry = new SimpleMeterRegistry();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         var requests = Executors.newVirtualThreadPerTaskExecutor()) {
       app.afterClose(registry::close);
       app.beforeClose(release::countDown);
@@ -56,7 +55,7 @@ class MicrometerMetricsTest {
       app.routes()
           .get(
               "/drain",
-              (_, response) -> {
+              (ignored, response) -> {
                 entered.countDown();
                 assertTrue(release.await(5, TimeUnit.SECONDS));
                 response.text("drained");
@@ -92,12 +91,13 @@ class MicrometerMetricsTest {
     var registry = new SimpleMeterRegistry();
     var completed = new CompletableFuture<Void>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var metrics = new MicrometerMetrics(registry);
       metrics.allRequests();
       app.extensions(metrics);
-      app.afterRequest(_ -> completed.complete(null));
-      app.routes().get("/status/{id}", (_, response) -> response.status(status).text("explicit"));
+      app.afterRequest(ignored2 -> completed.complete(null));
+      app.routes()
+          .get("/status/{id}", (ignored3, response) -> response.status(status).text("explicit"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -121,11 +121,11 @@ class MicrometerMetricsTest {
     var registry = new SimpleMeterRegistry();
     var completed = new CompletableFuture<Void>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var metrics = new MicrometerMetrics(registry);
       metrics.allRequests();
       app.extensions(metrics);
-      app.afterRequest(_ -> completed.complete(null));
+      app.afterRequest(ignored4 -> completed.complete(null));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -149,15 +149,15 @@ class MicrometerMetricsTest {
     var registry = new SimpleMeterRegistry();
     var completed = new CompletableFuture<Void>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var metrics = new MicrometerMetrics(registry);
       metrics.allRequests();
       app.extensions(metrics);
-      app.afterRequest(_ -> completed.complete(null));
+      app.afterRequest(ignored5 -> completed.complete(null));
       app.routes()
           .get(
               "/failure/{id}",
-              (_, _) -> {
+              (ignored6, ignored7) -> {
                 throw new IllegalStateException("private failure details");
               });
 
@@ -183,13 +183,13 @@ class MicrometerMetricsTest {
     var registry = new SimpleMeterRegistry();
     var completed = new CompletableFuture<Void>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var metrics = new MicrometerMetrics(registry);
       metrics.allRequests();
       app.extensions(metrics);
-      app.afterRequest(_ -> completed.complete(null));
-      app.routes().get("/redirect/{id}", (_, response) -> response.redirect("/target"));
-      app.routes().get("/target", (_, response) -> response.text("target"));
+      app.afterRequest(ignored8 -> completed.complete(null));
+      app.routes().get("/redirect/{id}", (ignored9, response) -> response.redirect("/target"));
+      app.routes().get("/target", (ignored10, response) -> response.text("target"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -217,12 +217,12 @@ class MicrometerMetricsTest {
     var registry = new SimpleMeterRegistry();
     var completed = new LinkedBlockingQueue<RequestOutcome>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var metrics = new MicrometerMetrics(registry);
       metrics.allRequests();
       app.extensions(metrics);
       app.afterRequest(completed::add);
-      app.routes().get("/asset/{id}", (_, response) -> response.file(file, "text/plain"));
+      app.routes().get("/asset/{id}", (ignored11, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
 
@@ -257,11 +257,11 @@ class MicrometerMetricsTest {
   void installationRequiresExplicitActivationAndLeavesTheRegistryBorrowed() throws Exception {
     var registry = new SimpleMeterRegistry();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var metrics = new MicrometerMetrics(registry);
       app.extensions(metrics);
       assertThrows(IllegalStateException.class, metrics::allRequests);
-      app.routes().get("/", (_, response) -> response.text("ok"));
+      app.routes().get("/", (ignored12, response) -> response.text("ok"));
 
       try (var test = TestServer.start(app)) {
         test.send(request -> request.path("/"), HttpResponse.BodyHandlers.discarding());
@@ -283,10 +283,11 @@ class MicrometerMetricsTest {
     var registry = new SimpleMeterRegistry();
     var completed = new CompletableFuture<Void>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(new MicrometerMetrics(registry).allRequests());
-      app.afterRequest(_ -> completed.complete(null));
-      app.routes().get("/explicit", (_, response) -> response.status(status).text("explicit"));
+      app.afterRequest(ignored13 -> completed.complete(null));
+      app.routes()
+          .get("/explicit", (ignored14, response) -> response.status(status).text("explicit"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -313,18 +314,18 @@ class MicrometerMetricsTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var registry = new SimpleMeterRegistry();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(new MicrometerMetrics(registry).allRequests());
       app.afterRequest(outcomes::add);
       app.routes()
           .get(
               "/failure",
-              (_, _) -> {
+              (ignored15, ignored16) -> {
                 throw new IllegalStateException("private");
               });
-      app.routes().get("/transport", (_, response) -> response.text("ok"));
+      app.routes().get("/transport", (ignored17, response) -> response.text("ok"));
       app.afterResponseFlush(
-          (request, _) -> {
+          (request, ignored18) -> {
             if (request.routePattern().filter("/transport"::equals).isPresent()) {
               throw new IOException("private");
             }
@@ -357,7 +358,7 @@ class MicrometerMetricsTest {
   void leavesAnUnconfiguredRegistryUntouched() throws Exception {
     var registry = new SimpleMeterRegistry();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       try (var test = TestServer.start(app)) {
         assertEquals(
             404,
@@ -378,14 +379,14 @@ class MicrometerMetricsTest {
 
     var registry = new SimpleMeterRegistry();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app = new Shoostr();
         var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
       app.extensions(new MicrometerMetrics(registry).allRequests());
-      app.afterRequest(_ -> completed.complete(null));
+      app.afterRequest(ignored19 -> completed.complete(null));
       app.routes()
           .get(
               "/orders/{id}",
-              (_, response) -> {
+              (ignored20, response) -> {
                 entered.countDown();
                 assertTrue(release.await(5, TimeUnit.SECONDS));
                 response.text("ok");

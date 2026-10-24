@@ -45,6 +45,7 @@ import org.eclipse.jetty.http2.frames.HeadersFrame;
 import org.eclipse.jetty.http2.frames.ResetFrame;
 import org.eclipse.jetty.io.QuietException;
 import org.eclipse.jetty.server.HttpStream;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -58,8 +59,11 @@ class BufferedRequestLifecycleTest {
   @ParameterizedTest
   @ValueSource(ints = {404, 405})
   void advertisesConnectionClosureWhenRoutingRejectsAnUnavailableBody(int status) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/get-only", (_, response) -> response.text("unexpected"));
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
+      app.routes().get("/get-only", (ignored, response) -> response.text("unexpected"));
       app.start();
 
       try (var socket = new Socket()) {
@@ -90,14 +94,14 @@ class BufferedRequestLifecycleTest {
           }
         };
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.authentication(authentication)
-          .beforeResponseFlush((request, _) -> observedBody.set(request.bodyText()))
+          .beforeResponseFlush((request, ignored2) -> observedBody.set(request.bodyText()))
           .routes()
           .post(
               "/body",
-              (_, response) -> response.text("unexpected"),
-              extensions -> extensions.get(authentication).enabled());
+              (ignored3, response) -> response.text("unexpected"),
+              extensions -> extensions.with(authentication));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -123,16 +127,16 @@ class BufferedRequestLifecycleTest {
           }
         };
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.authentication(authentication)
           .exception(
               AuthenticationRequiredException.class,
-              (_, request, response) -> response.text(request.bodyText()))
+              (ignored4, request, response) -> response.text(request.bodyText()))
           .routes()
           .post(
               "/body",
-              (_, response) -> response.text("unexpected"),
-              extensions -> extensions.get(authentication).enabled());
+              (ignored5, response) -> response.text("unexpected"),
+              extensions -> extensions.with(authentication));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -161,13 +165,16 @@ class BufferedRequestLifecycleTest {
           }
         };
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.authentication(authentication)
           .routes()
           .post(
               "/body",
               (request, response) -> response.text(request.bodyText()),
-              extensions -> extensions.get(authentication).enabled());
+              extensions -> extensions.with(authentication));
       app.start();
 
       try (var socket = new Socket()) {
@@ -209,11 +216,14 @@ class BufferedRequestLifecycleTest {
           }
         };
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       if (streamingRenderer) {
         app.exception(
             AuthenticationRequiredException.class,
-            (_, _, response) ->
+            (ignored6, ignored7, response) ->
                 response
                     .startStream(MediaType.TEXT_PLAIN)
                     .write("rejected".getBytes(StandardCharsets.US_ASCII)));
@@ -223,8 +233,8 @@ class BufferedRequestLifecycleTest {
           .routes()
           .post(
               "/body",
-              (_, response) -> response.text("unexpected"),
-              extensions -> extensions.get(authentication).enabled());
+              (ignored8, response) -> response.text("unexpected"),
+              extensions -> extensions.with(authentication));
       app.start();
 
       try (var socket = new Socket()) {
@@ -250,7 +260,11 @@ class BufferedRequestLifecycleTest {
     var payload = new byte[1_048_576];
     Arrays.fill(payload, (byte) 0x5A);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
       app.routes()
           .post(
@@ -282,7 +296,11 @@ class BufferedRequestLifecycleTest {
     var payload = new byte[1_048_577];
     Arrays.fill(payload, (byte) 0x5A);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
       app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
       app.start();
@@ -306,7 +324,10 @@ class BufferedRequestLifecycleTest {
 
   @Test
   void rejectsAnOversizedContentLengthWithoutWaitingForTheBody() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
       app.start();
 
@@ -413,7 +434,7 @@ class BufferedRequestLifecycleTest {
       app.modifyHttpConfiguration(
           configuration ->
               configuration.addCustomizer(
-                  (nativeRequest, _) -> {
+                  (nativeRequest, ignored9) -> {
                     if (!"/bad".equals(nativeRequest.getHttpURI().getPath())) {
                       return nativeRequest;
                     }
@@ -428,7 +449,7 @@ class BufferedRequestLifecycleTest {
       app.afterRequest(outcomes::add);
       app.exception(
           BadRequestException.class,
-          (failure, _, response) -> {
+          (failure, ignored10, response) -> {
             rejections.add(failure);
             response.text("bad length");
           });
@@ -548,7 +569,14 @@ class BufferedRequestLifecycleTest {
   }
 
   private static Shoostr app() {
-    return new Shoostr(new Options("127.0.0.1", 0, 16, 1024, 64, 30_000));
+    return new Shoostr(new Options(16, 1024, 64, 1000, MultipartOptions.defaults()))
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(30_000);
+            });
   }
 
   private static void routes(

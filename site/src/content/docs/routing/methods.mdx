@@ -1,0 +1,36 @@
+---
+title: Register HTTP methods
+description: Register method-specific handlers, handle HEAD and OPTIONS, and distinguish 404 from 405.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/03-routing/src/main/java/io/github/suppierk/shoostr/example/routing/MethodsExample.java?raw';
+import test from '../../../../../examples/03-routing/src/test/java/io/github/suppierk/shoostr/example/routing/MethodsExampleTest.java?raw';
+
+## Description
+
+Register a separate handler for each HTTP method that a path supports.
+The example uses the seven convenience methods at `/notes` and the generic `route(...)` API for `PROPFIND` at `/properties`.
+
+An unknown path receives `404`, while a matching path without the requested method receives `405` with an `Allow` header.
+That header includes registered methods from every matching path pattern, not just the most specific one; see [path matching](../patterns/) for overlapping routes.
+Customize the generated response with a [status renderer](../../errors/statuses/).
+
+Ordinary GET routes do not provide implicit HEAD or OPTIONS handlers, so `/read-only` rejects both methods.
+Static-resource HEAD handling and admitted CORS preflight have separate behavior.
+Register WebSocket handshakes with the [WebSocket APIs](../../websockets/managed/); their [HTTP/2 extended CONNECT path](../../websockets/native/) is separate from ordinary CONNECT routing.
+
+## Example
+
+[Static resource mounts](../../resources/static/) handle HEAD separately from ordinary registered routes.
+
+The HEAD handler returns metadata without a body, and the OPTIONS handler explicitly advertises the methods supported at `/notes`.
+The generic registration uses a recognized `HttpMethods` value; string overloads accept recognized, case-sensitive wire names rather than arbitrary custom verbs.
+
+<Code code={application} lang="java" title="MethodsExample.java" />
+
+## Test
+
+The tests distinguish explicit HEAD and OPTIONS handlers from generated `405` responses, checking `Allow` membership without depending on header ordering.
+
+<Code code={test} lang="java" title="MethodsExampleTest.java" />

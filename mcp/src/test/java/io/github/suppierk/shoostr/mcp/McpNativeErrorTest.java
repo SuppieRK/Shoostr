@@ -26,8 +26,8 @@ class McpNativeErrorTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     var mcp =
         Mcp.async(
             security,
@@ -39,7 +39,8 @@ class McpNativeErrorTest {
                             .tool(
                                 McpSchema.Tool.builder("refuse", Map.of("type", "object")).build())
                             .callHandler(
-                                (_, _) -> Mono.error(new ForbiddenException("Business refusal")))
+                                (ignored4, ignored5) ->
+                                    Mono.error(new ForbiddenException("Business refusal")))
                             .build())
                     .build());
     var app = new Shoostr();

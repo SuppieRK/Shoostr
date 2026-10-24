@@ -200,7 +200,7 @@ for repeat in 1 2 3; do
   "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.configure stackdepth=128 > "$run_dir/jfr-configure.txt"
   "$JAVA_HOME/bin/jcmd" "$server_pid" JFR.start name=benchmark settings=profile disk=true \
     dumponexit=true filename="$run_dir/server.jfr" \
-    'jdk.CPUTimeSample#enabled=true' 'jdk.CPUTimeSample#throttle=10ms' > "$run_dir/jfr-start.txt"
+    'jdk.ExecutionSample#enabled=true' 'jdk.ExecutionSample#period=10ms' > "$run_dir/jfr-start.txt"
   recording=1
   "$JAVA_HOME/bin/jcmd" "$server_pid" GC.heap_info > "$run_dir/before-heap.txt"
   cat "/proc/$server_pid/stat" > "$run_dir/before-process-stat.txt"

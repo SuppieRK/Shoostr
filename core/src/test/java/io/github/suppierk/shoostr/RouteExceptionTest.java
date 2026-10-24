@@ -35,7 +35,7 @@ class RouteExceptionTest {
   @TempDir Path directory;
 
   private static final Handler REJECT =
-      (_, _) -> {
+      (ignored, ignored2) -> {
         throw new IllegalArgumentException("private");
       };
 
@@ -50,11 +50,12 @@ class RouteExceptionTest {
                     "/child",
                     child ->
                         child.get(
-                            (_, _) -> {
+                            (ignored3, ignored4) -> {
                               throw new IllegalArgumentException("private");
                             }));
                 group.exception(
-                    IllegalArgumentException.class, (_, _, response) -> response.text("group"));
+                    IllegalArgumentException.class,
+                    (ignored5, ignored6, response) -> response.text("group"));
               });
 
       try (var test = TestServer.start(app)) {
@@ -74,7 +75,9 @@ class RouteExceptionTest {
     try (var app = new Shoostr()) {
       var root = app.routes();
       if (parentFirst) {
-        root.exception(IllegalArgumentException.class, (_, _, response) -> response.text("parent"));
+        root.exception(
+            IllegalArgumentException.class,
+            (ignored7, ignored8, response) -> response.text("parent"));
       }
 
       root.path(
@@ -82,10 +85,13 @@ class RouteExceptionTest {
           child -> {
             child.get(REJECT);
             child.exception(
-                IllegalArgumentException.class, (_, _, response) -> response.text("child"));
+                IllegalArgumentException.class,
+                (ignored9, ignored10, response) -> response.text("child"));
           });
       if (!parentFirst) {
-        root.exception(IllegalArgumentException.class, (_, _, response) -> response.text("parent"));
+        root.exception(
+            IllegalArgumentException.class,
+            (ignored11, ignored12, response) -> response.text("parent"));
       }
 
       try (var test = TestServer.start(app)) {
@@ -101,12 +107,16 @@ class RouteExceptionTest {
   void preservesAMoreSpecificParentMappingOverABroaderChildMapping() throws Exception {
     try (var app = new Shoostr()) {
       app.routes()
-          .exception(IllegalArgumentException.class, (_, _, response) -> response.text("specific"))
+          .exception(
+              IllegalArgumentException.class,
+              (ignored13, ignored14, response) -> response.text("specific"))
           .path(
               "/child",
               child ->
                   child
-                      .exception(Exception.class, (_, _, response) -> response.text("broad"))
+                      .exception(
+                          Exception.class,
+                          (ignored15, ignored16, response) -> response.text("broad"))
                       .get(REJECT));
 
       try (var test = TestServer.start(app)) {
@@ -121,12 +131,14 @@ class RouteExceptionTest {
   @Test
   void isolatesSiblingScopesWithTheSameUrlPrefix() throws Exception {
     try (var app = new Shoostr()) {
-      app.exception(IllegalArgumentException.class, (_, _, response) -> response.text("app"));
+      app.exception(
+          IllegalArgumentException.class, (ignored17, ignored18, response) -> response.text("app"));
       app.routes()
           .path(
               "/shared",
               get ->
-                  get.exception(Exception.class, (_, _, response) -> response.text("get"))
+                  get.exception(
+                          Exception.class, (ignored19, ignored20, response) -> response.text("get"))
                       .get(REJECT));
       app.routes().path("/shared", post -> post.post(REJECT));
 
@@ -149,9 +161,13 @@ class RouteExceptionTest {
   void replacesAnEarlierMappingInTheSameScope() throws Exception {
     try (var app = new Shoostr()) {
       var root = app.routes();
-      assertSame(root, root.exception(Exception.class, (_, _, response) -> response.text("first")));
+      assertSame(
+          root,
+          root.exception(
+              Exception.class, (ignored21, ignored22, response) -> response.text("first")));
       root.get("/fail", REJECT)
-          .exception(Exception.class, (_, _, response) -> response.text("replacement"));
+          .exception(
+              Exception.class, (ignored23, ignored24, response) -> response.text("replacement"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -165,9 +181,12 @@ class RouteExceptionTest {
   @Test
   void usesTheAppRendererWhenNoScopedTypeMatches() throws Exception {
     try (var app = new Shoostr()) {
-      app.exception(IllegalArgumentException.class, (_, _, response) -> response.text("app"));
+      app.exception(
+          IllegalArgumentException.class, (ignored25, ignored26, response) -> response.text("app"));
       app.routes()
-          .exception(IllegalStateException.class, (_, _, response) -> response.text("unrelated"))
+          .exception(
+              IllegalStateException.class,
+              (ignored27, ignored28, response) -> response.text("unrelated"))
           .get("/fail", REJECT);
 
       try (var test = TestServer.start(app)) {
@@ -192,7 +211,9 @@ class RouteExceptionTest {
                 group.get(REJECT);
               });
       var group = retained.get();
-      group.exception(IllegalArgumentException.class, (_, _, response) -> response.text("late"));
+      group.exception(
+          IllegalArgumentException.class,
+          (ignored29, ignored30, response) -> response.text("late"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -201,7 +222,9 @@ class RouteExceptionTest {
                 .body());
         assertThrows(
             IllegalStateException.class,
-            () -> group.exception(Exception.class, (_, _, response) -> response.text("closed")));
+            () ->
+                group.exception(
+                    Exception.class, (ignored31, ignored32, response) -> response.text("closed")));
       }
     }
   }
@@ -213,14 +236,14 @@ class RouteExceptionTest {
     try (var app = new Shoostr()) {
       app.exception(
           Exception.class,
-          (_, _, response) -> {
+          (ignored33, ignored34, response) -> {
             appInvoked.set(true);
             response.text("app");
           });
       app.routes()
           .exception(
               Exception.class,
-              (_, _, _) -> {
+              (ignored35, ignored36, ignored37) -> {
                 throw new IllegalStateException("renderer failed");
               })
           .get("/fail", REJECT);
@@ -246,14 +269,14 @@ class RouteExceptionTest {
                 "/child",
                 child ->
                     child.get(
-                        (_, _) -> {
+                        (ignored38, ignored39) -> {
                           throw new IllegalArgumentException();
                         }));
             assertSame(
                 group,
                 group.exception(
                     IllegalArgumentException.class,
-                    (_, _, response) -> response.text("typed error")));
+                    (ignored40, ignored41, response) -> response.text("typed error")));
           });
 
       try (var test = TestServer.start(app)) {
@@ -271,7 +294,8 @@ class RouteExceptionTest {
       app.routes()
           .sse("/events", REJECT)
           .exception(
-              IllegalArgumentException.class, (_, _, response) -> response.text("sse error"));
+              IllegalArgumentException.class,
+              (ignored42, ignored43, response) -> response.text("sse error"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -299,7 +323,8 @@ class RouteExceptionTest {
       app.routes()
           .staticFiles("/assets", directory)
           .exception(
-              IllegalArgumentException.class, (_, _, response) -> response.text("mount error"));
+              IllegalArgumentException.class,
+              (ignored44, ignored45, response) -> response.text("mount error"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -318,10 +343,12 @@ class RouteExceptionTest {
       app.routes()
           .websocket(
               "/socket",
-              (_, _) -> {
+              (ignored46, ignored47) -> {
                 throw new IllegalArgumentException();
               })
-          .exception(IllegalArgumentException.class, (_, _, response) -> response.status(422));
+          .exception(
+              IllegalArgumentException.class,
+              (ignored48, ignored49, response) -> response.status(422));
 
       try (var test = TestServer.start(app);
           var client = HttpClient.newHttpClient()) {
@@ -354,12 +381,12 @@ class RouteExceptionTest {
           .path(
               "/secure",
               group -> {
-                group.get((_, _) -> invoked.set(true));
+                group.get((ignored50, ignored51) -> invoked.set(true));
                 group.exception(
                     AuthorizationDeniedException.class,
-                    (_, _, response) -> response.text("denied"));
+                    (ignored52, ignored53, response) -> response.text("denied"));
               },
-              extensions -> extensions.get(authentication).enabled());
+              extensions -> extensions.with(authentication));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -379,11 +406,11 @@ class RouteExceptionTest {
               "/flush",
               group -> {
                 group.get(
-                    (_, response) -> response.text("discard"),
-                    extensions -> extensions.beforeResponseFlush(REJECT));
+                    (ignored54, response) -> response.text("discard"),
+                    extensions -> extensions.lifecycle().beforeResponseFlush(REJECT));
                 group.exception(
                     IllegalArgumentException.class,
-                    (_, _, response) -> response.text("flush error"));
+                    (ignored55, ignored56, response) -> response.text("flush error"));
               });
 
       try (var test = TestServer.start(app)) {
@@ -399,8 +426,11 @@ class RouteExceptionTest {
   void rejectsNullMappingInputsBeforeChangingExistingConfiguration() throws Exception {
     try (var app = new Shoostr()) {
       var routes = app.routes();
-      routes.exception(Exception.class, (_, _, response) -> response.text("existing"));
-      assertThrows(NullPointerException.class, () -> routes.exception(null, (_, _, _) -> {}));
+      routes.exception(
+          Exception.class, (ignored57, ignored58, response) -> response.text("existing"));
+      assertThrows(
+          NullPointerException.class,
+          () -> routes.exception(null, (ignored59, ignored60, ignored61) -> {}));
       assertThrows(NullPointerException.class, () -> routes.exception(Exception.class, null));
       routes.get("/fail", REJECT);
 
@@ -419,7 +449,8 @@ class RouteExceptionTest {
       var routes = app.routes();
       routes.close();
       assertThrows(
-          IllegalStateException.class, () -> routes.exception(Exception.class, (_, _, _) -> {}));
+          IllegalStateException.class,
+          () -> routes.exception(Exception.class, (ignored62, ignored63, ignored64) -> {}));
     }
   }
 
@@ -455,7 +486,7 @@ class RouteExceptionTest {
         app.routes()
             .exception(
                 IllegalArgumentException.class,
-                (_, _, response) -> response.text("concurrent mapping"));
+                (ignored65, ignored66, response) -> response.text("concurrent mapping"));
         assertThrows(IllegalStateException.class, app::start);
       } finally {
         release.countDown();

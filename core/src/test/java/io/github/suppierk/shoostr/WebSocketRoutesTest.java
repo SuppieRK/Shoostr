@@ -55,6 +55,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import org.eclipse.jetty.http.HostPortHttpField;
@@ -67,6 +68,7 @@ import org.eclipse.jetty.http2.frames.DataFrame;
 import org.eclipse.jetty.http2.frames.HeadersFrame;
 import org.eclipse.jetty.http2.frames.SettingsFrame;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.eclipse.jetty.websocket.api.Callback;
 import org.eclipse.jetty.websocket.api.Session;
@@ -80,6 +82,280 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 public class WebSocketRoutesTest {
   @TempDir Path temporaryDirectory;
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void skipsHttpCsrfOnlyForRecognizedWebSocketsAndRetainsNativeSessions(boolean managed)
+      throws Exception {
+    var factories = new AtomicInteger();
+    var writes = new AtomicInteger();
+    var authentication = chatAuthentication();
+    var csrf = Csrf.builder().trustedOrigins("https://socket.example").build();
+    Consumer<Request> admit =
+        request -> {
+          if (!request.headers("Origin").equals(List.of("https://socket.example"))) {
+            throw new ForbiddenException();
+          }
+
+          assertEquals("alice", request.principal().orElseThrow().getName());
+          assertEquals("native", request.getSession().orElseThrow().getAttribute("marker"));
+          factories.incrementAndGet();
+        };
+
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
+        var http = HttpClient.newHttpClient();
+        var client = new HTTP2Client()) {
+      app.sessions()
+          .http2()
+          .authentication(authentication)
+          .extensions(csrf)
+          .configureExtensionsDefaults(
+              e -> {
+                e.with(authentication);
+                e.with(csrf);
+              });
+      app.routes()
+          .get(
+              "/session",
+              (request, response) -> {
+                request.getOrCreateSession().setAttribute("marker", "native");
+                response.text("session");
+              },
+              e -> e.without(authentication))
+          .post(
+              "/socket",
+              (request, response) -> {
+                writes.incrementAndGet();
+                response.text("written");
+              });
+      if (managed) {
+        app.routes()
+            .websocket(
+                "/socket",
+                socket ->
+                    socket
+                        .beforeUpgrade((request, response) -> admit.accept(request))
+                        .onText(WebSocketConnection::send));
+      } else {
+        app.routes()
+            .websocket(
+                "/socket",
+                (request, response) -> {
+                  admit.accept(request);
+                  return new EchoListener();
+                });
+      }
+
+      app.start();
+      var base = "http://127.0.0.1:" + app.port();
+      var created =
+          http.send(
+              HttpRequest.newBuilder(URI.create(base + "/session")).build(),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, created.statusCode());
+      var cookie = created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+      var message = new CompletableFuture<String>();
+      var socket =
+          http.newWebSocketBuilder()
+              .header("Origin", "https://socket.example")
+              .header("Cookie", cookie)
+              .header("Authorization", "Bearer secret")
+              .buildAsync(
+                  URI.create("ws://127.0.0.1:" + app.port() + "/socket"), receiving(message))
+              .get(3, TimeUnit.SECONDS);
+
+      try {
+        socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
+        assertEquals("ping", message.get(3, TimeUnit.SECONDS));
+      } finally {
+        socket.abort();
+      }
+
+      var connection = connectHttp2(client, app);
+      var response =
+          http2ConnectResponse(
+              connection,
+              app,
+              "/socket",
+              "websocket",
+              HttpFields.build()
+                  .put("Sec-WebSocket-Version", "13")
+                  .put("Origin", "https://socket.example")
+                  .put("Authorization", "Bearer secret")
+                  .put("Cookie", cookie)
+                  .asImmutable());
+      assertEquals(200, response.getStatus());
+      assertEquals(2, factories.get());
+
+      try (var peer = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port());
+          var reader =
+              new BufferedReader(
+                  new InputStreamReader(peer.getInputStream(), StandardCharsets.US_ASCII))) {
+        peer.setSoTimeout(3000);
+        var request =
+            "POST /socket HTTP/1.1\r\nHost: 127.0.0.1:"
+                + app.port()
+                + "\r\nOrigin: "
+                + base
+                + "\r\nAuthorization: Bearer secret\r\nCookie: "
+                + cookie
+                + "\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nContent-Length: 0\r\n\r\n";
+        peer.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+        var status = Objects.requireNonNull(reader.readLine());
+        assertTrue(status.startsWith("HTTP/1.1 403"), status);
+      }
+
+      assertEquals(0, writes.get());
+      assertEquals(2, factories.get());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void usesExplicitWebSocketOriginAdmissionInsteadOfHttpCorsForBothProtocols(boolean managed)
+      throws Exception {
+    var factories = new AtomicInteger();
+    var authentication = chatAuthentication();
+    var cors =
+        new Cors(
+            CorsPolicy.builder().origins("https://http.example").methods(HttpMethods.POST).build());
+    Consumer<Request> admit =
+        request -> {
+          if (!request.headers("Origin").equals(List.of("https://socket.example"))) {
+            throw new ForbiddenException();
+          }
+
+          assertEquals("alice", request.principal().orElseThrow().getName());
+          factories.incrementAndGet();
+        };
+
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
+        var http = HttpClient.newHttpClient();
+        var client = new HTTP2Client()) {
+      app.http2()
+          .authentication(authentication)
+          .extensions(cors)
+          .configureExtensionsDefaults(
+              e -> {
+                e.with(authentication);
+                e.with(cors);
+              });
+      if (managed) {
+        app.routes()
+            .websocket(
+                "/socket",
+                socket ->
+                    socket
+                        .beforeUpgrade((request, response) -> admit.accept(request))
+                        .onText(WebSocketConnection::send));
+      } else {
+        app.routes()
+            .websocket(
+                "/socket",
+                (request, response) -> {
+                  admit.accept(request);
+                  return new EchoListener();
+                });
+      }
+
+      app.start();
+      var address = URI.create("ws://127.0.0.1:" + app.port() + "/socket");
+      var message = new CompletableFuture<String>();
+      var socket =
+          http.newWebSocketBuilder()
+              .header("Origin", "https://socket.example")
+              .header("Authorization", "Bearer secret")
+              .buildAsync(address, receiving(message))
+              .get(3, TimeUnit.SECONDS);
+
+      try {
+        socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
+        assertEquals("ping", message.get(3, TimeUnit.SECONDS));
+      } finally {
+        socket.abort();
+      }
+
+      assertEquals(1, factories.get());
+      for (var origin : List.of("https://http.example", "")) {
+        var builder = http.newWebSocketBuilder().header("Authorization", "Bearer secret");
+        if (!origin.isEmpty()) {
+          builder.header("Origin", origin);
+        }
+
+        var failure =
+            assertThrows(
+                ExecutionException.class,
+                () ->
+                    builder
+                        .buildAsync(address, new WebSocket.Listener() {})
+                        .get(3, TimeUnit.SECONDS));
+        assertEquals(
+            403,
+            assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
+                .getResponse()
+                .statusCode());
+      }
+      var unauthenticated =
+          assertThrows(
+              ExecutionException.class,
+              () ->
+                  http.newWebSocketBuilder()
+                      .header("Origin", "https://socket.example")
+                      .buildAsync(address, new WebSocket.Listener() {})
+                      .get(3, TimeUnit.SECONDS));
+      assertEquals(
+          401,
+          assertInstanceOf(WebSocketHandshakeException.class, unauthenticated.getCause())
+              .getResponse()
+              .statusCode());
+      assertEquals(1, factories.get());
+
+      var connection = connectHttp2(client, app);
+      var allowed =
+          HttpFields.build()
+              .put("Sec-WebSocket-Version", "13")
+              .put("Origin", "https://socket.example")
+              .put("Authorization", "Bearer secret");
+      var accepted =
+          http2ConnectResponse(connection, app, "/socket", "websocket", allowed.asImmutable());
+      assertEquals(200, accepted.getStatus());
+      assertNull(accepted.getHttpFields().get("Access-Control-Allow-Origin"));
+      assertEquals(2, factories.get());
+      for (var origin : List.of("https://http.example", "")) {
+        var fields =
+            HttpFields.build()
+                .put("Sec-WebSocket-Version", "13")
+                .put("Authorization", "Bearer secret");
+        if (!origin.isEmpty()) {
+          fields.put("Origin", origin);
+        }
+
+        assertEquals(
+            403,
+            http2ConnectResponse(connection, app, "/socket", "websocket", fields.asImmutable())
+                .getStatus());
+      }
+      assertEquals(
+          401,
+          http2ConnectResponse(
+                  connection,
+                  app,
+                  "/socket",
+                  "websocket",
+                  HttpFields.build()
+                      .put("Sec-WebSocket-Version", "13")
+                      .put("Origin", "https://socket.example")
+                      .asImmutable())
+              .getStatus());
+      assertEquals(2, factories.get());
+    }
+  }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
@@ -102,7 +378,9 @@ public class WebSocketRoutesTest {
     var context = SSLContext.getInstance("TLS");
     context.init(null, trust.getTrustManagers(), null);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var http =
             HttpClient.newBuilder()
                 .sslContext(context)
@@ -121,7 +399,7 @@ public class WebSocketRoutesTest {
       app.routes()
           .websocket(
               "/connect",
-              (request, _) -> {
+              (request, ignored) -> {
                 factories.incrementAndGet();
                 assertEquals(secure, request.isSecure());
                 return new EchoListener();
@@ -218,18 +496,20 @@ public class WebSocketRoutesTest {
     var factories = new AtomicInteger();
     var authentication = chatAuthentication();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = new HTTP2Client()) {
       app.http2().authentication(authentication);
       app.routes()
           .websocket(
               "/authenticated",
-              (request, _) -> {
+              (request, ignored2) -> {
                 assertEquals("alice", request.principal().orElseThrow().getName());
                 factories.incrementAndGet();
                 return new EchoListener();
               },
-              extensions -> extensions.get(authentication).enabled());
+              extensions -> extensions.with(authentication));
       app.start();
       var connection = connectHttp2(client, app);
       var fields = HttpFields.build().put("Sec-WebSocket-Version", "13");
@@ -257,17 +537,20 @@ public class WebSocketRoutesTest {
   void keepsOtherExtendedConnectProtocolsOnOrdinaryConnectRoutes() throws Exception {
     var factories = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = new HTTP2Client()) {
       app.http2();
       app.routes()
           .websocket(
               "/connect",
-              (_, _) -> {
+              (ignored3, ignored4) -> {
                 factories.incrementAndGet();
                 return new EchoListener();
               });
-      app.routes().route(HttpMethods.CONNECT, "/connect", (_, response) -> response.status(204));
+      app.routes()
+          .route(HttpMethods.CONNECT, "/connect", (ignored5, response) -> response.status(204));
       app.start();
       var connection = connectHttp2(client, app);
       var result = http2ConnectResponse(connection, app, "/connect", "other", HttpFields.EMPTY);
@@ -281,13 +564,15 @@ public class WebSocketRoutesTest {
   void rejectsUnsupportedHttp2WebSocketVersionsWithoutHttp1UpgradeHeaders() throws Exception {
     var factories = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = new HTTP2Client()) {
       app.http2();
       app.routes()
           .websocket(
               "/version",
-              (_, _) -> {
+              (ignored6, ignored7) -> {
                 factories.incrementAndGet();
                 return new EchoListener();
               });
@@ -310,7 +595,9 @@ public class WebSocketRoutesTest {
   @Test
   @Timeout(15)
   void matchesHttp2WebSocketTemplatesBeforeRunningRouteCallbacks() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = new HTTP2Client()) {
       app.http2();
       app.routes()
@@ -322,12 +609,15 @@ public class WebSocketRoutesTest {
                 return new EchoListener();
               },
               extensions ->
-                  extensions.onRouteMatched(
-                      (request, _) -> {
-                        assertEquals("CONNECT", request.method());
-                        assertEquals("/rooms/{room}", request.routePattern().orElseThrow());
-                        request.attribute("matched-room", request.pathParam("room").orElseThrow());
-                      }));
+                  extensions
+                      .lifecycle()
+                      .onRouteMatched(
+                          (request, ignored8) -> {
+                            assertEquals("CONNECT", request.method());
+                            assertEquals("/rooms/{room}", request.routePattern().orElseThrow());
+                            request.attribute(
+                                "matched-room", request.pathParam("room").orElseThrow());
+                          }));
       app.start();
       var connection = connectHttp2(client, app);
       var result =
@@ -348,7 +638,9 @@ public class WebSocketRoutesTest {
     var available = new AtomicBoolean(true);
     var factories = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = new HTTP2Client()) {
       app.http2();
       app.routes()
@@ -357,7 +649,7 @@ public class WebSocketRoutesTest {
               routes ->
                   routes.websocket(
                       "/available",
-                      (_, _) -> {
+                      (ignored9, ignored10) -> {
                         factories.incrementAndGet();
                         return new EchoListener();
                       }));
@@ -385,9 +677,13 @@ public class WebSocketRoutesTest {
     var received = new LinkedBlockingQueue<String>(2);
     var pending = new StringBuilder();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
-      app.routes().websocket("/greeting", (_, _) -> new GreetingListener(firstSent, replySent));
+      app.routes()
+          .websocket(
+              "/greeting", (ignored11, ignored12) -> new GreetingListener(firstSent, replySent));
       app.start();
 
       var socket =
@@ -434,9 +730,11 @@ public class WebSocketRoutesTest {
     var messages = new ArrayList<String>();
     var partial = new StringBuilder();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().websocket("/burst", (_, _) -> new EchoListener());
+      app.routes().websocket("/burst", (ignored13, ignored14) -> new EchoListener());
       app.start();
       var socket =
           client
@@ -489,13 +787,15 @@ public class WebSocketRoutesTest {
     var completedSends = new CountDownLatch(3);
     var sendFailure = new AtomicReference<Throwable>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().get("/echo", (_, response) -> response.text("ordinary"));
+      app.routes().get("/echo", (ignored15, response) -> response.text("ordinary"));
       app.routes()
           .websocket(
               "/echo",
-              (_, _) -> {
+              (ignored16, ignored17) -> {
                 factoryCalls.incrementAndGet();
                 return new EchoListener("", completedSends, sendFailure);
               });
@@ -560,7 +860,9 @@ public class WebSocketRoutesTest {
 
     var received = new LinkedBlockingQueue<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newBuilder().sslContext(context).build()) {
       app.tls(
           tls -> {
@@ -570,7 +872,7 @@ public class WebSocketRoutesTest {
       app.routes()
           .websocket(
               "/secure",
-              (request, _) -> {
+              (request, ignored18) -> {
                 assertTrue(request.isSecure());
                 assertEquals("https", request.scheme().orElseThrow());
                 return new EchoListener("secure:");
@@ -605,12 +907,14 @@ public class WebSocketRoutesTest {
     var factoryCalls = new AtomicInteger();
     var received = new CompletableFuture<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .websocket(
               "/rooms/{id}",
-              (request, _) -> {
+              (request, ignored19) -> {
                 factoryCalls.incrementAndGet();
                 return new EchoListener(request.pathParam("id").orElseThrow() + ":");
               });
@@ -640,33 +944,42 @@ public class WebSocketRoutesTest {
   void passesHandshakeMetadataAndExistingSessionToTheListenerFactory() throws Exception {
     var received = new CompletableFuture<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
+
       app.sessions();
       app.routes()
-          .get(
-              "/session",
-              (request, response) -> {
-                var session = request.session(true).orElseThrow();
-                session.setAttribute("name", "alice");
-                response.text(session.getId());
-              });
+          .path(
+              "/",
+              scoped ->
+                  scoped.get(
+                      "/session",
+                      (request, response) -> {
+                        var session = request.getOrCreateSession();
+                        session.setAttribute("name", "alice");
+                        response.text(session.getId());
+                      }));
       app.routes()
-          .websocket(
-              "/metadata",
-              (request, _) -> {
-                var session = request.session(false).orElseThrow();
-                var prefix =
-                    String.join(
-                        "|",
-                        request.queryParam("city").orElseThrow(),
-                        request.cookie("theme").orElseThrow(),
-                        Objects.toString(session.getAttribute("name")),
-                        session.getId(),
-                        request.header("X-Handshake").orElseThrow(),
-                        request.authority().orElseThrow());
-                return new EchoListener(prefix + "|");
-              });
+          .path(
+              "/",
+              scoped ->
+                  scoped.websocket(
+                      "/metadata",
+                      (request, ignored20) -> {
+                        var session = request.getSession().orElseThrow();
+                        var prefix =
+                            String.join(
+                                "|",
+                                request.queryParam("city").orElseThrow(),
+                                request.cookie("theme").orElseThrow(),
+                                Objects.toString(session.getAttribute("name")),
+                                session.getId(),
+                                request.header("X-Handshake").orElseThrow(),
+                                request.authority().orElseThrow());
+                        return new EchoListener(prefix + "|");
+                      }));
       app.start();
 
       var created =
@@ -713,7 +1026,9 @@ public class WebSocketRoutesTest {
     var firstMessage = new CompletableFuture<String>();
     var secondMessage = new CompletableFuture<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .path(
@@ -763,12 +1078,14 @@ public class WebSocketRoutesTest {
   @Timeout(10)
   void prefersLiteralWebSocketRoutesAndFallsBackAfterSuffixMismatch(boolean literalFirst)
       throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> literal =
-          (_, _) -> new EchoListener("literal:");
+          (ignored21, ignored22) -> new EchoListener("literal:");
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> parameter =
-          (request, _) ->
+          (request, ignored23) ->
               new EchoListener("parameter:" + request.pathParam("id").orElseThrow() + ":");
       if (literalFirst) {
         app.routes().websocket("/rooms/latest", literal);
@@ -778,11 +1095,12 @@ public class WebSocketRoutesTest {
         app.routes().websocket("/rooms/latest", literal);
       }
 
-      app.routes().websocket("/fallback/fixed/x", (_, _) -> new EchoListener("x:"));
+      app.routes().websocket("/fallback/fixed/x", (ignored24, ignored25) -> new EchoListener("x:"));
       app.routes()
           .websocket(
               "/fallback/{name}/y",
-              (request, _) -> new EchoListener(request.pathParam("name").orElseThrow() + ":"));
+              (request, ignored26) ->
+                  new EchoListener(request.pathParam("name").orElseThrow() + ":"));
       app.start();
 
       assertEquals("literal:ping", sendAndReceive(client, app, "/rooms/latest"));
@@ -794,7 +1112,9 @@ public class WebSocketRoutesTest {
   @Test
   @Timeout(10)
   void upgradesCatchAllWebSocketRoutesWithoutChangingSingleSegmentPrecedence() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .path(
@@ -802,13 +1122,13 @@ public class WebSocketRoutesTest {
               rooms -> {
                 rooms.websocket(
                     "/{*path}",
-                    (request, _) ->
+                    (request, ignored27) ->
                         new EchoListener("tail:" + request.pathParam("path").orElseThrow() + ":"));
                 rooms.websocket(
                     "/{id}",
-                    (request, _) ->
+                    (request, ignored28) ->
                         new EchoListener("single:" + request.pathParam("id").orElseThrow() + ":"));
-                rooms.websocket("/latest", (_, _) -> new EchoListener("literal:"));
+                rooms.websocket("/latest", (ignored29, ignored30) -> new EchoListener("literal:"));
               });
       app.start();
 
@@ -821,7 +1141,9 @@ public class WebSocketRoutesTest {
   @Test
   @Timeout(10)
   void upgradesConstrainedWebSocketRoutesAndFallsBackToPlainParameters() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .path(
@@ -829,11 +1151,11 @@ public class WebSocketRoutesTest {
               rooms -> {
                 rooms.websocket(
                     "/{name}",
-                    (request, _) ->
+                    (request, ignored31) ->
                         new EchoListener("plain:" + request.pathParam("name").orElseThrow() + ":"));
                 rooms.websocket(
                     "/{id:[0-9]+}",
-                    (request, _) ->
+                    (request, ignored32) ->
                         new EchoListener("digits:" + request.pathParam("id").orElseThrow() + ":"));
               });
       app.start();
@@ -848,11 +1170,13 @@ public class WebSocketRoutesTest {
   void rejectsAnOriginInRouteAdmissionBeforeCallingTheListenerFactory() throws Exception {
     var factoryCalls = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       var admission =
           new AdmissionExtension(
-              (request, _) -> {
+              (request, ignored33) -> {
                 if (request.header("Origin").filter("https://allowed.example"::equals).isEmpty()) {
                   throw new ForbiddenException();
                 }
@@ -864,11 +1188,11 @@ public class WebSocketRoutesTest {
               routes ->
                   routes.websocket(
                       "/private",
-                      (_, _) -> {
+                      (ignored34, ignored35) -> {
                         factoryCalls.incrementAndGet();
                         return new EchoListener();
                       }),
-              e -> e.get(admission));
+              e -> e.with(admission));
       app.start();
 
       var failure =
@@ -896,7 +1220,9 @@ public class WebSocketRoutesTest {
   void authenticatesBeforeUpgradeAndPassesThePrincipalToTheNewListener() throws Exception {
     var accepted = new CompletableFuture<String>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       var admission = chatAuthentication();
       app.authentication(admission)
@@ -906,9 +1232,9 @@ public class WebSocketRoutesTest {
               routes ->
                   routes.websocket(
                       "/authenticated",
-                      (request, _) ->
+                      (request, ignored36) ->
                           new EchoListener(request.principal().orElseThrow().getName() + ":")),
-              e -> e.get(admission).enabled());
+              e -> e.with(admission));
       app.start();
 
       var rejected =
@@ -947,11 +1273,13 @@ public class WebSocketRoutesTest {
   void completesInvalidUpgradeWith426AndAllowsAFactoryHandshakeHeader() throws Exception {
     var factoryCalls = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0))) {
       app.routes()
           .websocket(
               "/wire",
-              (_, upgrade) -> {
+              (ignored37, upgrade) -> {
                 factoryCalls.incrementAndGet();
                 upgrade.getHeaders().put("X-Handshake", "accepted");
                 return new EchoListener();
@@ -977,11 +1305,13 @@ public class WebSocketRoutesTest {
     var outcome = new CompletableFuture<RequestOutcome>();
     var notifications = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.exception(
           BadRequestException.class,
-          (_, _, response) ->
+          (ignored38, ignored39, response) ->
               response.status(422).setHeader("X-Error-Mapped", "yes").text("mapped"));
       app.afterRequest(
           result -> {
@@ -991,7 +1321,7 @@ public class WebSocketRoutesTest {
       app.routes()
           .websocket(
               "/reject",
-              (_, _) -> {
+              (ignored40, ignored41) -> {
                 throw new BadRequestException();
               });
       app.start();
@@ -1024,7 +1354,9 @@ public class WebSocketRoutesTest {
     var outcome = new CompletableFuture<RequestOutcome>();
     var notifications = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.afterRequest(
           result -> {
@@ -1032,14 +1364,15 @@ public class WebSocketRoutesTest {
             outcome.complete(result);
           });
       app.afterResponseFlush(
-          (_, _) -> {
+          (ignored42, ignored43) -> {
             throw postFlush;
           });
-      app.exception(BadRequestException.class, (_, _, response) -> response.text("mapped"));
+      app.exception(
+          BadRequestException.class, (ignored44, ignored45, response) -> response.text("mapped"));
       app.routes()
           .websocket(
               "/flush-failure",
-              (_, _) -> {
+              (ignored46, ignored47) -> {
                 throw original;
               });
       app.start();
@@ -1068,19 +1401,21 @@ public class WebSocketRoutesTest {
   @Test
   @Timeout(10)
   void doesNotAcceptUnexpectedFailuresNullListenersOrUnofferedProtocols() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .websocket(
               "/failure",
-              (_, _) -> {
+              (ignored48, ignored49) -> {
                 throw new IllegalStateException("broken factory");
               });
-      app.routes().websocket("/null", (_, _) -> null);
+      app.routes().websocket("/null", (ignored50, ignored51) -> null);
       app.routes()
           .websocket(
               "/protocol",
-              (_, upgrade) -> {
+              (ignored52, upgrade) -> {
                 upgrade.setAcceptedSubProtocol("not-offered");
                 return new EchoListener();
               });
@@ -1099,9 +1434,11 @@ public class WebSocketRoutesTest {
     var pong = new CompletableFuture<byte[]>();
     var closed = new CompletableFuture<Integer>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().websocket("/binary", (_, _) -> new BinaryEchoListener());
+      app.routes().websocket("/binary", (ignored53, ignored54) -> new BinaryEchoListener());
       app.start();
       var socket =
           client
@@ -1152,9 +1489,11 @@ public class WebSocketRoutesTest {
   void closesAnActiveWebSocketWhenTheAppStops() throws Exception {
     var terminated = new CompletableFuture<Void>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
-      app.routes().websocket("/live", (_, _) -> new EchoListener());
+      app.routes().websocket("/live", (ignored55, ignored56) -> new EchoListener());
       app.start();
       var socket =
           client
@@ -1191,12 +1530,15 @@ public class WebSocketRoutesTest {
     var accepted = new CompletableFuture<String>();
     var closed = new CompletableFuture<Integer>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .websocket(
               "/bounded",
-              (_, _) -> new LimitedListener(defaultOutgoing, configuredOutgoing, accepted));
+              (ignored57, ignored58) ->
+                  new LimitedListener(defaultOutgoing, configuredOutgoing, accepted));
       app.start();
       var socket =
           client
@@ -1235,10 +1577,16 @@ public class WebSocketRoutesTest {
     var sendFailure = new CompletableFuture<Throwable>();
     var server = new AtomicReference<Server>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServerConfiguration ->
+                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
+                            .setPort(0));
         var peer = new Socket()) {
       app.modifyServer(server::set);
-      app.routes().websocket("/slow", (_, _) -> new SlowPeerListener(opened, terminal));
+      app.routes()
+          .websocket("/slow", (ignored59, ignored60) -> new SlowPeerListener(opened, terminal));
       app.start();
       var container =
           server.get().getContainedBeans(ServerWebSocketContainer.class).iterator().next();
@@ -1277,12 +1625,15 @@ public class WebSocketRoutesTest {
     var completed = new CountDownLatch(1);
     var sendFailure = new AtomicReference<Throwable>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var peer = new Socket()) {
       app.routes()
           .websocket(
               "/producer",
-              (_, _) -> new SerializedProducerListener(opened, completed, sendFailure, 2));
+              (ignored61, ignored62) ->
+                  new SerializedProducerListener(opened, completed, sendFailure, 2));
       app.start();
       upgradeUnreadPeer(peer, app.port(), "/producer");
 
@@ -1310,12 +1661,16 @@ public class WebSocketRoutesTest {
     var received = new LinkedBlockingQueue<String>();
     var current = new StringBuilder();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = HttpClient.newHttpClient();
         var producers = Executors.newFixedThreadPool(4)) {
       app.routes()
           .websocket(
-              "/ordered", (_, _) -> new SerializedProducerListener(opened, completed, sendFailure));
+              "/ordered",
+              (ignored63, ignored64) ->
+                  new SerializedProducerListener(opened, completed, sendFailure));
       app.start();
       var socket =
           client

@@ -1,0 +1,62 @@
+---
+title: Protect cookie-backed writes with CSRF
+description: Protect browser writes with a session-bound token, verify the source origin, and reject old proofs after native session renewal or invalidation.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/14-security/src/main/java/io/github/suppierk/shoostr/example/authentication/CsrfProtectionExample.java?raw';
+import test from '../../../../../examples/14-security/src/test/java/io/github/suppierk/shoostr/example/authentication/CsrfProtectionExampleTest.java?raw';
+
+## Description
+
+Enable [native sessions](../sessions/), install a `Csrf` instance, and select it on browser routes with `extensions.with(csrf)`.
+For application defaults, make that selection in `app.configureExtensionsDefaults(...)` before registering routes; use `extensions.without(csrf)` only where that protection is deliberately unnecessary.
+The selected owner is inherited and deduplicated. A child cannot replace it with a different instance, including after exclusion.
+A protected endpoint without application sessions prevents startup rather than silently enabling sessions.
+
+Deliver `csrf.token(request)` in a response body or page, then submit that value through exactly one `X-CSRF-Token` header or `_csrf` form field on unsafe requests.
+The expected random token stays in the native session, bound to its current identifier; Shoostr does not issue a separate CSRF cookie.
+Keep token responses out of shared caches, keep proofs out of URLs, and protect the session cookie with HTTPS and suitable native cookie settings.
+
+Unsafe requests need an existing session, one valid proof and an accepted source origin.
+Do not submit both proof channels, even with the same value.
+The default source policy requires the target origin, using `Referer` only when `Origin` is absent; missing, ambiguous or foreign source information is rejected.
+For cross-origin scripts, configure additional exact origins through `Csrf.builder().trustedOrigins(...)` and a separate [CORS policy](../cors/).
+The builder accepts required-first varargs or a set, and `build()` validates the origin policy before it can be installed.
+
+| Operation | Token behavior |
+| --- | --- |
+| `csrf.token(request)` | Create a session if needed and return its stable, unpredictable token. |
+| `request.renewSessionId()` | Retain native attributes but immediately make the old token invalid; the next `token(request)` call generates a fresh value for the new identifier. |
+| `session.invalidate()` | Remove the session and its expected token; obtain a new session and proof in a later request. |
+
+A token can be reused while its issuing session identifier remains valid; it is not a one-use operation nonce.
+Renewal or invalidation ends that binding. Persistence and consistency across multiple application instances depend on the configured native session store.
+
+CSRF protection does not authenticate a caller.
+Application login/logout handlers coordinate credential verification and these native transitions, as shown in the [login and logout recipe](../login-logout/).
+Authentication runs before local admission hooks, including CSRF. A public login endpoint can exclude authentication while retaining CSRF verification before its credential handler.
+The [OWASP CSRF guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html#synchronizer-token-pattern) explains the synchronizer-token model used here.
+
+:::caution[Keep untrusted scripts on a separate host]
+
+Do not serve untrusted executable HTML or JavaScript on the application's trusted origin.
+Same-origin scripts can obtain proofs and make requests with the user's cookies; route groups, extension instances and cookie names do not restrict those browser privileges.
+Use a separate origin on a separate host, with host-only cookies, when applications must not trust one another.
+Different ports create different origins but do not isolate cookies, and Cookie Path is not a security boundary, as described in [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265.html#section-8.5).
+
+:::
+
+## Example
+
+`/csrf-token` delivers a proof, and `/preferences` accepts a shared preference change only after verification succeeds.
+Keep mutations on unsafe methods because CSRF verification permits GET, HEAD, OPTIONS and TRACE.
+
+<Code code={application} lang="java" title="CsrfProtectionExample.java" />
+
+## Test
+
+The tests exercise both proof channels and reject invalid session, proof and origin combinations before a write.
+They also verify that renewal rejects the old proof.
+
+<Code code={test} lang="java" title="CsrfProtectionExampleTest.java" />

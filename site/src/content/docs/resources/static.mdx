@@ -1,0 +1,42 @@
+---
+title: Serve static files and classpath resources
+description: Serve static files and classpath resources with filename media types, automatic HEAD responses, welcome files and an optional SPA fallback.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/09-resources/src/main/java/io/github/suppierk/shoostr/example/resources/StaticResourcesExample.java?raw';
+import test from '../../../../../examples/09-resources/src/test/java/io/github/suppierk/shoostr/example/resources/StaticResourcesExampleTest.java?raw';
+
+## Description
+
+Use `staticFiles(...)` to mount a public filesystem directory, or `classpathResources(...)` for assets already on the application's classpath.
+Both mounts serve existing resources through `GET` and `HEAD`; explicit routes take precedence, even when registered after the mount.
+Shoostr infers the media type from the filename and uses `application/octet-stream` when the extension is unknown.
+
+Directory listings, welcome files and single-page application (SPA) fallback are disabled by default.
+Enable welcome-file or fallback behavior through `StaticOptions` when the mount needs it: a welcome file belongs to the requested directory, while the fallback comes from the mount root.
+Fallback does not make unsafe traversal valid, and an external symbolic link can select the fallback without exposing its target.
+
+Keep each mount limited to public assets rather than exposing a project or storage root.
+Filesystem mounts require a provider with secure directory operations and do not follow symbolic links beneath the anchored root; classpath mounts reject aliased resources.
+Missing resources outside a configured fallback produce `404`.
+Keep untrusted executable HTML and JavaScript off the application's trusted origin; follow the [browser trust guidance](../../security/csrf/#description) to use a separate origin and host with host-only application cookies.
+
+## Example
+
+The same filesystem directory is mounted as ordinary files under `/files` and as a SPA under `/app`.
+Only the latter enables `index.html` as a welcome file and fallback, while its explicit `/app/version` endpoint still wins over a file with that name.
+The classpath directory `/recipe-public` is available separately under `/bundled`.
+
+Mounts use HTTP validators and a `no-cache` policy, which permits storage but requires revalidation; this is not an application cache.
+See [file ranges and conditional requests](../caching/) for validator handling, or [downloads](../downloads/) to select a file directly.
+Keep source files available through transfer completion, not merely until the handler returns.
+
+<Code code={application} lang="java" title="StaticResourcesExample.java" />
+
+## Test
+
+The test constructs both resource directories itself and adds the bundled directory to a temporary classloader.
+Its boundary checks distinguish a missing file, a rejected traversal and a symbolic link that selects the SPA shell instead of its external target.
+
+<Code code={test} lang="java" title="StaticResourcesExampleTest.java" />

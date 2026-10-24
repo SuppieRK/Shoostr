@@ -55,7 +55,7 @@ class AuthenticationGroupsTest {
     var basic =
         new Pac4j(
             new DirectBasicAuthClient(
-                (_, supplied) -> {
+                (ignored, supplied) -> {
                   if (!(supplied instanceof UsernamePasswordCredentials credentials)
                       || !"alice".equals(credentials.getUsername())
                       || !"correct".equals(credentials.getPassword())) {
@@ -69,7 +69,7 @@ class AuthenticationGroupsTest {
                 }),
             "Basic");
     Authenticator bearerAuthenticator =
-        (_, supplied) -> {
+        (ignored2, supplied) -> {
           if (!(supplied instanceof TokenCredentials credentials)
               || !"correct".equals(credentials.getToken())) {
             return Optional.empty();
@@ -91,14 +91,14 @@ class AuthenticationGroupsTest {
                       child.get(
                           (request, response) ->
                               response.text(request.principal().orElseThrow().getName())),
-                  extensions -> extensions.get(basic).enabled());
+                  extensions -> extensions.with(basic));
               routes.path(
                   "/mcp",
                   child ->
                       child.get(
                           (request, response) ->
                               response.text(request.principal().orElseThrow().getName())),
-                  extensions -> extensions.get(bearer).enabled());
+                  extensions -> extensions.with(bearer));
             });
   }
 }

@@ -30,8 +30,8 @@ class McpBidirectionalSessionTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (_, _) -> {}),
+                ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+                (ignored2, ignored3) -> {}),
             transport ->
                 McpServer.sync(transport)
                     .serverInfo("bidirectional", "1.0")

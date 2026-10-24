@@ -1,0 +1,44 @@
+---
+title: Match paths and capture parameters
+description: Match literal paths, constrained parameters, and catch-all tails with predictable precedence.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/03-routing/src/main/java/io/github/suppierk/shoostr/example/routing/PathPatternsExample.java?raw';
+import test from '../../../../../examples/03-routing/src/test/java/io/github/suppierk/shoostr/example/routing/PathPatternsExampleTest.java?raw';
+
+## Description
+
+Use named parameters to capture path segments, adding a constraint when only a restricted set of characters should match.
+Shoostr selects the most specific complete match for the requested method in this order:
+
+| Pattern | Match |
+| --- | --- |
+| `/items/latest` | The literal path |
+| `/items/{id:[0-9]+}` | One segment containing digits |
+| `/items/{name}` | Any single nonempty segment |
+| `/items/{*tail}` | One or more remaining segments |
+
+A method or suffix mismatch can fall back to a less-specific complete match, while overlapping constrained routes use registration order.
+For example, `/codes/7` selects the earlier single-digit constraint, but `/codes/12` selects the later one-to-three-digit constraint.
+This matching fallback differs from a failed [availability condition](../conditions/), which ends selection with `404`.
+
+Captures must occupy whole segments, and a catch-all must be the last segment with a nonempty tail.
+Constraints support one ASCII character class with limited repetition, not arbitrary regular expressions; invalid patterns and equivalent shapes for the same method are rejected during registration.
+
+## Example
+
+The example registers broad patterns before specific ones so that matching behavior does not depend on putting literal routes first.
+Case and trailing slashes remain significant: `/status`, `/Status`, and `/status/` are different paths.
+
+Matching uses Jetty's canonical path, while `pathParam(...)` returns a decoded capture and preserves a literal `+`.
+The transport can reject encoded slashes before routing; a catch-all capture is not a validated filesystem path.
+See [request parameters](../../request/parameters/) for accessor forms and the decoding differences between paths, queries, and forms.
+
+<Code code={application} lang="java" title="PathPatternsExample.java" />
+
+## Test
+
+The tests distinguish specificity from registration order, then check complete-match fallback, decoded captures, strict paths, and registration failures.
+
+<Code code={test} lang="java" title="PathPatternsExampleTest.java" />

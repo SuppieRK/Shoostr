@@ -107,7 +107,7 @@ class TypedCodecLifetimeTest {
           .routes()
           .get(
               "/stream",
-              (_, response) -> {
+              (ignored, response) -> {
                 response.startStream("text/plain").write("streamed");
                 assertThrows(
                     IllegalStateException.class,
@@ -135,7 +135,7 @@ class TypedCodecLifetimeTest {
           .routes()
           .get(
               "/file",
-              (_, response) -> {
+              (ignored2, response) -> {
                 response.file(file, "text/plain");
                 assertThrows(
                     IllegalStateException.class, () -> response.body("application/json", "late"));
@@ -185,20 +185,23 @@ class TypedCodecLifetimeTest {
           .routes()
           .get(
               "/flush",
-              (_, response) -> response.text("plain"),
+              (ignored3, response) -> response.text("plain"),
               extensions ->
-                  extensions.afterResponseFlush(
-                      (_, response) -> {
-                        try {
-                          rejection.complete(
-                              assertThrows(
-                                  IllegalStateException.class,
-                                  () ->
-                                      ((TypedResponse) response).body("application/json", "late")));
-                        } catch (RuntimeException | Error failure) {
-                          rejection.completeExceptionally(failure);
-                        }
-                      }));
+                  extensions
+                      .lifecycle()
+                      .afterResponseFlush(
+                          (ignored4, response) -> {
+                            try {
+                              rejection.complete(
+                                  assertThrows(
+                                      IllegalStateException.class,
+                                      () ->
+                                          ((TypedResponse) response)
+                                              .body("application/json", "late")));
+                            } catch (RuntimeException | Error failure) {
+                              rejection.completeExceptionally(failure);
+                            }
+                          }));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/flush")).statusCode());

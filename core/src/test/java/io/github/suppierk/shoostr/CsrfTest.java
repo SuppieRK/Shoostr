@@ -3,7 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
@@ -16,9 +16,9 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -35,7 +35,7 @@ class CsrfTest {
     var csrf = new Csrf();
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions().extensions(csrf);
       app.routes().get("/token", (request, response) -> response.text(csrf.token(request)));
       app.routes()
@@ -43,11 +43,11 @@ class CsrfTest {
               method,
               "/safe",
               (request, response) -> {
-                assertTrue(request.session(false).isPresent());
+                assertTrue(request.getSession().isPresent());
                 executions.incrementAndGet();
                 response.text("accepted");
               },
-              e -> e.get(csrf).required());
+              e -> e.with(csrf));
 
       try (var test =
           TestServer.start(
@@ -98,18 +98,18 @@ class CsrfTest {
     var csrf = new Csrf();
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions().extensions(csrf);
       app.routes().get("/token", (request, response) -> response.text(csrf.token(request)));
       app.routes()
           .route(
               method,
               "/mutation",
-              (_, response) -> {
+              (ignored, response) -> {
                 executions.incrementAndGet();
                 response.text("accepted");
               },
-              e -> e.get(csrf).required());
+              e -> e.with(csrf));
 
       try (var test =
           TestServer.start(
@@ -162,28 +162,45 @@ class CsrfTest {
   }
 
   @Test
-  void repeatedInheritedRequirementsRegisterExactlyOneVerification() throws Exception {
+  void repeatedSelectionInheritsProtectionWithoutChangingTheRequestProof() throws Exception {
     var csrf = new Csrf();
+    var executions = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.extensions(csrf)
-          .routes()
+    try (var app = new Shoostr()) {
+      app.sessions().extensions(csrf);
+      app.routes()
+          .get("/token", (request, response) -> response.text(csrf.token(request)))
           .path(
               "/browser",
               routes ->
-                  routes.post("/submit", (_, _) -> {}, e -> e.get(csrf).required().required()),
-              e -> e.get(csrf).required().required());
+                  routes.post(
+                      "/submit",
+                      (request, response) -> {
+                        executions.incrementAndGet();
+                        response.text("accepted");
+                      },
+                      e -> e.with(csrf)),
+              e -> e.with(csrf));
 
-      var router = app.routes().compile();
-
-      try {
-        var endpoint = router.match("/browser/submit", HttpMethods.POST);
-        assertNotNull(endpoint);
-        var behavior = endpoint.behavior();
-        assertNotNull(behavior);
-        assertEquals(1, behavior.before().size());
-      } finally {
-        router.close();
+      try (var test = TestServer.start(app)) {
+        var token = test.send(r -> r.path("/token"), HttpResponse.BodyHandlers.ofString()).body();
+        var origin = "http://127.0.0.1:" + app.port();
+        assertEquals(
+            403,
+            test.send(r -> r.path("/browser/submit").method("POST").header("Origin", origin))
+                .statusCode());
+        assertEquals(0, executions.get());
+        var accepted =
+            test.send(
+                r ->
+                    r.path("/browser/submit")
+                        .method("POST")
+                        .header("Origin", origin)
+                        .header("X-CSRF-Token", token),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, accepted.statusCode());
+        assertEquals("accepted", accepted.body());
+        assertEquals(1, executions.get());
       }
     }
   }
@@ -192,14 +209,19 @@ class CsrfTest {
   void installationAloneDoesNotProtectRoutesOrEnableSessions() throws Exception {
     var csrf = new Csrf();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(csrf)
           .routes()
           .post(
               "/unselected",
-              (request, response) ->
-                  response.text(
-                      request.session(true).isEmpty() ? "no session" : "session enabled"));
+              (request, response) -> {
+                assertTrue(request.getSession().isEmpty());
+                assertThrows(IllegalStateException.class, request::getOrCreateSession);
+                response.text("no session");
+              });
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -219,7 +241,7 @@ class CsrfTest {
     var executions = new AtomicInteger();
     var csrf = new Csrf();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions().extensions(csrf);
       app.routes()
           .path(
@@ -228,12 +250,12 @@ class CsrfTest {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
                 routes.post(
                     "/submit",
-                    (_, response) -> {
+                    (ignored4, response) -> {
                       executions.incrementAndGet();
                       response.text("accepted");
                     });
               },
-              e -> e.get(csrf).required());
+              e -> e.with(csrf));
 
       try (var test =
           TestServer.start(
@@ -276,7 +298,7 @@ class CsrfTest {
 
   @Test
   void acceptsOneTokenInAFormFieldWhenTheOriginHeaderIsUnavailable() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var csrf = new Csrf();
       app.sessions();
       app.extensions(csrf);
@@ -285,9 +307,9 @@ class CsrfTest {
               "/",
               routes -> {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
-                routes.post("/submit", (_, response) -> response.text("accepted"));
+                routes.post("/submit", (ignored5, response) -> response.text("accepted"));
               },
-              e -> e.get(csrf).required());
+              e -> e.with(csrf));
 
       try (var test =
           TestServer.start(
@@ -345,17 +367,17 @@ class CsrfTest {
     var executions = new AtomicInteger();
     var csrf = new Csrf();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions().extensions(csrf);
       app.routes().get("/form", (request, response) -> response.text(csrf.token(request)));
       app.routes()
           .post(
               "/submit",
-              (_, response) -> {
+              (ignored6, response) -> {
                 executions.incrementAndGet();
                 response.text("accepted");
               },
-              e -> e.get(csrf).required());
+              e -> e.with(csrf));
 
       try (var test =
           TestServer.start(
@@ -411,7 +433,7 @@ class CsrfTest {
     var executions = new AtomicInteger();
     var csrf = new Csrf();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions();
       app.extensions(csrf);
       app.routes()
@@ -419,9 +441,9 @@ class CsrfTest {
               "/",
               routes -> {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
-                routes.post("/submit", (_, _) -> executions.incrementAndGet());
+                routes.post("/submit", (ignored7, ignored8) -> executions.incrementAndGet());
               },
-              e -> e.get(csrf).required());
+              e -> e.with(csrf));
 
       try (var test =
           TestServer.start(
@@ -529,15 +551,16 @@ class CsrfTest {
   void rejectsMalformedRefererWithoutCreatingASessionOrRunningBusinessCode() throws Exception {
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var csrf = new Csrf();
       app.sessions();
       app.extensions(csrf);
       app.routes()
           .path(
               "/",
-              routes -> routes.post("/submit", (_, _) -> executions.incrementAndGet()),
-              e -> e.get(csrf).required());
+              routes ->
+                  routes.post("/submit", (ignored9, ignored10) -> executions.incrementAndGet()),
+              e -> e.with(csrf));
 
       try (var test =
           TestServer.start(
@@ -557,16 +580,16 @@ class CsrfTest {
 
   @Test
   void leavesBearerOnlyRoutesOutsideTheBrowserProtectionScope() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       var csrf = new Csrf();
       app.sessions();
       app.extensions(csrf);
       app.routes()
           .path(
               "/",
-              routes -> routes.post("/browser", (_, response) -> response.text("browser")),
-              e -> e.get(csrf).required());
-      app.routes().post("/api", (_, response) -> response.text("api"));
+              routes -> routes.post("/browser", (ignored11, response) -> response.text("browser")),
+              e -> e.with(csrf));
+      app.routes().post("/api", (ignored12, response) -> response.text("api"));
 
       try (var test =
           TestServer.start(
@@ -597,7 +620,7 @@ class CsrfTest {
   void rotatesTokenAfterSessionRenewalAndRejectsReplayAfterLogout() throws Exception {
     var csrf = new Csrf();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions();
       app.extensions(csrf);
       app.routes()
@@ -611,15 +634,15 @@ class CsrfTest {
                       request.renewSessionId();
                       response.text(csrf.token(request));
                     });
-                routes.post("/submit", (_, response) -> response.text("accepted"));
+                routes.post("/submit", (ignored13, response) -> response.text("accepted"));
                 routes.post(
                     "/logout",
                     (request, response) -> {
-                      request.session(false).orElseThrow().invalidate();
+                      request.getSession().orElseThrow().invalidate();
                       response.removeCookie("JSESSIONID").text("logged out");
                     });
               },
-              e -> e.get(csrf).required());
+              e -> e.with(csrf));
 
       try (var test =
           TestServer.start(
@@ -700,19 +723,22 @@ class CsrfTest {
   @Test
   void allowsExplicitTrustedBrowserOriginOnlyAfterCorsPreflightAndActualCsrfCheck()
       throws Exception {
-    var csrf = new Csrf(Set.of("https://client.example"));
+    var csrf =
+        Csrf.builder().trustedOrigins("https://client.example", "https://second.example").build();
     var executions = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.sessions();
-      app.cors(
-          new CorsPolicy(
-              Set.of("https://client.example"),
-              Set.of(HttpMethods.GET, HttpMethods.POST),
-              Set.of(HttpHeaders.of("X-CSRF-Token")),
-              true,
-              Set.of(),
-              5));
+      var cors =
+          new Cors(
+              CorsPolicy.builder()
+                  .origins("https://client.example", "https://second.example")
+                  .methods(HttpMethods.GET, HttpMethods.POST)
+                  .allowedHeaders(HttpHeaders.CONTENT_TYPE, HttpHeaders.of("X-CSRF-Token"))
+                  .exposedHeaders(HttpHeaders.ETAG, HttpHeaders.of("X-Request-Id"))
+                  .credentials(true)
+                  .build());
+      app.extensions(cors).configureExtensionsDefaults(e -> e.with(cors));
       app.extensions(csrf);
       app.routes()
           .path(
@@ -721,12 +747,12 @@ class CsrfTest {
                 routes.get("/form", (request, response) -> response.text(csrf.token(request)));
                 routes.post(
                     "/submit",
-                    (_, response) -> {
+                    (ignored14, response) -> {
                       executions.incrementAndGet();
                       response.text("accepted");
                     });
               },
-              e -> e.get(csrf).required());
+              e -> e.with(csrf));
 
       try (var test =
           TestServer.start(
@@ -778,6 +804,24 @@ class CsrfTest {
             "https://client.example",
             accepted.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
         assertEquals(1, executions.get());
+        assertEquals(
+            "ETag, X-Request-Id",
+            accepted.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
+        var second =
+            test.send(
+                request ->
+                    request
+                        .path("/submit")
+                        .method("POST")
+                        .header("Cookie", cookie)
+                        .header("Origin", "https://second.example")
+                        .header("X-CSRF-Token", form.body()),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, second.statusCode());
+        assertEquals(
+            "https://second.example",
+            second.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
+        assertEquals(2, executions.get());
       }
     }
   }

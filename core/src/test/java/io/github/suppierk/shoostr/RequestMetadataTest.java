@@ -44,6 +44,7 @@ import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.io.EndPoint;
 import org.eclipse.jetty.server.ConnectionMetaData;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,7 +60,10 @@ class RequestMetadataTest {
 
   @BeforeEach
   void prepare() {
-    app = new Shoostr(Options.defaults().withPort(0));
+    app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
   }
 
   @AfterEach
@@ -71,7 +75,8 @@ class RequestMetadataTest {
   @NullSource
   void rejectsNullPathNamesBeforeAndAfterRouteSelection(String name) throws Exception {
     app.onRequestHeaders(
-        (request, _) -> assertThrows(NullPointerException.class, () -> request.pathParam(name)));
+        (request, ignored) ->
+            assertThrows(NullPointerException.class, () -> request.pathParam(name)));
     app.routes()
         .get(
             "/null-name/{id}",
@@ -95,7 +100,7 @@ class RequestMetadataTest {
     app.modifyHttpConfiguration(
         configuration ->
             configuration.addCustomizer(
-                (nativeRequest, _) -> {
+                (nativeRequest, ignored2) -> {
                   var uri =
                       HttpURI.build(nativeRequest.getHttpURI())
                           .scheme((String) null)
@@ -107,7 +112,7 @@ class RequestMetadataTest {
                           Proxy.newProxyInstance(
                               ConnectionMetaData.class.getClassLoader(),
                               new Class<?>[] {ConnectionMetaData.class},
-                              (_, method, arguments) ->
+                              (ignored3, method, arguments) ->
                                   "getServerAuthority".equals(method.getName())
                                       ? null
                                       : method.invoke(nativeMetadata, arguments));
@@ -148,7 +153,7 @@ class RequestMetadataTest {
     app.modifyHttpConfiguration(
         configuration ->
             configuration.addCustomizer(
-                (nativeRequest, _) -> {
+                (nativeRequest, ignored4) -> {
                   var nativeMetadata = nativeRequest.getConnectionMetaData();
                   var nativeConnection = nativeMetadata.getConnection();
                   var nativeEndpoint = nativeConnection.getEndPoint();
@@ -157,7 +162,7 @@ class RequestMetadataTest {
                           Proxy.newProxyInstance(
                               EndPoint.class.getClassLoader(),
                               new Class<?>[] {EndPoint.class},
-                              (_, method, arguments) ->
+                              (ignored5, method, arguments) ->
                                   switch (method.getName()) {
                                     case "getLocalSocketAddress", "getRemoteSocketAddress" -> null;
                                     default -> method.invoke(nativeEndpoint, arguments);
@@ -167,7 +172,7 @@ class RequestMetadataTest {
                           Proxy.newProxyInstance(
                               Connection.class.getClassLoader(),
                               new Class<?>[] {Connection.class},
-                              (_, method, arguments) ->
+                              (ignored6, method, arguments) ->
                                   "getEndPoint".equals(method.getName())
                                       ? endpoint
                                       : method.invoke(nativeConnection, arguments));
@@ -176,7 +181,7 @@ class RequestMetadataTest {
                           Proxy.newProxyInstance(
                               ConnectionMetaData.class.getClassLoader(),
                               new Class<?>[] {ConnectionMetaData.class},
-                              (_, method, arguments) ->
+                              (ignored7, method, arguments) ->
                                   "getConnection".equals(method.getName())
                                       ? connection
                                       : method.invoke(nativeMetadata, arguments));
@@ -219,7 +224,7 @@ class RequestMetadataTest {
     app.modifyHttpConfiguration(
         configuration ->
             configuration.addCustomizer(
-                (nativeRequest, _) -> {
+                (nativeRequest, ignored8) -> {
                   var original = nativeRequest.getHeaders().asImmutable();
                   var fields =
                       (HttpFields)
@@ -327,7 +332,7 @@ class RequestMetadataTest {
     app.modifyHttpConfiguration(
         configuration ->
             configuration.addCustomizer(
-                (nativeRequest, _) -> {
+                (nativeRequest, ignored9) -> {
                   var fields = HttpFields.build(nativeRequest.getHeaders());
                   transportHeaders.set(fields);
                   return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
@@ -338,7 +343,7 @@ class RequestMetadataTest {
                   };
                 }));
     app.onRequestHeaders(
-        (_, _) -> {
+        (ignored10, ignored11) -> {
           transportHeaders.get().put("X-Snapshot", "changed");
           transportHeaders.get().put("Cookie", "token=changed");
         });
@@ -543,7 +548,7 @@ class RequestMetadataTest {
     var retained = new AtomicReference<Map<String, Object>>();
     var value = new Object();
     app.beforeRouteHandler(
-        (request, _) -> {
+        (request, ignored12) -> {
           assertTrue(request.attribute("value").isEmpty());
           assertEquals(Map.of(), request.attributeMap());
           assertSame(request, request.attribute("value", value));
@@ -589,7 +594,7 @@ class RequestMetadataTest {
   void propagatesPrincipalAndStateThroughErrorHandling() throws Exception {
     var retained = new AtomicReference<Principal>();
     app.beforeRouteHandler(
-        (request, _) -> {
+        (request, ignored13) -> {
           assertTrue(request.principal().isEmpty());
           if (request.routePattern().filter("/users/{id}"::equals).isPresent()) {
             var name = request.pathParam("id").orElseThrow();
@@ -601,7 +606,7 @@ class RequestMetadataTest {
         });
     app.exception(
         IllegalArgumentException.class,
-        (_, request, response) -> {
+        (ignored14, request, response) -> {
           assertEquals("/users/{id}", request.routePattern().orElseThrow());
           assertEquals(Map.of("id", "alice"), request.pathParamMap());
           assertEquals("alice", request.principal().orElseThrow().getName());
@@ -611,7 +616,7 @@ class RequestMetadataTest {
     app.routes()
         .get(
             "/users/{id}",
-            (request, _) -> {
+            (request, ignored15) -> {
               assertSame(retained.get(), request.principal().orElseThrow());
               throw new IllegalArgumentException("business failure");
             });
@@ -650,7 +655,7 @@ class RequestMetadataTest {
       var entered = new CountDownLatch(8);
       var release = new CountDownLatch(1);
       app.beforeRouteHandler(
-          (request, _) -> {
+          (request, ignored16) -> {
             assertTrue(request.principal().isEmpty());
             assertEquals(Map.of(), request.attributeMap());
             var id = request.pathParam("id").orElseThrow();
@@ -904,7 +909,8 @@ class RequestMetadataTest {
             request -> request.queryParam("missing"),
             request -> request.header("missing"),
             request -> request.cookie("missing"),
-            request -> request.session(false));
+            Request::getSession,
+            Request::getOrCreateSession);
     app.routes()
         .get(
             "/lifetime/{id}",
@@ -933,7 +939,7 @@ class RequestMetadataTest {
               assertEquals(Map.of("id", "one"), request.pathParamMap());
               stream.write("streamed");
             });
-    app.routes().get("/other", (_, response) -> response.text("other"));
+    app.routes().get("/other", (ignored17, response) -> response.text("other"));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
       assertEquals(
@@ -968,8 +974,8 @@ class RequestMetadataTest {
 
   @Test
   void matchesAnEncodedUtf8LiteralAtTheLiveListener() throws Exception {
-    app.routes().get("/tést", (_, response) -> response.text("unicode-literal"));
-    app.routes().get("/{value}", (_, response) -> response.text("parameter"));
+    app.routes().get("/tést", (ignored18, response) -> response.text("unicode-literal"));
+    app.routes().get("/{value}", (ignored19, response) -> response.text("parameter"));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
       var result =
@@ -994,7 +1000,7 @@ class RequestMetadataTest {
     app.routes()
         .get(
             "/segments/a/b",
-            (_, response) -> {
+            (ignored20, response) -> {
               calls.incrementAndGet();
               response.text("split");
             });
@@ -1049,7 +1055,7 @@ class RequestMetadataTest {
                 response.text("first");
               }
             });
-    app.routes().get("/next", (_, response) -> response.text("next"));
+    app.routes().get("/next", (ignored21, response) -> response.text("next"));
     app.start();
 
     try (var socket = new Socket()) {

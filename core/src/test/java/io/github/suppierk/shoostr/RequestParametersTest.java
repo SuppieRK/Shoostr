@@ -26,6 +26,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jetty.http.HttpTester;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,7 +41,10 @@ class RequestParametersTest {
 
   @BeforeEach
   void prepare() {
-    app = new Shoostr(Options.defaults().withPort(0));
+    app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
   }
 
   @AfterEach
@@ -127,7 +131,7 @@ class RequestParametersTest {
   void rejectsMalformedQueryEncoding(String encoded) throws Exception {
     app.exception(
         BadRequestException.class,
-        (_, request, response) -> {
+        (ignored, request, response) -> {
           assertThrows(BadRequestException.class, request::queryParamMap);
           response.setHeader("X-Handled", "bad-query").text("bad input");
         });
@@ -156,7 +160,7 @@ class RequestParametersTest {
     assertThrows(IllegalArgumentException.class, () -> defaults.withMaxParameters(0));
     assertThrows(IllegalArgumentException.class, () -> defaults.withMaxParameters(-1));
     app.close();
-    app = new Shoostr(Options.defaults().withMaxParameters(2).withPort(0));
+    app = new Shoostr(Options.defaults().withMaxParameters(2));
     app.routes()
         .get(
             "/query",
@@ -346,7 +350,7 @@ class RequestParametersTest {
   void rejectsMalformedFormUtf8WithoutPartialValues(boolean encoded) throws Exception {
     app.exception(
         BadRequestException.class,
-        (_, request, response) -> {
+        (ignored2, request, response) -> {
           assertThrows(BadRequestException.class, request::formParamMap);
           response.text("invalid form");
         });
@@ -379,10 +383,18 @@ class RequestParametersTest {
     // Independent transport access is required by this test's wire/client behavior.
     try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
       app.close();
-      app = new Shoostr(new Options("127.0.0.1", 0, 7, 1024, 64, 30_000));
+      app =
+          new Shoostr(new Options(7, 1024, 64, 1000, MultipartOptions.defaults()))
+              .modifyServer(
+                  nativeServer -> {
+                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                    nativeConnector.setHost("127.0.0.1");
+                    nativeConnector.setPort(0);
+                    nativeConnector.setIdleTimeout(30_000);
+                  });
       app.exception(
           ContentTooLargeException.class,
-          (_, request, response) -> {
+          (ignored3, request, response) -> {
             assertThrows(ContentTooLargeException.class, request::bodyBytes);
             assertThrows(ContentTooLargeException.class, request::formParamMap);
             response.text("still oversized");
@@ -466,7 +478,7 @@ class RequestParametersTest {
   @Test
   void limitsFormPairsIndependentlyFromQueryPairs() throws Exception {
     app.close();
-    app = new Shoostr(Options.defaults().withMaxParameters(2).withPort(0));
+    app = new Shoostr(Options.defaults().withMaxParameters(2));
     app.routes()
         .post(
             "/form",
@@ -508,7 +520,15 @@ class RequestParametersTest {
     // Independent transport access is required by this test's wire/client behavior.
     try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
       app.close();
-      app = new Shoostr(new Options("127.0.0.1", 0, 7, 1024, 64, 30_000));
+      app =
+          new Shoostr(new Options(7, 1024, 64, 1000, MultipartOptions.defaults()))
+              .modifyServer(
+                  nativeServer -> {
+                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                    nativeConnector.setHost("127.0.0.1");
+                    nativeConnector.setPort(0);
+                    nativeConnector.setIdleTimeout(30_000);
+                  });
       app.routes()
           .post(
               "/form", (request, response) -> response.text(request.formParam("a").orElseThrow()));

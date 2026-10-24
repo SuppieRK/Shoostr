@@ -7,7 +7,6 @@ import io.github.suppierk.shoostr.AuthenticationExtension;
 import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.Extensions;
 import io.github.suppierk.shoostr.Handler;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Shoostr;
@@ -39,7 +38,7 @@ class ExtensionCompositionTest {
     Handler shared =
         (request, response) -> response.text(request.principal().orElseThrow().getName());
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       assertSame(app, app.authentication(auth));
       assertSame(app, app.extensions(docs, otherDocs));
       app.routes(
@@ -47,21 +46,21 @@ class ExtensionCompositionTest {
             routes.path(
                 "/users",
                 users -> {
-                  users.get("/{id}", shared, e -> retained.set(e.get(docs).summary("One user")));
+                  users.get("/{id}", shared, e -> retained.set(e.with(docs).summary("One user")));
                   users.get("/search", shared);
                 },
                 e -> {
                   groupCalls.incrementAndGet();
-                  e.get(auth).enabled();
-                  e.get(docs).tag("users").summary("Users");
-                  e.get(otherDocs).tag("public").summary("Other document");
+                  e.with(auth);
+                  e.with(docs).tag("users").summary("Users");
+                  e.with(otherDocs).tag("public").summary("Other document");
                 });
             routes.get(
                 "/openapi.json",
                 docs.handler(),
                 e -> {
-                  e.get(auth).enabled();
-                  e.get(docs).summary("API description");
+                  e.with(auth);
+                  e.with(docs).summary("API description");
                 });
           });
 
@@ -118,7 +117,7 @@ class ExtensionCompositionTest {
     }
 
     Handler handler() {
-      return (_, response) -> response.text(String.join("\n", operations));
+      return (ignored, response) -> response.text(String.join("\n", operations));
     }
   }
 

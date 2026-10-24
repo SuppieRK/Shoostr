@@ -28,15 +28,15 @@ class EndpointMetricsTest {
     var registry = new SimpleMeterRegistry();
 
     try (var workers = executor(executorType, owned);
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       var metrics = new MicrometerMetrics(registry);
       metrics.allRequests();
-      app.extensions(metrics).afterRequest(_ -> finished.complete(null));
+      app.extensions(metrics).afterRequest(ignored -> finished.complete(null));
       app.routes()
           .get(
               "/metrics/{id}",
               workers,
-              (_, response) -> {
+              (ignored2, response) -> {
                 handled.complete(Thread.currentThread());
                 response.text("ok");
               });

@@ -6,10 +6,10 @@ plugins {
 }
 
 java {
-    toolchain { languageVersion = JavaLanguageVersion.of(25) }
+    toolchain { languageVersion = JavaLanguageVersion.of(21) }
 }
 tasks.withType(JavaCompile).configureEach {
-    options.release = 25
+    options.release = 21
     options.compilerArgs.add('-proc:none')
 }
 repositories {

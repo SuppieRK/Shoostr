@@ -2,7 +2,6 @@ package io.github.suppierk.shoostr.extensions;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.RouteInfo;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpMethods;
@@ -19,16 +18,16 @@ class RouteInfoTest {
     var conditions = new AtomicInteger();
     var facts = new ArrayList<RouteInfo>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes(
           routes ->
               routes.path(
                   "/api",
                   group -> {
-                    group.get("/public", (_, _) -> {});
+                    group.get("/public", (ignored, ignored2) -> {});
                     group.when(
                         () -> conditions.incrementAndGet() > 0,
-                        conditional -> conditional.get("/private", (_, _) -> {}));
+                        conditional -> conditional.get("/private", (ignored3, ignored4) -> {}));
                   },
                   e -> {
                     Consumer<RouteInfo> collect = facts::add;

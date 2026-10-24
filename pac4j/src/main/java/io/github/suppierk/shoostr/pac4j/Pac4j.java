@@ -16,6 +16,11 @@ import org.pac4j.core.context.CallContext;
  * A reusable stateless authentication policy using an application-configured pac4j direct client.
  * Configure the client and its thread-safe authenticator before creating this policy; do not mutate
  * them while serving requests. The application owns credentials, keys, and identity stores.
+ *
+ * <p>The pac4j context reports security through {@link Request#isEffectivelySecure()}: an
+ * explicitly selected trusted forwarding protocol takes precedence, with direct transport TLS as
+ * the fallback. A request-target or effective-URL scheme alone is not evidence of a secure
+ * connection. {@link Request#isSecure()} continues to describe only the direct transport.
  */
 public final class Pac4j extends AuthenticationExtension {
   private final DirectClient client;
@@ -29,7 +34,7 @@ public final class Pac4j extends AuthenticationExtension {
    * @param challenge WWW-Authenticate value used for missing or invalid credentials
    */
   public Pac4j(DirectClient client, String challenge) {
-    this(client, challenge, (_, _, _) -> true);
+    this(client, challenge, (ignored, ignored2, ignored3) -> true);
   }
 
   /**

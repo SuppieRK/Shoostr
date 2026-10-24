@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -48,7 +49,10 @@ class ApplicationCloseCallbacksTest {
   @ParameterizedTest
   @ValueSource(strings = {BEFORE_CLOSE, AFTER_CLOSE})
   void rejectsCallbackRegistrationAfterStartup(String phase) throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.start();
       Consumer<Runnable> register = BEFORE_CLOSE.equals(phase) ? app::beforeClose : app::afterClose;
       assertThrows(IllegalStateException.class, () -> register.accept(() -> {}));
@@ -299,11 +303,14 @@ class ApplicationCloseCallbacksTest {
     var invoked = new ArrayList<String>();
     var rejected = new IllegalStateException("Start failed");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.beforeClose(() -> invoked.add("stop"));
       app.afterClose(() -> invoked.add("dispose"));
       app.modifyServer(
-          _ -> {
+          ignored -> {
             throw rejected;
           });
       assertSame(rejected, assertThrows(IllegalStateException.class, app::start));
@@ -318,7 +325,7 @@ class ApplicationCloseCallbacksTest {
 
     try (var app = new Shoostr()) {
       app.afterClose(invoked::incrementAndGet);
-      app.routes(_ -> assertThrows(IllegalStateException.class, app::start));
+      app.routes(ignored2 -> assertThrows(IllegalStateException.class, app::start));
       assertEquals(0, invoked.get());
     }
 
@@ -340,13 +347,16 @@ class ApplicationCloseCallbacksTest {
                 () ->
                     assertThrows(
                         IllegalStateException.class,
-                        () -> app.routes(routes -> routes.get("/late", (_, _) -> {}))),
+                        () ->
+                            app.routes(routes -> routes.get("/late", (ignored3, ignored4) -> {}))),
                 () ->
                     assertThrows(
-                        IllegalStateException.class, () -> root.get("/late", (_, _) -> {})),
+                        IllegalStateException.class,
+                        () -> root.get("/late", (ignored5, ignored6) -> {})),
                 () ->
                     assertThrows(
-                        IllegalStateException.class, () -> nested.get("/late", (_, _) -> {})));
+                        IllegalStateException.class,
+                        () -> nested.get("/late", (ignored7, ignored8) -> {})));
             verified.set(true);
           });
     }

@@ -294,7 +294,7 @@ for (const [name, verify] of [
     assert.ok(markdown.includes('| Drops | Scheduled total | Dropped % |'));
   }],
   ['workload Markdown prints actual JVM characteristics and CPU/RAM limits', markdown => {
-    for (const expected of ['JDK 25.0.4', 'ServerMain 18080 1000', '-XX:+UseG1GC',
+    for (const expected of ['JDK 21.0.13', 'ServerMain 18080 1000', '-XX:+UseG1GC',
       'initial active 2', 'memory_limit: 1 GiB', 'JVM affinity: 0,1', 'k6 affinity: 2,3']) {
       assert.ok(markdown.includes(expected), expected);
     }
@@ -311,7 +311,7 @@ for (const [name, verify] of [
     for (const index of [1, 2, 3]) {
       const child = path.join(directory, `trial-${index}`);
       fs.cpSync(fixture(t, httpMetrics()), child, {recursive: true});
-      fs.writeFileSync(path.join(child, 'VM.version.txt'), 'JDK 25.0.4');
+      fs.writeFileSync(path.join(child, 'VM.version.txt'), 'JDK 21.0.13');
       fs.writeFileSync(path.join(child, 'VM.command_line.txt'), 'java_command: ServerMain 18080 1000');
       fs.writeFileSync(path.join(child, 'VM.flags.txt'), '-XX:+UseG1GC -XX:MaxHeapSize=268435456');
       fs.writeFileSync(path.join(child, 'VM.info.txt'), 'CPU: total 4 (initial active 2)\ncontainer memory_limit: 1 GiB');

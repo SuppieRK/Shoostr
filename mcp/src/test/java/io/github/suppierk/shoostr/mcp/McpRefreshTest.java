@@ -42,7 +42,7 @@ class McpRefreshTest {
 
               return new McpIdentity("alice:client", McpTransportContext.EMPTY, expiry);
             },
-            (_, _) -> {});
+            (ignored, ignored2) -> {});
     var mcp =
         Mcp.sync(
             security,
@@ -103,7 +103,7 @@ class McpRefreshTest {
                   () -> {
                     try {
                       oldInput.readAllBytes();
-                    } catch (IOException _) {
+                    } catch (IOException ignored3) {
                       // Either EOF or a transport failure ends the committed old stream.
                     }
 

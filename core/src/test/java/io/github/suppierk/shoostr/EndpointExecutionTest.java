@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import java.util.stream.Stream;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -55,7 +56,7 @@ class EndpointExecutionTest {
 
           try {
             release.await();
-          } catch (InterruptedException _) {
+          } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
           }
         });
@@ -64,23 +65,29 @@ class EndpointExecutionTest {
     var completed = new CompletableFuture<RequestOutcome>();
     var completions = new AtomicInteger();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var driver = Executors.newVirtualThreadPerTaskExecutor()) {
       app.modifyServer(server -> server.setStopTimeout(0));
       app.routes()
           .get(
               "/queued",
               workers,
-              (_, response) -> {
+              (ignored2, response) -> {
                 invoked.set(true);
                 response.text("wrong");
               },
               extensions ->
-                  extensions.afterRequest(
-                      outcome -> {
-                        completions.incrementAndGet();
-                        completed.complete(outcome);
-                      }));
+                  extensions
+                      .lifecycle()
+                      .afterRequest(
+                          outcome -> {
+                            completions.incrementAndGet();
+                            completed.complete(outcome);
+                          }));
 
       try (var test = TestServer.start(app)) {
         var sent = driver.submit(() -> test.send(request -> request.path("/queued")));
@@ -127,7 +134,7 @@ class EndpointExecutionTest {
 
           try {
             release.await();
-          } catch (InterruptedException _) {
+          } catch (InterruptedException ignored3) {
             Thread.currentThread().interrupt();
           }
         });
@@ -135,15 +142,15 @@ class EndpointExecutionTest {
     var invoked = new AtomicBoolean();
     var workers = Executors.unconfigurableExecutorService(pool);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.exception(
           RejectedExecutionException.class,
-          (_, _, response) -> response.status(503).text("rejected"));
+          (ignored4, ignored5, response) -> response.status(503).text("rejected"));
       app.routes()
           .get(
               "/inline",
               workers,
-              (_, response) -> {
+              (ignored6, response) -> {
                 invoked.set(true);
                 response.text("wrong");
               });
@@ -165,7 +172,7 @@ class EndpointExecutionTest {
     var workers = executor("platform", owned);
 
     try (workers;
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       app.routes()
           .when(
               () -> false,
@@ -173,13 +180,15 @@ class EndpointExecutionTest {
                   routes.get(
                       "/hidden",
                       workers,
-                      (_, _) -> invoked.set(true),
+                      (ignored7, ignored8) -> invoked.set(true),
                       extensions ->
-                          extensions.status(
-                              404,
-                              (_, response) ->
-                                  response.text(
-                                      "local:" + owned.contains(Thread.currentThread())))));
+                          extensions
+                              .lifecycle()
+                              .status(
+                                  404,
+                                  (ignored9, response) ->
+                                      response.text(
+                                          "local:" + owned.contains(Thread.currentThread())))));
 
       try (var test = TestServer.start(app)) {
         var response =
@@ -197,8 +206,8 @@ class EndpointExecutionTest {
     var workers = Executors.newFixedThreadPool(1);
 
     try (workers;
-        var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.onRequestHeaders((request, _) -> request.attribute("value", "original"));
+        var app = new Shoostr()) {
+      app.onRequestHeaders((request, ignored10) -> request.attribute("value", "original"));
       app.routes()
           .get(
               "/attributes",
@@ -221,13 +230,13 @@ class EndpointExecutionTest {
     var workers = Executors.newFixedThreadPool(1);
 
     try (workers;
-        var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.onRequestHeaders((_, _) -> context.set("admission-only"));
+        var app = new Shoostr()) {
+      app.onRequestHeaders((ignored11, ignored12) -> context.set("admission-only"));
       app.routes()
           .get(
               "/context",
               workers,
-              (_, response) -> response.text(context.get() == null ? "absent" : "copied"));
+              (ignored13, response) -> response.text(context.get() == null ? "absent" : "copied"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(
@@ -244,19 +253,20 @@ class EndpointExecutionTest {
     var workers = Executors.newFixedThreadPool(1);
 
     try (workers;
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       app.exception(
-          RejectedExecutionException.class, (_, _, response) -> response.status(503).text("app"));
+          RejectedExecutionException.class,
+          (ignored14, ignored15, response) -> response.status(503).text("app"));
       app.routes()
           .path(
               "/rejected",
               routes -> {
                 routes.exception(
                     RejectedExecutionException.class,
-                    (_, _, response) -> response.status(503).text("local"));
+                    (ignored16, ignored17, response) -> response.status(503).text("local"));
                 routes.get(
                     workers,
-                    (_, response) -> {
+                    (ignored18, response) -> {
                       invoked.set(true);
                       response.text("endpoint");
                     });
@@ -288,26 +298,26 @@ class EndpointExecutionTest {
     var workers = executor(executorType, owned);
 
     try (workers;
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       appRegistration.accept(
           app,
-          (_, _) -> {
+          (ignored19, ignored20) -> {
             callbackThreads.add(Thread.currentThread());
             events.add("app");
           });
-      app.afterRequest(_ -> finished.complete(null));
+      app.afterRequest(ignored21 -> finished.complete(null));
       app.routes()
           .get(
               "/callbacks",
               workers,
-              (_, response) -> {
+              (ignored22, response) -> {
                 callbackThreads.add(Thread.currentThread());
                 response.text("ok");
               },
               extensions ->
                   localRegistration.accept(
                       extensions,
-                      (_, _) -> {
+                      (ignored23, ignored24) -> {
                         callbackThreads.add(Thread.currentThread());
                         events.add("local");
                       }));
@@ -328,14 +338,14 @@ class EndpointExecutionTest {
   void keepsSseHandlerAndStreamWritesOnSelectedPlatformThread() throws Exception {
     var owned = ConcurrentHashMap.<Thread>newKeySet();
     Handler endpoint =
-        (_, response) ->
+        (ignored25, response) ->
             response
                 .startEventStream()
                 .send(Boolean.toString(owned.contains(Thread.currentThread())));
     var workers = executor("platform", owned);
 
     try (workers;
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       app.routes().sse("/events", workers, endpoint);
 
       try (var test = TestServer.start(app)) {
@@ -354,13 +364,14 @@ class EndpointExecutionTest {
     var completed = new CompletableFuture<RequestOutcome>();
     var admissionRestored = new AtomicBoolean();
     var workerRestored = new AtomicBoolean();
-    Handler endpoint = (_, response) -> response.text(Objects.requireNonNull(context.get()));
+    Handler endpoint =
+        (ignored26, response) -> response.text(Objects.requireNonNull(context.get()));
     var workers = Executors.newFixedThreadPool(1);
 
     try (workers;
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       app.observe(
-          _ -> {
+          ignored27 -> {
             var admission = Thread.currentThread();
             context.set("server-context");
             return new RequestObservation() {
@@ -409,11 +420,12 @@ class EndpointExecutionTest {
   void handlesSelectedEndpointOnPlatformThread() throws Exception {
     var owned = ConcurrentHashMap.<Thread>newKeySet();
     Handler endpoint =
-        (_, response) -> response.text(Boolean.toString(owned.contains(Thread.currentThread())));
+        (ignored28, response) ->
+            response.text(Boolean.toString(owned.contains(Thread.currentThread())));
     var workers = executor("platform", owned);
 
     try (workers;
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app = new Shoostr()) {
       app.routes().get("/selected", workers, endpoint);
 
       try (var test = TestServer.start(app)) {
@@ -464,27 +476,32 @@ class EndpointExecutionTest {
                     Arguments.of(
                         "matched",
                         executorType,
-                        (BiConsumer<Extensions, Handler>) Extensions::onRouteMatched,
+                        (BiConsumer<Extensions, Handler>)
+                            (scope, hook) -> scope.lifecycle().onRouteMatched(hook),
                         (BiConsumer<Shoostr, Handler>) Shoostr::onRouteMatched),
                     Arguments.of(
                         "before",
                         executorType,
-                        (BiConsumer<Extensions, Handler>) Extensions::beforeRouteHandler,
+                        (BiConsumer<Extensions, Handler>)
+                            (scope, hook) -> scope.lifecycle().beforeRouteHandler(hook),
                         (BiConsumer<Shoostr, Handler>) Shoostr::beforeRouteHandler),
                     Arguments.of(
                         "after",
                         executorType,
-                        (BiConsumer<Extensions, Handler>) Extensions::afterRouteHandler,
+                        (BiConsumer<Extensions, Handler>)
+                            (scope, hook) -> scope.lifecycle().afterRouteHandler(hook),
                         (BiConsumer<Shoostr, Handler>) Shoostr::afterRouteHandler),
                     Arguments.of(
                         "before-flush",
                         executorType,
-                        (BiConsumer<Extensions, Handler>) Extensions::beforeResponseFlush,
+                        (BiConsumer<Extensions, Handler>)
+                            (scope, hook) -> scope.lifecycle().beforeResponseFlush(hook),
                         (BiConsumer<Shoostr, Handler>) Shoostr::beforeResponseFlush),
                     Arguments.of(
                         "after-flush",
                         executorType,
-                        (BiConsumer<Extensions, Handler>) Extensions::afterResponseFlush,
+                        (BiConsumer<Extensions, Handler>)
+                            (scope, hook) -> scope.lifecycle().afterResponseFlush(hook),
                         (BiConsumer<Shoostr, Handler>) Shoostr::afterResponseFlush)));
   }
 }

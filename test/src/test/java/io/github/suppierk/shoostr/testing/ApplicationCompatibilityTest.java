@@ -25,7 +25,7 @@ class ApplicationCompatibilityTest {
           @Override
           public void install(ApplicationCallbacks callbacks) {
             callbacks.beforeRouteHandler(
-                (_, response) -> response.setHeader("X-App-Extension", "installed"));
+                (ignored, response) -> response.setHeader("X-App-Extension", "installed"));
           }
         };
     var authentication =
@@ -39,9 +39,9 @@ class ApplicationCompatibilityTest {
     app.routes()
         .path(
             "/api",
-            routes -> routes.get("/value", (_, response) -> response.text("existing")),
-            extensions -> extensions.get(authentication).enabled());
-    app.routes().get("/plain", (_, response) -> response.text("plain"));
+            routes -> routes.get("/value", (ignored2, response) -> response.text("existing")),
+            extensions -> extensions.with(authentication));
+    app.routes().get("/plain", (ignored3, response) -> response.text("plain"));
 
     try (var test = TestServer.start(app)) {
       var selected = test.send(request -> request.path("/api/value"));
@@ -58,7 +58,7 @@ class ApplicationCompatibilityTest {
     var value = new AtomicReference<>("first");
     Supplier<String> repository = value::get;
     var app = new Shoostr();
-    app.routes().get("/value", (_, response) -> response.text(repository.get()));
+    app.routes().get("/value", (ignored4, response) -> response.text(repository.get()));
 
     try (var test = TestServer.start(app)) {
       assertEquals(

@@ -1,0 +1,38 @@
+---
+title: Measure HTTP requests with Micrometer
+description: Observe selected routes with Micrometer, record terminal count and duration under route templates, track active requests, and keep the meter registry owned by the application.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/15-observability/micrometer/src/main/java/io/github/suppierk/shoostr/example/metrics/RequestMetricsExample.java?raw';
+import test from '../../../../../examples/15-observability/micrometer/src/test/java/io/github/suppierk/shoostr/example/metrics/RequestMetricsExampleTest.java?raw';
+
+## Description
+
+Use `shoostr-micrometer` with a caller-owned `MeterRegistry` to measure request lifecycles through Micrometer.
+Install `MicrometerMetrics`, then select it with `extensions.lifecycle().observe(metrics)` on the routes or groups you want to measure.
+This adapter is an observation function, not a typed route configurator, so it does not use `extensions.with(metrics)`.
+
+The `http.server.requests` timer records completed count and duration with `method`, `route`, `status` and `error` tags.
+It uses composed route templates instead of raw identifier paths, normalizes unknown methods to `OTHER`, and distinguishes `transport`, `application`, `server` and `none` error categories without recording exception text.
+The `http.server.requests.active` long-task timer tracks admitted observations that have not yet terminated, rather than counting only time inside the handler.
+Micrometer's [timer](https://docs.micrometer.io/micrometer/reference/concepts/timers.html) and [long-task timer](https://docs.micrometer.io/micrometer/reference/concepts/long-task-timers.html) references explain these different measurements and their backend-dependent statistics.
+
+## Example
+
+The `/api` group measures its item requests, while `/health` remains unselected.
+For application-wide observation, including unmatched requests and early failures, configure `allRequests()` on the adapter before installing it instead of adding the local observation shown here.
+App-wide unmatched requests use `UNMATCHED` as the route tag, and a terminal status of zero indicates that no final response was committed.
+
+The application controls registry filters, exporters and export destinations; Shoostr borrows the registry and does not close it.
+Keep metric tags free of user identifiers or credentials, and retain the registry until any outstanding caller-owned tasks have finished.
+
+<Code code={application} lang="java" title="RequestMetricsExample.java" />
+
+## Test
+
+The tests use Micrometer's `SimpleMeterRegistry` to check template-based counts, selective observation, active-request transitions and a bounded application-failure label.
+They also record a new application metric after Shoostr closes to verify registry ownership.
+These are in-process instrumentation checks, not proof of ingestion by a monitoring backend.
+
+<Code code={test} lang="java" title="RequestMetricsExampleTest.java" />

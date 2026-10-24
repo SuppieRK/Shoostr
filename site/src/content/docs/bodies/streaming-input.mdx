@@ -1,0 +1,33 @@
+---
+title: Process a request body incrementally
+description: Calculate an upload checksum without buffering the whole request body.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/05-bodies/src/main/java/io/github/suppierk/shoostr/example/bodies/StreamingInputExample.java?raw';
+import test from '../../../../../examples/05-bodies/src/test/java/io/github/suppierk/shoostr/example/bodies/StreamingInputExampleTest.java?raw';
+
+## Description
+
+Calculate an upload checksum with `input()` as bytes arrive, without building a whole-body byte array.
+Repeated calls return the same stream at its current position; they do not restart the body.
+Once streamed input is selected, buffered reads and multipart parsing are unavailable for that request.
+
+The stream belongs to the active handler and is closed during framework finalization, so finish reading within that lifetime rather than handing it to detached work.
+The configured request-byte limit applies as bytes are consumed, including skipped bytes.
+Opening a stream or stopping early does not validate the unread remainder of an unknown-length body.
+
+## Example
+
+The endpoint calculates SHA-256 with a per-request digest and a bounded transfer buffer, then returns the checksum only after successful consumption.
+It uses the default 1 MiB input limit; excessive declared length is rejected before the handler, while an unknown-length overflow produces `413` during reading.
+See [buffered bodies](../buffered/) for the body-mode comparison and [server options](../../application/server-options/) for general limit configuration.
+
+<Code code={application} lang="java" title="StreamingInputExample.java" />
+
+## Test
+
+The tests check known checksums, empty and multi-buffer input, exact-limit success, and overflow with both fixed-length and chunked requests.
+Additional HTTP handlers verify stream position and rejected attempts to switch body modes.
+
+<Code code={test} lang="java" title="StreamingInputExampleTest.java" />

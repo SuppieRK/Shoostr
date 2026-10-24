@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.MultipartOptions;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import java.net.URI;
@@ -46,7 +47,7 @@ class TransportConfigurationTest {
           server.setConnectors(new Connector[] {extra, primary});
           listeners.set(List.of(primary, extra));
         });
-    app.routes().get("/value", (_, response) -> response.text("both listeners"));
+    app.routes().get("/value", (ignored, response) -> response.text("both listeners"));
 
     // The secondary listener is outside the harness's default request origin.
 
@@ -104,7 +105,7 @@ class TransportConfigurationTest {
   @Test
   void preservesConfiguredHttp2Negotiation() throws Exception {
     var app = new Shoostr().http2();
-    app.routes().get("/value", (_, response) -> response.text("http2"));
+    app.routes().get("/value", (ignored2, response) -> response.text("http2"));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/value"));
@@ -115,8 +116,16 @@ class TransportConfigurationTest {
 
   @Test
   void preservesApplicationBodyLimitsWhileChangingItsTestAddress() throws Exception {
-    var app = new Shoostr(new Options("0.0.0.0", 8080, 16, 1024, 64, 30000));
-    app.routes().post("/body", (_, response) -> response.text("accepted"));
+    var app =
+        new Shoostr(new Options(16, 1024, 64, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("0.0.0.0");
+                  nativeConnector.setPort(8080);
+                  nativeConnector.setIdleTimeout(30000);
+                });
+    app.routes().post("/body", (ignored3, response) -> response.text("accepted"));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/body").method("POST").body(new byte[17]));
@@ -183,7 +192,7 @@ class TransportConfigurationTest {
           tls.setKeyStore(store);
           tls.setKeyStorePassword("changeit");
         });
-    app.routes().get("/value", (_, response) -> response.text("verified TLS"));
+    app.routes().get("/value", (ignored4, response) -> response.text("verified TLS"));
 
     try (var test =
         TestServer.startOnPortRange(app, 49152, 65535, client -> client.sslContext(context))) {

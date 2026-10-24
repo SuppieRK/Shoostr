@@ -1,0 +1,54 @@
+---
+title: Read and write JSON
+description: Read JSON requests and write JSON responses with typed conversion helpers backed by an application-provided codec.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/07-json/src/main/java/io/github/suppierk/shoostr/example/json/JsonCodecExample.java?raw';
+import test from '../../../../../examples/07-json/src/test/java/io/github/suppierk/shoostr/example/json/JsonCodecExampleTest.java?raw';
+
+## Description
+
+A `Codec` connects Shoostr's typed conversion helpers to your serialization and deserialization code: `read(...)` converts bytes to Java objects, while `write(...)` converts Java objects to bytes for HTTP bodies, WebSocket messages, or SSE events.
+Shoostr delegates these conversions without choosing a serialization library or data format; JSON is one possible codec implementation, not a framework requirement.
+
+Register the codec with `app.codec(codec)` and register handlers through the returned typed view, as the example does with `.routes(...)`.
+HTTP handlers receive `TypedRequest` and `TypedResponse`; the same registration view also supplies typed WebSocket callbacks and an SSE event writer with these conversion helpers:
+
+| Helper | Codec operation | Result |
+| --- | --- | --- |
+| `request.body(Class<T>)` | `read(bytes, type)` | Decode the buffered request body to the requested class. |
+| `response.body(MediaType, Object)` | `write(value)` | Encode an object and stage its bytes with explicit media metadata. |
+| `response.body(String, Object)` | `write(value)` | Encode an object and stage its bytes with a media type supplied as a string. |
+| `socket.onObject(Class<T>, handler)` | `read(bytes, type)` | Decode a complete [binary WebSocket message](../../websockets/objects/). |
+| `connection.sendObject(Object)` | `write(value)` | Encode and send a [binary WebSocket message](../../websockets/objects/). |
+| `events.sendObject(Object)` | `write(value)` | Encode UTF-8 text as [SSE event data](../../streaming/sse-objects/). |
+
+For this JSON recipe, `response.body(MediaType.APPLICATION_JSON, user)` sets `application/json` as the response media type; the codec produces the bytes without choosing that metadata.
+Ordinary `app.routes(...)` registrations keep their original handler types.
+Text and byte-array helpers remain available in typed handlers without calling the codec; `body(..., byte[])` sends those bytes directly.
+
+This example implements the codec with Jackson 2's `jackson-databind` library and explicit JSON tree conversion, without mapping annotations.
+Its codec accepts only `User.class`, and the record constructor rejects blank names regardless of where a user is created.
+Malformed JSON, an invalid object shape, or a blank name becomes a JSON `400` response, while unexpected conversion failures retain their original classification.
+These checks are the example's validation choice, not a Shoostr requirement; your application decides how to validate its data structures.
+`Class<T>` describes a concrete class, not a parameterized type such as `List<User>`.
+Use [exception renderers](../../errors/exceptions/) for shared error handling, or return [Problem Details](../../errors/problem-details/) when clients need a standard error format.
+
+Configure the shared codec before serving requests and keep it safe for concurrent HTTP handlers and WebSocket callbacks; Shoostr does not close it.
+Each HTTP body read decodes again, subject to the [buffered request-body limits](../../bodies/buffered/).
+The finite HTTP response limit applies after body encoding, not to WebSocket or SSE object sends; transport buffering cannot bound allocations or execution time inside the codec.
+
+## Example
+
+`POST /users` returns the validated user as JSON with status `201`; `/help` shows that ordinary text output remains available.
+The handler explicitly selects JSON output: typed conversion does not check the request's `Content-Type` or negotiate its `Accept` header.
+Use [content negotiation](../negotiation/) when a response must match the client's preferences.
+
+<Code code={application} lang="java" title="JsonCodecExample.java" />
+
+## Test
+
+The tests cover Unicode and escaping, malformed and invalid input, JSON error output, ordinary text, and the absence of automatic media enforcement.
+
+<Code code={test} lang="java" title="JsonCodecExampleTest.java" />

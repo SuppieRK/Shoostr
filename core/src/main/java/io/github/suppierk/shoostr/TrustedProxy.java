@@ -6,6 +6,8 @@ import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -27,6 +29,7 @@ final class TrustedProxy {
   private static final String X_FORWARDED_PROTO = "X-Forwarded-Proto";
   private static final String PROTO_FIELD = "proto";
   private static final Pattern IPV4 = Pattern.compile("\\d{1,3}(?:\\.\\d{1,3}){3}");
+  private static final Pattern IPV6 = Pattern.compile("[0-9A-Fa-f:.]+");
   private static final Pattern OBFUSCATED = Pattern.compile("_[A-Za-z0-9._-]+");
   private static final Pattern DIGITS = Pattern.compile("\\d+");
   private static final QuotedStringTokenizer PARAMETERS =
@@ -96,7 +99,7 @@ final class TrustedProxy {
 
     try {
       parseForwarding(forwarding, chain, addresses);
-    } catch (IllegalArgumentException _) {
+    } catch (IllegalArgumentException ignored) {
       throw new BadRequestException();
     }
 
@@ -110,8 +113,10 @@ final class TrustedProxy {
 
     try {
       var uri = HttpURI.build(request.fullUrl());
-      if (fields.containsKey(PROTO_FIELD)) {
-        uri.scheme(fields.get(PROTO_FIELD).toLowerCase(Locale.ROOT));
+      var protocol = fields.get(PROTO_FIELD);
+      if (protocol != null) {
+        protocol = protocol.toLowerCase(Locale.ROOT);
+        uri.scheme(protocol);
       }
 
       if (fields.containsKey("host")) {
@@ -119,8 +124,8 @@ final class TrustedProxy {
         uri.authority(host.getHost(), host.getPort());
       }
 
-      request.forwarded(addresses.get(selected), uri.asString());
-    } catch (IllegalArgumentException _) {
+      request.forwarded(addresses.get(selected), uri.asString(), protocol);
+    } catch (IllegalArgumentException ignored2) {
       throw new BadRequestException();
     }
   }
@@ -205,7 +210,7 @@ final class TrustedProxy {
       }
 
       validateLegacyOrigins(hosts, protocols, ports);
-    } catch (IllegalArgumentException _) {
+    } catch (IllegalArgumentException ignored3) {
       throw new BadRequestException();
     }
 
@@ -218,8 +223,10 @@ final class TrustedProxy {
 
     try {
       var uri = HttpURI.build(request.fullUrl());
+      String protocol = null;
       if (!protocols.isEmpty()) {
-        uri.scheme(protocols.get(selected).toLowerCase(Locale.ROOT));
+        protocol = protocols.get(selected).toLowerCase(Locale.ROOT);
+        uri.scheme(protocol);
       }
 
       if (!hosts.isEmpty()) {
@@ -228,8 +235,8 @@ final class TrustedProxy {
         uri.authority(parsed.getHost(), parsed.getPort());
       }
 
-      request.forwarded(addresses.get(selected), uri.asString());
-    } catch (IllegalArgumentException _) {
+      request.forwarded(addresses.get(selected), uri.asString(), protocol);
+    } catch (IllegalArgumentException ignored4) {
       throw new BadRequestException();
     }
   }
@@ -273,7 +280,7 @@ final class TrustedProxy {
         throw new IllegalArgumentException("Invalid forwarding address");
       }
 
-      return new InetSocketAddress(InetAddress.ofLiteral(value), 0);
+      return new InetSocketAddress(literalAddress(value), 0);
     }
 
     return node(value);
@@ -480,7 +487,52 @@ final class TrustedProxy {
       throw new IllegalArgumentException("Invalid forwarding address");
     }
 
-    return new InetSocketAddress(InetAddress.ofLiteral(name), sourcePort);
+    return new InetSocketAddress(literalAddress(name), sourcePort);
+  }
+
+  /**
+   * Parses literal addresses without allowing malformed numeric input to fall through to DNS.
+   *
+   * @param value IPv4 or IPv6 literal, optionally bracketed for IPv6
+   * @return decoded address
+   * @throws IllegalArgumentException if the literal is malformed
+   */
+  private static InetAddress literalAddress(String value) {
+    try {
+      if (IPV4.matcher(value).matches()) {
+        var octets = value.split("\\.", -1);
+        var bytes = new byte[4];
+        for (int index = 0; index < bytes.length; index++) {
+          int octet = Integer.parseInt(octets[index]);
+          if (octet > 255) {
+            throw new IllegalArgumentException("Invalid forwarding address");
+          }
+
+          bytes[index] = (byte) octet;
+        }
+
+        return InetAddress.getByAddress(bytes);
+      }
+
+      String literal = value;
+      if (literal.startsWith("[") && literal.endsWith("]")) {
+        literal = literal.substring(1, literal.length() - 1);
+      }
+
+      if (literal.indexOf(':') < 0 || !IPV6.matcher(literal).matches()) {
+        throw new IllegalArgumentException("Invalid forwarding address");
+      }
+
+      // URI validates the IPv6 grammar before a parser that can also resolve names is called.
+      var host = URI.create("//[" + literal + "]").getHost();
+      if (host == null) {
+        throw new IllegalArgumentException("Invalid forwarding address");
+      }
+
+      return InetAddress.getByName(host);
+    } catch (UnknownHostException failure) {
+      throw new IllegalArgumentException("Invalid forwarding address", failure);
+    }
   }
 
   /**

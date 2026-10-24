@@ -33,13 +33,13 @@ class McpDeferredNotificationTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     var mcp = Mcp.async(security, transport -> McpServer.async(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
-        (request, _) -> {
+        (request, ignored4) -> {
           if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
             var session = request.header("Mcp-Session-Id").orElseThrow();
             if (attached.add(session)) {

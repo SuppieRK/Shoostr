@@ -5,6 +5,7 @@ import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.Charset;
 import java.nio.file.Path;
 import java.util.Objects;
 import org.eclipse.jetty.util.Callback;
@@ -66,6 +67,19 @@ public final class TypedResponse extends Response {
     return body(Objects.requireNonNull(contentType).value(), value);
   }
 
+  /**
+   * Starts handler-owned SSE output with codec-backed object sends. Starting commits HTTP headers
+   * immediately; object conversion cannot replace that committed response.
+   *
+   * @return event writer using this response's existing stream lifecycle
+   * @throws IOException if initial output fails
+   * @throws IllegalStateException if the response cannot become a stream
+   */
+  @Override
+  public TypedEventStream startEventStream() throws IOException {
+    return new TypedEventStream(startStream(EVENT_STREAM_CONTENT_TYPE), codec);
+  }
+
   /** {@inheritDoc} */
   @Override
   public TypedResponse status(int code) {
@@ -84,6 +98,13 @@ public final class TypedResponse extends Response {
   @Override
   public TypedResponse text(String value) {
     super.text(value);
+    return this;
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public TypedResponse text(String value, Charset charset) {
+    super.text(value, charset);
     return this;
   }
 

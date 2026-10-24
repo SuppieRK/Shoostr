@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Shoostr;
@@ -49,7 +50,7 @@ class McpExpiryChallengeTest {
                     "alice:client",
                     McpTransportContext.EMPTY,
                     request.header("X-Expiring").isPresent() ? Instant.now().plusSeconds(2) : null),
-            (identity, _) -> {
+            (identity, ignored) -> {
               var expiry = identity.expiresAt();
               if (expiry == null) {
                 return;
@@ -147,7 +148,7 @@ class McpExpiryChallengeTest {
 
                   return new McpIdentity("alice:client", McpTransportContext.EMPTY, expiry);
                 },
-                (_, _) -> {},
+                (ignored2, ignored3) -> {},
                 URI.create("https://example.com/.well-known/oauth-protected-resource/mcp")),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
@@ -158,17 +159,23 @@ class McpExpiryChallengeTest {
                     "/mcp",
                     group -> mcp.routes(group, selected),
                     extensions ->
-                        extensions.beforeResponseFlush(
-                            (request, _) -> {
-                              if (request.header("X-Expiring").isPresent()) {
-                                try {
-                                  assertFalse(new CountDownLatch(1).await(4, TimeUnit.SECONDS));
-                                } catch (InterruptedException _) {
-                                  // Let the following MCP flush guard render the expired token.
-                                  interruptedAt.set(Instant.now());
-                                }
-                              }
-                            })));
+                        extensions
+                            .lifecycle()
+                            .beforeResponseFlush(
+                                (request, ignored4) -> {
+                                  if (request.header("X-Expiring").isPresent()) {
+                                    try {
+                                      // Only the verified deadline may release this first flush.
+                                      if (!new CountDownLatch(1).await(10, TimeUnit.SECONDS)) {
+                                        fail(
+                                            "The token deadline must interrupt the held first flush");
+                                      }
+                                    } catch (InterruptedException ignored5) {
+                                      // Let the following MCP flush guard render the expired token.
+                                      interruptedAt.set(Instant.now());
+                                    }
+                                  }
+                                })));
 
     try (selected;
         var test = TestServer.start(app)) {
@@ -200,7 +207,8 @@ class McpExpiryChallengeTest {
                       .header("X-Expiring", "true")
                       .body(
                           "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}"
-                              .getBytes(StandardCharsets.UTF_8)));
+                              .getBytes(StandardCharsets.UTF_8)),
+              HttpResponse.BodyHandlers.ofString());
 
       var observedInterruption = interruptedAt.get();
       assertNotNull(observedInterruption, "Exercise the armed lifetime's first flush guard");
@@ -208,6 +216,7 @@ class McpExpiryChallengeTest {
           observedInterruption.isBefore(verifiedExpiry.get()),
           "The deadline must not interrupt an identity that is still valid");
       assertEquals(HttpStatusCodes.UNAUTHORIZED.value(), rejected.statusCode());
+      assertEquals(HttpStatusCodes.UNAUTHORIZED.reasonPhrase(), rejected.body());
       assertEquals(
           "Bearer error=\"invalid_token\", resource_metadata=\"https://example.com/.well-known/oauth-protected-resource/mcp\"",
           rejected.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).orElseThrow());
@@ -228,8 +237,9 @@ class McpExpiryChallengeTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("alice:client", McpTransportContext.EMPTY, Instant.EPOCH),
-                (_, _) -> {},
+                ignored6 ->
+                    new McpIdentity("alice:client", McpTransportContext.EMPTY, Instant.EPOCH),
+                (ignored7, ignored8) -> {},
                 URI.create("https://example.com/.well-known/oauth-protected-resource/mcp")),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
@@ -241,7 +251,7 @@ class McpExpiryChallengeTest {
                     group -> {
                       group.exception(
                           AuthenticationRequiredException.class,
-                          (_, _, response) ->
+                          (ignored9, ignored10, response) ->
                               response
                                   .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Basic")
                                   .body(
@@ -271,11 +281,11 @@ class McpExpiryChallengeTest {
   @ValueSource(booleans = {false, true})
   void retainsTheGenericExpiryChallengeWithoutMetadata(boolean explicitNull) throws Exception {
     Function<Request, McpIdentity> identity =
-        _ -> new McpIdentity("alice:client", McpTransportContext.EMPTY, Instant.EPOCH);
+        ignored11 -> new McpIdentity("alice:client", McpTransportContext.EMPTY, Instant.EPOCH);
     var security =
         explicitNull
-            ? new McpHttpSecurity(Set.of(), identity, (_, _) -> {}, null)
-            : new McpHttpSecurity(Set.of(), identity, (_, _) -> {});
+            ? new McpHttpSecurity(Set.of(), identity, (ignored12, ignored13) -> {}, null)
+            : new McpHttpSecurity(Set.of(), identity, (ignored14, ignored15) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));

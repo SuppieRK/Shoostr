@@ -1,0 +1,35 @@
+---
+title: Set and inspect response headers
+description: Replace or append response header fields, read their values, and keep immutable snapshots before further changes.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/06-responses/src/main/java/io/github/suppierk/shoostr/example/responses/ResponseHeadersExample.java?raw';
+import test from '../../../../../examples/06-responses/src/test/java/io/github/suppierk/shoostr/example/responses/ResponseHeadersExampleTest.java?raw';
+
+## Description
+
+Use `setHeader(name, value)` to replace a field, `addHeader(...)` to append another occurrence, and `removeHeader(name)` to remove all occurrences.
+Header names are case-insensitive, so those operations apply to the same field regardless of spelling.
+
+Read the first value with `header(name)`, all values with `headers(name)`, or a complete snapshot with `headerMap()`.
+The first-value getter returns null when the field is absent; the collection accessors return immutable snapshots that do not change with later response mutations.
+Repeated fields preserve separate values without splitting comma-separated content.
+
+## Example
+
+The `/headers` endpoint captures two `Link` fields in a snapshot before appending another, replacing a mode field and removing a temporary field.
+Its body returns both the current values and the unchanged snapshot values.
+`HttpHeaders` supplies standard names and also supports explicit custom names through `HttpHeaders.of(...)`.
+
+Set headers before output is committed, and inspect the live response only on its handler thread and within its lifetime.
+Shoostr owns framing fields such as `Content-Length` and `Transfer-Encoding`; attempts to set, append or remove them are rejected rather than overriding transport behavior.
+For the distinction between repeated fields and their combined interpretation, see [HTTP field lines](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.2).
+
+<Code code={application} lang="java" title="ResponseHeadersExample.java" />
+
+## Test
+
+The tests verify replacement and removal, separate repeated fields, case-insensitive inspection, stable immutable snapshots, and rejection of framing changes.
+
+<Code code={test} lang="java" title="ResponseHeadersExampleTest.java" />

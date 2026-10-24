@@ -20,8 +20,7 @@ import org.jspecify.annotations.Nullable;
 
 /** Optional SERVER spans with application-owned SDK, exporters and propagation configuration. */
 public final class OpenTelemetryTracing
-    implements Extension<OpenTelemetryTracing.Configuration>,
-        Function<Request, RequestObservation> {
+    implements Extension<OpenTelemetryTracing>, Function<Request, RequestObservation> {
   private static final TextMapGetter<Request> HEADERS =
       new TextMapGetter<>() {
         /** {@inheritDoc} */
@@ -53,20 +52,21 @@ public final class OpenTelemetryTracing
   }
 
   /**
-   * Creates independent route/group activation without changing application SDK configuration.
+   * Contributes selected SERVER spans without changing application SDK configuration.
    *
-   * @param endpoint registration scope receiving observations
-   * @param inherited enclosing configuration, or null
-   * @return this scope's configuration; selection alone does not enable tracing
+   * @param endpoint registration collector receiving this selection's observations
+   * @param inherited installed instance selected by the parent, or null
+   * @return this installed provider, which has no mutable scope-local settings
    */
   @Override
-  public Configuration configure(Extensions endpoint, @Nullable Configuration inherited) {
-    var configuration = new Configuration(endpoint, this);
-    if (inherited != null && inherited.enabled) {
-      configuration.enabled();
+  public synchronized OpenTelemetryTracing configure(
+      Extensions endpoint, @Nullable OpenTelemetryTracing inherited) {
+    endpoint.requireInstalled(this);
+    if (!allRequests) {
+      endpoint.lifecycle().observe(this);
     }
 
-    return configuration;
+    return this;
   }
 
   /**
@@ -183,7 +183,7 @@ public final class OpenTelemetryTracing
     if (allRequests) {
       callbacks.observe(this);
     } else {
-      callbacks.observe(_ -> admissionContext());
+      callbacks.observe(ignored -> admissionContext());
     }
   }
 
@@ -219,43 +219,5 @@ public final class OpenTelemetryTracing
         // This observation carries context only and owns no span to complete.
       }
     };
-  }
-
-  /** Registration-only activation of SERVER spans on one route or group. */
-  public static final class Configuration {
-    private final Extensions endpoint;
-    private final OpenTelemetryTracing tracing;
-    private boolean enabled;
-
-    /**
-     * Creates configuration belonging to one registration scope.
-     *
-     * @param endpoint receiving scope
-     * @param tracing installed tracing instance
-     */
-    private Configuration(Extensions endpoint, OpenTelemetryTracing tracing) {
-      this.endpoint = Objects.requireNonNull(endpoint);
-      this.tracing = Objects.requireNonNull(tracing);
-    }
-
-    /**
-     * Enables SERVER spans on this route and inherited children. Repeated activation contributes
-     * once; app-wide instrumentation of this instance already covers the endpoint. Application
-     * spans remain controlled by the supplied SDK, including on unselected endpoints.
-     *
-     * @return this configuration
-     * @throws IllegalArgumentException if the tracing instance is not installed
-     * @throws IllegalStateException if registration has finished
-     */
-    public Configuration enabled() {
-      endpoint.requireInstalled(tracing);
-      synchronized (tracing) {
-        if (!enabled && !tracing.allRequests) {
-          endpoint.observe(tracing);
-        }
-      }
-      enabled = true;
-      return this;
-    }
   }
 }

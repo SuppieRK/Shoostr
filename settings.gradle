@@ -5,37 +5,67 @@ project(':benchmarks').projectDir = file('.github/benchmarks')
 include 'micrometer', 'opentelemetry', 'openapi', 'mcp'
 
 include 'openapi-example'
-project(':openapi-example').projectDir = file('examples/11-openapi')
+project(':openapi-example').projectDir = file('examples/16-openapi')
 
 include 'mcp-example'
-project(':mcp-example').projectDir = file('examples/12-mcp')
+project(':mcp-example').projectDir = file('examples/17-mcp')
 
 include 'hello-example'
 project(':hello-example').projectDir = file('examples/01-hello')
 
+include 'application-example'
+project(':application-example').projectDir = file('examples/02-application')
+
+include 'routing-example'
+project(':routing-example').projectDir = file('examples/03-routing')
+
+include 'request-example'
+project(':request-example').projectDir = file('examples/04-request')
+
+include 'bodies-example'
+project(':bodies-example').projectDir = file('examples/05-bodies')
+
+include 'responses-example'
+project(':responses-example').projectDir = file('examples/06-responses')
+
+include 'json-example'
+project(':json-example').projectDir = file('examples/07-json')
+
+include 'errors-example'
+project(':errors-example').projectDir = file('examples/08-errors')
+
+include 'resources-example'
+project(':resources-example').projectDir = file('examples/09-resources')
+
+include 'lifecycle-example'
+project(':lifecycle-example').projectDir = file('examples/12-lifecycle')
+
+include 'extensions-example'
+project(':extensions-example').projectDir = file('examples/13-extensions')
+
 include 'requests-example'
-project(':requests-example').projectDir = file('examples/02-requests')
+project(':requests-example').projectDir = file('examples/03-routing/legacy-requests')
 
 include 'sse-example'
-project(':sse-example').projectDir = file('examples/03-sse')
+project(':sse-example').projectDir = file('examples/10-streaming/sse')
 
 include 'websocket-example'
-project(':websocket-example').projectDir = file('examples/04-websocket')
+project(':websocket-example').projectDir = file('examples/11-websockets')
 
 include 'exceptions-example'
-project(':exceptions-example').projectDir = file('examples/05-exceptions')
+project(':exceptions-example').projectDir = file('examples/08-errors/legacy-exceptions')
 
 include 'json-errors-example'
-project(':json-errors-example').projectDir = file('examples/06-json-errors')
+project(':json-errors-example').projectDir = file('examples/07-json/legacy-json-errors')
 
 include 'authentication-example'
-project(':authentication-example').projectDir = file('examples/07-authentication')
+project(':authentication-example').projectDir = file('examples/14-security')
 
 include 'micrometer-example'
-project(':micrometer-example').projectDir = file('examples/09-micrometer')
+project(':micrometer-example').projectDir = file('examples/15-observability/micrometer')
 
 include 'opentelemetry-example'
-project(':opentelemetry-example').projectDir = file('examples/10-opentelemetry')
+project(':opentelemetry-example').projectDir = file('examples/15-observability/opentelemetry')
 
 include 'static-streaming-example'
-project(':static-streaming-example').projectDir = file('examples/08-static-streaming')
+project(':static-streaming-example').projectDir = file('examples/10-streaming/finite')

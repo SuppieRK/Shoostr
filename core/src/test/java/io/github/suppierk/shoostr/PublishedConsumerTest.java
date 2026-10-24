@@ -160,7 +160,7 @@ class PublishedConsumerTest {
             .redirectOutput(output.toFile())
             .start();
 
-    try (var _ = (AutoCloseable) () -> stopOwnedProcesses(process)) {
+    try (var ignored = (AutoCloseable) () -> stopOwnedProcesses(process)) {
       if (waitForReady) {
         var ready = project.resolve("owned-application.pid");
         var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
@@ -224,7 +224,7 @@ class PublishedConsumerTest {
           TimeUnit.NANOSECONDS.sleep(
               Math.min(
                   TimeUnit.MILLISECONDS.toNanos(10), Math.max(1, deadline - System.nanoTime())));
-        } catch (InterruptedException _) {
+        } catch (InterruptedException ignored2) {
           interrupted = true;
         }
       }

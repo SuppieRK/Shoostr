@@ -48,7 +48,7 @@ class McpCompletedDeadlineTest {
 
                   return new McpIdentity("public", McpTransportContext.EMPTY, null);
                 },
-                (_, _) -> {}),
+                (ignored, ignored2) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp)
@@ -58,7 +58,7 @@ class McpCompletedDeadlineTest {
               routes.get(
                   "/occupy",
                   selected,
-                  (_, response) -> {
+                  (ignored3, response) -> {
                     var target = Objects.requireNonNull(expiry.get()).plusMillis(100);
                     var started = System.nanoTime();
                     var initial = Duration.between(Instant.now(), target);

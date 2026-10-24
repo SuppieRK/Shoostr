@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.Extensions;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Routes;
 import io.github.suppierk.shoostr.Shoostr;
 import java.util.concurrent.CountDownLatch;
@@ -16,13 +15,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 
 class RegistrationDepthTest {
   @Test
   void acceptsTenPathScopesAndAllowsEndpointRegistrationAtTheLimit() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      nested(app.routes(), 10, false, routes -> routes.get("/leaf", (_, _) -> {}));
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
+      nested(app.routes(), 10, false, routes -> routes.get("/leaf", (ignored, ignored2) -> {}));
       app.start();
       assertTrue(app.port() > 0);
     }
@@ -46,7 +49,8 @@ class RegistrationDepthTest {
           10,
           true,
           routes ->
-              assertThrows(IllegalStateException.class, () -> routes.when(() -> true, _ -> {})));
+              assertThrows(
+                  IllegalStateException.class, () -> routes.when(() -> true, ignored3 -> {})));
     }
   }
 
@@ -68,13 +72,16 @@ class RegistrationDepthTest {
     try (var app = new Shoostr()) {
       nested(app.routes(), 10, false, retained::set);
       var child = retained.get();
-      assertThrows(IllegalStateException.class, () -> child.path("/child", _ -> {}));
+      assertThrows(IllegalStateException.class, () -> child.path("/child", ignored4 -> {}));
     }
   }
 
   @Test
   void restoresGroupingDepthAfterARegistrationException() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
@@ -83,10 +90,10 @@ class RegistrationDepthTest {
                   routes,
                   10,
                   true,
-                  _ -> {
+                  ignored5 -> {
                     throw new IllegalArgumentException("registration failed");
                   }));
-      nested(routes, 10, true, child -> child.get("/recovered", (_, _) -> {}));
+      nested(routes, 10, true, child -> child.get("/recovered", (ignored6, ignored7) -> {}));
       app.start();
       assertTrue(app.port() > 0);
     }
@@ -106,7 +113,10 @@ class RegistrationDepthTest {
           }
         };
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(provider)
           .routes()
           .path(
@@ -123,13 +133,13 @@ class RegistrationDepthTest {
                             () ->
                                 limit.path(
                                     "/blocked",
-                                    _ -> userCalls.incrementAndGet(),
-                                    _ -> userCalls.incrementAndGet()));
+                                    ignored8 -> userCalls.incrementAndGet(),
+                                    ignored9 -> userCalls.incrementAndGet()));
                         assertEquals(10, configured.get());
                       }),
-              e -> e.get(provider));
+              e -> e.with(provider));
       assertEquals(0, userCalls.get());
-      app.routes().get("/recovered", (_, _) -> {});
+      app.routes().get("/recovered", (ignored10, ignored11) -> {});
       app.start();
       assertTrue(app.port() > 0);
     }
@@ -147,7 +157,7 @@ class RegistrationDepthTest {
                   app.routes(),
                   10,
                   true,
-                  _ -> {
+                  ignored12 -> {
                     reached.countDown();
 
                     assertDoesNotThrow(() -> assertTrue(reached.await(5, TimeUnit.SECONDS)));
@@ -221,7 +231,7 @@ class RegistrationDepthTest {
     if (remaining > 0) {
       root.path(
           "/",
-          _ -> {
+          ignored13 -> {
             entered.incrementAndGet();
             capturedRoot(root, remaining - 1, entered);
           });

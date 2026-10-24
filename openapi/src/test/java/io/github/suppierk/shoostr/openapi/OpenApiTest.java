@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Handler;
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -20,26 +19,27 @@ import io.swagger.v3.oas.models.parameters.RequestBody;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import java.util.Map;
 import java.util.Set;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 
 class OpenApiTest {
   @Test
   void keepsDocumentationIndependentWhenOneHandlerIsRegisteredAtTwoPaths() throws Exception {
     var docs = new OpenApi("API", "1");
-    Handler shared = (_, response) -> response.text("shared");
+    Handler shared = (ignored, response) -> response.text("shared");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
                 routes.get(
                     "/first",
                     shared,
-                    e -> e.get(docs).summary("First operation").operationId("first"));
+                    e -> e.with(docs).summary("First operation").operationId("first"));
                 routes.get(
                     "/second",
                     shared,
-                    e -> e.get(docs).summary("Second operation").operationId("second"));
+                    e -> e.with(docs).summary("Second operation").operationId("second"));
                 routes.get("/openapi.json", docs.handler());
               });
 
@@ -66,11 +66,12 @@ class OpenApiTest {
                 new Content()
                     .addMediaType("text/plain", new io.swagger.v3.oas.models.media.MediaType()));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
-                routes.post("/text", (_, _) -> {}, e -> e.get(docs).requestBody(body));
+                routes.post(
+                    "/text", (ignored2, ignored3) -> {}, e -> e.with(docs).requestBody(body));
                 routes.get("/openapi.json", docs.handler());
               });
 
@@ -97,7 +98,7 @@ class OpenApiTest {
     node.addProperty("next", new JsonSchema().$ref("#/components/schemas/Node"));
     docs.schema("Node", node);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs).routes().get("/openapi.json", docs.handler());
 
       try (var test = TestServer.start(app)) {
@@ -122,7 +123,7 @@ class OpenApiTest {
     schema.setExample(Map.of("$ref", "#/components/schemas/Missing"));
     docs.schema("Example", schema);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs).routes().get("/openapi.json", docs.handler());
 
       try (var test = TestServer.start(app)) {
@@ -147,15 +148,15 @@ class OpenApiTest {
             .tag("users", "User operations");
     var schema = new JsonSchema().types(Set.of("object"));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
                 routes.post(
                     "/users",
-                    (_, _) -> {},
+                    (ignored4, ignored5) -> {},
                     e ->
-                        e.get(docs)
+                        e.with(docs)
                             .operationId("createUser")
                             .queryParameter(
                                 "dryRun",
@@ -201,17 +202,18 @@ class OpenApiTest {
     docs.securityScheme(
         "basic", new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme("basic"));
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
                 routes.path(
                     "/api",
                     group -> {
-                      group.get("/anonymous", (_, _) -> {}, e -> e.get(docs).anonymous());
-                      group.get("/documented", (_, _) -> {});
+                      group.get(
+                          "/anonymous", (ignored6, ignored7) -> {}, e -> e.with(docs).anonymous());
+                      group.get("/documented", (ignored8, ignored9) -> {});
                     },
-                    e -> e.get(docs).security("basic"));
+                    e -> e.with(docs).security("basic"));
                 routes.get("/openapi.json", docs.handler());
               });
 
@@ -239,13 +241,18 @@ class OpenApiTest {
   void rejectsConstrainedAndPlainOperationsThatNormalizeToTheSamePath() throws Exception {
     var docs = new OpenApi("Users API", "1.0");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
                 routes.get(
-                    "/users/{id:[0-9]+}", (_, _) -> {}, e -> e.get(docs).pathParameter("id", "ID"));
-                routes.get("/users/{id}", (_, _) -> {}, e -> e.get(docs).pathParameter("id", "ID"));
+                    "/users/{id:[0-9]+}",
+                    (ignored10, ignored11) -> {},
+                    e -> e.with(docs).pathParameter("id", "ID"));
+                routes.get(
+                    "/users/{id}",
+                    (ignored12, ignored13) -> {},
+                    e -> e.with(docs).pathParameter("id", "ID"));
               });
       var failure = assertThrows(IllegalArgumentException.class, app::start);
       assertEquals("Conflicting OpenAPI operation: GET /users/{id}", failure.getMessage());
@@ -256,14 +263,17 @@ class OpenApiTest {
   void documentsConstrainedSegmentsAsExplicitRequiredPathParameters() throws Exception {
     var docs = new OpenApi("Users API", "1.0");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.extensions(docs)
           .routes(
               routes -> {
                 routes.get(
                     "/users/{id:[0-9]{1,32}}",
-                    (_, _) -> {},
-                    e -> e.get(docs).pathParameter("id", "User identifier"));
+                    (ignored14, ignored15) -> {},
+                    e -> e.with(docs).pathParameter("id", "User identifier"));
                 routes.get("/openapi.json", docs.handler());
               });
 
@@ -289,12 +299,14 @@ class OpenApiTest {
     var schema = new JsonSchema().types(Set.of("string")).pattern("^1").minLength(2);
     var parameter = new Parameter().name("id").in("path").required(true).schema(schema);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
                 routes.get(
-                    "/users/{id:[0-9]+}", (_, _) -> {}, e -> e.get(docs).parameter(parameter));
+                    "/users/{id:[0-9]+}",
+                    (ignored16, ignored17) -> {},
+                    e -> e.with(docs).parameter(parameter));
                 routes.get("/openapi.json", docs.handler());
               });
 
@@ -330,14 +342,14 @@ class OpenApiTest {
     schema.addProperty("name", new JsonSchema().types(Set.of("string", "null")));
     var user = docs.schema("User", schema);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
                 routes.get(
                     "/users",
-                    (_, _) -> {},
-                    e -> e.get(docs).response(200, "Users", MediaType.APPLICATION_JSON, user));
+                    (ignored18, ignored19) -> {},
+                    e -> e.with(docs).response(200, "Users", MediaType.APPLICATION_JSON, user));
                 routes.get("/openapi.json", docs.handler());
               });
 
@@ -379,7 +391,7 @@ class OpenApiTest {
   void overridesGroupFieldsWithoutChangingSiblingDefaults() throws Exception {
     var docs = new OpenApi("Users API", "1.0");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
@@ -388,17 +400,18 @@ class OpenApiTest {
                     group -> {
                       group.get(
                           "/first",
-                          (_, _) -> {},
+                          (ignored20, ignored21) -> {},
                           e ->
-                              e.get(docs)
+                              e.with(docs)
                                   .summary("First")
                                   .tag("first")
                                   .response(200, "Child response", MediaType.TEXT_PLAIN));
-                      group.get("/second", (_, _) -> {});
-                      group.get("/hidden", (_, _) -> {}, e -> e.get(docs).hidden());
+                      group.get("/second", (ignored22, ignored23) -> {});
+                      group.get(
+                          "/hidden", (ignored24, ignored25) -> {}, e -> e.with(docs).hidden());
                     },
                     e ->
-                        e.get(docs)
+                        e.with(docs)
                             .summary("Group")
                             .description("Shared description")
                             .tag("group")
@@ -434,7 +447,7 @@ class OpenApiTest {
   void servesOnlyExplicitlyDocumentedFinalBindings() throws Exception {
     var docs = new OpenApi("Users API", "1.0");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.extensions(docs)
           .routes(
               routes -> {
@@ -443,9 +456,9 @@ class OpenApiTest {
                     group -> {
                       group.get(
                           "/users",
-                          (_, response) -> response.text("users"),
-                          e -> e.get(docs).summary("List users"));
-                      group.get("/internal", (_, _) -> {});
+                          (ignored26, response) -> response.text("users"),
+                          e -> e.with(docs).summary("List users"));
+                      group.get("/internal", (ignored27, ignored28) -> {});
                     });
                 routes.get("/openapi.json", docs.handler());
               });

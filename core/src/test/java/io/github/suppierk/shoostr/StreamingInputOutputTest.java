@@ -25,6 +25,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -33,7 +34,7 @@ class StreamingInputOutputTest {
 
   @Test
   void readsRequestInputWithoutBufferingTheWholeBody() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/echo",
@@ -60,7 +61,11 @@ class StreamingInputOutputTest {
   void consumesAnInitialChunkBeforeTheRemainingChunkArrives() throws Exception {
     var initialConsumed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var socket = new Socket()) {
       app.routes()
           .post(
@@ -91,7 +96,7 @@ class StreamingInputOutputTest {
 
   @Test
   void rejectsBufferedBodyAccessAfterStreamingInputAccess() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/input",
@@ -118,7 +123,7 @@ class StreamingInputOutputTest {
 
   @Test
   void rejectsStreamingInputAccessAfterBufferedBodyAccess() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/buffered",
@@ -145,9 +150,17 @@ class StreamingInputOutputTest {
 
   @Test
   void rejectsChunkedStreamingInputAfterTheConsumedByteLimit() throws Exception {
-    var options = new Options("127.0.0.1", 0, 3, 1_048_576, 8192, 30_000);
+    var options = new Options(3, 1_048_576, 8192, 1000, MultipartOptions.defaults());
 
-    try (var app = new Shoostr(options);
+    try (var app =
+            new Shoostr(options)
+                .modifyServer(
+                    listenerServer -> {
+                      var listener = (ServerConnector) listenerServer.getConnectors()[0];
+                      listener.setHost("127.0.0.1");
+                      listener.setPort(0);
+                      listener.setIdleTimeout(30000);
+                    });
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .post(
@@ -171,9 +184,17 @@ class StreamingInputOutputTest {
 
   @Test
   void rejectsChunkedStreamingInputSkippedPastTheConsumedByteLimit() throws Exception {
-    var options = new Options("127.0.0.1", 0, 3, 1_048_576, 8192, 30_000);
+    var options = new Options(3, 1_048_576, 8192, 1000, MultipartOptions.defaults());
 
-    try (var app = new Shoostr(options);
+    try (var app =
+            new Shoostr(options)
+                .modifyServer(
+                    listenerServer -> {
+                      var listener = (ServerConnector) listenerServer.getConnectors()[0];
+                      listener.setHost("127.0.0.1");
+                      listener.setPort(0);
+                      listener.setIdleTimeout(30000);
+                    });
         var client = HttpClient.newHttpClient()) {
       app.routes()
           .post(
@@ -206,7 +227,7 @@ class StreamingInputOutputTest {
             + boundary
             + "--\r\n";
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/input",
@@ -242,7 +263,7 @@ class StreamingInputOutputTest {
             + boundary
             + "--\r\n";
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/multipart",
@@ -273,8 +294,8 @@ class StreamingInputOutputTest {
     var file = Files.createTempFile(temporaryDirectory, "response-file-test", ".txt");
     Files.writeString(file, "file output");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().get("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().get("/file", (ignored, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -289,14 +310,22 @@ class StreamingInputOutputTest {
 
   @Test
   void rejectsOversizedFiniteBodiesWithoutChangingThePreviouslyStagedBody() throws Exception {
-    var options = new Options("127.0.0.1", 0, 1024, 3, 2, 5000);
+    var options = new Options(1024, 3, 2, 1000, MultipartOptions.defaults());
     var oversizedBody = "abcd".getBytes(StandardCharsets.UTF_8);
 
-    try (var app = new Shoostr(options)) {
+    try (var app =
+        new Shoostr(options)
+            .modifyServer(
+                listenerServer -> {
+                  var listener = (ServerConnector) listenerServer.getConnectors()[0];
+                  listener.setHost("127.0.0.1");
+                  listener.setPort(0);
+                  listener.setIdleTimeout(5000);
+                })) {
       app.routes()
           .get(
               "/finite",
-              (_, response) -> {
+              (ignored2, response) -> {
                 response.body("text/plain", "abc".getBytes(StandardCharsets.UTF_8));
                 assertThrows(
                     IllegalArgumentException.class,
@@ -314,13 +343,21 @@ class StreamingInputOutputTest {
 
   @Test
   void streamsOutputLargerThanTheFiniteResponseLimit() throws Exception {
-    var options = new Options("127.0.0.1", 0, 1_048_576, 3, 2, 30_000);
+    var options = new Options(1_048_576, 3, 2, 1000, MultipartOptions.defaults());
 
-    try (var app = new Shoostr(options)) {
+    try (var app =
+        new Shoostr(options)
+            .modifyServer(
+                listenerServer -> {
+                  var listener = (ServerConnector) listenerServer.getConnectors()[0];
+                  listener.setHost("127.0.0.1");
+                  listener.setPort(0);
+                  listener.setIdleTimeout(30000);
+                })) {
       app.routes()
           .get(
               "/stream",
-              (_, response) ->
+              (ignored3, response) ->
                   response.input(
                       new ByteArrayInputStream("streamed".getBytes(StandardCharsets.UTF_8)),
                       "text/plain"));
@@ -338,11 +375,11 @@ class StreamingInputOutputTest {
   void writesAnInputStreamWithoutStagingItsWholeContent() throws Exception {
     var closed = new AtomicBoolean();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/stream",
-              (_, response) ->
+              (ignored4, response) ->
                   response.input(
                       new ByteArrayInputStream("stream output".getBytes(StandardCharsets.UTF_8)) {
                         @Override
@@ -367,8 +404,8 @@ class StreamingInputOutputTest {
     var file = Files.createTempFile(temporaryDirectory, "response-head-file-test", ".txt");
     Files.writeString(file, "file output");
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
-      app.routes().head("/file", (_, response) -> response.file(file, "text/plain"));
+    try (var app = new Shoostr()) {
+      app.routes().head("/file", (ignored5, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -389,11 +426,11 @@ class StreamingInputOutputTest {
   void closesInputWithoutReadingItForBodylessResponses() throws Exception {
     var closed = new AtomicBoolean();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/empty",
-              (_, response) -> {
+              (ignored6, response) -> {
                 response.status(204);
                 response.input(
                     new InputStream() {
@@ -429,11 +466,11 @@ class StreamingInputOutputTest {
   void closesInputWhenStreamingSetupFails() throws Exception {
     var closed = new AtomicBoolean();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/invalid",
-              (_, response) ->
+              (ignored7, response) ->
                   response.input(
                       new ByteArrayInputStream("body".getBytes(StandardCharsets.UTF_8)) {
                         @Override
@@ -456,11 +493,11 @@ class StreamingInputOutputTest {
   void closesInputWhenReadingItFails() throws Exception {
     var closed = new AtomicBoolean();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .get(
               "/read-error",
-              (_, response) ->
+              (ignored8, response) ->
                   response.input(
                       new InputStream() {
                         @Override
@@ -497,12 +534,16 @@ class StreamingInputOutputTest {
     var started = new CountDownLatch(1);
     var closed = new CountDownLatch(1);
 
-    try (var app = new Shoostr(Options.defaults().withPort(0));
+    try (var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
         var socket = new Socket()) {
       app.routes()
           .get(
               "/disconnect",
-              (_, response) ->
+              (ignored9, response) ->
                   response.input(
                       new InputStream() {
                         @Override
@@ -540,9 +581,11 @@ class StreamingInputOutputTest {
 
   @Test
   void allowsExplicitHeadStreamingWithoutWireContent() throws Exception {
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
-          .head("/stream", (_, response) -> response.startStream("text/plain").write("suppressed"));
+          .head(
+              "/stream",
+              (ignored10, response) -> response.startStream("text/plain").write("suppressed"));
 
       try (var test = TestServer.start(app)) {
         var result =
@@ -559,7 +602,7 @@ class StreamingInputOutputTest {
   void rejectsRetainedStreamingInputAfterHandlerCompletion() throws Exception {
     var retained = new AtomicReference<InputStream>();
 
-    try (var app = new Shoostr(Options.defaults().withPort(0))) {
+    try (var app = new Shoostr()) {
       app.routes()
           .post(
               "/input",

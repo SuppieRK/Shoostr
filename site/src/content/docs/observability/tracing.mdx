@@ -1,0 +1,40 @@
+---
+title: Trace HTTP requests with OpenTelemetry
+description: Enable selected SERVER spans with an application-owned OpenTelemetry SDK, continue incoming trace context across endpoint workers, and create child spans without leaking context.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/15-observability/opentelemetry/src/main/java/io/github/suppierk/shoostr/example/tracing/RequestTracingExample.java?raw';
+import test from '../../../../../examples/15-observability/opentelemetry/src/test/java/io/github/suppierk/shoostr/example/tracing/RequestTracingExampleTest.java?raw';
+
+## Description
+
+Use `shoostr-opentelemetry` with an application-configured OpenTelemetry SDK, including the propagators, sampler and exporters your application needs.
+Install `OpenTelemetryTracing`, then select `extensions.with(tracing)` on a route or group to create SERVER spans there.
+Installation alone does not create those spans. Select tracing in `app.configureExtensionsDefaults(...)` for registered endpoints by default, and use `extensions.without(tracing)` for a local exclusion.
+Configure `allRequests()` before installation when unmatched requests and pre-routing work also need coverage; that application-wide observation is outside scoped exclusion.
+
+Incoming context is extracted through the supplied propagator, so [W3C Trace Context](https://www.w3.org/TR/trace-context/) fields `traceparent` and `tracestate` depend on that SDK configuration.
+The adapter makes the server span current during invocation and explicitly reattaches it across a selected [endpoint executor](../../lifecycle/executors/), restoring the worker's previous context afterward.
+Application-created asynchronous tasks still need their own SDK context propagation rather than inheriting permission to use live request objects.
+The [OpenTelemetry context propagation guide](https://opentelemetry.io/docs/concepts/context-propagation/) explains how this context connects operations across service boundaries; trace headers are correlation data, not authentication.
+
+## Example
+
+The item route selects tracing and creates a `load-item` child operation beneath its current server span on the supplied worker.
+`/health` selects no SERVER observation and reports whether any span is current; with empty admission context it returns `traced=false`.
+Selective installation carries admission SDK context across unselected handoffs too, without creating SERVER spans there or suppressing application-created spans.
+
+Completed server spans use the composed method and route template, with terminal status and bounded error attributes rather than raw paths, credentials or exception events.
+Transport failures, 5xx responses and uncommitted application failures set an error status; a handled 4xx does not become an error solely because an exception produced it.
+The SDK controls sampling and export, and the adapter neither installs a global SDK nor closes the borrowed SDK or worker pool.
+
+<Code code={application} lang="java" title="RequestTracingExample.java" />
+
+## Test
+
+The test requires `opentelemetry-sdk` and the test-scoped `opentelemetry-sdk-testing` library, using its in-memory exporter rather than a remote service.
+It checks W3C parent continuation, server/child relationships, worker context cleanup, selective coverage, the default provider's unsampled-parent behavior, and a failed request without secret attributes or exception events.
+A new span after Shoostr closes verifies that the SDK remains caller-owned; these checks do not establish ingestion by a trace backend.
+
+<Code code={test} lang="java" title="RequestTracingExampleTest.java" />

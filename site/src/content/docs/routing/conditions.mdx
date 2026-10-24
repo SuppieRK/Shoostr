@@ -1,0 +1,31 @@
+---
+title: Control availability with conditional routes
+description: Make routes conditional on a live flag or request predicate without changing their registration.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/03-routing/src/main/java/io/github/suppierk/shoostr/example/routing/ConditionalRoutesExample.java?raw';
+import test from '../../../../../examples/03-routing/src/test/java/io/github/suppierk/shoostr/example/routing/ConditionalRoutesExampleTest.java?raw';
+
+## Description
+
+Use `when(...)` to control whether a registered route is available for each request.
+The `BooleanSupplier` overload reads a live application flag, while the `Predicate<Request>` overload evaluates the request; nested conditions run from outer to inner and stop at the first false result.
+
+Conditions run after route selection and admission, so a false result ends selection with `404` and `Cache-Control: no-store` rather than trying another matching route.
+Registration and method discovery remain unchanged: an unavailable route can still contribute methods to a generated `405` response's `Allow` header.
+Use these conditions for availability, not as a replacement for authentication or authorization.
+
+## Example
+
+Pass a live flag to `application(...)`; `/preview/latest` is available only while that flag returns true and the query contains `preview=true`.
+The catch-all handles other preview paths, but is not retried when the selected endpoint's condition fails.
+
+<Code code={application} lang="java" title="ConditionalRoutesExample.java" />
+
+## Test
+
+The malformed query makes inner evaluation observable: it receives `404` with the flag disabled, but `400` when the request condition attempts to decode it.
+This checks short-circuiting, not an exemption from transport validation.
+
+<Code code={test} lang="java" title="ConditionalRoutesExampleTest.java" />

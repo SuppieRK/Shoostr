@@ -1,0 +1,46 @@
+---
+title: Run request lifecycle hooks and observe completion
+description: Add application and local request hooks, inspect composed route facts, and retain terminal RequestOutcome summaries for successful, failed and unmatched requests.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/RequestHooksExample.java?raw';
+import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/RequestHooksExampleTest.java?raw';
+
+## Description
+
+Register application hooks on `Shoostr` before startup, and use the [`Extensions`](../../extensions/route-metadata/#description) object supplied to a route or group configuration callback and register local hooks through `extensions.lifecycle()`.
+This built-in collector configures request handling for that scope; it does not configure other installed extensions.
+Excluding an extension with `extensions.without(instance)` removes only that provider's scoped contributions, so direct local hooks and application-wide installation hooks remain in effect.
+Each method registers a callback for the corresponding request phase:
+
+| Method | When it runs |
+| --- | --- |
+| <code>on<wbr />Request<wbr />Headers</code> | After request headers become available, before matched-route processing. Application-only, including requests with no matching route. |
+| <code>on<wbr />Route<wbr />Matched</code> | After a route matches, before the known body-length check and admission gates. The composed route pattern is available. |
+| <code>before<wbr />Route<wbr />Handler</code> | After the known request-size check, before the handler. Throw to reject the request; response streaming is unavailable. |
+| <code>after<wbr />Route<wbr />Handler</code> | After the matched handler returns successfully; skipped when it throws. |
+| <code>before<wbr />Response<wbr />Flush</code> | Immediately before each framework-owned response flush. Read-only and repeatable for streaming output. |
+| <code>after<wbr />Response<wbr />Flush</code> | After each committed framework-owned response flush. Read-only and repeatable for streaming output. |
+| <code>after<wbr />Request</code> | After both application finalization and transport termination. Receives a detached `RequestOutcome`, not a live request or response. |
+
+Within each matched phase, local hooks run before application hooks, retaining registration order within their scope.
+Application terminal observers also see unmatched requests, whose route pattern is absent, while local observers apply only to selected endpoints.
+An exception stops the ordinary phase; [exception handling](../../errors/exceptions/) determines how an uncommitted failure is rendered.
+
+Retain `RequestOutcome` instead of the live request or response: its status is the committed final status, or zero when none was committed, and its separate failure fields distinguish application and transport failures.
+Terminal callbacks may run on transport threads, so do not block them or assume handler thread-local state remains attached.
+Runtime failures in one terminal observer do not suppress later observers, but diagnostic failure objects must not become response bodies or metric labels.
+
+## Example
+
+The `/jobs` group reports each phase through a thread-safe, nonblocking sink and retains terminal summaries in a separate sink.
+Requests to `/jobs/{id}` return the job ID, while `/jobs/failure` throws so the test can verify that successful-return hooks are skipped.
+
+<Code code={application} lang="java" title="RequestHooksExample.java" />
+
+## Test
+
+The tests check the complete success sequence, the composed route template, omission of successful-return hooks after a failure, and application-only observation of an unmatched request.
+
+<Code code={test} lang="java" title="RequestHooksExampleTest.java" />

@@ -33,8 +33,8 @@ class McpSubscriptionDeletionRaceTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     var tool = McpSchema.Tool.builder("wait", Map.of("type", "object")).build();
     var mcp =
         Mcp.async(
@@ -46,7 +46,7 @@ class McpSubscriptionDeletionRaceTest {
                         McpServerFeatures.AsyncToolSpecification.builder()
                             .tool(tool)
                             .callHandler(
-                                (_, _) ->
+                                (ignored4, ignored5) ->
                                     Mono.create(
                                         sink -> {
                                           sink.onCancel(
@@ -140,7 +140,7 @@ class McpSubscriptionDeletionRaceTest {
           }
 
           return;
-        } catch (InterruptedException _) {
+        } catch (InterruptedException ignored6) {
           interrupted = true;
         }
       }

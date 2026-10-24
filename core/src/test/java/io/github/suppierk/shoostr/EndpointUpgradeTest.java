@@ -13,6 +13,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.server.ServerUpgradeResponse;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -34,17 +35,23 @@ class EndpointUpgradeTest {
                   owned.add(thread);
                   return thread;
                 });
-        var app = new Shoostr(Options.defaults().withPort(0))) {
+        var app =
+            new Shoostr()
+                .modifyServer(
+                    nativeServer ->
+                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       var configuredThread = new CompletableFuture<Thread>();
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> factory =
-          (_, _) -> {
+          (ignored, ignored2) -> {
             selected.complete(Thread.currentThread());
             return new Session.Listener.AutoDemanding() {};
           };
       Consumer<Extensions> configuration =
           extensions ->
-              extensions.beforeRouteHandler(
-                  (_, _) -> configuredThread.complete(Thread.currentThread()));
+              extensions
+                  .lifecycle()
+                  .beforeRouteHandler(
+                      (ignored3, ignored4) -> configuredThread.complete(Thread.currentThread()));
       if (pathless) {
         app.routes()
             .path(

@@ -114,7 +114,7 @@ final class Pac4jContext implements WebContext {
   /** {@inheritDoc} */
   @Override
   public Optional<String> getResponseHeader(String name) {
-    return Optional.ofNullable(response.setHeader(name));
+    return Optional.ofNullable(response.header(name));
   }
 
   /** {@inheritDoc} */
@@ -126,13 +126,13 @@ final class Pac4jContext implements WebContext {
   /** {@inheritDoc} */
   @Override
   public String getServerName() {
-    return Objects.requireNonNull(URI.create(request.effectiveUrl()).getHost());
+    return Objects.requireNonNull(effectiveOrigin().getHost());
   }
 
   /** {@inheritDoc} */
   @Override
   public int getServerPort() {
-    var uri = URI.create(request.effectiveUrl());
+    var uri = effectiveOrigin();
     if (uri.getPort() >= 0) {
       return uri.getPort();
     }
@@ -143,13 +143,13 @@ final class Pac4jContext implements WebContext {
   /** {@inheritDoc} */
   @Override
   public String getScheme() {
-    return Objects.requireNonNull(URI.create(request.effectiveUrl()).getScheme());
+    return Objects.requireNonNull(effectiveOrigin().getScheme());
   }
 
   /** {@inheritDoc} */
   @Override
   public boolean isSecure() {
-    return request.isSecure();
+    return request.isEffectivelySecure();
   }
 
   /** {@inheritDoc} */
@@ -218,5 +218,23 @@ final class Pac4jContext implements WebContext {
     var combined = Arrays.copyOf(query, query.length + form.length);
     System.arraycopy(form, 0, combined, query.length, form.length);
     return combined;
+  }
+
+  /**
+   * Parses scheme and authority without interpreting opaque path or raw query data.
+   *
+   * @return effective origin used by the SDK's server metadata accessors
+   */
+  private URI effectiveOrigin() {
+    var url = request.effectiveUrl();
+    var end = url.length();
+    for (int index = url.indexOf("://") + 3; index < end; index++) {
+      var character = url.charAt(index);
+      if (character == '/' || character == '?' || character == '#') {
+        end = index;
+        break;
+      }
+    }
+    return URI.create(url.substring(0, end));
   }
 }

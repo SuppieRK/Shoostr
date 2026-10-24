@@ -1,0 +1,34 @@
+---
+title: Share request-local state
+description: Share attributes during handling and retain snapshots without retaining the live request.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/04-request/src/main/java/io/github/suppierk/shoostr/example/request/RequestStateExample.java?raw';
+import test from '../../../../../examples/04-request/src/test/java/io/github/suppierk/shoostr/example/request/RequestStateExampleTest.java?raw';
+
+## Description
+
+Use request attributes to share application values between a request hook and its handler without global state.
+Keys are case-sensitive, setting a value replaces that binding, and setting `null` removes it.
+Each request has its own bindings, so an attribute is not a session or a way to communicate with later requests.
+
+Request access is confined to the active handler thread and lifetime.
+Do not retain the live `Request` or pass it to another thread; capture needed values and snapshots while handling the request instead.
+Parameter, header, and cookie collections are deeply immutable, but `attributeMap()` only copies the bindings: mutable application objects remain shared with the snapshot.
+Retaining those objects does not copy them or make them thread-safe.
+For an upgraded connection, use the detached values on [WebSocketConnection](../../websockets/managed/) rather than keeping its handshake request.
+
+## Example
+
+The hook assigns a request ID and locale before the greeting handler runs.
+The handler reads an individual attribute for the response header, then passes an attribute snapshot to `greeting(...)` so that method needs no live request.
+
+<Code code={application} lang="java" title="RequestStateExample.java" />
+
+## Test
+
+The tests verify per-request isolation, replacement and removal, immutable snapshot bindings, and shared mutable values.
+They also check rejected access from another thread and confirm that a captured header snapshot remains usable after the response.
+
+<Code code={test} lang="java" title="RequestStateExampleTest.java" />

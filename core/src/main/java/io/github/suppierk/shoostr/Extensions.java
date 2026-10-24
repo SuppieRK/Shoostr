@@ -3,14 +3,12 @@ package io.github.suppierk.shoostr;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import java.util.ArrayList;
 import java.util.IdentityHashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.function.Function;
 import java.util.function.Predicate;
 import org.jspecify.annotations.Nullable;
 
@@ -23,16 +21,12 @@ public final class Extensions {
   private final Set<Extension<?>> installed;
   private final IdentityHashMap<Extension<?>, Selection> selections;
   private final List<Extension<?>> order;
-  private final List<Handler> matched;
-  private final List<Handler> before;
-  private final List<Handler> after;
-  private final List<Handler> beforeFlush;
-  private final List<Handler> afterFlush;
-  private final List<Consumer<RequestOutcome>> observers;
-  private final List<Function<Request, RequestObservation>> instrumentation;
-  private final Map<Integer, Handler> statuses;
+  private final Lifecycle lifecycle;
   private final List<Consumer<RouteInfo>> routeConsumers;
   private @Nullable Handler authentication;
+  private @Nullable Csrf csrf;
+  private @Nullable Cors cors;
+  private @Nullable CorsPolicy corsPolicy;
   private boolean closed;
   private boolean provider;
 
@@ -46,14 +40,7 @@ public final class Extensions {
     this.installed = installed;
     selections = new IdentityHashMap<>();
     order = new ArrayList<>();
-    matched = new ArrayList<>();
-    before = new ArrayList<>();
-    after = new ArrayList<>();
-    beforeFlush = new ArrayList<>();
-    afterFlush = new ArrayList<>();
-    observers = new ArrayList<>();
-    instrumentation = new ArrayList<>();
-    statuses = new LinkedHashMap<>();
+    lifecycle = new Lifecycle(this);
     routeConsumers = new ArrayList<>();
     if (inherited != null) {
       append(inherited);
@@ -95,7 +82,7 @@ public final class Extensions {
    *     nested selection
    */
   @SuppressWarnings("unchecked") // Identity-keyed entries are created by this exact Extension<C>.
-  public <C> C get(Extension<C> extension) {
+  public <C> C with(Extension<C> extension) {
     requireMutable();
     if (provider) {
       throw new IllegalStateException(
@@ -110,9 +97,37 @@ public final class Extensions {
     var selection = selections.get(extension);
     if (selection == null) {
       selection = select(extension, null);
+    } else if (!selection.included()) {
+      selection = new Selection(selection.configuration(), selection.contribution(), true);
+      selections.put(extension, selection);
     }
 
     return (C) selection.configuration();
+  }
+
+  /**
+   * Excludes an installed instance's scoped contributions without disposing its resources.
+   *
+   * @param extension installed extension instance
+   * @return this scope
+   * @throws IllegalArgumentException if the instance is not installed
+   * @throws IllegalStateException if the scope is frozen or a provider attempts nested selection
+   */
+  public Extensions without(Extension<?> extension) {
+    requireMutable();
+    if (provider) {
+      throw new IllegalStateException(
+          "Select extensions in the route/group callback, not inside a provider");
+    }
+
+    requireInstalled(extension);
+    var selected = selections.get(extension);
+    if (selected != null && selected.included()) {
+      selections.put(
+          extension, new Selection(selected.configuration(), selected.contribution(), false));
+    }
+
+    return this;
   }
 
   /**
@@ -143,104 +158,13 @@ public final class Extensions {
   }
 
   /**
-   * Adds a local match hook before app match hooks and known-length validation.
+   * Returns this scope's built-in request lifecycle configuration.
    *
-   * @param handler local callback
-   * @return this scope
+   * @return the independently owned registration collector
    */
-  public Extensions onRouteMatched(Handler handler) {
-    return add(matched, handler);
-  }
-
-  /**
-   * Adds an admission callback after managed authentication and before app gates. Selected
-   * extension contributions run in inherited/first-selection order, followed by direct local
-   * callbacks. Throw to reject; response streaming is unavailable during admission.
-   *
-   * @param handler local gate
-   * @return this scope
-   */
-  public Extensions beforeRouteHandler(Handler handler) {
-    return add(before, handler);
-  }
-
-  /**
-   * Adds a local callback after successful endpoint return, before app callbacks.
-   *
-   * @param handler local callback
-   * @return this scope
-   */
-  public Extensions afterRouteHandler(Handler handler) {
-    return add(after, handler);
-  }
-
-  /**
-   * Adds a local callback before each framework flush, before app callbacks.
-   *
-   * @param handler local callback
-   * @return this scope
-   */
-  public Extensions beforeResponseFlush(Handler handler) {
-    return add(beforeFlush, handler);
-  }
-
-  /**
-   * Adds a local read-only callback after each flush, before app callbacks.
-   *
-   * @param handler local callback
-   * @return this scope
-   */
-  public Extensions afterResponseFlush(Handler handler) {
-    return add(afterFlush, handler);
-  }
-
-  /**
-   * Adds a local terminal observer before app observers; RuntimeException does not suppress others.
-   *
-   * @param observer read-only terminal callback
-   * @return this scope
-   */
-  public Extensions afterRequest(Consumer<RequestOutcome> observer) {
+  public Lifecycle lifecycle() {
     requireMutable();
-    observers.add(Objects.requireNonNull(observer));
-    return this;
-  }
-
-  /**
-   * Adds matched-request instrumentation before executor handoff and local match hooks. The same
-   * factory instance contributes once per endpoint, including inherited selections. Scopes follow
-   * the application instrumentation's handoff, cleanup and failure-isolation contract. Unmatched
-   * requests and pre-routing short circuits do not invoke local factories.
-   *
-   * @param factory creates one observation without retaining live input
-   * @return this scope
-   */
-  public Extensions observe(Function<Request, RequestObservation> factory) {
-    requireMutable();
-    Objects.requireNonNull(factory);
-    if (instrumentation.stream().noneMatch(existing -> existing == factory)) {
-      instrumentation.add(factory);
-    }
-
-    return this;
-  }
-
-  /**
-   * Adds a generated-status renderer; a local match suppresses the app renderer.
-   *
-   * @param status HTTP status from 100 through 599
-   * @param handler renderer
-   * @return this scope
-   * @throws IllegalArgumentException if status is outside the HTTP range
-   */
-  public Extensions status(int status, Handler handler) {
-    requireMutable();
-    if (status < 100 || status > 599) {
-      throw new IllegalArgumentException("Invalid HTTP status");
-    }
-
-    statuses.put(status, Objects.requireNonNull(handler));
-    return this;
+    return lifecycle;
   }
 
   /**
@@ -259,6 +183,38 @@ public final class Extensions {
   }
 
   /**
+   * Selects the immutable CSRF owner.
+   *
+   * @param owner selected protection
+   * @throws IllegalArgumentException if a different CSRF owner is already selected
+   */
+  void csrf(Csrf owner) {
+    requireMutable();
+    if (csrf != null && csrf != owner) {
+      throw new IllegalArgumentException("An endpoint may select only one Csrf instance");
+    }
+
+    csrf = owner;
+  }
+
+  /**
+   * Selects the immutable CORS owner.
+   *
+   * @param owner selected sharing policy
+   * @param policy resolved immutable permissions
+   * @throws IllegalArgumentException if a different CORS owner is already selected
+   */
+  void cors(Cors owner, CorsPolicy policy) {
+    requireMutable();
+    if (cors != null && cors != owner) {
+      throw new IllegalArgumentException("An endpoint may select only one Cors instance");
+    }
+
+    cors = owner;
+    corsPolicy = Objects.requireNonNull(policy);
+  }
+
+  /**
    * Snapshots runtime behavior and queues cold facts, then closes all registration surfaces.
    *
    * @param conditions inherited runtime predicates
@@ -272,14 +228,8 @@ public final class Extensions {
       @Nullable HttpMethods method,
       String pathTemplate,
       List<Runnable> notifications) {
-    var combined = new Extensions(installed, null);
-    for (var extension : order) {
-      var contribution = Objects.requireNonNull(selections.get(extension)).contribution();
-      combined.append(contribution);
-      contribution.closed = true;
-    }
-    combined.append(this);
-    closed = true;
+    var combined = combined();
+    freeze();
     if (method != null && !combined.routeConsumers.isEmpty()) {
       var info = new RouteInfo(method, pathTemplate, !conditions.isEmpty());
       for (var consumer : combined.routeConsumers) {
@@ -287,31 +237,52 @@ public final class Extensions {
       }
     }
 
-    if (combined.authentication == null
+    if (combined.cors == null
+        && combined.csrf == null
+        && combined.authentication == null
         && conditions.isEmpty()
-        && combined.matched.isEmpty()
-        && combined.before.isEmpty()
-        && combined.after.isEmpty()
-        && combined.beforeFlush.isEmpty()
-        && combined.afterFlush.isEmpty()
-        && combined.observers.isEmpty()
-        && combined.instrumentation.isEmpty()
-        && combined.statuses.isEmpty()) {
+        && combined.lifecycle.matched.isEmpty()
+        && combined.lifecycle.before.isEmpty()
+        && combined.lifecycle.after.isEmpty()
+        && combined.lifecycle.beforeFlush.isEmpty()
+        && combined.lifecycle.afterFlush.isEmpty()
+        && combined.lifecycle.observers.isEmpty()
+        && combined.lifecycle.instrumentation.isEmpty()
+        && combined.lifecycle.statuses.isEmpty()) {
       return null;
     }
 
     return new EndpointBehavior(
         combined.authentication,
-        combined.matched,
-        combined.before,
-        combined.after,
-        combined.beforeFlush,
-        combined.afterFlush,
-        combined.observers,
-        combined.instrumentation,
+        combined.csrf,
+        combined.corsPolicy,
+        combined.lifecycle.matched,
+        combined.lifecycle.before,
+        combined.lifecycle.after,
+        combined.lifecycle.beforeFlush,
+        combined.lifecycle.afterFlush,
+        combined.lifecycle.observers,
+        combined.lifecycle.instrumentation,
         Map.of(),
-        combined.statuses,
+        combined.lifecycle.statuses,
         conditions);
+  }
+
+  /**
+   * Copies provider contributions before direct callbacks without closing the source scope.
+   *
+   * @return independent combined collector
+   */
+  private Extensions combined() {
+    var combined = new Extensions(installed, null);
+    for (var extension : order) {
+      var selected = Objects.requireNonNull(selections.get(extension));
+      if (selected.included()) {
+        combined.append(selected.contribution());
+      }
+    }
+    combined.append(this);
+    return combined;
   }
 
   /** Closes registration surfaces retained by a group callback. */
@@ -331,7 +302,11 @@ public final class Extensions {
    */
   @SuppressWarnings("unchecked") // The identity-keyed selection came from this Extension<C>.
   private <C> void inherit(Extension<C> extension, Selection selection) {
-    select(extension, (C) selection.configuration());
+    var inherited = select(extension, (C) selection.configuration());
+    if (!selection.included()) {
+      selections.put(
+          extension, new Selection(inherited.configuration(), inherited.contribution(), false));
+    }
   }
 
   /**
@@ -345,12 +320,26 @@ public final class Extensions {
   private <C> Selection select(Extension<C> extension, @Nullable C inherited) {
     var contribution = new Extensions(installed, null);
     contribution.provider = true;
-    var selection =
-        new Selection(
-            Objects.requireNonNull(extension.configure(contribution, inherited)), contribution);
-    selections.put(extension, selection);
-    order.add(extension);
-    return selection;
+
+    try {
+      var selection =
+          new Selection(
+              Objects.requireNonNull(extension.configure(contribution, inherited)),
+              contribution,
+              true);
+      var owners = new Extensions(installed, null);
+      owners.reserve(this);
+      for (var previous : selections.values()) {
+        owners.reserve(previous.contribution());
+      }
+      owners.reserve(contribution);
+      selections.put(extension, selection);
+      order.add(extension);
+      return selection;
+    } catch (RuntimeException | Error failure) {
+      contribution.freeze();
+      throw failure;
+    }
   }
 
   /**
@@ -359,32 +348,28 @@ public final class Extensions {
    * @param source contribution to copy
    */
   private void append(Extensions source) {
-    if (source.authentication != null) {
-      authentication(source.authentication);
-    }
-
-    matched.addAll(source.matched);
-    before.addAll(source.before);
-    after.addAll(source.after);
-    beforeFlush.addAll(source.beforeFlush);
-    afterFlush.addAll(source.afterFlush);
-    observers.addAll(source.observers);
-    source.instrumentation.forEach(this::observe);
-    statuses.putAll(source.statuses);
+    reserve(source);
+    lifecycle.append(source.lifecycle);
     routeConsumers.addAll(source.routeConsumers);
   }
 
   /**
-   * Adds a non-null callback during registration.
+   * Preserves selected owners even while their scoped contributions are excluded.
    *
-   * @param handlers target phase
-   * @param handler callback
-   * @return this scope
+   * @param source configuration whose ownership constraints remain in force
    */
-  private Extensions add(List<Handler> handlers, Handler handler) {
-    requireMutable();
-    handlers.add(Objects.requireNonNull(handler));
-    return this;
+  private void reserve(Extensions source) {
+    if (source.authentication != null) {
+      authentication(source.authentication);
+    }
+
+    if (source.csrf != null) {
+      csrf(source.csrf);
+    }
+
+    if (source.cors != null) {
+      cors(source.cors, Objects.requireNonNull(source.corsPolicy));
+    }
   }
 
   /**
@@ -403,13 +388,15 @@ public final class Extensions {
    *
    * @param configuration independently copied typed facade
    * @param contribution this provider's callbacks
+   * @param included whether this scope applies the contribution
    */
-  private record Selection(Object configuration, Extensions contribution) {
+  private record Selection(Object configuration, Extensions contribution, boolean included) {
     /**
-     * Validates both parts before publishing the selection.
+     * Validates required values before publishing the selection.
      *
      * @param configuration independent provider data
      * @param contribution local callbacks
+     * @param included whether this scope applies the contribution
      */
     private Selection {
       Objects.requireNonNull(configuration);

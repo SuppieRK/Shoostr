@@ -5,20 +5,22 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 
 /** Owns managed connections without taking ownership of the shared application executor. */
 final class WebSocketRuntime {
-  private final ExecutorService executor;
+  private final Executor executor;
   private final Set<ManagedWebSocket> connections;
   private boolean stopping;
+  private boolean stopped;
 
   /**
-   * Retains the application's already-owned virtual-thread executor.
+   * Retains the application's already-owned execution policy.
    *
-   * @param executor managed virtual-thread dispatch
+   * @param executor managed dispatch
    */
-  WebSocketRuntime(ExecutorService executor) {
+  WebSocketRuntime(Executor executor) {
     this.executor = Objects.requireNonNull(executor);
     connections = new HashSet<>();
   }
@@ -39,12 +41,19 @@ final class WebSocketRuntime {
   }
 
   /**
-   * Starts one worker that serializes this connection's application callbacks.
+   * Submits one work item without taking ownership of the application's executor.
    *
-   * @param connection admitted adapter
+   * @param task admitted application work
+   * @throws RejectedExecutionException if managed dispatch has finished or the executor rejects
+   *     work
    */
-  void execute(ManagedWebSocket connection) {
-    executor.execute(connection::run);
+  void execute(Runnable task) {
+    synchronized (this) {
+      if (stopped) {
+        throw new RejectedExecutionException("Managed WebSocket dispatch is closed");
+      }
+    }
+    executor.execute(task);
   }
 
   /**
@@ -62,15 +71,43 @@ final class WebSocketRuntime {
    * @throws IOException if signalling fails; every registered connection is still attempted
    */
   void stop() throws IOException {
+    signal(false);
+  }
+
+  /**
+   * Closes dispatch and cancels unclaimed work after native stop, including failed native stop.
+   *
+   * @throws IOException if cleanup fails; every registered connection is still attempted
+   */
+  void finishStop() throws IOException {
+    signal(true);
+  }
+
+  /**
+   * Snapshots ownership under the runtime lock, then signals connections without holding it.
+   *
+   * @param finished whether native stop has ended and dispatch must close
+   * @throws IOException if any connection fails to settle
+   */
+  private void signal(boolean finished) throws IOException {
     List<ManagedWebSocket> active;
     synchronized (this) {
+      if (stopped) {
+        return;
+      }
+
       stopping = true;
+      stopped = finished;
       active = List.copyOf(connections);
     }
     IOException failure = null;
     for (var connection : active) {
       try {
-        connection.stop();
+        if (finished) {
+          connection.finishStop();
+        } else {
+          connection.stop();
+        }
       } catch (RuntimeException stopFailure) {
         if (failure == null) {
           failure = new IOException("Could not signal managed WebSockets", stopFailure);

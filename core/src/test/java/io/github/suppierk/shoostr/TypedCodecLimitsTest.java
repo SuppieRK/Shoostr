@@ -8,6 +8,7 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -25,7 +26,15 @@ class TypedCodecLimitsTest {
           }
         };
 
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 4, 256, 8, 3000))) {
+    try (var app =
+        new Shoostr(new Options(4, 256, 8, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(3000);
+                })) {
       app.codec(codec)
           .routes()
           .post(
@@ -45,7 +54,15 @@ class TypedCodecLimitsTest {
 
   @Test
   void decodesRequestAtExactByteLimit() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 4, 256, 8, 3000))) {
+    try (var app =
+        new Shoostr(new Options(4, 256, 8, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(3000);
+                })) {
       app.codec(new TestCodec())
           .routes()
           .post(
@@ -70,12 +87,20 @@ class TypedCodecLimitsTest {
 
   @Test
   void enforcesFiniteLimitAfterEncodingWithoutReplacingStagedBody() throws Exception {
-    try (var app = new Shoostr(new Options("127.0.0.1", 0, 64, 8, 8, 3000))) {
+    try (var app =
+        new Shoostr(new Options(64, 8, 8, 1000, MultipartOptions.defaults()))
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(0);
+                  nativeConnector.setIdleTimeout(3000);
+                })) {
       app.codec(new TestCodec())
           .routes()
           .get(
               "/body",
-              (_, response) -> {
+              (ignored, response) -> {
                 response.text("kept");
                 assertThrows(
                     IllegalArgumentException.class,
@@ -149,7 +174,7 @@ class TypedCodecLimitsTest {
           .routes()
           .get(
               "/body",
-              (_, response) -> {
+              (ignored2, response) -> {
                 response.body("application/json", "anything");
                 bytes[0] = '!';
               });

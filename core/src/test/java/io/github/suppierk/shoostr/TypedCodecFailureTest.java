@@ -62,7 +62,7 @@ class TypedCodecFailureTest {
     try (var app = new Shoostr()) {
       app.codec(codec)
           .routes()
-          .get("/encode", (_, response) -> response.body("application/json", "Alice"));
+          .get("/encode", (ignored, response) -> response.body("application/json", "Alice"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(status, test.send(request -> request.path("/encode")).statusCode());
@@ -82,7 +82,8 @@ class TypedCodecFailureTest {
         };
 
     try (var app = new Shoostr()) {
-      app.exception(IOException.class, (_, _, response) -> response.status(502).text("global"));
+      app.exception(
+          IOException.class, (ignored2, ignored3, response) -> response.status(502).text("global"));
       app.codec(codec)
           .routes()
           .path(
@@ -90,11 +91,12 @@ class TypedCodecFailureTest {
               routes -> {
                 routes.exception(
                     IOException.class,
-                    (caught, _, response) -> {
+                    (caught, ignored4, response) -> {
                       assertSame(failure, caught);
                       response.status(503).text("local");
                     });
-                routes.get((_, response) -> response.body(MediaType.APPLICATION_JSON, "Alice"));
+                routes.get(
+                    (ignored5, response) -> response.body(MediaType.APPLICATION_JSON, "Alice"));
               });
 
       try (var test = TestServer.start(app)) {
@@ -122,7 +124,7 @@ class TypedCodecFailureTest {
           .routes()
           .get(
               "/failure",
-              (_, response) -> {
+              (ignored6, response) -> {
                 response.text("kept");
                 assertSame(
                     failure,
@@ -156,7 +158,7 @@ class TypedCodecFailureTest {
     try (var app = new Shoostr()) {
       app.codec(codec)
           .routes()
-          .get("/null", (_, response) -> response.body("application/json", "Alice"));
+          .get("/null", (ignored7, response) -> response.body("application/json", "Alice"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(500, test.send(request -> request.path("/null")).statusCode());

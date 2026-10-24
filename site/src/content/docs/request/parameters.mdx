@@ -1,0 +1,37 @@
+---
+title: Read request parameters
+description: Read path captures, query values, and URL-encoded form fields without merging their sources.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/04-request/src/main/java/io/github/suppierk/shoostr/example/request/ParametersExample.java?raw';
+import test from '../../../../../examples/04-request/src/test/java/io/github/suppierk/shoostr/example/request/ParametersExampleTest.java?raw';
+
+## Description
+
+Read selected-route captures with `pathParam(...)` or `pathParamMap()`, and keep query values separate from form fields.
+For query and form input, the singular accessor returns the first value, the plural accessor preserves repeated values in arrival order, and `queryParamMap()` and `formParamMap()` expose all decoded names and values.
+Names are case-sensitive; a submitted empty value is present, while an absent name returns an empty `Optional` or collection.
+
+Query and URL-encoded form decoding use UTF-8 and convert `+` to a space, whereas path captures preserve a literal `+`.
+Decoding happens once: a query value of `%2520` becomes `%20`, not a space; the default transport rejects that double-encoded spelling in a path.
+See [path matching](../../routing/patterns/) for pattern syntax and route selection.
+For raw text or bytes, see [request bodies](../../bodies/buffered/); use [multipart fields and files](../../bodies/multipart/) for file uploads.
+
+## Example
+
+The GET handler reads the category and search tags, while the POST handler reads tags from a URL-encoded body and reports query tags separately.
+Send form input as `application/x-www-form-urlencoded`, with either no charset parameter or a supported UTF-8 declaration.
+
+Query and form parsing happens on access, but requesting any value validates that whole collection.
+Malformed encoding or too many pairs produces `400`; an oversized form body produces `413`, and missing or unsupported form representation metadata produces `415`.
+The transport can reject invalid requests before these accessors run.
+
+<Code code={application} lang="java" title="ParametersExample.java" />
+
+## Test
+
+The tests cover decoded names and values, repeated and empty input, query/form separation, and rejected representations.
+The returned maps and lists are immutable snapshots; see [request-local state](../state/) for their lifetime and how they differ from attribute snapshots.
+
+<Code code={test} lang="java" title="ParametersExampleTest.java" />

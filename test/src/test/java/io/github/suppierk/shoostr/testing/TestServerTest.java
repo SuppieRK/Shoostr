@@ -17,9 +17,9 @@ class TestServerTest {
   void startsIsolatedServersOnEphemeralPortsAndStopsThemAtScopeExit() throws Exception {
     TestServer first;
     var firstApp = new Shoostr();
-    firstApp.routes().get("/id", (_, res) -> res.text("one"));
+    firstApp.routes().get("/id", (ignored, res) -> res.text("one"));
     var secondApp = new Shoostr();
-    secondApp.routes().get("/id", (_, res) -> res.text("two"));
+    secondApp.routes().get("/id", (ignored2, res) -> res.text("two"));
 
     try (var running = TestServer.start(firstApp);
         var second = TestServer.start(secondApp);
@@ -49,13 +49,14 @@ class TestServerTest {
   void closesAppWhenConfigurationFails() {
     var app = new Shoostr();
     app.modifyServer(
-        _ -> {
+        ignored3 -> {
           throw new IllegalArgumentException("invalid fixture configuration");
         });
     assertThrows(IllegalArgumentException.class, () -> TestServer.start(app));
     var routes = app.routes();
     assertThrows(
-        IllegalStateException.class, () -> routes.get("/later", (_, res) -> res.text("late")));
+        IllegalStateException.class,
+        () -> routes.get("/later", (ignored4, res) -> res.text("late")));
   }
 
   @Test
@@ -70,7 +71,7 @@ class TestServerTest {
                     throw new IOException("forced native stop failure");
                   }
                 }));
-    app.routes().get("/", (_, response) -> response.text("ready"));
+    app.routes().get("/", (ignored5, response) -> response.text("ready"));
     var server = TestServer.start(app);
 
     var failure = assertThrows(IOException.class, server::close);

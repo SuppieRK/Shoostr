@@ -1,0 +1,38 @@
+---
+title: Send files as downloads
+description: Download a file attachment with a UTF-8 filename, send a file inline, and register matching HEAD handlers without buffering the file in memory.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/09-resources/src/main/java/io/github/suppierk/shoostr/example/resources/DownloadExample.java?raw';
+import test from '../../../../../examples/09-resources/src/test/java/io/github/suppierk/shoostr/example/resources/DownloadExampleTest.java?raw';
+
+## Description
+
+Use `response.file(...)` to send an application-selected file, or `attachment(...)` to add a download filename through `Content-Disposition`.
+Supply the media type explicitly; these methods do not choose it from the filename or encode the file's contents.
+Attachment names have both an ASCII fallback and a UTF-8 extended form, while control characters and path separators are rejected.
+
+Select the path in application code rather than passing an unchecked request parameter to the filesystem.
+File output supports readable regular files on the default filesystem and is separate from finite bodies and streaming: do not combine those output modes on one response.
+For a directory mount instead, use [static resources](../static/).
+
+## Example
+
+The `/file` endpoint sends a CSV report without an attachment header, and `/download` presents the same bytes as `résumé.csv`.
+Both endpoints register `HEAD` explicitly so clients can inspect the representation without receiving its body.
+
+Shoostr stages the transfer during the handler and sends the file afterward rather than copying it into the finite response buffer.
+Keep the file readable and its representation stable until terminal transfer completion; do not delete it in a handler's `finally` block.
+A successful staging call does not guarantee that the later transfer succeeds, and [error replacement](../../errors/exceptions/) is no longer possible after commitment.
+The same file responses support [ranges and conditional requests](../caching/).
+
+<Code code={application} lang="java" title="DownloadExample.java" />
+
+## Test
+
+The download test saves the HTTP response to a separate file with Java's `BodyHandlers.ofFile(...)` and verifies its contents after the server closes.
+The remaining checks distinguish inline output from an attachment, verify the two filename forms and exercise both explicit HEAD routes.
+The report remains available after the application closes because the application does not own its storage.
+
+<Code code={test} lang="java" title="DownloadExampleTest.java" />

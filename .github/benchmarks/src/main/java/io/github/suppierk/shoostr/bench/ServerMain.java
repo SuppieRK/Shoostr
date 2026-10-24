@@ -1,6 +1,5 @@
 package io.github.suppierk.shoostr.bench;
 
-import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Routes;
 import io.github.suppierk.shoostr.Shoostr;
@@ -8,6 +7,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
+import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.websocket.api.Callback;
 import org.eclipse.jetty.websocket.api.Session;
 import org.jspecify.annotations.Nullable;
@@ -29,23 +29,27 @@ public final class ServerMain {
    * @throws Exception if startup fails or the main thread is interrupted
    * @throws IllegalArgumentException if the number of route groups is not positive
    */
-  static void main(String[] args) throws Exception {
+  public static void main(String[] args) throws Exception {
     int port = args.length > 0 ? Integer.parseInt(args[0]) : 18080;
     int routeGroups = args.length > 1 ? Integer.parseInt(args[1]) : 1000;
     if (routeGroups < 1) {
       throw new IllegalArgumentException("Route groups require a positive count");
     }
 
-    var app = new Shoostr(Options.defaults().withPort(port));
+    var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(port));
     app.routes(
             routes -> {
-              routes.get("/plaintext", (_, res) -> res.body("text/plain;charset=utf-8", PLAIN));
-              routes.get("/json-bytes", (_, res) -> res.body("application/json", JSON));
+              routes.get(
+                  "/plaintext", (ignored, res) -> res.body("text/plain;charset=utf-8", PLAIN));
+              routes.get("/json-bytes", (ignored2, res) -> res.body("application/json", JSON));
               routes.post(
                   "/echo", (req, res) -> res.body("application/octet-stream", req.bodyBytes()));
               routes.get(
                   "/stream",
-                  (_, res) -> {
+                  (ignored3, res) -> {
                     var stream = res.startStream("application/octet-stream");
                     for (int index = 0; index < EVENT_COUNT; index++) {
                       stream.write(CHUNK);
@@ -54,12 +58,13 @@ public final class ServerMain {
                   });
               routes.get(
                   "/virtual",
-                  (_, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
-              routes.sse("/sse-burst", (_, res) -> sendEvents(res, 0, EVENT_PAYLOAD));
-              routes.sse("/sse-paced", (_, res) -> sendEvents(res, 20, EVENT_PAYLOAD));
-              routes.sse("/sse-slow", (_, res) -> sendEvents(res, 0, LARGE_EVENT_PAYLOAD));
-              routes.websocket("/ws-text", (_, _) -> new EchoListener());
-              routes.websocket("/ws-binary", (_, _) -> new EchoListener());
+                  (ignored4, res) ->
+                      res.text(Boolean.toString(Thread.currentThread().isVirtual())));
+              routes.sse("/sse-burst", (ignored5, res) -> sendEvents(res, 0, EVENT_PAYLOAD));
+              routes.sse("/sse-paced", (ignored6, res) -> sendEvents(res, 20, EVENT_PAYLOAD));
+              routes.sse("/sse-slow", (ignored7, res) -> sendEvents(res, 0, LARGE_EVENT_PAYLOAD));
+              routes.websocket("/ws-text", (ignored8, ignored9) -> new EchoListener());
+              routes.websocket("/ws-binary", (ignored10, ignored11) -> new EchoListener());
               registerRouteGroups(routes, routeGroups);
             })
         .start();
@@ -101,12 +106,13 @@ public final class ServerMain {
               resources.path(
                   "/orders",
                   orders -> {
-                    orders.get("/latest", (_, res) -> res.body("text/plain;charset=utf-8", PLAIN));
+                    orders.get(
+                        "/latest", (ignored12, res) -> res.body("text/plain;charset=utf-8", PLAIN));
                     orders.get("/{id}", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
                     orders.post(
                         "/{orderId}",
                         (req, res) -> res.text(req.pathParam("orderId").orElseThrow()));
-                    orders.get("/fixed/details", (_, res) -> res.text("details"));
+                    orders.get("/fixed/details", (ignored13, res) -> res.text("details"));
                     orders.get(
                         "/{id}/events", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
                     orders.get(
@@ -116,8 +122,8 @@ public final class ServerMain {
                                 req.pathParam("id").orElseThrow()
                                     + "/"
                                     + req.pathParam("itemId").orElseThrow()));
-                    orders.get("/shadowed", (_, res) -> res.text("literal"));
-                    orders.post("/latest", (_, res) -> res.text("latest"));
+                    orders.get("/shadowed", (ignored14, res) -> res.text("literal"));
+                    orders.post("/latest", (ignored15, res) -> res.text("latest"));
                   }));
     }
   }

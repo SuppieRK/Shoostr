@@ -18,6 +18,8 @@ import org.jspecify.annotations.Nullable;
  */
 record EndpointBehavior(
     @Nullable Handler authentication,
+    @Nullable Csrf csrf,
+    @Nullable CorsPolicy cors,
     List<Handler> matched,
     List<Handler> before,
     List<Handler> after,
@@ -32,6 +34,8 @@ record EndpointBehavior(
    * Freezes registration collections before publishing the endpoint.
    *
    * @param authentication managed authentication, or null
+   * @param csrf selected session-backed browser protection, or null
+   * @param cors selected browser sharing policy, or null
    * @param matched local match hooks
    * @param before local admission hooks
    * @param after local successful-handler hooks
@@ -72,10 +76,12 @@ record EndpointBehavior(
 
     return behavior == null
         ? new EndpointBehavior(
-            null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
-            errors, Map.of(), List.of())
+            null, null, null, List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+            List.of(), errors, Map.of(), List.of())
         : new EndpointBehavior(
             behavior.authentication,
+            behavior.csrf,
+            behavior.cors,
             behavior.matched,
             behavior.before,
             behavior.after,

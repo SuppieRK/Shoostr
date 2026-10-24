@@ -1,9 +1,9 @@
 # Hello and lifecycle
 
-Start with Java 25: `./gradlew :hello-example:run`, then
+Start with Java 21: `./gradlew :hello-example:run`, then
 `curl http://127.0.0.1:8080/hello` → `Hello, Shoostr!`.
 
-The default listener binds all IPv4 interfaces (`0.0.0.0:8080`), so the same app
+Jetty's default listener binds wildcard interfaces on port 8080, so the same app
 works directly and in Docker without a Jetty connector override or host property.
 
 [HelloExample](src/main/java/io/github/suppierk/shoostr/example/hello/HelloExample.java)
@@ -22,7 +22,7 @@ The framework itself does not impose a logging backend or log every request.
 Docker: `./gradlew :hello-example:jibDockerBuild`, then
 `docker compose -f examples/01-hello/compose.yaml up -d`.
 The same curl works. Stop with `docker compose -f examples/01-hello/compose.yaml down`.
-Docker Engine/Compose and Java 25 are prerequisites; no Dockerfile or registry push is needed.
+Docker Engine/Compose and Java 21 are prerequisites; no Dockerfile or registry push is needed.
 The image runs as UID1000, binds internally on all interfaces, and Compose exposes
 it only on host loopback. Set `APP_PORT=8081` for an occupied host port.
 

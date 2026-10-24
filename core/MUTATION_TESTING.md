@@ -1,13 +1,14 @@
 # Diagnostic mutation testing
 
-Run the full six-library diagnostic suite from the repository root with Java 25:
+Run the full eight-library diagnostic suite from the repository root with Java 21:
 
 ```sh
 cmdshape ./gradlew mutationTest --console=plain
 ```
 
 The root task delegates to `:core:pitest`, `:http:pitest`, `:micrometer:pitest`,
-`:opentelemetry:pitest`, `:pac4j:pitest` and `:test:pitest`. The plugin generates
+`:opentelemetry:pitest`, `:pac4j:pitest`, `:test:pitest`, `:openapi:pitest`, and
+`:mcp:pitest`. The plugin generates
 its standard HTML report (`index.html`) and XML (`mutations.xml`) under
 `<module>/build/reports/pitest/<timestamp>/`. Open the HTML report to inspect surviving
 changes and covering tests. Timestamped runs preserve earlier reports until `clean`;
@@ -33,13 +34,15 @@ For a module-specific diagnostic rerun, use its task directly, for example
 | `http` | All module-local production classes and all tests | HTTP value validation, formatting, parsing and exception/status contracts. |
 | `micrometer` | All module-local production classes and all tests | Metrics registration, request measurements and cleanup. |
 | `opentelemetry` | All module-local production classes and all tests | Instrumentation scope, span completion and propagation. |
+| `openapi` | All module-local production classes and all tests | OpenAPI generation, document delivery, and UI configuration. |
+| `mcp` | All module-local production classes and all tests | MCP transport, protocol dispatch, and session ownership. |
 | `pac4j` | All module-local production classes and all tests | Authentication/authorization adaptation and request context. |
 | `test` | All module-local production classes and all tests | Consumer test application/client and resource ownership. |
 
 Both class and test selectors are `io.github.suppierk.*`, including nested classes;
 PIT's mutable code paths are each module's own production output. Dependency classes
 are not mutated through their consumers. No client-facing class or test is explicitly
-excluded. Examples, benchmark fixtures and build logic are outside the six requested
+excluded. Examples, benchmark fixtures and build logic are outside the eight
 library modules. Standard PIT bytecode filters still apply; generated/no-executable
 code is not evidence of an untested user-visible contract.
 
@@ -65,6 +68,9 @@ Sources checked on 2026-09-26:
 - [PIT options](https://pitest.org/quickstart/commandline/).
 
 ## Diagnostic results
+
+The retained measurements below cover the six libraries in the original diagnostic run;
+they do not measure the subsequently added OpenAPI and MCP modules.
 
 The initial pass collected findings before a focused regression plan. Follow-up
 tests use agreed public boundaries: value construction, route registration and

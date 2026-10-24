@@ -18,7 +18,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class RoutePatternTest {
-  private static final Handler HANDLER = (_, _) -> {};
+  private static final Handler HANDLER = (ignored, ignored2) -> {};
 
   @Test
   void prefersLiteralSegmentsRegardlessOfRegistrationOrderForEachMethod() {

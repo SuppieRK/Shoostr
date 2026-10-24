@@ -20,8 +20,8 @@ class McpMediaTypeTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (_, _) -> {}),
+                ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+                (ignored2, ignored3) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
@@ -47,8 +47,8 @@ class McpMediaTypeTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (_, _) -> {}),
+                ignored4 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+                (ignored5, ignored6) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
@@ -91,8 +91,8 @@ class McpMediaTypeTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (_, _) -> {}),
+                ignored7 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+                (ignored8, ignored9) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
@@ -133,8 +133,8 @@ class McpMediaTypeTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (_, _) -> {}),
+                ignored10 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+                (ignored11, ignored12) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));

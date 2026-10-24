@@ -16,10 +16,10 @@ allprojects {
 	apply plugin: 'checkstyle'
 	apply plugin: 'java'
 
-	java { toolchain { languageVersion = JavaLanguageVersion.of(25) } }
+	java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 	tasks.withType(JavaCompile).configureEach {
 		options.encoding = 'UTF-8'
-		options.release = 25
+		options.release = 21
 		options.compilerArgs.add('-proc:none')
 	}
 	tasks.withType(Test).configureEach { useJUnitPlatform() }
@@ -135,7 +135,7 @@ def frameworkModules = [
 ]
 def frameworkProjects = frameworkModules.collect { project(":${it}") }
 def exampleProjects = subprojects.findAll {
-	it.projectDir.parentFile == file('examples')
+	it.projectDir.toPath().startsWith(file('examples').toPath())
 }
 def sonarProjects = frameworkProjects + exampleProjects
 
@@ -254,7 +254,7 @@ configure([
 	}
 }
 project(':core') {
-	tasks.named('test') {
+	tasks.withType(Test).configureEach {
 		dependsOn ':http:publishMavenJavaPublicationToConsumerVerificationRepository',
 				':core:publishMavenJavaPublicationToConsumerVerificationRepository'
 		inputs.dir(consumerRepository)

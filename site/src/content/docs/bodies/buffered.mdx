@@ -1,0 +1,44 @@
+---
+title: Read request body text and bytes
+description: Read request text with a selected charset or exact body bytes, with cached reads and explicit input limits.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/05-bodies/src/main/java/io/github/suppierk/shoostr/example/bodies/BufferedBodyExample.java?raw';
+import test from '../../../../../examples/05-bodies/src/test/java/io/github/suppierk/shoostr/example/bodies/BufferedBodyExampleTest.java?raw';
+
+## Description
+
+Read request body bytes with `bodyBytes()`, or use `bodyText()` for UTF-8 text.
+Buffered reads cache the input, and each byte-array result is an independent copy.
+`bodyText()` uses UTF-8 by default, while `bodyText(Charset)` lets you select another encoding without changing the cached bytes or byte limit.
+Neither method infers its charset from `Content-Type`; malformed input uses the selected charset's replacement text rather than the strict UTF-8 rejection used for URL-encoded forms.
+To decode a Java model from buffered input, use an [explicit JSON codec](../../json/codec/).
+
+Choose one body mode for each request:
+
+| Mode | Accessors | Reading behavior |
+| --- | --- | --- |
+| Buffered | `bodyText()`, `bodyText(Charset)`, `bodyBytes()`, URL-encoded form fields | Cached input supports repeated reads |
+| Streaming | `input()` | One bounded stream advances as bytes are consumed |
+| Multipart | Multipart fields and file accessors | Parsed parts remain scoped to the request |
+
+Do not combine these modes, except that URL-encoded form access shares the buffered body.
+A file lookup on a nonmultipart request returns empty without claiming its input.
+
+## Example
+
+The `/text` endpoint reads UTF-8, `/latin1` selects ISO-8859-1 explicitly, and `/bytes` preserves the input bytes, while `/form` reads both the original body and its decoded fields.
+See [request parameters](../../request/parameters/) for ordinary query and form access.
+
+This example sets a 64-byte request limit and a four-pair limit for each query or URL-encoded form.
+Oversized declared input is rejected before the handler, and a buffered read also enforces the byte limit when the length is unknown.
+Byte overflow produces `413`; pair overflow produces `400`, counting repeated names as separate pairs rather than merging the query and form totals.
+
+<Code code={application} lang="java" title="BufferedBodyExample.java" />
+
+## Test
+
+The tests check binary preservation, default and explicit charset selection, defensive copies, compatible form reads, and exact limit boundaries.
+
+<Code code={test} lang="java" title="BufferedBodyExampleTest.java" />

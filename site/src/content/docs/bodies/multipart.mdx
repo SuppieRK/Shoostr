@@ -1,0 +1,48 @@
+---
+title: Read multipart fields and files
+description: Read multipart form fields and repeated file uploads with explicit limits and temporary storage.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/05-bodies/src/main/java/io/github/suppierk/shoostr/example/bodies/MultipartExample.java?raw';
+import test from '../../../../../examples/05-bodies/src/test/java/io/github/suppierk/shoostr/example/bodies/MultipartExampleTest.java?raw';
+
+## Description
+
+Use `formParam()` for a multipart text field and `file()` for the first upload with a given name.
+For repeated files, `files(name)` returns every upload with that name; `files()` groups uploads by field name.
+An empty submitted filename still identifies a file part, while a request without a multipart body returns empty file results.
+For query parameters and URL-encoded forms, see [request parameters](../../request/parameters/).
+
+Multipart parsing reads and validates the complete body before exposing fields or uploads.
+It cannot be combined with [buffered or streamed input](../buffered/).
+Text fields accept an absent content type or `text/plain`, with UTF-8 decoding; unsupported media types or charsets produce `415`, and malformed multipart input produces `400`.
+Unlike URL-encoded forms, multipart fields preserve literal `+` characters.
+
+An upload and its content streams are available only during the handler.
+Read them there, or [save the upload](../persist-upload/) before handing its content to later work.
+Shoostr removes unretained temporary files when the exchange completes, which can occur after the client receives its response.
+
+## Example
+
+The endpoint reads a title and summarizes the `document` uploads, including their exact bytes as hexadecimal text.
+Its per-part limit makes this small binary read bounded; for a raw-body checksum without whole-body buffering, use [streamed input](../streaming-input/).
+Submitted filenames are metadata, not trusted filesystem paths.
+
+The configured limits are 8,192 bytes for the complete multipart body, 1,024 bytes per part, eight parts, and 1,024 header bytes per part.
+Limit overflow produces `413`.
+The per-part byte limit also applies to text fields, and the aggregate limit includes multipart boundaries and headers.
+Multipart uses `maxParts`, not the query and URL-encoded `maxParameters` limit; its aggregate limit is separate from `maxRequestBytes`.
+
+The application creates the selected temporary directory before startup.
+A file part larger than 128 bytes spills to that directory; the threshold selects storage rather than rejecting the upload or limiting total request memory.
+
+<Code code={application} lang="java" title="MultipartExample.java" />
+
+## Test
+
+The tests send real multipart bodies, including binary bytes and repeated file fields, then check the configured limits and body-mode conflicts.
+Awaitility is an additional test library used to wait for exchange cleanup without assuming that receiving the response ends the exchange.
+The spill test inspects temporary files during the handler and waits for their removal afterward.
+
+<Code code={test} lang="java" title="MultipartExampleTest.java" />

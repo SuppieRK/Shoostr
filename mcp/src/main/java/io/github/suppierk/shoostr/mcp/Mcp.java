@@ -229,7 +229,7 @@ public final class Mcp<S> implements Extension<Void> {
     callbacks.observe(
         request -> {
           if (!Objects.equals(mount, request.path())) {
-            return _ -> {};
+            return ignored -> {};
           }
 
           var lifetime = new McpRequestLifetime(deadlines, expiredTokenChallenge);
@@ -243,7 +243,7 @@ public final class Mcp<S> implements Extension<Void> {
           }
         });
     callbacks.onRequestHeaders(
-        (request, _) -> {
+        (request, ignored2) -> {
           if (Objects.equals(mount, request.path())) {
             validateOrigin(request);
           }
@@ -281,7 +281,7 @@ public final class Mcp<S> implements Extension<Void> {
   private void register(Routes routes, @Nullable ExecutorService executor) {
     Objects.requireNonNull(routes);
     Consumer<Extensions> configuration =
-        extensions -> extensions.requireInstalled(this).onRoute((_, path) -> bind(path));
+        extensions -> extensions.requireInstalled(this).onRoute((ignored3, path) -> bind(path));
     Consumer<Extensions> installed = extensions -> extensions.requireInstalled(this);
     if (executor == null) {
       routes.post("", this::post, configuration);
@@ -349,7 +349,7 @@ public final class Mcp<S> implements Extension<Void> {
       if (!security.allowedOrigins().contains(McpHttpSecurity.origin(values.getFirst()))) {
         throw new ForbiddenException();
       }
-    } catch (IllegalArgumentException _) {
+    } catch (IllegalArgumentException ignored4) {
       throw new ForbiddenException();
     }
   }
@@ -383,7 +383,7 @@ public final class Mcp<S> implements Extension<Void> {
     try {
       var body = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
       decoded = provider.mapper.readValue(body, new TypeRef<>() {});
-    } catch (IOException _) {
+    } catch (IOException ignored5) {
       rejectMessage(response, -32700, "Parse error", null);
       return;
     }
@@ -411,7 +411,7 @@ public final class Mcp<S> implements Extension<Void> {
       }
 
       message = provider.mapper.convertValue(fields, type);
-    } catch (IllegalArgumentException _) {
+    } catch (IllegalArgumentException ignored6) {
       rejectMessage(response, -32600, "Invalid Request", fields.get("id"));
       return;
     }
@@ -466,7 +466,7 @@ public final class Mcp<S> implements Extension<Void> {
 
     try {
       parameters = provider.mapper.convertValue(rpc.params(), McpSchema.InitializeRequest.class);
-    } catch (IllegalArgumentException _) {
+    } catch (IllegalArgumentException ignored7) {
       rejectMessage(response, -32602, "Invalid params", rpc.id());
       return;
     }
@@ -1009,7 +1009,7 @@ public final class Mcp<S> implements Extension<Void> {
               session.activity().set(System.nanoTime());
             }
             return Mono.defer(() -> session.sdk().sendNotification(method, params))
-                .doFinally(_ -> notificationComplete(session));
+                .doFinally(ignored8 -> notificationComplete(session));
           });
     }
 
@@ -1288,7 +1288,7 @@ public final class Mcp<S> implements Extension<Void> {
       termination
           .subscribeOn(Schedulers.boundedElastic())
           .subscribe(
-              _ -> {},
+              ignored9 -> {},
               failure ->
                   System.getLogger(Mcp.class.getName())
                       .log(System.Logger.Level.WARNING, "MCP session cleanup failed", failure));
@@ -1347,7 +1347,7 @@ public final class Mcp<S> implements Extension<Void> {
                 .then(
                     Mono.defer(
                         () -> deletion ? session.sdk().delete() : session.sdk().closeGracefully()))
-                .doFinally(_ -> terminationComplete(session))
+                .doFinally(ignored10 -> terminationComplete(session))
                 .cache();
         closing.put(session, termination);
         return termination;

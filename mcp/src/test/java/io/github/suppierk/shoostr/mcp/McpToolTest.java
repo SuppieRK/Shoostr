@@ -27,8 +27,8 @@ class McpToolTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored2, ignored3) -> {});
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
     var mcp =
         Mcp.sync(
@@ -42,7 +42,7 @@ class McpToolTest {
                         McpServerFeatures.SyncToolSpecification.builder()
                             .tool(tool)
                             .callHandler(
-                                (exchange, _) -> {
+                                (exchange, ignored4) -> {
                                   exchange.ping();
                                   return McpSchema.CallToolResult.builder()
                                       .addTextContent("native ping returned")
@@ -82,8 +82,8 @@ class McpToolTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored5 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored6, ignored7) -> {});
     var tool =
         McpSchema.Tool.builder("greet", Map.of("type", "object", "properties", Map.of()))
             .description("Returns a greeting")
@@ -98,7 +98,7 @@ class McpToolTest {
                         McpServerFeatures.SyncToolSpecification.builder()
                             .tool(tool)
                             .callHandler(
-                                (_, _) ->
+                                (ignored8, ignored9) ->
                                     McpSchema.CallToolResult.builder()
                                         .addTextContent("hello from Shoostr")
                                         .build())
@@ -131,8 +131,8 @@ class McpToolTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (_, _) -> {});
+            ignored10 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignored11, ignored12) -> {});
     var tool =
         McpSchema.Tool.builder("greet", Map.of("type", "object", "properties", Map.of()))
             .description("Returns a greeting")
@@ -147,7 +147,7 @@ class McpToolTest {
                         McpServerFeatures.AsyncToolSpecification.builder()
                             .tool(tool)
                             .callHandler(
-                                (_, _) ->
+                                (ignored13, ignored14) ->
                                     reactor.core.publisher.Mono.just(
                                         McpSchema.CallToolResult.builder()
                                             .addTextContent("hello from async Shoostr")

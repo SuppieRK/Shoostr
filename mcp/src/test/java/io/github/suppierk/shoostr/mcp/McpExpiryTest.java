@@ -26,8 +26,8 @@ class McpExpiryTest {
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("alice:client", McpTransportContext.EMPTY, Instant.MAX),
-                (_, _) -> {}),
+                ignored -> new McpIdentity("alice:client", McpTransportContext.EMPTY, Instant.MAX),
+                (ignored2, ignored3) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
@@ -81,7 +81,7 @@ class McpExpiryTest {
                     request.header("X-Expiring-Identity").isPresent()
                         ? Instant.now().plusSeconds(1)
                         : null),
-            (_, _) -> {});
+            (ignored4, ignored5) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
@@ -122,7 +122,7 @@ class McpExpiryTest {
                 () -> {
                   try {
                     input.readAllBytes();
-                  } catch (IOException _) {
+                  } catch (IOException ignored6) {
                     // A committed stream may end by transport failure instead of clean EOF.
                   }
 

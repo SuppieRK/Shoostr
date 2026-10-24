@@ -37,7 +37,7 @@ class PortSelectionTest {
     }
 
     var app = new Shoostr();
-    app.routes().get("/value", (_, response) -> response.text("fixed"));
+    app.routes().get("/value", (ignored, response) -> response.text("fixed"));
 
     try (var test = TestServer.startOnPort(app, port)) {
       assertEquals(port, test.baseUri().getPort());
@@ -59,7 +59,7 @@ class PortSelectionTest {
       int maximum = available.getLocalPort();
       available.close();
       var app = new Shoostr();
-      app.routes().get("/value", (_, response) -> response.text("range"));
+      app.routes().get("/value", (ignored2, response) -> response.text("range"));
 
       try (var test = TestServer.startOnPortRange(app, minimum, maximum)) {
         assertEquals(maximum, test.baseUri().getPort());
@@ -98,8 +98,8 @@ class PortSelectionTest {
     }
 
     var app = new Shoostr();
-    app.routes().get("/value", (_, response) -> response.text("custom client"));
-    app.routes().get("/redirect", (_, response) -> response.redirect("/value"));
+    app.routes().get("/value", (ignored3, response) -> response.text("custom client"));
+    app.routes().get("/redirect", (ignored4, response) -> response.redirect("/value"));
 
     try (var test =
         range
@@ -184,7 +184,7 @@ class PortSelectionTest {
       assertThrows(
           BindException.class,
           () -> {
-            try (var _ = bind(port)) {
+            try (var ignored5 = bind(port)) {
               // A successful bind makes assertThrows fail after closing the unexpected socket.
             }
           });
@@ -201,8 +201,10 @@ class PortSelectionTest {
     try (var app = new Shoostr()) {
       assertThrows(
           IllegalArgumentException.class,
-          () -> TestServer.startOnPort(app, port, _ -> fail("must reject before client setup")));
-      app.routes().get("/value", (_, response) -> response.text("not closed"));
+          () ->
+              TestServer.startOnPort(
+                  app, port, ignored6 -> fail("must reject before client setup")));
+      app.routes().get("/value", (ignored7, response) -> response.text("not closed"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/value")).statusCode());
@@ -218,8 +220,8 @@ class PortSelectionTest {
           IllegalArgumentException.class,
           () ->
               TestServer.startOnPortRange(
-                  app, minimum, maximum, _ -> fail("must reject before client setup")));
-      app.routes().get("/value", (_, response) -> response.text("not closed"));
+                  app, minimum, maximum, ignored8 -> fail("must reject before client setup")));
+      app.routes().get("/value", (ignored9, response) -> response.text("not closed"));
 
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/value")).statusCode());
@@ -249,7 +251,7 @@ class PortSelectionTest {
                       assertThrows(
                           BindException.class,
                           () -> {
-                            try (var _ = bind(port)) {
+                            try (var ignored10 = bind(port)) {
                               // A successful bind makes assertThrows fail after socket cleanup.
                             }
                           });
@@ -295,7 +297,7 @@ class PortSelectionTest {
 
     try {
       socket.setReuseAddress(false);
-      socket.bind(new InetSocketAddress(InetAddress.ofLiteral("127.0.0.1"), port));
+      socket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port));
       return socket;
     } catch (IOException failure) {
       try {

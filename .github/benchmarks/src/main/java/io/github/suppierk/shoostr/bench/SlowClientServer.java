@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.jetty.server.Connector;
+import org.eclipse.jetty.server.ServerConnector;
 
 /** Loopback-only fixture for finite slow-client resource-safety diagnostics. */
 public final class SlowClientServer implements AutoCloseable {
@@ -38,20 +39,17 @@ public final class SlowClientServer implements AutoCloseable {
     nativeConfiguration = "";
     var defaults = Options.defaults();
     app =
-        new Shoostr(
-            new Options(
-                "127.0.0.1",
-                port,
-                defaults.maxRequestBytes(),
-                defaults.maxResponseBytes(),
-                defaults.streamBufferBytes(),
-                defaults.idleTimeoutMillis(),
-                defaults.maxParameters(),
-                defaults.multipart()));
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> {
+                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+                  nativeConnector.setHost("127.0.0.1");
+                  nativeConnector.setPort(port);
+                });
     app.modifyServer(server -> connectors = List.of(server.getConnectors()));
     app.modifyHttpConfiguration(configuration -> nativeConfiguration = configuration.dump());
     app.onRouteMatched(
-        (request, _) -> {
+        (request, ignored) -> {
           synchronized (phase) {
             if (("POST".equals(request.method()) && "/slow-body".equals(request.path()))
                 || ("GET".equals(request.method()) && "/blocked".equals(request.path()))) {
@@ -71,20 +69,20 @@ public final class SlowClientServer implements AutoCloseable {
           }
         });
     app.routes().post("/slow-body", this::consumeBody);
-    app.routes().get("/blocked", (_, response) -> awaitRelease(response));
-    app.routes().post("/arm", (_, response) -> arm(response));
+    app.routes().get("/blocked", (ignored2, response) -> awaitRelease(response));
+    app.routes().post("/arm", (ignored3, response) -> arm(response));
     app.routes()
         .post(
             "/release",
-            (_, response) -> {
+            (ignored4, response) -> {
               releaseWork();
               response.text("released");
             });
-    app.routes().get("/healthy", (_, response) -> response.text("healthy"));
+    app.routes().get("/healthy", (ignored5, response) -> response.text("healthy"));
     app.routes()
         .get(
             "/configuration",
-            (_, response) ->
+            (ignored6, response) ->
                 response.text(
                     "max_request_bytes="
                         + defaults.maxRequestBytes()
@@ -95,7 +93,7 @@ public final class SlowClientServer implements AutoCloseable {
     app.routes()
         .get(
             "/state",
-            (_, response) ->
+            (ignored7, response) ->
                 response.body("application/json", state().getBytes(StandardCharsets.UTF_8)));
   }
 

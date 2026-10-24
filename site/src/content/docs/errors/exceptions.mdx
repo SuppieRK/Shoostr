@@ -1,0 +1,44 @@
+---
+title: Handle thrown application and route group exceptions
+description: Register application and route group exception handlers, select the most specific mapping, and recover safely before response commitment.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/08-errors/src/main/java/io/github/suppierk/shoostr/example/errors/ExceptionHandlingExample.java?raw';
+import test from '../../../../../examples/08-errors/src/test/java/io/github/suppierk/shoostr/example/errors/ExceptionHandlingExampleTest.java?raw';
+
+## Description
+
+Throw an `HttpException` subtype, such as `BadRequestException`, to select its HTTP error status, or register an exception renderer when the application needs a different response.
+The `HttpClientException` and `HttpServerException` families carry `4xx` and `5xx` statuses; other unhandled exceptions produce `500`.
+Default error output uses a safe status reason phrase rather than the exception's diagnostic message, subject to [HEAD and finite response limits](../../responses/bodies/).
+
+Register a route group exception handler with `routes.exception(...)` to render failures from that scope and its descendants.
+Use `app.exception(...)` for an application-wide renderer.
+A matching scoped renderer takes precedence over application renderers; within the merged scope map, the most specific exception class wins.
+A child replaces an inherited mapping for the same class, but a narrower inherited mapping still beats a broader child mapping.
+Matching uses the directly thrown exception, not its cause chain.
+
+Finish registration before startup.
+An application rejects a duplicate mapping for the same class, while another registration in the same route scope replaces that scope's mapping.
+Scope registration also covers endpoints defined earlier; it does not configure only the last endpoint in a fluent chain.
+
+## Example
+
+The application renderer replaces a failed checkout's staged body and private header, while route and group renderers select different responses for invalid input.
+The number handler lets `NumberFormatException` reach its specific renderer; `/recover` handles that recoverable input error directly instead.
+The built-in and unhandled routes demonstrate default error responses without exposing diagnostics.
+
+Before response commitment, Shoostr clears failed application output and initializes the error status before invoking the renderer; framework-required metadata can remain.
+If that renderer fails before commitment, Shoostr uses its safe `500` fallback without trying another renderer.
+After response commitment, failure aborts the output rather than sending a second error response.
+The [streaming recipe](../../streaming/output/) covers output buffering, source cleanup and the handler-owned writer lifetime.
+For generated `404` and `405` output, use [status renderers](../statuses/); for structured errors, see [Problem Details JSON](../problem-details/).
+
+<Code code={application} lang="java" title="ExceptionHandlingExample.java" />
+
+## Test
+
+The tests cover scope selection, inheritance and specificity, local recovery, safe defaults, discarded private output, failed rendering, and the commitment boundary through real HTTP requests.
+
+<Code code={test} lang="java" title="ExceptionHandlingExampleTest.java" />

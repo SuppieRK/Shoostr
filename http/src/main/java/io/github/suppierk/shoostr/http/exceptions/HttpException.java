@@ -29,12 +29,7 @@ public abstract class HttpException extends RuntimeException {
    */
   protected HttpException(
       HttpStatusCodes statusCode, @Nullable String message, @Nullable Throwable cause) {
-    Objects.requireNonNull(statusCode, "statusCode");
-    if (!statusCode.isError()) {
-      throw new IllegalArgumentException("HTTP exceptions require a client or server error status");
-    }
-
-    super(message == null ? statusCode.reasonPhrase() : message, cause);
+    super(message(statusCode, message), cause);
     this.statusCode = statusCode;
   }
 
@@ -45,5 +40,23 @@ public abstract class HttpException extends RuntimeException {
    */
   public final HttpStatusCodes statusCode() {
     return statusCode;
+  }
+
+  /**
+   * Validates the status before constructing the superclass and selects its diagnostic message.
+   *
+   * @param statusCode client or server error status
+   * @param message explicit diagnostic message, or null for the reason phrase
+   * @return diagnostic message
+   * @throws NullPointerException if statusCode is null
+   * @throws IllegalArgumentException if statusCode is not a client or server error
+   */
+  private static String message(HttpStatusCodes statusCode, @Nullable String message) {
+    Objects.requireNonNull(statusCode, "statusCode");
+    if (!statusCode.isError()) {
+      throw new IllegalArgumentException("HTTP exceptions require a client or server error status");
+    }
+
+    return message == null ? statusCode.reasonPhrase() : message;
   }
 }

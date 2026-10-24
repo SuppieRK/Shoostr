@@ -1,0 +1,55 @@
+---
+title: Keep session state and renew session identifiers
+description: Configure session cookies and a Jetty file store, create or inspect a session, renew the session identifier, and invalidate state without retaining the live request.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/14-security/src/main/java/io/github/suppierk/shoostr/example/authentication/SessionExample.java?raw';
+import test from '../../../../../examples/14-security/src/test/java/io/github/suppierk/shoostr/example/authentication/SessionExampleTest.java?raw';
+
+## Description
+
+Enable native session management with `app.sessions()`, or pass a callback to `app.sessions(handler -> ...)` to configure Jetty's session handler.
+One application-level handler manages sessions for ordinary requests; it creates a session only when application code requests one.
+Sessions are part of the standard request API, so they do not require installing or selecting an extension.
+A session does not establish a principal or verify an identity; apply [authentication](../authentication/) separately when stored state belongs to an account.
+
+| Method | Result |
+| --- | --- |
+| `getSession()` | Read an existing session without creating one; absence returns an empty `Optional`. |
+| `getOrCreateSession()` | Return the native `Session` directly, creating it before the response commits if absent. An existing session remains accessible after commitment. Disabled session support or invalidation earlier in this request throws `IllegalStateException`. |
+| `renewSessionId()` | Change an existing session's identifier while retaining its attributes, before the response commits. |
+| `session.invalidate()` | Invalidate the native session and its stored state. |
+
+The configuration callback receives the native `SessionHandler` after `modifyServer(...)` callbacks and before startup.
+Use it for cookie attributes, idle limits, and the cache and store that provide persistence.
+The [Jetty session reference](https://jetty.org/docs/jetty/12.1/programming-guide/server/session.html) explains those settings and supported backends.
+Shoostr manages their lifecycle; preserve the handler's server and child wiring when configuring it.
+
+## Example
+
+`/preferences/session` creates a session with a default theme, while `/preferences/state` reads an existing session without issuing a new cookie.
+`/preferences/renew` changes an existing identifier without losing its attributes, and `/preferences/reset` invalidates that state.
+The example explicitly configures the cookie as `Secure`, with `HttpOnly` and `SameSite=Strict`; its 900-second maximum age governs browser retention, while the separate 900-second idle limit governs unused server sessions.
+
+When HTTPS terminates at a proxy and Jetty receives plain HTTP, set `handler.setSecureCookies(true)` for a cookie that must always be Secure.
+A trusted forwarded HTTPS protocol does not by itself change Jetty's native cookie configuration.
+Use a host-only cookie by leaving its domain unset, and choose the cookie attributes for your deployment.
+
+Supply an existing private directory outside any public resource mount and keep stored attributes serializable for this file store.
+Keep the store's native context and backend configuration stable across restarts.
+Configure persistent storage through Jetty rather than assuming that a separate Java store object provides a separate backend namespace.
+Shoostr owns the running Jetty session components, but closing the application does not delete the caller-owned store files.
+After invalidation, create a replacement session in a later request rather than the same exchange.
+Keep compound attribute updates safe for concurrent requests, and add [CSRF protection](../csrf/) to cookie-authenticated writes rather than treating cookie attributes as a substitute.
+For credential verification followed by renewal, fresh CSRF token delivery and logout, use the [login and logout recipe](../login-logout/).
+Separate server-side state does not isolate mutually untrusted browser applications; follow the [browser trust boundary guidance](../csrf/#description) when serving executable content.
+
+<Code code={application} lang="java" title="SessionExample.java" />
+
+## Test
+
+The tests verify cookie policy, per-session state, identifier renewal, invalidation, and restoration through a second application using the same temporary store.
+They explicitly send the cookie over loopback HTTP to test server behavior; this does not establish browser delivery of a Secure cookie, which requires HTTPS.
+
+<Code code={test} lang="java" title="SessionExampleTest.java" />

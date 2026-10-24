@@ -16,11 +16,13 @@ import java.time.Duration;
 import java.util.Collections;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
@@ -29,7 +31,10 @@ class TrustedProxyTest {
 
   @BeforeEach
   void prepare() {
-    app = new Shoostr(Options.defaults().withPort(0));
+    app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
   }
 
   @AfterEach
@@ -120,7 +125,7 @@ class TrustedProxyTest {
             (request, response) -> {
               assertTrue(request.isForwarded());
               assertEquals(
-                  InetAddress.ofLiteral("2001:db8::7"),
+                  InetAddress.getByName("2001:db8::7"),
                   request.clientAddress().orElseThrow().getAddress());
               assertEquals(4123, request.clientAddress().orElseThrow().getPort());
               assertEquals("https://[2001:db8::8]:8443/ipv6?raw=%2B", request.effectiveUrl());
@@ -130,7 +135,7 @@ class TrustedProxyTest {
               assertEquals("http", request.scheme().orElseThrow());
               assertFalse(request.isSecure());
               assertEquals(
-                  InetAddress.ofLiteral("127.0.0.1"),
+                  InetAddress.getByName("127.0.0.1"),
                   assertInstanceOf(InetSocketAddress.class, request.remoteAddress().orElseThrow())
                       .getAddress());
               response.text("ipv6");
@@ -154,16 +159,15 @@ class TrustedProxyTest {
 
   @Test
   void selectsTheSameBoundaryForCombinedAndRepeatedForwardedLines() throws Exception {
-    app.trustedProxies(
-        address ->
-            address.isLoopbackAddress() || address.equals(InetAddress.ofLiteral("192.0.2.10")));
+    var trustedHop = InetAddress.getByName("192.0.2.10");
+    app.trustedProxies(address -> address.isLoopbackAddress() || address.equals(trustedHop));
     app.routes()
         .get(
             "/repeated",
             (request, response) -> {
               assertTrue(request.isForwarded());
               assertEquals(
-                  InetAddress.ofLiteral("203.0.113.7"),
+                  InetAddress.getByName("203.0.113.7"),
                   request.clientAddress().orElseThrow().getAddress());
               assertEquals(4123, request.clientAddress().orElseThrow().getPort());
               assertEquals("https://public.example/repeated?raw=%2B", request.effectiveUrl());
@@ -171,7 +175,7 @@ class TrustedProxyTest {
                   "http://127.0.0.1:" + app.port() + "/repeated?raw=%2B", request.fullUrl());
               assertFalse(request.isSecure());
               assertEquals(
-                  InetAddress.ofLiteral("127.0.0.1"),
+                  InetAddress.getByName("127.0.0.1"),
                   assertInstanceOf(InetSocketAddress.class, request.remoteAddress().orElseThrow())
                       .getAddress());
               response.text("boundary");
@@ -211,7 +215,7 @@ class TrustedProxyTest {
     var gateInvoked = new AtomicBoolean();
     app.trustedProxies(InetAddress::isLoopbackAddress);
     app.beforeRouteHandler(
-        (request, _) -> {
+        (request, ignored2) -> {
           gateInvoked.set(true);
           assertTrue(request.isForwarded());
           assertEquals(
@@ -220,7 +224,7 @@ class TrustedProxyTest {
         });
     app.exception(
         IllegalStateException.class,
-        (_, request, response) ->
+        (ignored3, request, response) ->
             response.text(
                 request.clientAddress().orElseThrow().getAddress().getHostAddress()
                     + "|"
@@ -228,7 +232,7 @@ class TrustedProxyTest {
     app.routes()
         .get(
             "/gated",
-            (_, _) -> {
+            (ignored4, ignored5) -> {
               throw new IllegalStateException();
             });
 
@@ -249,7 +253,7 @@ class TrustedProxyTest {
 
   @Test
   void ignoresMalformedForwardingFromAnUntrustedPeer() throws Exception {
-    app.trustedProxies(_ -> false);
+    app.trustedProxies(ignored6 -> false);
     app.routes().get("/untrusted", (request, response) -> response.text(request.effectiveUrl()));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
@@ -273,8 +277,11 @@ class TrustedProxyTest {
         IllegalStateException.class,
         () -> app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED));
 
-    try (var started = new Shoostr(Options.defaults().withPort(0))) {
-      started.routes().get("/frozen", (_, response) -> response.text("ok"));
+    try (var started =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
+      started.routes().get("/frozen", (ignored7, response) -> response.text("ok"));
       started.start();
       assertThrows(
           IllegalStateException.class,
@@ -313,7 +320,7 @@ class TrustedProxyTest {
   @Test
   void rejectsMisalignedLegacyForwardingLists() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED);
-    app.routes().get("/legacy", (_, response) -> response.text("unexpected"));
+    app.routes().get("/legacy", (ignored8, response) -> response.text("unexpected"));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
       var result =
@@ -387,7 +394,7 @@ class TrustedProxyTest {
   @Test
   void rejectsConflictingLegacyHostAndPort() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED);
-    app.routes().get("/legacy-port", (_, response) -> response.text("unexpected"));
+    app.routes().get("/legacy-port", (ignored9, response) -> response.text("unexpected"));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
       var result =
@@ -406,7 +413,7 @@ class TrustedProxyTest {
   @Test
   void rejectsMalformedLegacyOriginOutsideTheSelectedBoundary() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED);
-    app.routes().get("/legacy-origin", (_, response) -> response.text("unexpected"));
+    app.routes().get("/legacy-origin", (ignored10, response) -> response.text("unexpected"));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
       var result =
@@ -432,7 +439,7 @@ class TrustedProxyTest {
           return address.isLoopbackAddress();
         },
         ForwardedHeaders.X_FORWARDED);
-    app.routes().get("/legacy-predicate", (_, response) -> response.text("unexpected"));
+    app.routes().get("/legacy-predicate", (ignored11, response) -> response.text("unexpected"));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
       var result =
@@ -518,13 +525,19 @@ class TrustedProxyTest {
         "for=\"[2001:db8::1%25zone]\"",
         "for=127.1",
         "for=2130706433",
+        "for=999.0.0.1",
+        "for=\"[localhost]\"",
+        "for=\"[1:2:3]\"",
+        "for=\"[::ffff:999.0.0.1]\"",
+        "for=\"[::1\"",
+        "for=\"[::1]:port\"",
         "for=localhost"
       })
   void rejectsMalformedTrustedMetadata(String value) throws Exception {
     var calls = new AtomicInteger();
     app.trustedProxies(InetAddress::isLoopbackAddress);
-    app.beforeRouteHandler((_, _) -> calls.incrementAndGet());
-    app.routes().get("/invalid", (_, _) -> calls.incrementAndGet());
+    app.beforeRouteHandler((ignored12, ignored13) -> calls.incrementAndGet());
+    app.routes().get("/invalid", (ignored14, ignored15) -> calls.incrementAndGet());
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
       var result =
@@ -537,6 +550,33 @@ class TrustedProxyTest {
               HttpResponse.BodyHandlers.ofString());
       assertEquals(400, result.statusCode(), value);
       assertEquals(0, calls.get());
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource(
+      value = {"001.002.003.004|1.2.3.4", "[::ffff:192.000.2.1]|192.0.2.1"},
+      delimiter = '|')
+  void decodesLiteralAddressesWithDecimalLeadingZeros(String node, String expected)
+      throws Exception {
+    app.trustedProxies(InetAddress::isLoopbackAddress);
+    app.routes()
+        .get(
+            "/literal",
+            (request, response) ->
+                response.text(request.clientAddress().orElseThrow().getAddress().getHostAddress()));
+
+    try (var test = TestServer.start(app)) {
+      var result =
+          test.send(
+              request ->
+                  request
+                      .path("/literal")
+                      .timeout(Duration.ofSeconds(3))
+                      .header("Forwarded", "for=\"" + node + "\""),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, result.statusCode());
+      assertEquals(expected, result.body());
     }
   }
 
@@ -578,8 +618,8 @@ class TrustedProxyTest {
   void rejectsEmptyForwardedChainElements(String value) throws Exception {
     var calls = new AtomicInteger();
     app.trustedProxies(InetAddress::isLoopbackAddress);
-    app.beforeRouteHandler((_, _) -> calls.incrementAndGet());
-    app.routes().get("/empty", (_, _) -> calls.incrementAndGet());
+    app.beforeRouteHandler((ignored16, ignored17) -> calls.incrementAndGet());
+    app.routes().get("/empty", (ignored18, ignored19) -> calls.incrementAndGet());
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
       var result =
@@ -596,8 +636,8 @@ class TrustedProxyTest {
   void rejectsForwardedChainPastTheWorkBound() throws Exception {
     var calls = new AtomicInteger();
     app.trustedProxies(InetAddress::isLoopbackAddress);
-    app.beforeRouteHandler((_, _) -> calls.incrementAndGet());
-    app.routes().get("/bounded", (_, _) -> calls.incrementAndGet());
+    app.beforeRouteHandler((ignored20, ignored21) -> calls.incrementAndGet());
+    app.routes().get("/bounded", (ignored22, ignored23) -> calls.incrementAndGet());
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
       var value = String.join(",", Collections.nCopies(65, "for=203.0.113.7"));
@@ -617,7 +657,7 @@ class TrustedProxyTest {
   @Test
   void acceptsForwardedChainAtTheWorkBound() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress);
-    app.routes().get("/bounded", (_, response) -> response.text("accepted"));
+    app.routes().get("/bounded", (ignored24, response) -> response.text("accepted"));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
       var value = String.join(",", Collections.nCopies(64, "for=203.0.113.7"));
@@ -638,8 +678,8 @@ class TrustedProxyTest {
   void rejectsForwardedChainPastTheWorkBoundAcrossHeaderLines() throws Exception {
     var calls = new AtomicInteger();
     app.trustedProxies(InetAddress::isLoopbackAddress);
-    app.beforeRouteHandler((_, _) -> calls.incrementAndGet());
-    app.routes().get("/bounded", (_, _) -> calls.incrementAndGet());
+    app.beforeRouteHandler((ignored25, ignored26) -> calls.incrementAndGet());
+    app.routes().get("/bounded", (ignored27, ignored28) -> calls.incrementAndGet());
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
       var accepted = String.join(",", Collections.nCopies(64, "for=203.0.113.7"));
@@ -660,7 +700,7 @@ class TrustedProxyTest {
   @Test
   void acceptsLongQuotedForwardedExtension() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress);
-    app.routes().get("/quoted", (_, response) -> response.text("accepted"));
+    app.routes().get("/quoted", (ignored29, response) -> response.text("accepted"));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
 
@@ -683,7 +723,7 @@ class TrustedProxyTest {
       strings = {"for=203.0.113.7;extension=\"a\\\"b\"", "for=203.0.113.7;extension=\"a\\\\b\""})
   void acceptsEscapedQuotedForwardedExtensions(String value) throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress);
-    app.routes().get("/quoted", (_, response) -> response.text("accepted"));
+    app.routes().get("/quoted", (ignored30, response) -> response.text("accepted"));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
 
@@ -703,7 +743,7 @@ class TrustedProxyTest {
   @Test
   void rejectsEscapedClosingQuoteWithoutTerminator() throws Exception {
     app.trustedProxies(InetAddress::isLoopbackAddress);
-    app.routes().get("/quoted", (_, response) -> response.text("unexpected"));
+    app.routes().get("/quoted", (ignored31, response) -> response.text("unexpected"));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
 

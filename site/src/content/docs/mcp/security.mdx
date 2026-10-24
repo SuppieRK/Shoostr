@@ -1,0 +1,45 @@
+---
+title: Protect MCP identity, permissions and sessions
+description: Authenticate MCP requests, bind sessions to verified user and client identities, enforce current scopes and exact Origin admission, and bound session capacity, idle lifetime and token expiry.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/17-mcp/src/main/java/io/github/suppierk/shoostr/example/mcp/McpSecurityExample.java?raw';
+import test from '../../../../../examples/17-mcp/src/test/java/io/github/suppierk/shoostr/example/mcp/McpSecurityExampleTest.java?raw';
+
+## Description
+
+Bind MCP sessions to verified credentials, and check the current credentials on every POST, GET and DELETE.
+`McpHttpSecurity` from `shoostr-mcp` supplies exact Origin admission, detached identity and a pre-dispatch message policy; select a managed authenticator on the mounted group so the identity extractor receives an authenticated principal.
+Neither an allowed Origin nor a session identifier authenticates a caller.
+
+This self-contained example uses fixed, development-only Bearer credentials with expiry stored in a local registry.
+It does not implement an OAuth provider, cryptographic token verification or external discovery.
+Before using private data, replace that lookup with verification of the token's issuer, intended audience, validity and permissions, following the [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization) and [security guidance](https://modelcontextprotocol.io/docs/2025-11-25/tutorials/security/security_best_practices).
+The HTTPS metadata URL in the code is illustrative; the example does not host that document or an authorization service.
+
+## Example
+
+The registry creates each credential's actual expiry once, rather than granting a fresh lifetime on every request.
+It stores immutable claims in the principal and native transport context, without retaining a Shoostr request, response or mutable provider profile.
+The session owner encodes the subject and client separately, keeping scopes and expiry outside the key so refreshed credentials can use the same session.
+An application that accepts multiple identity issuers must distinguish the issuer in that key too.
+
+Authentication requires `mcp:access` on every mounted transport method, including GET and DELETE, while the message policy checks incoming JSON-RPC messages before SDK dispatch and requires `tools:read` for tool discovery and calls.
+Insufficient scopes produce HTTP 403 with a scope and resource-metadata challenge; these HTTP checks are separate from native tool errors returned by a callback.
+Origin admission runs before authentication: requests without Origin are allowed for non-browser clients, and a present Origin must match the single configured browser origin.
+
+The deliberately small limits allow four sessions overall, two per owner and ten seconds of quiescence; they demonstrate policy rather than recommend production capacity.
+Initialization and native cleanup both count against capacity, so an expired session can become unavailable before its reservation is released.
+The short-lived credential ends an open stream at its fixed expiry without deleting the owner's session; fresh credentials for that owner can still use it.
+Idle expiry and explicit session deletion instead end session ownership, with cleanup releasing capacity afterward.
+
+<Code code={application} lang="java" title="McpSecurityExample.java" />
+
+## Test
+
+The SDK client invokes a tool using detached verified claims, while the HTTP checks cover credentials, Origin admission, current scopes, credential refresh and user/client isolation.
+The quota checks begin at capacity and verify recovery after deletion or bounded idle cleanup.
+Bounded stream reads distinguish credential expiry from idle session eviction without sending keepalive requests to the quiet session.
+
+<Code code={test} lang="java" title="McpSecurityExampleTest.java" />

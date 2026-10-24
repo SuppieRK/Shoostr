@@ -1,0 +1,43 @@
+---
+title: Authenticate with a pac4j direct client
+description: Validate HTTP Basic credentials with a pac4j direct client, select the Shoostr adapter on a route group, and authorize a verified profile without creating sessions.
+---
+
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../../../examples/14-security/src/main/java/io/github/suppierk/shoostr/example/authentication/Pac4jAuthenticationExample.java?raw';
+import test from '../../../../../examples/14-security/src/test/java/io/github/suppierk/shoostr/example/authentication/Pac4jAuthenticationExampleTest.java?raw';
+
+## Description
+
+Use Shoostr's `pac4j` adapter with a configured pac4j `DirectClient` when credentials arrive with each request rather than through a browser redirect and callback flow.
+
+:::note[Libraries required]
+- `io.github.suppierk:shoostr-pac4j` — Shoostr's pac4j adapter.
+- `org.pac4j:pac4j-http` — the `DirectBasicAuthClient` used in this example.
+:::
+
+The [`pac4j-http` client reference](https://www.pac4j.org/6.5.x/docs/clients/http.html) describes the available credential formats.
+Configure the client's authenticator before constructing `Pac4j` and do not mutate the client while the application serves requests.
+
+The adapter extracts and validates credentials, requires an unexpired profile, publishes its principal, and then calls the configured authorizer.
+Missing or rejected credentials receive the configured `401` challenge, while a verified profile denied by the authorizer receives `403`.
+Install the adapter and select that same instance on the protected group, following the [route authentication](../authentication/) selection rules.
+
+## Example
+
+The `/accounts/me` route returns the validated profile's name, and `/accounts/admin` additionally requires its `administrator` role.
+The explicit authenticator checks development-only accounts and assigns that role to `admin`; these fixed passwords are local fixtures, not a production identity store.
+Use HTTPS for HTTP Basic credentials outside a controlled local test and replace the fixture validation with your actual account policy.
+
+The adapter is stateless: it authenticates each protected request without creating a session or saving a profile in one, even when the application separately enables sessions.
+It does not implement pac4j's indirect-client login or callback flow.
+When a trusted proxy terminates TLS, pac4j's security context uses `request.isEffectivelySecure()`; configure [proxy trust](../proxies/) explicitly rather than trusting a forwarded scheme from any client.
+
+<Code code={application} lang="java" title="Pac4jAuthenticationExample.java" />
+
+## Test
+
+The tests exercise real credential extraction, validation, profile publication, and role authorization through HTTP, including missing, rejected, and duplicate credentials.
+A session-enabled fixture verifies that authenticated requests still leave session state absent.
+
+<Code code={test} lang="java" title="Pac4jAuthenticationExampleTest.java" />

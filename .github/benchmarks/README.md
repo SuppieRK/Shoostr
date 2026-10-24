@@ -7,7 +7,8 @@ For HTTP modes, set the JVM's logical CPU count (default 1) and total memory cap
 CPU counts must leave at least one permitted CPU for k6. Memory must exceed the
 256 MiB heap and cannot exceed host RAM. Invalid settings fail, never clamp.
 The workflow requires its support files on the selected branch. It does not run
-benchmarks on pushes or pull requests.
+benchmarks on pushes or pull requests. Campaigns use Java 21; ordinary dispatch uses
+Jetty's default platform-thread pool.
 
 Steady mode runs eight HTTP workloads (plaintext, pre-encoded JSON, 1 KiB echo,
 16 KiB flushed stream, literal routing, parameter routing, 404 and 405), three SSE
@@ -79,6 +80,7 @@ schedule, not a claim that all iterations were accounted for.
 
 Artifacts retain complete JFR recordings, native k6 HTML dashboards, compressed
 raw time series, summary JSON, logs, process monitoring and full JFR CLI views.
+HTTP recordings enable `jdk.ExecutionSample` at a 10 ms period.
 JFR starts after warmup and spans the full measured k6 invocation, including
 client initialization/setup, drain and output finalization. Recordings can therefore
 last longer than the offered-load phase. JFR is explicitly stopped before JVM shutdown. Cancellation
@@ -177,7 +179,8 @@ The candidate is the selected workflow branch's exact commit. One Ubuntu runner 
 candidate fixture and baseline adapters serially, then uses the same fixture and dependency jars
 for both revisions, substituting only the project's core and OpenTelemetry adapter jars. Classpaths,
 checksums, source revisions, hardware, JVM flags, CPU/memory visibility and OS limits are retained.
-An incompatible baseline fails smoke validation rather than producing a comparison.
+Choose a baseline that builds and runs on Java 21. An incompatible baseline fails
+validation rather than producing a comparison.
 
 The bounded matrix covers `plain`, SDK-installed/no-routes-enabled, selected GET, unselected GET
 with selected sibling POST, and app-wide SDK tracing, each with default, single-platform-worker
@@ -201,5 +204,5 @@ effective JVM settings are recorded explicitly; heap size is not a total-memory 
 References: [manual workflow execution](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow),
 [k6 native dashboard](https://grafana.com/docs/k6/latest/results-output/web-dashboard/),
 [k6 metric definitions](https://grafana.com/docs/k6/latest/using-k6/metrics/reference/),
-[JDK 25 diagnostic commands](https://docs.oracle.com/en/java/javase/25/docs/specs/man/jcmd.html),
-[JDK 25 JFR CLI](https://docs.oracle.com/en/java/javase/25/docs/specs/man/jfr.html).
+[JDK 21 diagnostic commands](https://docs.oracle.com/en/java/javase/21/docs/specs/man/jcmd.html),
+[JDK 21 JFR CLI](https://docs.oracle.com/en/java/javase/21/docs/specs/man/jfr.html).

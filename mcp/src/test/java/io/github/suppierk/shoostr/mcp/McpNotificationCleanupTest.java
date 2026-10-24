@@ -41,16 +41,16 @@ class McpNotificationCleanupTest {
         Mcp.async(
             new McpHttpSecurity(
                 Set.of(),
-                _ -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (_, _) -> {}),
+                ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+                (ignored2, ignored3) -> {}),
             transport ->
                 McpServer.async(transport)
                     .requestTimeout(Duration.ofSeconds(5))
                     .rootsChangeHandler(
-                        (_, _) ->
+                        (ignored4, ignored5) ->
                             release
                                 .asMono()
-                                .doOnSubscribe(_ -> pending.countDown())
+                                .doOnSubscribe(ignored6 -> pending.countDown())
                                 .doOnCancel(
                                     () -> {
                                       cancellations.incrementAndGet();

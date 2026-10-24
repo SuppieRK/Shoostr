@@ -42,16 +42,17 @@ public interface Extension<C> extends Closeable {
   default void install(ApplicationCallbacks callbacks) {}
 
   /**
-   * Creates independent configuration for a scope. Copy inherited values rather than returning or
-   * mutating the parent. Register callbacks on the supplied scope; core handles execution phases.
-   * This method also runs for inherited selections, without replaying the user's group callback.
-   * Providers must capture stable values in runtime callbacks. App-only extensions may leave this
-   * method unsupported. Select collaborating extensions separately in the user's route/group
-   * callback; nested get on this provider-only contribution scope is rejected.
+   * Creates configuration for a scope. Copy mutable scope-local settings rather than returning or
+   * mutating the parent. A provider without scope-local settings may return itself. Register
+   * callbacks on the supplied scope; core handles execution phases. This method also runs for
+   * inherited selections, without replaying the user's group callback. Providers must capture
+   * stable values in runtime callbacks. App-only extensions may leave this method unsupported.
+   * Select collaborating extensions separately in the user's route/group callback; nested with on
+   * this provider-only contribution scope is rejected.
    *
    * @param endpoint configuration receiving this extension's contributions
    * @param inherited parent configuration, or null for the first selection
-   * @return new typed configuration
+   * @return independent mutable configuration, or this provider when it has no local settings
    * @throws UnsupportedOperationException if this extension has no route configuration
    */
   default C configure(Extensions endpoint, @Nullable C inherited) {

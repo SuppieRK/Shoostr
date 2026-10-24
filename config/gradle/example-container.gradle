@@ -2,7 +2,7 @@ apply plugin: 'com.google.cloud.tools.jib'
 
 jib {
 	from {
-		image = 'eclipse-temurin:25-jre@sha256:fcd7fd7b387f94bb2ac461478a7436ad8e349924c374ea8313919624dceae636'
+		image = 'eclipse-temurin:21-jre@sha256:227118764cccd3c3294617061aaa93a08309c63a395eefa83e6b35032992ea99'
 	}
 	to { image = "shoostr/${project.name}:local" }
 	container {

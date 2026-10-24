@@ -3,324 +3,398 @@ package io.github.suppierk.shoostr;
 import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
-import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
-import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
-import java.net.URI;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Locale;
-import java.util.Map;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
-import java.util.TreeSet;
 import org.jspecify.annotations.Nullable;
 
 /**
- * Immutable application-wide cross-origin response sharing. Origins use exact HTTP(S) tuple
- * spelling without userinfo, path, query or fragment; supply the browser's serialized ASCII form.
- * No URL repair or allowlist normalization occurs. The special origin {@code null} admits opaque
- * origins; {@code *} admits all origins only without credentials. Header wildcards are unsupported.
- * Requests without Origin and same-origin requests retain normal dispatch. Cross-origin permission
- * failures use 403; malformed CORS input uses 400 through the application's normal error handling.
- *
- * @param origins allowed serialized origins, {@code null}, or noncredentialed {@code *}
- * @param methods allowed cross-origin methods
- * @param headers explicitly allowed preflight request headers
- * @param credentials whether browsers may share credentialed responses
- * @param exposedHeaders additional response headers visible to browser scripts
- * @param maxAgeSeconds browser preflight cache lifetime, subject to browser limits
+ * Complete immutable cross-origin permissions. Each policy has standalone defaults; selecting a
+ * replacement does not merge collections or inherit omitted fields. Origins use exact serialized
+ * HTTP(S) spelling, opaque {@code null}, or noncredentialed {@code *}.
  */
-public record CorsPolicy(
-    Set<String> origins,
-    Set<HttpMethods> methods,
-    Set<HttpHeaders> headers,
-    boolean credentials,
-    Set<HttpHeaders> exposedHeaders,
-    long maxAgeSeconds) {
-  private static final Map<String, String> VARIATION =
-      Map.of(HttpHeaders.VARY.value(), HttpHeaders.ORIGIN.value());
-  private static final Map<String, String> OPTIONS_VARIATION =
-      Map.of(
-          HttpHeaders.VARY.value(),
-          String.join(
-              ", ",
-              HttpHeaders.ORIGIN.value(),
-              HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value(),
-              HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value()));
+public final class CorsPolicy {
+  private final Set<String> origins;
+  private final Set<HttpMethods> methods;
+  private final boolean allMethods;
+  private final Set<HttpHeaders> allowedHeaders;
+  private final boolean credentials;
+  private final Set<HttpHeaders> exposedHeaders;
+  private final long maxAgeSeconds;
 
   /**
-   * Copies policy sets and rejects invalid origins, wildcard credentials, header wildcards and
-   * negative cache lifetimes before publication.
+   * Creates a policy with every value explicitly configured.
    *
-   * @throws IllegalArgumentException if the policy cannot be represented safely
-   * @throws NullPointerException if any set or element is null
+   * @param origins exact allowed serialized origins
+   * @param methods allowed methods, or an empty set to deny all
+   * @param allowedHeaders permitted preflight headers
+   * @param credentials whether credentialed sharing is allowed
+   * @param exposedHeaders additional response headers visible to scripts
+   * @param maxAgeSeconds nonnegative browser preflight cache lifetime
    */
-  public CorsPolicy {
-    origins = Set.copyOf(origins);
-    methods = Set.copyOf(methods);
-    headers = Set.copyOf(headers);
-    exposedHeaders = Set.copyOf(exposedHeaders);
-    for (var origin : origins) {
-      validateOrigin(origin);
+  public CorsPolicy(
+      Set<String> origins,
+      Set<HttpMethods> methods,
+      Set<HttpHeaders> allowedHeaders,
+      boolean credentials,
+      Set<HttpHeaders> exposedHeaders,
+      long maxAgeSeconds) {
+    this(
+        builder()
+            .origins(origins)
+            .methods(methods)
+            .allowedHeaders(allowedHeaders)
+            .credentials(credentials)
+            .exposedHeaders(exposedHeaders)
+            .maxAgeSeconds(maxAgeSeconds));
+  }
+
+  /**
+   * Configures origins with standalone defaults for the other permissions.
+   *
+   * @param origins exact allowed serialized origins
+   */
+  public CorsPolicy(Set<String> origins) {
+    this(builder().origins(origins));
+  }
+
+  /**
+   * Snapshots values and validates the complete permissions.
+   *
+   * @param builder declared configuration
+   * @throws IllegalArgumentException if credentials use wildcard origins or max-age is negative
+   */
+  private CorsPolicy(Builder builder) {
+    for (var origin : builder.origins) {
+      Origins.validateOrigin(origin);
     }
-    if (credentials && origins.contains(HttpCharacters.ASTERISK_STRING)) {
+
+    origins = wildcard(builder.origins, HttpCharacters.ASTERISK_STRING);
+    methods = builder.methods;
+    allMethods = builder.allMethods;
+    allowedHeaders =
+        wildcard(builder.allowedHeaders, HttpHeaders.of(HttpCharacters.ASTERISK_STRING));
+    credentials = builder.credentials;
+    exposedHeaders =
+        wildcard(builder.exposedHeaders, HttpHeaders.of(HttpCharacters.ASTERISK_STRING));
+    maxAgeSeconds = builder.maxAgeSeconds;
+    if (allMethods && !methods.isEmpty()) {
+      throw new IllegalArgumentException("Wildcard methods require an explicitly empty method set");
+    }
+
+    if (credentials() && origins().contains(HttpCharacters.ASTERISK_STRING)) {
       throw new IllegalArgumentException("Credentialed CORS requires explicit origins");
     }
 
-    if (maxAgeSeconds < 0
-        || headers.contains(HttpHeaders.of(HttpCharacters.ASTERISK_STRING))
-        || exposedHeaders.contains(HttpHeaders.of(HttpCharacters.ASTERISK_STRING))) {
+    if (credentials()
+        && exposedHeaders().contains(HttpHeaders.of(HttpCharacters.ASTERISK_STRING))) {
       throw new IllegalArgumentException(
-          "CORS requires nonnegative max-age and explicit header names");
+          "Credentialed CORS requires explicit exposed header names");
+    }
+
+    if (maxAgeSeconds() < 0) {
+      throw new IllegalArgumentException("CORS cache lifetime must be nonnegative");
     }
   }
 
   /**
-   * Allows GET and HEAD without credentials or additional headers, with a five-second preflight
-   * cache.
+   * Creates a builder with standalone defaults.
    *
-   * @param origins allowed serialized origins
+   * @return independent builder
    */
-  public CorsPolicy(Set<String> origins) {
-    this(origins, Set.of(HttpMethods.GET, HttpMethods.HEAD), Set.of(), false, Set.of(), 5);
+  public static Builder builder() {
+    return new Builder();
   }
 
   /**
-   * Selects immutable response fields before application processing.
+   * Returns allowed origins, defaulting to none.
    *
-   * @param request invocation input
-   * @param response output receiving required sharing fields
-   * @return whether this is an admitted preflight
+   * @return immutable origin set
    */
-  boolean prepare(Request request, Response response) {
-    boolean options = HttpMethods.OPTIONS.value().equals(request.method());
-    var variation = options ? OPTIONS_VARIATION : VARIATION;
-    response.corsHeaders(variation);
-    var incomingOrigins = request.headers(HttpHeaders.ORIGIN.value());
-    if (incomingOrigins.isEmpty()) {
-      return false;
-    }
-
-    var origin = validatedOrigin(incomingOrigins);
-
-    var requestedMethods = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
-    boolean preflight = options && !requestedMethods.isEmpty();
-    if (preflight && requestedMethods.size() != 1) {
-      throw new BadRequestException();
-    }
-
-    if (!preflight && sameOrigin(origin, request.effectiveUrl())) {
-      return false;
-    }
-
-    var method = preflight ? requestedMethods.getFirst() : request.method();
-    validateToken(method);
-    if (!origins.contains(origin) && !origins.contains(HttpCharacters.ASTERISK_STRING)) {
-      throw new ForbiddenException();
-    }
-
-    if (!HttpMethods.httpMethod(method).map(methods::contains).orElse(false)) {
-      throw new ForbiddenException();
-    }
-
-    Map<String, String> fields = new HashMap<>(variation);
-    fields.put(
-        HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN.value(),
-        origins.contains(HttpCharacters.ASTERISK_STRING) ? HttpCharacters.ASTERISK_STRING : origin);
-    if (credentials) {
-      fields.put(HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS.value(), "true");
-    }
-
-    populateResponseHeaders(fields, request, method, preflight);
-    response.corsHeaders(Map.copyOf(fields));
-    return preflight;
+  public Set<String> origins() {
+    return origins;
   }
 
   /**
-   * Requires exactly one concrete, syntactically valid Origin field.
+   * Returns allowed methods, defaulting to GET and HEAD only when unspecified.
    *
-   * @param incomingOrigins raw Origin fields
-   * @return validated serialized origin
-   * @throws BadRequestException if Origin is missing, repeated or malformed
+   * @return immutable method set; inspect allMethods() to distinguish wildcard from deny-all
    */
-  private static String validatedOrigin(List<String> incomingOrigins) {
-    if (incomingOrigins.size() != 1
-        || HttpCharacters.ASTERISK_STRING.equals(incomingOrigins.getFirst())) {
-      throw new BadRequestException();
-    }
-
-    var origin = incomingOrigins.getFirst();
-
-    try {
-      validateOrigin(origin);
-    } catch (IllegalArgumentException failure) {
-      throw new BadRequestException(failure);
-    }
-
-    return origin;
+  public Set<HttpMethods> methods() {
+    return methods;
   }
 
   /**
-   * Adds response headers that differ between preflight and ordinary CORS requests.
+   * Returns whether every syntactically valid method token is allowed.
    *
-   * @param fields mutable response fields
-   * @param request incoming request
-   * @param method validated requested method
-   * @param preflight whether the request is a preflight
+   * @return whether the method collection is a wildcard
    */
-  private void populateResponseHeaders(
-      Map<String, String> fields, Request request, String method, boolean preflight) {
-    if (preflight) {
-      var requestedHeaders = requestedHeaders(request);
-      fields.put(HttpHeaders.ACCESS_CONTROL_ALLOW_METHODS.value(), method);
-      if (!requestedHeaders.isEmpty()) {
-        fields.put(
-            HttpHeaders.ACCESS_CONTROL_ALLOW_HEADERS.value(), String.join(", ", requestedHeaders));
+  public boolean allMethods() {
+    return allMethods;
+  }
+
+  /**
+   * Returns permitted preflight headers, defaulting to none.
+   *
+   * @return immutable typed header set
+   */
+  public Set<HttpHeaders> allowedHeaders() {
+    return allowedHeaders;
+  }
+
+  /**
+   * Returns whether credentialed sharing is allowed, defaulting to false.
+   *
+   * @return credential permission
+   */
+  public boolean credentials() {
+    return credentials;
+  }
+
+  /**
+   * Returns additional response headers visible to scripts, defaulting to none.
+   *
+   * @return immutable typed header set
+   */
+  public Set<HttpHeaders> exposedHeaders() {
+    return exposedHeaders;
+  }
+
+  /**
+   * Returns the preflight cache lifetime, defaulting to five seconds.
+   *
+   * @return nonnegative lifetime
+   */
+  public long maxAgeSeconds() {
+    return maxAgeSeconds;
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public boolean equals(@Nullable Object value) {
+    return value instanceof CorsPolicy other
+        && Objects.equals(origins, other.origins)
+        && Objects.equals(methods, other.methods)
+        && allMethods == other.allMethods
+        && Objects.equals(allowedHeaders, other.allowedHeaders)
+        && credentials == other.credentials
+        && Objects.equals(exposedHeaders, other.exposedHeaders)
+        && maxAgeSeconds == other.maxAgeSeconds;
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public int hashCode() {
+    return Objects.hash(
+        origins, methods, allMethods, allowedHeaders, credentials, exposedHeaders, maxAgeSeconds);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public String toString() {
+    return "CorsPolicy[origins="
+        + origins()
+        + ", methods="
+        + methods()
+        + ", allMethods="
+        + allMethods
+        + ", allowedHeaders="
+        + allowedHeaders()
+        + ", credentials="
+        + credentials()
+        + ", exposedHeaders="
+        + exposedHeaders()
+        + ", maxAgeSeconds="
+        + maxAgeSeconds()
+        + "]";
+  }
+
+  /**
+   * Collapses a wildcard to one immutable value.
+   *
+   * @param values configured immutable values
+   * @param wildcard wildcard value
+   * @param <T> value type
+   * @return normalized immutable values
+   */
+  private static <T> Set<T> wildcard(Set<T> values, T wildcard) {
+    return values.contains(wildcard) ? Set.of(wildcard) : values;
+  }
+
+  /** Builds complete immutable permissions. */
+  public static final class Builder {
+    private Set<String> origins;
+    private Set<HttpMethods> methods;
+    private boolean allMethods;
+    private Set<HttpHeaders> allowedHeaders;
+    private boolean credentials;
+    private Set<HttpHeaders> exposedHeaders;
+    private long maxAgeSeconds;
+
+    /** Creates standalone default permissions. */
+    private Builder() {
+      origins = Set.of();
+      methods = Set.of(HttpMethods.GET, HttpMethods.HEAD);
+      allMethods = false;
+      allowedHeaders = Set.of();
+      credentials = false;
+      exposedHeaders = Set.of();
+      maxAgeSeconds = 5;
+    }
+
+    /**
+     * Sets allowed origins with a required first value.
+     *
+     * @param first first value
+     * @param additional remaining values; null means none
+     * @return this builder
+     */
+    public Builder origins(String first, String @Nullable ... additional) {
+      return origins(values(first, additional));
+    }
+
+    /**
+     * Sets exact serialized origins.
+     *
+     * @param values allowed origins
+     * @return this builder
+     */
+    public Builder origins(Set<String> values) {
+      origins = Set.copyOf(values);
+      return this;
+    }
+
+    /**
+     * Sets allowed methods with a required first value.
+     *
+     * @param first first value
+     * @param additional remaining values; null means none
+     * @return this builder
+     */
+    public Builder methods(HttpMethods first, HttpMethods @Nullable ... additional) {
+      return methods(values(first, additional));
+    }
+
+    /**
+     * Sets allowed methods; an explicitly empty set denies all methods.
+     *
+     * @param values allowed methods
+     * @return this builder
+     */
+    public Builder methods(Set<HttpMethods> values) {
+      methods = Set.copyOf(values);
+      allMethods = false;
+      return this;
+    }
+
+    /**
+     * Allows every valid method token, replacing this builder's finite method declaration.
+     *
+     * @return this builder
+     */
+    public Builder allMethods() {
+      methods = Set.of();
+      allMethods = true;
+      return this;
+    }
+
+    /**
+     * Sets permitted request headers with a required first value.
+     *
+     * @param first first value
+     * @param additional remaining values; null means none
+     * @return this builder
+     */
+    public Builder allowedHeaders(HttpHeaders first, HttpHeaders @Nullable ... additional) {
+      return allowedHeaders(values(first, additional));
+    }
+
+    /**
+     * Sets permitted preflight headers.
+     *
+     * @param values typed request headers
+     * @return this builder
+     */
+    public Builder allowedHeaders(Set<HttpHeaders> values) {
+      allowedHeaders = Set.copyOf(values);
+      return this;
+    }
+
+    /**
+     * Sets whether credentialed response sharing is allowed.
+     *
+     * @param value credential permission
+     * @return this builder
+     */
+    public Builder credentials(boolean value) {
+      credentials = value;
+      return this;
+    }
+
+    /**
+     * Sets exposed response headers with a required first value.
+     *
+     * @param first first value
+     * @param additional remaining values; null means none
+     * @return this builder
+     */
+    public Builder exposedHeaders(HttpHeaders first, HttpHeaders @Nullable ... additional) {
+      return exposedHeaders(values(first, additional));
+    }
+
+    /**
+     * Sets additional response headers visible to scripts.
+     *
+     * @param values typed response headers
+     * @return this builder
+     */
+    public Builder exposedHeaders(Set<HttpHeaders> values) {
+      exposedHeaders = Set.copyOf(values);
+      return this;
+    }
+
+    /**
+     * Sets the browser cache lifetime; zero disables preflight caching.
+     *
+     * @param value nonnegative lifetime in seconds
+     * @return this builder
+     * @throws IllegalArgumentException if the lifetime is negative
+     */
+    public Builder maxAgeSeconds(long value) {
+      if (value < 0) {
+        throw new IllegalArgumentException("CORS cache lifetime must be nonnegative");
       }
 
-      fields.put(HttpHeaders.ACCESS_CONTROL_MAX_AGE.value(), Long.toString(maxAgeSeconds));
-    } else if (!exposedHeaders.isEmpty()) {
-      fields.put(
-          HttpHeaders.ACCESS_CONTROL_EXPOSE_HEADERS.value(),
-          String.join(", ", exposedHeaders.stream().map(HttpHeaders::value).sorted().toList()));
-    }
-  }
-
-  /**
-   * Compares scheme, host and effective port using only already-established proxy trust.
-   *
-   * @param origin validated incoming origin
-   * @param url effective request URL, possibly with an unparseable raw path or query
-   * @return whether this is ordinary same-origin traffic
-   */
-  static boolean sameOrigin(String origin, String url) {
-    if ("null".equals(origin)) {
-      return false;
+      maxAgeSeconds = value;
+      return this;
     }
 
-    var source = URI.create(origin);
-    var target = effectiveOrigin(url);
-    if (target == null) {
-      return false;
+    /**
+     * Snapshots and validates declared permissions.
+     *
+     * @return immutable policy
+     */
+    public CorsPolicy build() {
+      return new CorsPolicy(this);
     }
 
-    return source.getScheme().equalsIgnoreCase(target.getScheme())
-        && source.getHost().equalsIgnoreCase(target.getHost())
-        && effectivePort(source) == effectivePort(target);
-  }
-
-  /**
-   * Parses only the effective scheme and authority, leaving preserved raw path/query untouched.
-   *
-   * @param url effective URL from the request or trusted proxy
-   * @return origin tuple, or null if the URL has no absolute authority
-   */
-  static @Nullable URI effectiveOrigin(String url) {
-    int schemeEnd = url.indexOf(HttpCharacters.COLON_SIGN);
-    if (schemeEnd < 0
-        || url.length() < schemeEnd + 3
-        || url.charAt(schemeEnd + 1) != HttpCharacters.PATH_SEPARATOR
-        || url.charAt(schemeEnd + 2) != HttpCharacters.PATH_SEPARATOR) {
-      return null;
-    }
-
-    int end = url.length();
-    for (int index = schemeEnd + 3; index < url.length(); index++) {
-      char value = url.charAt(index);
-      if (value == HttpCharacters.PATH_SEPARATOR
-          || value == HttpCharacters.QUERY_SEPARATOR
-          || value == HttpCharacters.FRAGMENT_SEPARATOR) {
-        end = index;
-        break;
+    /**
+     * Copies nonnull values without retaining a caller's array.
+     *
+     * @param first required first value
+     * @param additional optional remaining values
+     * @param <T> value type
+     * @return immutable values
+     */
+    private static <T> Set<T> values(T first, T @Nullable [] additional) {
+      var values = new HashSet<T>();
+      values.add(Objects.requireNonNull(first));
+      if (additional != null) {
+        values.addAll(Arrays.asList(additional));
       }
-    }
 
-    return URI.create(url.substring(0, end));
-  }
-
-  /**
-   * Expands an omitted HTTP(S) default port for origin comparison.
-   *
-   * @param uri origin or request URL
-   * @return explicit port or scheme default
-   */
-  private static int effectivePort(URI uri) {
-    if (uri.getPort() >= 0) {
-      return uri.getPort();
-    }
-
-    return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
-  }
-
-  /**
-   * Combines requested-header list fields, validates tokens and applies explicit permissions.
-   *
-   * @param request invocation input
-   * @return unique lowercase header names in stable order
-   */
-  private Set<String> requestedHeaders(Request request) {
-    var values = request.headers(HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value());
-    var names = new TreeSet<String>();
-    for (var value : values) {
-      for (var token : value.split(HttpCharacters.COMMA_SIGN_STRING, -1)) {
-        var name = token.trim();
-        if (name.isEmpty()) {
-          continue;
-        }
-
-        validateToken(name);
-        if (!headers.contains(HttpHeaders.of(name))) {
-          throw new ForbiddenException();
-        }
-
-        names.add(name.toLowerCase(Locale.ROOT));
-      }
-    }
-    if (!values.isEmpty() && names.isEmpty()) {
-      throw new BadRequestException();
-    }
-
-    return names;
-  }
-
-  /**
-   * Checks the shared HTTP token grammar without constructing a field-name object.
-   *
-   * @param token untrusted method or header name
-   * @throws BadRequestException if the value is not one token
-   */
-  private static void validateToken(String token) {
-    if (!HttpCharacters.isValidHttpToken(token)) {
-      throw new BadRequestException(
-          new IllegalArgumentException("HTTP field name must be an RFC 9110 token"));
-    }
-  }
-
-  /**
-   * Checks origin tuple syntax without DNS lookups or URL repair; matching remains exact.
-   *
-   * @param origin configured origin or supported special value
-   * @throws IllegalArgumentException if origin is not an HTTP(S) tuple, null or wildcard
-   */
-  static void validateOrigin(String origin) {
-    if ("null".equals(origin) || HttpCharacters.ASTERISK_STRING.equals(origin)) {
-      return;
-    }
-
-    var uri = URI.create(origin);
-    if ((!"http".equals(uri.getScheme()) && !"https".equals(uri.getScheme()))
-        || uri.getHost() == null
-        || uri.getRawUserInfo() != null
-        || !uri.getRawPath().isEmpty()
-        || uri.getRawQuery() != null
-        || uri.getRawFragment() != null
-        || uri.getPort() > 65535
-        || origin.indexOf(HttpCharacters.PERCENT_SIGN) >= 0
-        || !origin.equals(
-            uri.getScheme()
-                + "://"
-                + uri.getHost()
-                + (uri.getPort() < 0 ? "" : HttpCharacters.COLON_SIGN_STRING + uri.getPort()))) {
-      throw new IllegalArgumentException("Expected an exact HTTP(S) origin without a path");
+      return Set.copyOf(values);
     }
   }
 }
