@@ -27,7 +27,7 @@ tasks.named('processResources') {
 	doFirst {
 		def artifact = configurations.swaggerUiAssets.singleFile
 		def digest = MessageDigest.getInstance('SHA-256').digest(artifact.bytes)
-		assert HexFormat.of().formatHex(digest) == 'f7816953f7df2c01757a89d73579596374d5bff1e85210eb98f1dca81e0cbf6d' : 'Pinned Swagger UI artifact checksum mismatch'
+		assert HexFormat.of().formatHex(digest) == 'a439f1bd0d0c69667e97fac5a8cdfb3cc599ed9bdb31fbf40602c648dd2e1a63' : 'Pinned Swagger UI artifact checksum mismatch'
 	}
 	from({ zipTree(configurations.swaggerUiAssets.singleFile) }) {
 		include 'META-INF/resources/webjars/swagger-ui/5.34.0/swagger-ui.css'
