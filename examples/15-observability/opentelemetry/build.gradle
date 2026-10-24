@@ -9,7 +9,7 @@ dependencies {
 	testImplementation project(':test')
 	testImplementation 'io.opentelemetry:opentelemetry-sdk-testing:1.67.0'
 	testImplementation 'org.awaitility:awaitility:4.3.0'
-	testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.22.3'
+	testImplementation 'com.fasterxml.jackson.core:jackson-databind:2.22.4'
 }
 application {
 	mainClass = 'io.github.suppierk.shoostr.example.tracing.TelemetryExample'
