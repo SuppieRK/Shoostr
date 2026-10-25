@@ -312,13 +312,15 @@ public final class Extensions {
   /**
    * Creates fresh provider data and records stable selection order.
    *
+   * <p>S1181 is suppressed because failed provider setup must freeze retained configuration before
+   * rethrowing either a runtime exception or an {@link Error}.
+   *
    * @param extension selected provider
    * @param inherited parent data, or null
    * @param <C> configuration type
    * @return provider data and its own contributions
    */
-  @SuppressWarnings(
-      "java:S1181") // Freeze retained configuration on failure, then rethrow unchanged.
+  @SuppressWarnings("java:S1181")
   private <C> Selection select(Extension<C> extension, @Nullable C inherited) {
     var contribution = new Extensions(installed, null);
     contribution.provider = true;

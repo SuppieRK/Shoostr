@@ -23,7 +23,7 @@ const origins = [
 ];
 
 for (const { name, payload, env = {} } of origins) {
-  test(`${name} passes with successful validation of the proposed revision and no Sonar outputs`, () => {
+  test(`${name} passes with successful validation of the proposed revision`, () => {
     const result = runGate(env, payload);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, new RegExp(`CI validation succeeded for ${revision}`));

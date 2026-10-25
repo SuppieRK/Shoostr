@@ -10,6 +10,7 @@ import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.websocket.api.Callback;
 import org.eclipse.jetty.websocket.api.Session;
+import org.eclipse.jetty.websocket.core.CloseStatus;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -235,12 +236,13 @@ public final class ManagedWebSocket implements Session.Listener {
   /**
    * Runs one admitted callback and releases executor ownership before another native event.
    *
+   * <p>S1181 and S2139 are suppressed because {@link FutureTask} captures fatal errors without
+   * reporting them to the worker's uncaught exception handler. Logging and rethrowing the original
+   * error preserves both diagnostics and the task's failed state.
+   *
    * @param pending task whose ownership must still match this connection
    */
-  @SuppressWarnings({
-    "java:S1181",
-    "java:S2139"
-  }) // FutureTask otherwise silently retains fatal failures.
+  @SuppressWarnings({"java:S1181", "java:S2139"})
   private void run(FutureTask<Void> pending) {
     synchronized (events) {
       if (task != pending || dispatchClosed) {
@@ -271,7 +273,7 @@ public final class ManagedWebSocket implements Session.Listener {
       deliverPending();
       completed = true;
     } catch (InterruptedException ignored) {
-      Objects.requireNonNull(connection).close(1001, "Processing interrupted");
+      Objects.requireNonNull(connection).close(CloseStatus.SHUTDOWN, "Processing interrupted");
       Thread.currentThread().interrupt();
     } catch (Exception failure) {
       WebSocketConnection opened;
@@ -287,11 +289,11 @@ public final class ManagedWebSocket implements Session.Listener {
         LOGGER.warn("WebSocket application callback failed", failure);
       }
 
-      opened.close(1011, "Processing failed");
+      opened.close(CloseStatus.SERVER_ERROR, "Processing failed");
     } finally {
       try {
         if (!completed) {
-          Objects.requireNonNull(connection).close(1011, "Processing failed");
+          Objects.requireNonNull(connection).close(CloseStatus.SERVER_ERROR, "Processing failed");
         }
       } finally {
         finish(pending);
@@ -401,7 +403,7 @@ public final class ManagedWebSocket implements Session.Listener {
     terminate(new IOException("Server stopping"));
 
     try {
-      opened.close(1001, "Server stopping", Callback.NOOP);
+      opened.close(CloseStatus.SHUTDOWN, "Server stopping", Callback.NOOP);
     } catch (RuntimeException ignored3) {
       opened.disconnect();
     }
