@@ -1,7 +1,7 @@
 plugins { id 'application' }
 dependencies {
 	implementation project(':micrometer')
-	implementation 'io.micrometer:micrometer-registry-prometheus:1.17.1'
+	implementation 'io.micrometer:micrometer-registry-prometheus:1.17.2'
 	implementation 'org.slf4j:slf4j-api:2.0.20'
 	runtimeOnly 'ch.qos.logback:logback-classic:1.6.5'
 	runtimeOnly 'org.slf4j:slf4j-jdk-platform-logging:2.0.20'

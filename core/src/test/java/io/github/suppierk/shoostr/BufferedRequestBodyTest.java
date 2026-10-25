@@ -209,6 +209,8 @@ class BufferedRequestBodyTest {
     return request(declaredLength, limit, true, input);
   }
 
+  // The EMPTY singleton means no failure has been recorded; compare it by identity.
+  @SuppressWarnings("ReferenceEquality")
   private static Request request(
       long declaredLength, int limit, boolean complete, Content.Chunk... input) {
     var chunks = new ArrayDeque<>(List.of(input));

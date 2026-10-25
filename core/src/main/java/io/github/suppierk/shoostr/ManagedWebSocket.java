@@ -193,7 +193,13 @@ public final class ManagedWebSocket implements Session.Listener {
     releaseIfFinished();
   }
 
-  /** Schedules actual work once; idle connections retain state without occupying a worker. */
+  /**
+   * Schedules actual work once; idle connections retain state without occupying a worker.
+   *
+   * <p>ReferenceEquality is suppressed because only the currently owned task may clear dispatch
+   * state.
+   */
+  @SuppressWarnings("ReferenceEquality")
   private void schedule() {
     FutureTask<Void> pending;
     synchronized (events) {
@@ -240,9 +246,11 @@ public final class ManagedWebSocket implements Session.Listener {
    * reporting them to the worker's uncaught exception handler. Logging and rethrowing the original
    * error preserves both diagnostics and the task's failed state.
    *
+   * <p>ReferenceEquality is suppressed because a callback must still own its exact scheduled task.
+   *
    * @param pending task whose ownership must still match this connection
    */
-  @SuppressWarnings({"java:S1181", "java:S2139"})
+  @SuppressWarnings({"java:S1181", "java:S2139", "ReferenceEquality"})
   private void run(FutureTask<Void> pending) {
     synchronized (events) {
       if (task != pending || dispatchClosed) {
@@ -335,8 +343,11 @@ public final class ManagedWebSocket implements Session.Listener {
   /**
    * Completes active ownership before another item or terminal observer can be admitted.
    *
+   * <p>ReferenceEquality is suppressed because completion may release only its own task instance.
+   *
    * @param pending task completing its actual application work
    */
+  @SuppressWarnings("ReferenceEquality")
   private void finish(FutureTask<Void> pending) {
     boolean notify;
     synchronized (events) {

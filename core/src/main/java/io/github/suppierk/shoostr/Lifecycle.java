@@ -111,9 +111,12 @@ public final class Lifecycle {
    * the application instrumentation's handoff, cleanup and failure-isolation contract. Unmatched
    * requests and pre-routing short circuits do not invoke local factories.
    *
+   * <p>ReferenceEquality is suppressed because only the same factory instance is deduplicated.
+   *
    * @param factory creates one observation without retaining live input
    * @return this scope
    */
+  @SuppressWarnings("ReferenceEquality")
   public Lifecycle observe(Function<Request, RequestObservation> factory) {
     owner.requireMutable();
     Objects.requireNonNull(factory);

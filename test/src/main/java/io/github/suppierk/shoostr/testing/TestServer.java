@@ -162,6 +162,8 @@ public final class TestServer implements Closeable {
   /**
    * Applies test transport settings through native configuration and owns startup cleanup.
    *
+   * <p>ReferenceEquality is suppressed because only this startup's binding bridge may be unwrapped.
+   *
    * @param app existing unstarted application
    * @param minimum automatic port zero or a validated positive minimum
    * @param maximum automatic port zero or a validated positive maximum
@@ -170,7 +172,11 @@ public final class TestServer implements Closeable {
    * @throws Exception if configuration or startup fails
    */
   // S2445: use Shoostr's own monitor to keep eligibility, registration and start atomic.
-  @SuppressWarnings({"java:S1181", "java:S2445"}) // Cleanup must also run after Error.
+  @SuppressWarnings({
+    "java:S1181",
+    "java:S2445",
+    "ReferenceEquality"
+  }) // Cleanup must also run after Error.
   private static TestServer start(
       Shoostr app, int minimum, int maximum, Consumer<HttpClient.Builder> configureClient)
       throws Exception {

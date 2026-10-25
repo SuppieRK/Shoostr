@@ -170,9 +170,12 @@ public final class Extensions {
   /**
    * Marks managed authentication on this scope; repeated selection does not duplicate work.
    *
+   * <p>ReferenceEquality is suppressed because authentication selection requires the same instance.
+   *
    * @param handler installed authenticator
    * @throws IllegalArgumentException if a different authenticator is already required
    */
+  @SuppressWarnings("ReferenceEquality")
   void authentication(Handler handler) {
     requireMutable();
     if (authentication != null && authentication != handler) {

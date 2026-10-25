@@ -845,9 +845,12 @@ public final class Shoostr implements Closeable {
    * Reentrant closure during provider setup defers final callbacks until that setup unwinds and
    * completes provider cleanup.
    *
+   * <p>ReferenceEquality is suppressed because cleanup may detach only the owned executor instance.
+   *
    * @throws IOException if resources cannot be closed
    */
   @Override
+  @SuppressWarnings("ReferenceEquality")
   public synchronized void close() throws IOException {
     if (closed) {
       return;
@@ -1259,12 +1262,16 @@ public final class Shoostr implements Closeable {
   /**
    * Runs native server and session customization, then verifies Shoostr still owns the listener.
    *
+   * <p>ReferenceEquality is suppressed because native hooks must preserve the owned handler
+   * instances.
+   *
    * @param server unstarted transport server
    * @param graceful root graceful-shutdown handler
    * @param applicationHandler request dispatcher
    * @param connector default listener owned by Shoostr
    * @throws IllegalStateException if native configuration changes owned wiring or closes Shoostr
    */
+  @SuppressWarnings("ReferenceEquality")
   private void configureNativeServer(
       Server server,
       GracefulHandler graceful,
@@ -1305,6 +1312,8 @@ public final class Shoostr implements Closeable {
    * Hands a matched upgrade to Jetty while keeping factory rejection inside its creator callback.
    * Jetty owns the response callback whenever this method returns true.
    *
+   * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+   *
    * @param container context's WebSocket container
    * @param endpoint matched WebSocket route
    * @param request live framework request for handshake decisions
@@ -1317,8 +1326,10 @@ public final class Shoostr implements Closeable {
    * @param runtime app-owned WebSocket message dispatch
    * @return whether Jetty handled the exchange
    */
-  @SuppressWarnings(
-      "java:S107") // Keep the hot handshake path free of a per-request argument holder.
+  @SuppressWarnings({
+    "java:S107",
+    "ReferenceEquality"
+  }) // Keep the hot handshake path free of a per-request argument holder.
   private static boolean upgradeWebSocket(
       ServerWebSocketContainer container,
       RadixRoutes.Endpoint endpoint,
@@ -1417,6 +1428,8 @@ public final class Shoostr implements Closeable {
   /**
    * Runs an application error handler with the framework's safe fallback on handler failure.
    *
+   * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+   *
    * @param errorHandler selected application handler
    * @param failure initiating application failure
    * @param request live request
@@ -1424,7 +1437,10 @@ public final class Shoostr implements Closeable {
    * @param observation optional terminal observation
    * @throws Throwable if error response submission fails after commitment
    */
-  @SuppressWarnings("java:S112") // A committed response propagates its original transport failure.
+  @SuppressWarnings({
+    "java:S112",
+    "ReferenceEquality"
+  }) // A committed response propagates its original transport failure.
   private static void renderCustomFailure(
       ExceptionHandler<Exception> errorHandler,
       Throwable failure,
@@ -1849,8 +1865,11 @@ public final class Shoostr implements Closeable {
     /**
      * Rejects native callbacks that detach or replace the owned application dispatcher.
      *
+     * <p>ReferenceEquality is suppressed because native hooks must preserve the exact owned wiring.
+     *
      * @throws IllegalStateException if native configuration changes the owned handler chain
      */
+    @SuppressWarnings("ReferenceEquality")
     private void validateApplicationWiring() {
       var owner = Objects.requireNonNull(server);
       if (owner.getDescendant(ApplicationHandler.class) != this
@@ -1865,9 +1884,12 @@ public final class Shoostr implements Closeable {
     /**
      * Checks the owned native handler lifecycle and shared server session identifier manager.
      *
+     * <p>ReferenceEquality is suppressed because sessions must retain their owned native instances.
+     *
      * @param started whether native managers have completed startup
      * @throws IllegalStateException if native configuration changes owned wiring or lifecycle
      */
+    @SuppressWarnings("ReferenceEquality")
     private void validateSessions(boolean started) {
       validateApplicationWiring();
       if (applicationSessions != null) {
@@ -1952,12 +1974,15 @@ public final class Shoostr implements Closeable {
     /**
      * Attempts a safe error response or returns the cause that must abort committed output.
      *
+     * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+     *
      * @param failure unwrapped application or transport failure
      * @param request live request
      * @param response live response
      * @param observation optional terminal observation
      * @return terminal abort cause, or null when error rendering completed
      */
+    @SuppressWarnings("ReferenceEquality")
     private @Nullable Throwable recoverFailure(
         Throwable failure, Request request, Response response, @Nullable Completion observation) {
       response.disableFlushHooksAfterBeforeFailure();
@@ -1982,6 +2007,8 @@ public final class Shoostr implements Closeable {
     /**
      * Releases request-scoped resources and reports final application and transport outcomes.
      *
+     * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+     *
      * @param request live request
      * @param response live response
      * @param observation optional terminal observation
@@ -1989,6 +2016,7 @@ public final class Shoostr implements Closeable {
      * @param applicationFailure initiating application failure, or null
      * @param terminalFailure transport abort cause, or null
      */
+    @SuppressWarnings("ReferenceEquality")
     private void finishRequest(
         Request request,
         Response response,
@@ -2782,9 +2810,12 @@ public final class Shoostr implements Closeable {
     /**
      * Records application cleanup before allowing a terminal notification.
      *
+     * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+     *
      * @param routePattern selected named template, or null for unmatched requests
      * @param failure initiating processing failure, or null
      */
+    @SuppressWarnings("ReferenceEquality")
     private void finish(@Nullable String routePattern, @Nullable Throwable failure) {
       RequestOutcome outcome;
       synchronized (this) {

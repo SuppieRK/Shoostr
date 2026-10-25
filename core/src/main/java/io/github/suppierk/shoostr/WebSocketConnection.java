@@ -201,10 +201,13 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
   /**
    * Serializes write submission through completion without blocking lifecycle bookkeeping.
    *
+   * <p>ReferenceEquality is suppressed because a completed write may clear only its own future.
+   *
    * @param submit native complete-message write
    * @throws IOException if transport rejects or fails the write
    * @throws InterruptedException if this producer is interrupted
    */
+  @SuppressWarnings("ReferenceEquality")
   private void write(Consumer<Callback> submit) throws IOException, InterruptedException {
     writes.lockInterruptibly();
     var completion = new CompletableFuture<Void>();

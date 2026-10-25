@@ -55,7 +55,7 @@ boundary that demonstrates a meaningful surviving fault.
 ## Tool versions and sources
 
 Versions are pinned inline, following the repository's Gradle dependency convention:
-Gradle plugin 1.19.0, PIT 1.30.0 and PIT JUnit plugin 1.2.3. Tests use the existing
+Gradle plugin 1.19.0, PIT 1.30.1 and PIT JUnit plugin 1.2.3. Tests use the existing
 repository Jupiter dependencies; do not downgrade them or introduce JUnit 4.
 
 Sources checked on 2026-09-26:
