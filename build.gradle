@@ -189,6 +189,20 @@ sonar {
 		property 'sonar.gradle.skipCompile', 'true'
 		property 'sonar.qualitygate.wait', 'true'
 		property 'sonar.exclusions', '.github/benchmarks/**,.github/ci/*.test.mjs'
+		property 'sonar.issue.ignore.multicriteria',
+				'exampleResourceOwnership,nonFunctionalExtensionFixture,asynchronousSessionReclamation'
+		// Example factories transfer resource ownership to callers; retain every other rule.
+		property 'sonar.issue.ignore.multicriteria.exampleResourceOwnership.ruleKey', 'java:S2095'
+		property 'sonar.issue.ignore.multicriteria.exampleResourceOwnership.resourceKey',
+				'examples/**/src/main/java/**'
+		// Extension has no abstract methods, so this startup-failure fixture cannot be a lambda.
+		property 'sonar.issue.ignore.multicriteria.nonFunctionalExtensionFixture.ruleKey', 'java:S9357'
+		property 'sonar.issue.ignore.multicriteria.nonFunctionalExtensionFixture.resourceKey',
+				'examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/ShutdownExampleTest.java'
+		// Bounded HTTP polling observes asynchronous session-capacity reclamation after expiry.
+		property 'sonar.issue.ignore.multicriteria.asynchronousSessionReclamation.ruleKey', 'java:S2925'
+		property 'sonar.issue.ignore.multicriteria.asynchronousSessionReclamation.resourceKey',
+				'examples/17-mcp/src/test/java/io/github/suppierk/shoostr/example/mcp/McpSecurityExampleTest.java'
 		property 'sonar.tests', sourceSets.test.allSource.srcDirs.findAll {
 			it.exists()
 		} +

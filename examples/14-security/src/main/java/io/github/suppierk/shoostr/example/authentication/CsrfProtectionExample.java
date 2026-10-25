@@ -6,6 +6,8 @@ import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 
 /** Session-bound CSRF tokens for explicitly selected preference writes. */
 public final class CsrfProtectionExample {
+  private static final String THEME_ATTRIBUTE = "theme";
+
   /** Prevents utility-class construction. */
   private CsrfProtectionExample() {}
 
@@ -35,17 +37,17 @@ public final class CsrfProtectionExample {
                           response.text(
                               request
                                   .getSession()
-                                  .map(session -> (String) session.getAttribute("theme"))
+                                  .map(session -> (String) session.getAttribute(THEME_ATTRIBUTE))
                                   .orElse("unset")))
                   .post(
                       "/preferences",
                       (request, response) -> {
                         var theme =
                             request
-                                .formParam("theme")
+                                .formParam(THEME_ATTRIBUTE)
                                 .filter(value -> "light".equals(value) || "dark".equals(value))
                                 .orElseThrow(BadRequestException::new);
-                        request.getSession().orElseThrow().setAttribute("theme", theme);
+                        request.getSession().orElseThrow().setAttribute(THEME_ATTRIBUTE, theme);
                         response.text(theme);
                       },
                       extensions -> extensions.with(csrf))

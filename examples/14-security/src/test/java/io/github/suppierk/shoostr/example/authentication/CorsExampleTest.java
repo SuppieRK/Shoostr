@@ -9,6 +9,7 @@ import io.github.suppierk.shoostr.AuthenticationExtension;
 import io.github.suppierk.shoostr.CorsPolicy;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
+import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -337,8 +338,11 @@ class CorsExampleTest {
 
   @Test
   void rejectsWildcardOriginsWhenCredentialedSharingIsEnabled() {
+    var origins = Set.of("*");
+    var methods = Set.of(HttpMethods.GET);
+    var headers = Set.<HttpHeaders>of();
     assertThrows(
         IllegalArgumentException.class,
-        () -> new CorsPolicy(Set.of("*"), Set.of(HttpMethods.GET), Set.of(), true, Set.of(), 0));
+        () -> new CorsPolicy(origins, methods, headers, true, headers, 0));
   }
 }

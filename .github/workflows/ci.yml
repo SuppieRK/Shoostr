@@ -40,7 +40,9 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: examples/17-mcp/package-lock.json
+          cache-dependency-path: |
+            examples/17-mcp/package-lock.json
+            site/package-lock.json
 
       - name: Install pinned MCP compatibility tests and browser
         working-directory: examples/17-mcp
@@ -121,8 +123,7 @@ jobs:
           BENCHMARK_TEST_CGROUP: '1'
         run: node --test .github/benchmarks/*.test.mjs
 
-      - name: Analyze with SonarQube Cloud (informational)
-        continue-on-error: true
+      - name: Require Sonar quality gate and zero issues
         if: >-
           github.repository == 'SuppieRK/Shoostr' &&
           (github.event_name != 'pull_request' ||
@@ -133,18 +134,20 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           if [[ -z "$SONAR_TOKEN" ]]; then
-            echo '::warning::Sonar analysis requires SONAR_TOKEN'
+            echo '::error::Sonar analysis requires SONAR_TOKEN'
             exit 1
           fi
+          npm --prefix site ci --ignore-scripts
           test -s build/reports/ci/lcov.info
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF_NAME" != "main" ]]; then
             ./gradlew sonar -Dsonar.branch.name="$GITHUB_REF_NAME" \
               -Dsonar.scm.revision="$EXPECTED_REVISION" \
-              -Dsonar.qualitygate.wait=false --console=plain
+              --console=plain --info
           else
             ./gradlew sonar -Dsonar.scm.revision="$EXPECTED_REVISION" \
-              -Dsonar.qualitygate.wait=false --console=plain
+              --console=plain --info
           fi
+          node .github/ci/sonar-gate.mjs build/sonar/report-task.txt
 
       - name: Preserve failed test results
         if: failure()

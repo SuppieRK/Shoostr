@@ -17,6 +17,7 @@ import io.github.suppierk.shoostr.Csrf;
 import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.Extensions;
 import io.github.suppierk.shoostr.Handler;
+import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Response;
@@ -55,17 +56,17 @@ class ExtensionLifecycleTest {
 
     try (var app = new Shoostr()) {
       app.sessions().extensions(first, second).configureExtensionsDefaults(e -> e.with(first));
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
           () ->
-              app.routes()
-                  .get(
-                      "/value",
-                      (request, response) -> response.text("unexpected"),
-                      e -> {
-                        e.without(first);
-                        e.with(second);
-                      }));
+              routes.get(
+                  "/value",
+                  (request, response) -> response.text("unexpected"),
+                  e -> {
+                    e.without(first);
+                    e.with(second);
+                  }));
       app.routes().get("/value", (request, response) -> response.text("kept"));
 
       try (var test = TestServer.start(app)) {
@@ -119,8 +120,9 @@ class ExtensionLifecycleTest {
                 assertThrows(IllegalStateException.class, app::start);
               });
       assertThrows(IllegalStateException.class, () -> app.configureExtensionsDefaults(e -> {}));
-      assertThrows(IllegalStateException.class, () -> retained.get().with(admission));
-      assertThrows(IllegalStateException.class, () -> retained.get().without(admission));
+      var configuration = retained.get();
+      assertThrows(IllegalStateException.class, () -> configuration.with(admission));
+      assertThrows(IllegalStateException.class, () -> configuration.without(admission));
       routes.get("/value", (request, response) -> response.text("ok"));
 
       try (var test = TestServer.start(app)) {
@@ -155,7 +157,8 @@ class ExtensionLifecycleTest {
                     assertThrows(IllegalArgumentException.class, () -> e.without(missing));
                     e.with(missing);
                   }));
-      assertThrows(IllegalStateException.class, () -> retained.get().with(installed));
+      var configuration = retained.get();
+      assertThrows(IllegalStateException.class, () -> configuration.with(installed));
       app.configureExtensionsDefaults(e -> e.with(installed));
       app.routes().get("/value", (request, response) -> response.text("ok"));
 
@@ -202,17 +205,17 @@ class ExtensionLifecycleTest {
     try (var app = new Shoostr()) {
       app.authentication(first, second)
           .configureExtensionsDefaults(extensions -> extensions.with(first));
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
           () ->
-              app.routes()
-                  .get(
-                      "/identity",
-                      (request, response) -> response.text("unexpected"),
-                      extensions -> {
-                        extensions.without(first);
-                        extensions.with(second);
-                      }));
+              routes.get(
+                  "/identity",
+                  (request, response) -> response.text("unexpected"),
+                  extensions -> {
+                    extensions.without(first);
+                    extensions.with(second);
+                  }));
       app.routes()
           .get(
               "/identity",
@@ -376,6 +379,7 @@ class ExtensionLifecycleTest {
     var installed = new Capability("same", events);
     var missing = new Capability("same", events);
     var retained = new AtomicReference<Extensions>();
+    var retainedLifecycle = new AtomicReference<Lifecycle>();
 
     try (var app = new Shoostr()) {
       app.extensions(installed);
@@ -390,11 +394,14 @@ class ExtensionLifecycleTest {
               e -> {
                 assertSame(e.with(installed), e.with(installed));
                 retained.set(e);
+                retainedLifecycle.set(e.lifecycle());
               });
       var configuration = retained.get();
+      var lifecycle = retainedLifecycle.get();
+      assertThrows(IllegalStateException.class, configuration::lifecycle);
       assertThrows(
           IllegalStateException.class,
-          () -> configuration.lifecycle().afterRouteHandler((ignored6, ignored7) -> {}));
+          () -> lifecycle.afterRouteHandler((ignored6, ignored7) -> {}));
 
       try (var test = TestServer.start(app)) {
         assertThrows(IllegalStateException.class, () -> app.extensions(missing));

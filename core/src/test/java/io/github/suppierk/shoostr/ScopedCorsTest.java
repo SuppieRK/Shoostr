@@ -339,7 +339,8 @@ class ScopedCorsTest {
                 configuration.policy(branch);
               })
           .get("/root", (request, response) -> response.text("root"));
-      assertThrows(IllegalStateException.class, () -> retained.get().policy(leaf));
+      var configuration = retained.get();
+      assertThrows(IllegalStateException.class, () -> configuration.policy(leaf));
 
       try (var test = TestServer.start(app)) {
         for (var path : new String[] {"/branch/excluded", "/branch/sibling"}) {
@@ -646,10 +647,12 @@ class ScopedCorsTest {
     var parent = new Cors(policy);
     var conflicting = new Cors(policy);
     builder.origins(Set.of("https://changed.example"));
+    var allowedHeaders = policy.allowedHeaders();
+    var exposedHeaders = parent.policy().exposedHeaders();
     org.junit.jupiter.api.Assertions.assertThrows(
-        UnsupportedOperationException.class, () -> policy.allowedHeaders().clear());
+        UnsupportedOperationException.class, allowedHeaders::clear);
     org.junit.jupiter.api.Assertions.assertThrows(
-        UnsupportedOperationException.class, () -> parent.policy().exposedHeaders().clear());
+        UnsupportedOperationException.class, exposedHeaders::clear);
 
     try (var app = new Shoostr()) {
       app.extensions(parent, conflicting)

@@ -61,9 +61,13 @@ public final class TypedWebSocket extends WebSocket {
   /**
    * Registers opening work with the codec-enabled connection.
    *
+   * <p>S2177 is suppressed because this overload accepts a callback for the typed connection; the
+   * base callback signature is overridden separately.
+   *
    * @param handler opening callback completed before message delivery
    * @return this configuration
    */
+  @SuppressWarnings("java:S2177")
   public TypedWebSocket onOpen(ConnectionHandler handler) {
     super.onOpen(handler);
     return this;
@@ -79,9 +83,13 @@ public final class TypedWebSocket extends WebSocket {
   /**
    * Registers raw text handling with the codec-enabled connection.
    *
+   * <p>S2177 is suppressed because this overload accepts a callback for the typed connection; the
+   * base callback signature is overridden separately.
+   *
    * @param handler complete text callback; input bypasses the codec
    * @return this configuration
    */
+  @SuppressWarnings("java:S2177")
   public TypedWebSocket onText(MessageHandler<String> handler) {
     super.onText(handler);
     return this;
@@ -97,9 +105,13 @@ public final class TypedWebSocket extends WebSocket {
   /**
    * Registers raw binary handling, replacing any object handler.
    *
+   * <p>S2177 is suppressed because this overload accepts a callback for the typed connection; the
+   * base callback signature is overridden separately.
+   *
    * @param handler owned binary callback; input bypasses the codec
    * @return this configuration
    */
+  @SuppressWarnings("java:S2177")
   public TypedWebSocket onBinary(MessageHandler<byte[]> handler) {
     super.onBinary(handler);
     return this;
@@ -115,9 +127,13 @@ public final class TypedWebSocket extends WebSocket {
   /**
    * Registers a terminal observer with the same codec-enabled connection.
    *
+   * <p>S2177 is suppressed because this overload accepts a callback for the typed connection; the
+   * base callback signature is overridden separately.
+   *
    * @param handler failure observer, not a recovery callback
    * @return this configuration
    */
+  @SuppressWarnings("java:S2177")
   public TypedWebSocket onError(MessageHandler<Throwable> handler) {
     super.onError(handler);
     return this;
@@ -133,9 +149,13 @@ public final class TypedWebSocket extends WebSocket {
   /**
    * Registers a close observer with the same codec-enabled connection.
    *
+   * <p>S2177 is suppressed because this overload accepts a callback for the typed connection; the
+   * base callback signature is overridden separately.
+   *
    * @param handler terminal close observer
    * @return this configuration
    */
+  @SuppressWarnings("java:S2177")
   public TypedWebSocket onClose(CloseHandler handler) {
     super.onClose(handler);
     return this;

@@ -18,6 +18,8 @@ import java.util.concurrent.atomic.AtomicReference;
 
 /** Requests client interactions and publishes a shared, nonsecret status resource. */
 public final class McpInteractionsExample {
+  private static final String AUDIENCE_FIELD = "audience";
+
   /** Prevents construction of the factory. */
   private McpInteractionsExample() {}
 
@@ -137,10 +139,10 @@ public final class McpInteractionsExample {
                         "object",
                         "properties",
                         Map.of(
-                            "audience",
+                            AUDIENCE_FIELD,
                             Map.of("type", "string", "enum", List.of("developers", "operators"))),
                         "required",
-                        List.of("audience")))
+                        List.of(AUDIENCE_FIELD)))
                 .build());
     // Decline and cancel are normal choices, not permission to continue with generation.
     switch (answer.action()) {
@@ -153,12 +155,14 @@ public final class McpInteractionsExample {
       case null -> {
         return result("Client returned no elicitation action", true);
       }
-      case ACCEPT -> {}
+      case ACCEPT -> {
+        // Continue below to validate the accepted content before using it.
+      }
     }
     // Treat even accepted form content as untrusted input before using the selected audience.
     var content = answer.content();
     if (content == null
-        || !(content.get("audience") instanceof String audience)
+        || !(content.get(AUDIENCE_FIELD) instanceof String audience)
         || !Set.of("developers", "operators").contains(audience)) {
       return result("Client returned an invalid audience", true);
     }

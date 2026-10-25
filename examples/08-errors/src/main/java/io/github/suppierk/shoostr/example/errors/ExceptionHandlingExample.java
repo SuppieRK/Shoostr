@@ -8,6 +8,8 @@ import java.io.IOException;
 
 /** Handles request failures without exposing private diagnostics. */
 public final class ExceptionHandlingExample {
+  private static final String INPUT_PATH = "/input";
+
   /** Prevents construction of this example factory. */
   private ExceptionHandlingExample() {}
 
@@ -36,7 +38,7 @@ public final class ExceptionHandlingExample {
                             .text("Private staged output");
                         throw new IllegalStateException("Private checkout diagnostics");
                       })
-                  .get("/input", ExceptionHandlingExample::readName)
+                  .get(INPUT_PATH, ExceptionHandlingExample::readName)
                   .get("/number", ExceptionHandlingExample::readNumber)
                   .path(
                       "/group",
@@ -48,13 +50,13 @@ public final class ExceptionHandlingExample {
                                 IllegalArgumentException.class,
                                 (ignored4, ignored5, response) ->
                                     response.status(409).text("Group input rejected"))
-                            .get("/input", ExceptionHandlingExample::readName)
+                            .get(INPUT_PATH, ExceptionHandlingExample::readName)
                             .get("/number", ExceptionHandlingExample::readNumber);
                       })
                   // With no local override, this child uses the root scope's input mapping.
                   .path(
                       "/inherited",
-                      group -> group.get("/input", ExceptionHandlingExample::readName))
+                      group -> group.get(INPUT_PATH, ExceptionHandlingExample::readName))
                   // Built-in HTTP exceptions keep their status, but not private diagnostic text.
                   .get(
                       "/builtin",

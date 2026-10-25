@@ -102,11 +102,10 @@ class MethodsExampleTest {
   @ValueSource(strings = {"get", "FETCH"})
   void rejectsUnrecognizedOrIncorrectlyCasedMethodNames(String method) throws Exception {
     try (var app = MethodsExample.application()) {
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
-          () ->
-              app.routes()
-                  .route(method, "/invalid", (ignored2, response) -> response.text("unused")));
+          () -> routes.route(method, "/invalid", (ignored2, response) -> response.text("unused")));
     }
   }
 }

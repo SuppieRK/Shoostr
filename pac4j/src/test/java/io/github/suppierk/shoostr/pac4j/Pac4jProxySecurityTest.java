@@ -57,7 +57,7 @@ class Pac4jProxySecurityTest {
     try (var app = new Shoostr()) {
       var family = "direct".equals(source) ? null : ForwardedHeaders.valueOf(source);
       if (family != null) {
-        app.trustedProxies(address -> address.isLoopbackAddress(), family);
+        app.trustedProxies(InetAddress::isLoopbackAddress, family);
       }
 
       var auth = new Pac4j(provider, "Basic");
@@ -152,7 +152,9 @@ class Pac4jProxySecurityTest {
     var scheme = new AtomicReference<String>();
 
     try (var test = TestServer.start(application(family, true, scheme));
-        var socket = new Socket(InetAddress.getByName("127.0.0.1"), test.baseUri().getPort())) {
+        var socket =
+            new Socket(
+                InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), test.baseUri().getPort())) {
       var header =
           family == ForwardedHeaders.RFC7239
               ? "Forwarded: for=203.0.113.7\r\n"

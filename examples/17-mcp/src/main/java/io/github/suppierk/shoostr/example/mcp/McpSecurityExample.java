@@ -25,6 +25,12 @@ import java.util.Set;
 
 /** Demonstrates MCP transport security with local development credentials. */
 public final class McpSecurityExample {
+  private static final String ALICE_SUBJECT = "alice";
+  private static final String DESKTOP_CLIENT = "desktop";
+  private static final String READ_TOOLS_SCOPE = "tools:read";
+  private static final String MCP_ACCESS_SCOPE = "mcp:access";
+  private static final String TOKEN_CONTEXT_KEY = "token";
+
   private static final URI METADATA =
       URI.create("https://resource.example/.well-known/oauth-protected-resource");
   private static final String CHALLENGE =
@@ -45,36 +51,49 @@ public final class McpSecurityExample {
         Map.of(
             "reader-token",
                 new VerifiedToken(
-                    "alice",
-                    "desktop",
-                    Set.of("mcp:access", "tools:read"),
+                    ALICE_SUBJECT,
+                    DESKTOP_CLIENT,
+                    Set.of(MCP_ACCESS_SCOPE, READ_TOOLS_SCOPE),
                     issued.plusSeconds(3600)),
             "restricted-token",
                 new VerifiedToken(
-                    "alice", "desktop", Set.of("mcp:access"), issued.plusSeconds(3600)),
+                    ALICE_SUBJECT,
+                    DESKTOP_CLIENT,
+                    Set.of(MCP_ACCESS_SCOPE),
+                    issued.plusSeconds(3600)),
             "refreshed-token",
                 new VerifiedToken(
-                    "alice",
-                    "desktop",
-                    Set.of("mcp:access", "tools:read"),
+                    ALICE_SUBJECT,
+                    DESKTOP_CLIENT,
+                    Set.of(MCP_ACCESS_SCOPE, READ_TOOLS_SCOPE),
                     issued.plusSeconds(7200)),
             "other-client-token",
                 new VerifiedToken(
-                    "alice",
+                    ALICE_SUBJECT,
                     "mobile",
-                    Set.of("mcp:access", "tools:read"),
+                    Set.of(MCP_ACCESS_SCOPE, READ_TOOLS_SCOPE),
                     issued.plusSeconds(3600)),
             "other-user-token",
                 new VerifiedToken(
-                    "bob", "desktop", Set.of("mcp:access", "tools:read"), issued.plusSeconds(3600)),
+                    "bob",
+                    DESKTOP_CLIENT,
+                    Set.of(MCP_ACCESS_SCOPE, READ_TOOLS_SCOPE),
+                    issued.plusSeconds(3600)),
             "short-token",
                 new VerifiedToken(
-                    "alice", "desktop", Set.of("mcp:access", "tools:read"), issued.plusSeconds(6)),
+                    ALICE_SUBJECT,
+                    DESKTOP_CLIENT,
+                    Set.of(MCP_ACCESS_SCOPE, READ_TOOLS_SCOPE),
+                    issued.plusSeconds(6)),
             "blocked-token",
-                new VerifiedToken("alice", "desktop", Set.of(), issued.plusSeconds(3600)),
+                new VerifiedToken(
+                    ALICE_SUBJECT, DESKTOP_CLIENT, Set.of(), issued.plusSeconds(3600)),
             "expired-token",
                 new VerifiedToken(
-                    "alice", "desktop", Set.of("mcp:access"), issued.minusSeconds(1)));
+                    ALICE_SUBJECT,
+                    DESKTOP_CLIENT,
+                    Set.of(MCP_ACCESS_SCOPE),
+                    issued.minusSeconds(1)));
     // Verify identity and transport access before MCP message parsing or session admission.
     var authentication =
         new AuthenticationExtension() {
@@ -97,8 +116,8 @@ public final class McpSecurityExample {
               throw new AuthenticationRequiredException(CHALLENGE);
             }
 
-            if (!token.scopes().contains("mcp:access")) {
-              throw McpHttpSecurity.scopeDenied(Set.of("mcp:access"), METADATA);
+            if (!token.scopes().contains(MCP_ACCESS_SCOPE)) {
+              throw McpHttpSecurity.scopeDenied(Set.of(MCP_ACCESS_SCOPE), METADATA);
             }
 
             request.principal(token);
@@ -113,20 +132,21 @@ public final class McpSecurityExample {
               // reuse.
               return new McpIdentity(
                   token.owner(),
-                  McpTransportContext.create(Map.of("token", token)),
+                  McpTransportContext.create(Map.of(TOKEN_CONTEXT_KEY, token)),
                   token.expiresAt());
             },
             (identity, message) -> {
               // Check the current request's verified claims, not permissions cached in the session.
-              var token = Objects.requireNonNull((VerifiedToken) identity.context().get("token"));
-              if (!token.scopes().contains("mcp:access")) {
-                throw McpHttpSecurity.scopeDenied(Set.of("mcp:access"), METADATA);
+              var token =
+                  Objects.requireNonNull((VerifiedToken) identity.context().get(TOKEN_CONTEXT_KEY));
+              if (!token.scopes().contains(MCP_ACCESS_SCOPE)) {
+                throw McpHttpSecurity.scopeDenied(Set.of(MCP_ACCESS_SCOPE), METADATA);
               }
 
               if (message instanceof McpSchema.JSONRPCRequest rpc
                   && rpc.method().startsWith("tools/")
-                  && !token.scopes().contains("tools:read")) {
-                throw McpHttpSecurity.scopeDenied(Set.of("tools:read"), METADATA);
+                  && !token.scopes().contains(READ_TOOLS_SCOPE)) {
+                throw McpHttpSecurity.scopeDenied(Set.of(READ_TOOLS_SCOPE), METADATA);
               }
             },
             METADATA);
@@ -147,7 +167,8 @@ public final class McpSecurityExample {
                                 (exchange, ignored) -> {
                                   var current =
                                       Objects.requireNonNull(
-                                          (VerifiedToken) exchange.transportContext().get("token"));
+                                          (VerifiedToken)
+                                              exchange.transportContext().get(TOKEN_CONTEXT_KEY));
                                   return McpSchema.CallToolResult.builder()
                                       .addTextContent(current.subject() + "/" + current.client())
                                       .build();

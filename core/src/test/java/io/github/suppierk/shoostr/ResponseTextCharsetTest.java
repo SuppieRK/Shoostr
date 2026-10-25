@@ -147,9 +147,8 @@ class ResponseTextCharsetTest {
                 assertThrows(
                     NullPointerException.class, () -> response.text(null, StandardCharsets.UTF_8));
                 assertThrows(NullPointerException.class, () -> response.text("late", null));
-                assertThrows(
-                    IllegalArgumentException.class,
-                    () -> response.text("late", rejectedEncoder("X-Test:Codec")));
+                var charset = rejectedEncoder("X-Test:Codec");
+                assertThrows(IllegalArgumentException.class, () -> response.text("late", charset));
               });
 
       try (var test = TestServer.start(app)) {
@@ -170,9 +169,9 @@ class ResponseTextCharsetTest {
               "/encoder",
               (ignored8, response) -> {
                 response.status(201).body("application/json", new byte[] {'0'});
+                var charset = rejectedEncoder(name);
                 assertThrows(
-                    UnsupportedOperationException.class,
-                    () -> response.text("late", rejectedEncoder(name)));
+                    UnsupportedOperationException.class, () -> response.text("late", charset));
               });
 
       try (var test = TestServer.start(app)) {
@@ -192,12 +191,12 @@ class ResponseTextCharsetTest {
           .get(
               "/thread",
               (ignored9, response) -> {
+                var charset = rejectedEncoder("X-Test");
                 children
                     .submit(
                         () ->
                             assertThrows(
-                                IllegalStateException.class,
-                                () -> response.text("late", rejectedEncoder("X-Test"))))
+                                IllegalStateException.class, () -> response.text("late", charset)))
                     .get(5, TimeUnit.SECONDS);
                 response.text("ok", StandardCharsets.US_ASCII);
               });
@@ -228,12 +227,11 @@ class ResponseTextCharsetTest {
       try (var test = TestServer.start(app)) {
         assertEquals(200, test.send(request -> request.path("/complete")).statusCode());
         var response = saved.get();
+        var charset = rejectedEncoder("X-Test");
         executor
             .submit(
                 () ->
-                    assertThrows(
-                        IllegalStateException.class,
-                        () -> response.text("late", rejectedEncoder("X-Test"))))
+                    assertThrows(IllegalStateException.class, () -> response.text("late", charset)))
             .get(5, TimeUnit.SECONDS);
       }
     }
@@ -250,9 +248,8 @@ class ResponseTextCharsetTest {
               "/file",
               (ignored11, response) -> {
                 response.file(file, "application/octet-stream");
-                assertThrows(
-                    IllegalStateException.class,
-                    () -> response.text("late", rejectedEncoder("X-Test")));
+                var charset = rejectedEncoder("X-Test");
+                assertThrows(IllegalStateException.class, () -> response.text("late", charset));
               });
 
       try (var test = TestServer.start(app)) {
@@ -271,9 +268,8 @@ class ResponseTextCharsetTest {
               "/stream",
               (ignored12, response) -> {
                 response.startStream("application/octet-stream").write(new byte[] {42});
-                assertThrows(
-                    IllegalStateException.class,
-                    () -> response.text("late", rejectedEncoder("X-Test")));
+                var charset = rejectedEncoder("X-Test");
+                assertThrows(IllegalStateException.class, () -> response.text("late", charset));
               });
 
       try (var test = TestServer.start(app)) {

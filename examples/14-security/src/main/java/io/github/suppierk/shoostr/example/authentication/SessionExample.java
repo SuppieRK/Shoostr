@@ -13,6 +13,8 @@ import org.eclipse.jetty.session.FileSessionDataStore;
 
 /** Server-side preference sessions with an explicitly configured private file store. */
 public final class SessionExample {
+  private static final String THEME_ATTRIBUTE = "theme";
+
   /** Prevents utility-class construction. */
   private SessionExample() {}
 
@@ -55,11 +57,11 @@ public final class SessionExample {
                         // Only this endpoint creates a missing session and initializes its
                         // preference.
                         var session = request.getOrCreateSession();
-                        if (session.getAttribute("theme") == null) {
-                          session.setAttribute("theme", "dark");
+                        if (session.getAttribute(THEME_ATTRIBUTE) == null) {
+                          session.setAttribute(THEME_ATTRIBUTE, "dark");
                         }
 
-                        response.text((String) session.getAttribute("theme"));
+                        response.text((String) session.getAttribute(THEME_ATTRIBUTE));
                       })
                   // Inspection uses getSession(), so a read does not create server-side state.
                   .get(
@@ -68,7 +70,7 @@ public final class SessionExample {
                           response.text(
                               request
                                   .getSession()
-                                  .map(session -> (String) session.getAttribute("theme"))
+                                  .map(session -> (String) session.getAttribute(THEME_ATTRIBUTE))
                                   .orElse("absent")))
                   .post(
                       "/preferences/renew",

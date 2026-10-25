@@ -142,8 +142,7 @@ class TypedWebSocketTest {
             return super.read(source, type);
           }
         };
-    io.github.suppierk.shoostr.WebSocket.MessageHandler<byte[]> raw =
-        (connection, bytes) -> connection.send(bytes);
+    io.github.suppierk.shoostr.WebSocket.MessageHandler<byte[]> raw = WebSocketConnection::send;
     var app =
         new Shoostr()
             .codec(codec)
@@ -374,10 +373,7 @@ class TypedWebSocketTest {
         new Shoostr()
             .codec(codec)
             .routes(
-                routes ->
-                    routes.websocket(
-                        "/closing",
-                        socket -> socket.onOpen(connection -> opened.complete(connection))));
+                routes -> routes.websocket("/closing", socket -> socket.onOpen(opened::complete)));
 
     try (var server = TestServer.start(app);
         var client = HttpClient.newHttpClient();
@@ -522,9 +518,7 @@ class TypedWebSocketTest {
             .codec(codec)
             .routes(
                 routes ->
-                    routes.websocket(
-                        "/concurrent",
-                        socket -> socket.onOpen(connection -> opened.complete(connection))));
+                    routes.websocket("/concurrent", socket -> socket.onOpen(opened::complete)));
 
     try (var server = TestServer.start(app);
         var client = HttpClient.newHttpClient();

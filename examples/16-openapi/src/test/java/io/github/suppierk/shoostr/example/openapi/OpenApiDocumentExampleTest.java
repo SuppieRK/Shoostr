@@ -171,7 +171,8 @@ class OpenApiDocumentExampleTest {
             document.path("components").path("schemas").path("Snapshot").path("type").asText());
         assertEquals(0, checks.get());
         assertEquals(0, invocations.get());
-        assertThrows(IllegalStateException.class, () -> retained.get().summary("Late change"));
+        var configuration = retained.get();
+        assertThrows(IllegalStateException.class, () -> configuration.summary("Late change"));
         assertArrayEquals(first.body(), test.send(request -> request.path("/openapi.json")).body());
         assertEquals(0, checks.get());
         assertEquals(404, test.send(request -> request.path("/preview")).statusCode());

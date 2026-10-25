@@ -79,11 +79,11 @@ public final class TypedSseExample {
      */
     @Override
     public byte[] write(Object value) {
-      if (!(value instanceof Progress progress)) {
+      if (!(value instanceof Progress(int completed))) {
         throw new IllegalArgumentException("This codec supports only Progress");
       }
 
-      return ("{\"completed\":" + progress.completed() + "}").getBytes(StandardCharsets.UTF_8);
+      return ("{\"completed\":" + completed + "}").getBytes(StandardCharsets.UTF_8);
     }
   }
 }

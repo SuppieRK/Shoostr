@@ -70,11 +70,11 @@ public final class TypedWebSocketExample {
      */
     @Override
     public byte[] write(Object value) {
-      if (!(value instanceof Counter counter)) {
+      if (!(value instanceof Counter(int counterValue))) {
         throw new IllegalArgumentException("This codec supports only Counter");
       }
 
-      return ByteBuffer.allocate(Integer.BYTES).putInt(counter.value()).array();
+      return ByteBuffer.allocate(Integer.BYTES).putInt(counterValue).array();
     }
   }
 }

@@ -5,6 +5,8 @@ import java.security.Principal;
 
 /** Distinguishes request metadata from the physical transport and assigned identity. */
 public final class MetadataExample {
+  private static final String MISSING_VALUE = "(missing)";
+
   /** Prevents construction of this example factory. */
   private MetadataExample() {}
 
@@ -26,16 +28,16 @@ public final class MetadataExample {
                                 "method=" + request.method(),
                                 "protocol=" + request.protocol(),
                                 "path=" + request.path(),
-                                "route=" + request.routePattern().orElse("(missing)"),
+                                "route=" + request.routePattern().orElse(MISSING_VALUE),
                                 "name=" + request.pathParam("name").orElseThrow(),
-                                "query=" + request.queryString().orElse("(missing)"),
+                                "query=" + request.queryString().orElse(MISSING_VALUE),
                                 // URI metadata is not proof of the connection's transport security.
                                 "url=" + request.url(),
                                 "fullUrl=" + request.fullUrl(),
                                 "effectiveUrl=" + request.effectiveUrl(),
-                                "scheme=" + request.scheme().orElse("(missing)"),
-                                "authority=" + request.authority().orElse("(missing)"),
-                                "serverName=" + request.serverName().orElse("(missing)"),
+                                "scheme=" + request.scheme().orElse(MISSING_VALUE),
+                                "authority=" + request.authority().orElse(MISSING_VALUE),
+                                "serverName=" + request.serverName().orElse(MISSING_VALUE),
                                 "serverPort=" + request.serverPort(),
                                 // Socket addresses describe the direct connection, not proxy
                                 // claims.
@@ -43,17 +45,17 @@ public final class MetadataExample {
                                     + request
                                         .localAddress()
                                         .map(Object::toString)
-                                        .orElse("(missing)"),
+                                        .orElse(MISSING_VALUE),
                                 "remote="
                                     + request
                                         .remoteAddress()
                                         .map(Object::toString)
-                                        .orElse("(missing)"),
+                                        .orElse(MISSING_VALUE),
                                 "client="
                                     + request
                                         .clientAddress()
                                         .map(Object::toString)
-                                        .orElse("(missing)"),
+                                        .orElse(MISSING_VALUE),
                                 "secure=" + request.isSecure(),
                                 "forwarded=" + request.isForwarded(),
                                 "principal="

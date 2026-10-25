@@ -6,6 +6,8 @@ import java.util.UUID;
 
 /** Shares per-request values without retaining the live request. */
 public final class RequestStateExample {
+  private static final String LOCALE_ATTRIBUTE = "locale";
+
   /** Prevents construction of this example factory. */
   private RequestStateExample() {}
 
@@ -21,7 +23,7 @@ public final class RequestStateExample {
             (request, ignored) ->
                 request
                     .attribute("request.id", UUID.randomUUID().toString())
-                    .attribute("locale", request.queryParam("locale").orElse("en")))
+                    .attribute(LOCALE_ATTRIBUTE, request.queryParam(LOCALE_ATTRIBUTE).orElse("en")))
         .routes(
             routes ->
                 routes.get(
@@ -42,6 +44,6 @@ public final class RequestStateExample {
    * @return localized greeting
    */
   private static String greeting(Map<String, Object> context) {
-    return "fr".equals(context.get("locale")) ? "Bonjour" : "Hello";
+    return "fr".equals(context.get(LOCALE_ATTRIBUTE)) ? "Bonjour" : "Hello";
   }
 }
