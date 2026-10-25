@@ -1101,16 +1101,19 @@ class CorsTest {
               "/configured",
               (request, response) -> response.text("ready"),
               extensions -> retained.set(extensions.with(cors)));
-      assertThrows(IllegalStateException.class, () -> retained.get().policy(policy));
+      var configuration = retained.get();
+      assertThrows(IllegalStateException.class, () -> configuration.policy(policy));
 
       try (var test = TestServer.start(app)) {
-        assertThrows(IllegalStateException.class, () -> app.extensions(new Cors(policy)));
+        var afterStart = new Cors(policy);
+        assertThrows(IllegalStateException.class, () -> app.extensions(afterStart));
       }
     }
 
     var closed = new Shoostr();
     closed.close();
-    assertThrows(IllegalStateException.class, () -> closed.extensions(new Cors(policy)));
+    var afterClose = new Cors(policy);
+    assertThrows(IllegalStateException.class, () -> closed.extensions(afterClose));
   }
 
   @ParameterizedTest

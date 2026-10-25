@@ -759,7 +759,9 @@ class TransportTest {
               request ->
                   new RequestObservation() {
                     @Override
-                    public void complete(RequestOutcome result) {}
+                    public void complete(RequestOutcome result) {
+                      // Only close() participates in this cleanup-order assertion.
+                    }
 
                     @Override
                     public void close() {

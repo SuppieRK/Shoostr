@@ -640,7 +640,7 @@ class SessionTest {
               "/stream",
               (request, response) -> {
                 var stream = response.startStream("text/plain");
-                assertThrows(IllegalStateException.class, () -> request.getOrCreateSession());
+                assertThrows(IllegalStateException.class, request::getOrCreateSession);
                 stream.write("ok");
               });
 

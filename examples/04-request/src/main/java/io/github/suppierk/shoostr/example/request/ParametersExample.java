@@ -5,6 +5,8 @@ import java.util.List;
 
 /** Reads decoded parameters without merging their sources. */
 public final class ParametersExample {
+  private static final String CATEGORY_PARAMETER = "category";
+
   /** Prevents construction of this example factory. */
   private ParametersExample() {}
 
@@ -26,8 +28,8 @@ public final class ParametersExample {
                         response.text(
                             String.join(
                                 "\n",
-                                "category=" + request.pathParam("category").orElseThrow(),
-                                "path=" + request.pathParamMap().get("category"),
+                                "category=" + request.pathParam(CATEGORY_PARAMETER).orElseThrow(),
+                                "path=" + request.pathParamMap().get(CATEGORY_PARAMETER),
                                 "first=" + request.queryParam("tag").orElse("(missing)"),
                                 "tags=" + String.join("|", request.queryParams("tag")),
                                 "sort="
@@ -43,7 +45,7 @@ public final class ParametersExample {
                         response.text(
                             String.join(
                                 "\n",
-                                "category=" + request.pathParam("category").orElseThrow(),
+                                "category=" + request.pathParam(CATEGORY_PARAMETER).orElseThrow(),
                                 "first=" + request.formParam("tag").orElse("(missing)"),
                                 "tags=" + String.join("|", request.formParams("tag")),
                                 "sort=" + fields.getOrDefault("sort", List.of("recent")).getFirst(),

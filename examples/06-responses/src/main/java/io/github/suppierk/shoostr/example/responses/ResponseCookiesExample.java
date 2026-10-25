@@ -6,6 +6,9 @@ import io.github.suppierk.shoostr.http.HttpStatusCodes;
 
 /** Sets and deletes explicitly scoped preference cookies. */
 public final class ResponseCookiesExample {
+  private static final String THEME_COOKIE = "theme";
+  private static final String THEME_PATH = "/preferences/theme";
+
   /** Prevents construction of this example factory. */
   private ResponseCookiesExample() {}
 
@@ -17,7 +20,7 @@ public final class ResponseCookiesExample {
   public static Shoostr application() {
     // Restrict the preference to /preferences; deletion must use this same cookie scope.
     var theme =
-        new Cookie("theme", "dark")
+        new Cookie(THEME_COOKIE, "dark")
             .withPath("/preferences")
             .withMaxAge(3600)
             .withSameSite(Cookie.SameSite.LAX);
@@ -29,20 +32,22 @@ public final class ResponseCookiesExample {
             routes -> {
               routes
                   .post(
-                      "/preferences/theme",
+                      THEME_PATH,
                       (ignored, response) ->
                           response.cookie(theme).status(HttpStatusCodes.NO_CONTENT.value()))
                   .get(
-                      "/preferences/theme",
-                      (request, response) -> response.text(request.cookie("theme").orElse("light")))
+                      THEME_PATH,
+                      (request, response) ->
+                          response.text(request.cookie(THEME_COOKIE).orElse("light")))
                   .delete(
-                      "/preferences/theme",
+                      THEME_PATH,
                       (ignored2, response) ->
                           response.removeCookie(theme).status(HttpStatusCodes.NO_CONTENT.value()))
                   // A browser will not attach the path-scoped preference to this endpoint.
                   .get(
                       "/outside",
-                      (request, response) -> response.text(request.cookie("theme").orElse("light")))
+                      (request, response) ->
+                          response.text(request.cookie(THEME_COOKIE).orElse("light")))
                   .post(
                       "/secure-preference",
                       (ignored3, response) ->

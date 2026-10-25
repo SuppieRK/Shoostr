@@ -138,7 +138,9 @@ class EffectiveSecurityTest {
   void neverUsesAForgedTargetOrAnotherHopAsEvidenceOfHttps(ForwardedHeaders family, String headers)
       throws Exception {
     try (var test = TestServer.start(application(family, true));
-        var socket = new Socket(InetAddress.getByName("127.0.0.1"), test.baseUri().getPort())) {
+        var socket =
+            new Socket(
+                InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), test.baseUri().getPort())) {
       socket.setSoTimeout(5000);
       socket
           .getOutputStream()
@@ -207,8 +209,8 @@ class EffectiveSecurityTest {
             .submit(
                 () -> {
                   assertSame(thread.get(), Thread.currentThread());
-                  assertThrows(
-                      IllegalStateException.class, () -> saved.get().isEffectivelySecure());
+                  var request = saved.get();
+                  assertThrows(IllegalStateException.class, request::isEffectivelySecure);
                 })
             .get(3, TimeUnit.SECONDS);
       }
@@ -218,7 +220,7 @@ class EffectiveSecurityTest {
   @Test
   void inheritsEffectiveSecurityInTypedRoutes() throws Exception {
     try (var app = new Shoostr()) {
-      app.trustedProxies(address -> address.isLoopbackAddress())
+      app.trustedProxies(InetAddress::isLoopbackAddress)
           .codec(new TestCodec())
           .routes()
           .get(

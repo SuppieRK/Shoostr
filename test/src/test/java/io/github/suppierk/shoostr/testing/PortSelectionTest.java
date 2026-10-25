@@ -297,7 +297,7 @@ class PortSelectionTest {
 
     try {
       socket.setReuseAddress(false);
-      socket.bind(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port));
+      socket.bind(new InetSocketAddress(InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), port));
       return socket;
     } catch (IOException failure) {
       try {

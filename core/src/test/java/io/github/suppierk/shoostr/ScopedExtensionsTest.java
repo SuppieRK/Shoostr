@@ -28,9 +28,10 @@ class ScopedExtensionsTest {
                     (request, response) -> response.setHeader("X-Scope", "parent"));
               })
           .get("/sibling", (request, response) -> response.text("sibling"));
+      var lifecycle = retained.get();
       assertThrows(
           IllegalStateException.class,
-          () -> retained.get().beforeRouteHandler((request, response) -> response.text("late")));
+          () -> lifecycle.beforeRouteHandler((request, response) -> response.text("late")));
 
       try (var test = TestServer.start(app)) {
         assertEquals(

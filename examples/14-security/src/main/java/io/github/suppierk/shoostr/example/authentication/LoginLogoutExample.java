@@ -19,6 +19,9 @@ import org.eclipse.jetty.server.Session;
 
 /** Application-owned login and logout using native sessions and session-bound CSRF tokens. */
 public final class LoginLogoutExample {
+  private static final String NO_STORE = "no-store";
+  private static final String THEME_ATTRIBUTE = "theme";
+
   private static final String AUTH_COOKIE = "__Host-SHOOSTR-AUTH";
   private static final String ACCOUNT = "account";
 
@@ -52,7 +55,7 @@ public final class LoginLogoutExample {
               request.principal(() -> account);
             }
             // Account responses contain private state and must not enter shared caches.
-            response.setHeader(HttpHeaders.CACHE_CONTROL.value(), "no-store");
+            response.setHeader(HttpHeaders.CACHE_CONTROL.value(), NO_STORE);
           }
         };
 
@@ -81,12 +84,12 @@ public final class LoginLogoutExample {
                           var proof = csrf.token(request);
                           var session = request.getOrCreateSession();
                           synchronized (session) {
-                            if (session.getAttribute("theme") == null) {
-                              session.setAttribute("theme", "light");
+                            if (session.getAttribute(THEME_ATTRIBUTE) == null) {
+                              session.setAttribute(THEME_ATTRIBUTE, "light");
                             }
                           }
                           response
-                              .setHeader(HttpHeaders.CACHE_CONTROL.value(), "no-store")
+                              .setHeader(HttpHeaders.CACHE_CONTROL.value(), NO_STORE)
                               .text(proof);
                         },
                         extensions -> extensions.without(authentication))
@@ -119,7 +122,7 @@ public final class LoginLogoutExample {
                             session.setAttribute(ACCOUNT, account);
                           }
                           response
-                              .setHeader(HttpHeaders.CACHE_CONTROL.value(), "no-store")
+                              .setHeader(HttpHeaders.CACHE_CONTROL.value(), NO_STORE)
                               .text(proof);
                         },
                         extensions -> extensions.without(authentication))
@@ -131,20 +134,20 @@ public final class LoginLogoutExample {
                           response.text(
                               request.principal().orElseThrow().getName()
                                   + ":"
-                                  + session.getAttribute("theme"));
+                                  + session.getAttribute(THEME_ATTRIBUTE));
                         })
                     .post(
                         "/account/theme",
                         (request, response) -> {
                           var theme =
                               request
-                                  .formParam("theme")
+                                  .formParam(THEME_ATTRIBUTE)
                                   .filter(value -> "light".equals(value) || "dark".equals(value))
                                   .orElseThrow(BadRequestException::new);
                           request
                               .getSession()
                               .orElseThrow(UnauthorizedException::new)
-                              .setAttribute("theme", theme);
+                              .setAttribute(THEME_ATTRIBUTE, theme);
                           response.text(theme);
                         })
                     .post(
@@ -159,7 +162,7 @@ public final class LoginLogoutExample {
                           }
                           response
                               .removeCookie(sessionCookie)
-                              .setHeader(HttpHeaders.CACHE_CONTROL.value(), "no-store")
+                              .setHeader(HttpHeaders.CACHE_CONTROL.value(), NO_STORE)
                               .text("logged out");
                         }));
   }

@@ -123,13 +123,22 @@ class LocalRequestObservationTest {
   @Test
   void rejectsObservationRegistrationAfterTheCallbackReturns() throws Exception {
     var retained = new AtomicReference<Extensions>();
+    var retainedLifecycle = new AtomicReference<Lifecycle>();
 
     try (var app = new Shoostr()) {
-      app.routes().get("/ok", (ignored6, ignored7) -> {}, retained::set);
+      app.routes()
+          .get(
+              "/ok",
+              (ignored6, ignored7) -> {},
+              extensions -> {
+                retained.set(extensions);
+                retainedLifecycle.set(extensions.lifecycle());
+              });
       var configuration = retained.get();
+      var lifecycle = retainedLifecycle.get();
+      assertThrows(IllegalStateException.class, configuration::lifecycle);
       assertThrows(
-          IllegalStateException.class,
-          () -> configuration.lifecycle().observe(ignored8 -> ignored9 -> {}));
+          IllegalStateException.class, () -> lifecycle.observe(ignored8 -> ignored9 -> {}));
     }
   }
 

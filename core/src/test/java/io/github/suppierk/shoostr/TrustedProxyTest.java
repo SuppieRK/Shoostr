@@ -135,7 +135,7 @@ class TrustedProxyTest {
               assertEquals("http", request.scheme().orElseThrow());
               assertFalse(request.isSecure());
               assertEquals(
-                  InetAddress.getByName("127.0.0.1"),
+                  InetAddress.getByAddress(new byte[] {127, 0, 0, 1}),
                   assertInstanceOf(InetSocketAddress.class, request.remoteAddress().orElseThrow())
                       .getAddress());
               response.text("ipv6");
@@ -175,7 +175,7 @@ class TrustedProxyTest {
                   "http://127.0.0.1:" + app.port() + "/repeated?raw=%2B", request.fullUrl());
               assertFalse(request.isSecure());
               assertEquals(
-                  InetAddress.getByName("127.0.0.1"),
+                  InetAddress.getByAddress(new byte[] {127, 0, 0, 1}),
                   assertInstanceOf(InetSocketAddress.class, request.remoteAddress().orElseThrow())
                       .getAddress());
               response.text("boundary");

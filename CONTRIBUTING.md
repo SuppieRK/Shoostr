@@ -9,7 +9,7 @@ For every tracked repository change, including documentation and benchmark fixtu
 
 1. Create a separate branch from the current `main`.
 2. Commit and push the branch to the remote, then open a pull request targeting `main`.
-3. Fix failures on that branch and push again until CI passes for the pull request's latest commit. The Gradle build and test validation must succeed; Sonar analysis is informational.
+3. Fix failures on that branch and push again until CI passes for the pull request's latest commit. The Gradle build and test validation must succeed. Trusted runs also require a passing Sonar quality gate and zero open issues.
 4. Leave the pull request unmerged for review unless the user authorizes merging it.
 
 ## CI and external contributions
@@ -19,10 +19,11 @@ internal, fork and Dependabot pull requests. Failed, cancelled or skipped valida
 cannot pass this check, and the validated revision must match the triggering event.
 External contributions do not need a replacement pull request on a maintainer branch.
 
-Sonar runs as an informational check for trusted pull requests and CI runs in
-`SuppieRK/Shoostr`. Fork and Dependabot pull requests run validation without Sonar;
-repository secrets remain restricted to trusted analysis. A missing analysis token,
-scanner failure or Sonar quality-gate result does not change the required `build` result.
+Trusted pull requests and CI runs in `SuppieRK/Shoostr` must pass the Sonar quality gate
+and have zero open issues. A missing analysis token, scanner failure, failed quality gate,
+API error or nonzero issue count fails validation and the required `build` check.
+Fork and Dependabot pull requests run validation without Sonar; repository secrets remain
+restricted to trusted analysis.
 
 The aggregate `build` job runs even when validation fails or is skipped. Main's ruleset
 requires `build` from GitHub Actions and an up-to-date branch; the existing administrator

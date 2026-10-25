@@ -135,12 +135,12 @@ class ParametersExampleTest {
                 assertEquals(Map.of("tag", List.of("query", "second")), query);
                 assertEquals(Map.of("tag", List.of("form", "next")), form);
                 assertThrows(UnsupportedOperationException.class, () -> path.put("id", "changed"));
+                var queryTags = query.get("tag");
+                var formTags = form.get("tag");
                 assertThrows(UnsupportedOperationException.class, query::clear);
-                assertThrows(
-                    UnsupportedOperationException.class, () -> query.get("tag").add("changed"));
+                assertThrows(UnsupportedOperationException.class, () -> queryTags.add("changed"));
                 assertThrows(UnsupportedOperationException.class, form::clear);
-                assertThrows(
-                    UnsupportedOperationException.class, () -> form.get("tag").add("changed"));
+                assertThrows(UnsupportedOperationException.class, () -> formTags.add("changed"));
                 response.text("checked");
               });
 

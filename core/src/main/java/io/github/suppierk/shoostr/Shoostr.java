@@ -893,15 +893,7 @@ public final class Shoostr implements Closeable {
       failure = appendCloseFailure(failure, "Could not stop HTTP server", stopFailure);
     } finally {
       failure = finishManagedWebSocketDispatch(failure);
-      if (router != null) {
-        try {
-          router.close();
-        } catch (RuntimeException closeFailure) {
-          failure = appendCloseFailure(failure, "Could not close static resources", closeFailure);
-        } finally {
-          router = null;
-        }
-      }
+      failure = closeStaticResources(failure);
 
       if (ownedVirtualThreads != null) {
         try {
@@ -932,6 +924,26 @@ public final class Shoostr implements Closeable {
     if (failure != null) {
       throw failure;
     }
+  }
+
+  /**
+   * Closes static resources without preventing later shutdown cleanup.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException closeStaticResources(@Nullable IOException failure) {
+    if (router != null) {
+      try {
+        router.close();
+      } catch (RuntimeException closeFailure) {
+        failure = appendCloseFailure(failure, "Could not close static resources", closeFailure);
+      } finally {
+        router = null;
+      }
+    }
+
+    return failure;
   }
 
   /**
