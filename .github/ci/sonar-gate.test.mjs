@@ -145,6 +145,16 @@ for (const options of [
   });
 }
 
+test('rejects provider-controlled warning text before it can inject a CI log command', async () => {
+  const result = await runGate({ responses: { '/api/ce/task': { task: {
+    id: 'task-1', componentKey: project, status: 'SUCCESS', analysisId: 'analysis-1',
+    warningCount: '0\r\n::error::injected',
+  } } } });
+  assert.equal(result.status, 1, result.stdout);
+  assert.match(result.stderr, /invalid analysis warning count/);
+  assert(!result.stdout.includes('::error::'));
+});
+
 async function runGate(options = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'shoostr-sonar-gate-'));
   const requests = [];

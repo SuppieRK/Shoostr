@@ -136,7 +136,9 @@ class NativeSessionLifecycleTest {
                     new DefaultSessionIdManager(nativeHandler.getServer()));
               });
       var failure = assertThrows(IllegalStateException.class, app::start);
-      assertTrue(failure.getMessage().contains("SessionIdManager"));
+      var message = failure.getMessage();
+      assertNotNull(message);
+      assertTrue(message.contains("SessionIdManager"));
       assertEquals(0, starts.get());
     }
 

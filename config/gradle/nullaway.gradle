@@ -12,11 +12,12 @@ nullaway {
 	jspecifyMode = true
 }
 
-tasks.withType(JavaCompile).configureEach { task ->
-	if (task.name == 'compileJava') {
-		options.errorprone.error('NullAway')
-		options.errorprone.errorproneArgumentProviders.add({
-			['-Xep:NullAway:ERROR']
-		} as CommandLineArgumentProvider)
+// Runtime validation tests deliberately pass null; production nullness violations remain errors.
+tasks.withType(JavaCompile).configureEach {
+	def nullawayOptions = options.errorprone.nullaway
+	if (options.errorprone.compilingTestOnlyCode.get()) {
+		nullawayOptions.disable()
+	} else {
+		nullawayOptions.error()
 	}
 }

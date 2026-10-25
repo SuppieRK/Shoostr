@@ -24,7 +24,8 @@ class TrustedProxyExampleTest {
       ForwardedHeaders family) throws Exception {
     try (var test =
         TestServer.start(
-            TrustedProxyExample.application(Set.of(InetAddress.getByName("127.0.0.1")), family))) {
+            TrustedProxyExample.application(
+                Set.of(InetAddress.getByAddress(new byte[] {127, 0, 0, 1})), family))) {
       var response =
           test.send(
               request -> {
@@ -57,7 +58,8 @@ class TrustedProxyExampleTest {
   @CsvSource({"false, 200", "true, 400"})
   void inspectsForwardingSyntaxOnlyAfterThePhysicalPeerIsTrusted(boolean trusted, int status)
       throws Exception {
-    Set<InetAddress> peers = trusted ? Set.of(InetAddress.getByName("127.0.0.1")) : Set.of();
+    Set<InetAddress> peers =
+        trusted ? Set.of(InetAddress.getByAddress(new byte[] {127, 0, 0, 1})) : Set.of();
 
     try (var test =
         TestServer.start(TrustedProxyExample.application(peers, ForwardedHeaders.RFC7239))) {
@@ -79,7 +81,8 @@ class TrustedProxyExampleTest {
       throws Exception {
     try (var test =
         TestServer.start(
-            TrustedProxyExample.application(Set.of(InetAddress.getByName("127.0.0.1")), family))) {
+            TrustedProxyExample.application(
+                Set.of(InetAddress.getByAddress(new byte[] {127, 0, 0, 1})), family))) {
       var response =
           test.send(
               request ->
@@ -106,7 +109,9 @@ class TrustedProxyExampleTest {
     try (var test =
         TestServer.start(
             TrustedProxyExample.application(
-                Set.of(InetAddress.getByName("127.0.0.1"), InetAddress.getByName("192.0.2.10")),
+                Set.of(
+                    InetAddress.getByAddress(new byte[] {127, 0, 0, 1}),
+                    InetAddress.getByName("192.0.2.10")),
                 ForwardedHeaders.RFC7239))) {
       var response =
           test.send(
@@ -132,7 +137,8 @@ class TrustedProxyExampleTest {
     try (var test =
         TestServer.start(
             TrustedProxyExample.application(
-                Set.of(InetAddress.getByName("127.0.0.1")), ForwardedHeaders.X_FORWARDED))) {
+                Set.of(InetAddress.getByAddress(new byte[] {127, 0, 0, 1})),
+                ForwardedHeaders.X_FORWARDED))) {
       var response =
           test.send(
               request ->
@@ -148,7 +154,7 @@ class TrustedProxyExampleTest {
   void keepsItsPeerSnapshotWhenTheCallerLaterChangesTheInputSet() throws Exception {
     var peers = new HashSet<InetAddress>();
     var app = TrustedProxyExample.application(peers, ForwardedHeaders.RFC7239);
-    peers.add(InetAddress.getByName("127.0.0.1"));
+    peers.add(InetAddress.getByAddress(new byte[] {127, 0, 0, 1}));
 
     try (var test = TestServer.start(app)) {
       var response =

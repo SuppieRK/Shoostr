@@ -36,13 +36,15 @@ async function verify(path) {
       && typeof task.analysisId === 'string' && task.analysisId.length > 0,
     'Scanner task is not a completed analysis for this project',
   );
+  assert(Number.isSafeInteger(task.warningCount) && task.warningCount >= 0, 'Sonar returned an invalid analysis warning count');
+  const warningCount = Number(task.warningCount);
   await verifyRevision(api, project, target, revision, task.analysisId);
   const issues = await api('issues/search', { componentKeys: project, ...target, resolved: 'false', ps: '1' });
   assert(Number.isSafeInteger(issues.total) && issues.total >= 0, 'Sonar returned an invalid issue count');
   assert(issues.total === 0, `Sonar analysis has ${issues.total} open issue(s)`);
   await verifyRevision(api, project, target, revision, task.analysisId);
-  console.log(`Sonar analysis has zero open issues for ${revision} (task ${task.id})`);
-  console.log(`Sonar analysis warnings: ${task.warningCount}`);
+  console.log(`Sonar analysis has zero open issues for ${revision}`);
+  console.log(`Sonar analysis warnings: ${warningCount}`);
 }
 
 function readReport(path) {

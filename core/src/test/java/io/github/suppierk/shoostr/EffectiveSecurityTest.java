@@ -138,7 +138,9 @@ class EffectiveSecurityTest {
   void neverUsesAForgedTargetOrAnotherHopAsEvidenceOfHttps(ForwardedHeaders family, String headers)
       throws Exception {
     try (var test = TestServer.start(application(family, true));
-        var socket = new Socket(InetAddress.getByName("127.0.0.1"), test.baseUri().getPort())) {
+        var socket =
+            new Socket(
+                InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), test.baseUri().getPort())) {
       socket.setSoTimeout(5000);
       socket
           .getOutputStream()
