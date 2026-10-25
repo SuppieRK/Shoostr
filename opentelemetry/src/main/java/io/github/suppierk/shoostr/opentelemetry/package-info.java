@@ -1,3 +1,5 @@
 /** Explicit optional opentelemetry instrumentation. */
-@org.jspecify.annotations.NullMarked
+@NullMarked
 package io.github.suppierk.shoostr.opentelemetry;
+
+import org.jspecify.annotations.NullMarked;

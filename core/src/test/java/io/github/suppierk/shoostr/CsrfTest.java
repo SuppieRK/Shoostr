@@ -619,6 +619,8 @@ class CsrfTest {
   @Test
   void rotatesTokenAfterSessionRenewalAndRejectsReplayAfterLogout() throws Exception {
     var csrf = new Csrf();
+    var equivalent = new Csrf();
+    var originalHash = csrf.hashCode();
 
     try (var app = new Shoostr()) {
       app.sessions();
@@ -652,6 +654,8 @@ class CsrfTest {
         var form =
             test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
         var oldCookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+        assertEquals(equivalent, csrf);
+        assertEquals(originalHash, csrf.hashCode());
         var origin = "http://127.0.0.1:" + app.port();
         var renewed =
             test.send(
@@ -667,6 +671,8 @@ class CsrfTest {
         var newCookie = renewed.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
         assertNotEquals(form.body(), renewed.body());
         assertNotEquals(oldCookie, newCookie);
+        assertEquals(equivalent, csrf);
+        assertEquals(originalHash, csrf.hashCode());
         assertEquals(
             403,
             test.send(

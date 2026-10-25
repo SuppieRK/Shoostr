@@ -13,9 +13,11 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -649,10 +651,8 @@ class ScopedCorsTest {
     builder.origins(Set.of("https://changed.example"));
     var allowedHeaders = policy.allowedHeaders();
     var exposedHeaders = parent.policy().exposedHeaders();
-    org.junit.jupiter.api.Assertions.assertThrows(
-        UnsupportedOperationException.class, allowedHeaders::clear);
-    org.junit.jupiter.api.Assertions.assertThrows(
-        UnsupportedOperationException.class, exposedHeaders::clear);
+    Assertions.assertThrows(UnsupportedOperationException.class, allowedHeaders::clear);
+    Assertions.assertThrows(UnsupportedOperationException.class, exposedHeaders::clear);
 
     try (var app = new Shoostr()) {
       app.extensions(parent, conflicting)
@@ -661,7 +661,7 @@ class ScopedCorsTest {
                   routes.path(
                       "/parent",
                       child -> {
-                        org.junit.jupiter.api.Assertions.assertThrows(
+                        Assertions.assertThrows(
                             IllegalArgumentException.class,
                             () ->
                                 child.get(
@@ -683,7 +683,7 @@ class ScopedCorsTest {
         assertEquals(200, result.statusCode());
         assertEquals("parent", result.body());
         assertEquals(
-            java.util.List.of("https://parent.example"),
+            List.of("https://parent.example"),
             result.headers().allValues("Access-Control-Allow-Origin"));
         assertEquals(
             403,
@@ -696,9 +696,9 @@ class ScopedCorsTest {
   }
 
   @Test
-  void inspectsConditionalAndStaticTargetsWithoutEvaluatingTargetConditions(
-      @org.junit.jupiter.api.io.TempDir Path directory) throws Exception {
-    java.nio.file.Files.writeString(directory.resolve("asset.txt"), "asset");
+  void inspectsConditionalAndStaticTargetsWithoutEvaluatingTargetConditions(@TempDir Path directory)
+      throws Exception {
+    Files.writeString(directory.resolve("asset.txt"), "asset");
     var calls = new AtomicInteger();
     var cors = new Cors(CorsPolicy.builder().origins(Set.of("https://client.example")).build());
 
@@ -758,7 +758,7 @@ class ScopedCorsTest {
       app.onRequestHeaders(
           (request, response) -> {
             if ("OPTIONS".equals(request.method())) {
-              org.junit.jupiter.api.Assertions.assertTrue(request.getSession().isEmpty());
+              Assertions.assertTrue(request.getSession().isEmpty());
             }
           });
       app.routes()

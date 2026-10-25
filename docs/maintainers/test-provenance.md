@@ -67,12 +67,13 @@ The case-sensitive miss has a successful upgrade/message positive control and
 must leave the listener-factory count unchanged.
 
 Issue 76 T05 independently adapts pinned Javalin 7.2.3 `TestWsLogging` in
-`AccessLogTest.logsBoundedAcceptedWebSocketUpgradesWithoutHandshakeSecrets` and
-`logsBoundedDeniedWebSocketUpgradesWithoutHandshakeOrFailureSecrets`.
-Live upgrades with long credentials and path identifiers produce single bounded
-101/403 records using the configured route template. Neither record includes
-handshake secrets; denial also excludes exception details and skips the listener
-factory. These tests cover Shoostr's terminal access log, not message-payload logging.
+`RequestOutcomeIntegrationTest.reportsAcceptedWebSocketUpgradeWithItsRegisteredTemplate` and
+`reportsDeniedWebSocketUpgradeWithoutInvokingTheListenerFactory`.
+Live upgrades with long credentials and path identifiers produce one terminal
+`RequestOutcome` with status 101 or 403 and the registered route template, without
+substituting identifiers or query strings. Denial records the application failure
+and skips the listener factory. These tests cover completion metadata rather than
+formatted log output; failure fields retain diagnostic exceptions.
 
 Issue 76 T06 independently adapts pinned Javalin 7.2.3 `TestStaticFilesEdgeCases`
 in `StaticResourcesTest.servesExactMountedFileBytesOverTheConfiguredProtocol`,

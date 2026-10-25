@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -50,7 +51,7 @@ class PersistUploadExampleTest {
           .untilAsserted(
               () -> {
                 try (var files = Files.list(directory)) {
-                  assertEquals(Set.of(saved), files.collect(java.util.stream.Collectors.toSet()));
+                  assertEquals(Set.of(saved), files.collect(Collectors.toSet()));
                 }
               });
     }
@@ -79,9 +80,7 @@ class PersistUploadExampleTest {
                 try (var files = Files.list(directory)) {
                   assertEquals(
                       Set.of(sentinel.getFileName().toString(), first.body(), second.body()),
-                      files
-                          .map(path -> path.getFileName().toString())
-                          .collect(java.util.stream.Collectors.toSet()));
+                      files.map(path -> path.getFileName().toString()).collect(Collectors.toSet()));
                 }
               });
     }

@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.nio.channels.SeekableByteChannel;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,7 +44,7 @@ class ResponseResourceTest {
     response.complete();
 
     assertEquals(List.of(3L), channel.readPositions());
-    assertEquals("345", body.toString(java.nio.charset.StandardCharsets.UTF_8));
+    assertEquals("345", body.toString(StandardCharsets.UTF_8));
   }
 
   @Test
@@ -59,7 +60,7 @@ class ResponseResourceTest {
 
     assertSame(response, chained);
     assertEquals("ok", responseHeaders.get("X-Chain"));
-    assertEquals("0123456789", body.toString(java.nio.charset.StandardCharsets.UTF_8));
+    assertEquals("0123456789", body.toString(StandardCharsets.UTF_8));
   }
 
   private static Response response(
@@ -110,7 +111,7 @@ class ResponseResourceTest {
     private boolean open;
 
     private TrackingChannel(String content, boolean failPosition) {
-      bytes = content.getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+      bytes = content.getBytes(StandardCharsets.US_ASCII);
       this.failPosition = failPosition;
       readPositions = new ArrayList<>();
       open = true;

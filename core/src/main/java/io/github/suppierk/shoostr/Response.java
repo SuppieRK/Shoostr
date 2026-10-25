@@ -21,6 +21,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -479,7 +480,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       var buffer = new byte[options.streamBufferBytes()];
       for (int read; (read = source.read(buffer)) >= 0; ) {
         if (read > 0) {
-          output.write(read == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, read));
+          output.write(read == buffer.length ? buffer : Arrays.copyOf(buffer, read));
         }
       }
 

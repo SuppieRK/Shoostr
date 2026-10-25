@@ -193,13 +193,7 @@ public final class ManagedWebSocket implements Session.Listener {
     releaseIfFinished();
   }
 
-  /**
-   * Schedules actual work once; idle connections retain state without occupying a worker.
-   *
-   * <p>ReferenceEquality is suppressed because only the currently owned task may clear dispatch
-   * state.
-   */
-  @SuppressWarnings("ReferenceEquality")
+  /** Schedules actual work once; idle connections retain state without occupying a worker. */
   private void schedule() {
     FutureTask<Void> pending;
     synchronized (events) {
@@ -218,7 +212,7 @@ public final class ManagedWebSocket implements Session.Listener {
     } catch (RejectedExecutionException ignored) {
       synchronized (events) {
         pending.cancel(false);
-        if (task != pending) {
+        if (!pending.equals(task)) {
           return;
         }
 
@@ -246,14 +240,12 @@ public final class ManagedWebSocket implements Session.Listener {
    * reporting them to the worker's uncaught exception handler. Logging and rethrowing the original
    * error preserves both diagnostics and the task's failed state.
    *
-   * <p>ReferenceEquality is suppressed because a callback must still own its exact scheduled task.
-   *
    * @param pending task whose ownership must still match this connection
    */
-  @SuppressWarnings({"java:S1181", "java:S2139", "ReferenceEquality"})
+  @SuppressWarnings({"java:S1181", "java:S2139"})
   private void run(FutureTask<Void> pending) {
     synchronized (events) {
-      if (task != pending || dispatchClosed) {
+      if (!pending.equals(task) || dispatchClosed) {
         return;
       }
 
@@ -343,11 +335,8 @@ public final class ManagedWebSocket implements Session.Listener {
   /**
    * Completes active ownership before another item or terminal observer can be admitted.
    *
-   * <p>ReferenceEquality is suppressed because completion may release only its own task instance.
-   *
    * @param pending task completing its actual application work
    */
-  @SuppressWarnings("ReferenceEquality")
   private void finish(FutureTask<Void> pending) {
     boolean notify;
     synchronized (events) {
@@ -366,7 +355,7 @@ public final class ManagedWebSocket implements Session.Listener {
         // Cancellation uses this same lock; no task interrupt can arrive after ownership clears.
         Thread.interrupted();
         worker = null;
-        if (task == pending) {
+        if (pending.equals(task)) {
           task = null;
         }
       }

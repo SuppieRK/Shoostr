@@ -11,6 +11,7 @@ import java.net.URLDecoder;
 import java.nio.channels.SeekableByteChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.NoSuchFileException;
@@ -30,7 +31,12 @@ import org.eclipse.jetty.util.resource.Resource;
 import org.eclipse.jetty.util.resource.ResourceFactory;
 import org.jspecify.annotations.Nullable;
 
-/** A frozen filesystem or classpath directory mounted below one application path. */
+/**
+ * A filesystem or classpath directory mounted below one application path. Equality compares stored
+ * mount, policy, option and native resource state; it does not compare directory contents. Separate
+ * openings retain their resources' equality contracts. Registration updates to behavior can change
+ * equality and hash codes; registration ownership is tracked by identity.
+ */
 final class StaticFiles implements Closeable {
   private static final String BINARY_CONTENT_TYPE = "application/octet-stream";
   private final String mount;
@@ -117,6 +123,33 @@ final class StaticFiles implements Closeable {
   }
 
   /**
+   * Compares all stored mount settings and owned resource references.
+   *
+   * @param other candidate mount
+   * @return whether both mounts have equal stored state
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return other instanceof StaticFiles files
+        && mount.equals(files.mount)
+        && Objects.equals(behavior, files.behavior)
+        && options.equals(files.options)
+        && Objects.equals(rootDirectory, files.rootDirectory)
+        && Objects.equals(resourceFactory, files.resourceFactory)
+        && Objects.equals(source, files.source);
+  }
+
+  /**
+   * Hashes the same mount settings and resource references used by equality.
+   *
+   * @return hash of the stored mount state
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(mount, behavior, options, rootDirectory, resourceFactory, source);
+  }
+
+  /**
    * Retains an independent descriptor while always closing the stream used to check capabilities.
    *
    * @param root resolved filesystem directory
@@ -161,7 +194,7 @@ final class StaticFiles implements Closeable {
    */
   @Nullable FileSystem archiveFileSystem() {
     var path = source == null ? null : source.getPath();
-    return path == null || path.getFileSystem().equals(java.nio.file.FileSystems.getDefault())
+    return path == null || path.getFileSystem().equals(FileSystems.getDefault())
         ? null
         : path.getFileSystem();
   }

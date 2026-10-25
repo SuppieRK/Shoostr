@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -42,7 +43,7 @@ class ScopedExtensionsTest {
                 .firstValue("X-Scope")
                 .orElseThrow());
         assertEquals(
-            java.util.Optional.empty(),
+            Optional.empty(),
             test.send(request -> request.path("/sibling"), HttpResponse.BodyHandlers.ofString())
                 .headers()
                 .firstValue("X-Scope"));

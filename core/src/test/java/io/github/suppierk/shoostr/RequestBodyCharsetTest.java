@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
+import java.io.OutputStream;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -259,7 +260,7 @@ class RequestBodyCharsetTest {
                   assertThrows(
                       IllegalStateException.class,
                       () -> request.bodyText(StandardCharsets.ISO_8859_1));
-                  input.transferTo(java.io.OutputStream.nullOutputStream());
+                  input.transferTo(OutputStream.nullOutputStream());
                 }
 
                 response.text("checked");

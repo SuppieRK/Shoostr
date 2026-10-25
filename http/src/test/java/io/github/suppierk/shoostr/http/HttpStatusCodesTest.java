@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.util.Arrays;
 import java.util.Set;
 import java.util.stream.Collectors;
+import nl.jqno.equalsverifier.EqualsVerifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -14,6 +15,11 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class HttpStatusCodesTest {
+  @Test
+  void satisfiesEqualsAndHashCodeContract() {
+    EqualsVerifier.forClass(HttpStatusCodes.class).verify();
+  }
+
   @ParameterizedTest
   @CsvSource(
       textBlock =

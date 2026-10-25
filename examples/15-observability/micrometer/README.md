@@ -1,10 +1,9 @@
 # Request metrics with Prometheus and Grafana
 
-Maintainer backend fixture. Consumer recipes cover [logging](../../../site/src/content/docs/observability/logging.mdx) and [metrics](../../../site/src/content/docs/observability/metrics.mdx).
+Maintainer backend fixture for the [request metrics recipe](../../../site/src/content/docs/observability/metrics.mdx).
 
-Focused consumer recipes use [AccessLoggingExample](src/main/java/io/github/suppierk/shoostr/example/metrics/AccessLoggingExample.java)
-and [RequestMetricsExample](src/main/java/io/github/suppierk/shoostr/example/metrics/RequestMetricsExample.java),
-with complete tests in this module. Access logging itself needs only Shoostr core.
+The recipe uses [RequestMetricsExample](src/main/java/io/github/suppierk/shoostr/example/metrics/RequestMetricsExample.java),
+with complete tests in this module.
 These fixtures verify local instrumentation; the backend lane below separately
 checks actual Prometheus ingestion and Grafana queries.
 

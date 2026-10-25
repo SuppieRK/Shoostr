@@ -4,11 +4,45 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import java.time.Instant;
+import nl.jqno.equalsverifier.EqualsVerifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class CookieTest {
+  @Test
+  void sameSiteSatisfiesEqualsAndHashCodeContract() {
+    EqualsVerifier.forClass(Cookie.SameSite.class).verify();
+  }
+
+  @Test
+  void satisfiesEqualsAndHashCodeContract() {
+    var first =
+        new Cookie(
+            "first",
+            "alpha",
+            "/one",
+            "one.example",
+            60,
+            false,
+            false,
+            Cookie.SameSite.LAX,
+            Instant.parse("2030-01-01T00:00:00Z"));
+    var second =
+        new Cookie(
+            "second",
+            "beta",
+            "/two",
+            "two.example",
+            120,
+            true,
+            true,
+            Cookie.SameSite.STRICT,
+            Instant.parse("2031-01-01T00:00:00Z"));
+
+    EqualsVerifier.forExamples(first, second).withNonnullFields("name", "value", "path").verify();
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {"a b", "a;b", "a,b", "a\\b", "a\"b", "\rvalue", "\nvalue", "\u007f", "\u0080"})

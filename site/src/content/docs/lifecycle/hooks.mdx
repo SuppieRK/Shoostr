@@ -29,6 +29,9 @@ Application terminal observers also see unmatched requests, whose route pattern 
 An exception stops the ordinary phase; [exception handling](../../errors/exceptions/) determines how an uncommitted failure is rendered.
 
 Retain `RequestOutcome` instead of the live request or response: its status is the committed final status, or zero when none was committed, and its separate failure fields distinguish application and transport failures.
+Its `routePattern()` contains the composed registered template, such as `/jobs/{id}`, without substituting request identifiers or appending query strings; when no endpoint was selected, it remains `null` rather than exposing the requested path.
+Use this registration metadata to identify the endpoint in logs and metrics, applying any escaping your output format requires.
+The summary retains the original method and diagnostic failure objects; it does not provide a sanitized log record.
 Terminal callbacks may run on transport threads, so do not block them or assume handler thread-local state remains attached.
 Runtime failures in one terminal observer do not suppress later observers, but diagnostic failure objects must not become response bodies or metric labels.
 

@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.http.exceptions;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -23,6 +24,18 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class HttpExceptionTest {
+  @Test
+  void separateExceptionsRemainDistinctWithIdenticalDiagnostics() {
+    var cause = new IllegalArgumentException("cause");
+    var first = new BadRequestException("diagnostic message", cause);
+    var second = new BadRequestException("diagnostic message", cause);
+    second.setStackTrace(first.getStackTrace());
+
+    assertNotEquals(first, second);
+    first.addSuppressed(second);
+    assertSame(second, first.getSuppressed()[0]);
+  }
+
   @Test
   void preservesAuthorizationDenialChallengeAndForbiddenStatus() {
     var exception = new AuthorizationDeniedException("Bearer error=\"insufficient_scope\"");

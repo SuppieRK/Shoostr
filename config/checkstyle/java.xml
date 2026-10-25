@@ -23,6 +23,11 @@
 			<property name="allowedAnnotations" value=""/>
 			<property name="validateThrows" value="true"/>
 		</module>
+		<module name="MatchXpath">
+			<property name="id" value="qualifiedAnnotation"/>
+			<property name="query" value="//ANNOTATION/DOT[descendant::IDENT[matches(@text, '^[a-z]')]]"/>
+			<message key="matchxpath.match" value="Import the annotation type instead of using its fully qualified name."/>
+		</module>
 		<module name="io.github.suppierk.build.StatementSpacingCheck"/>
 		<module name="io.github.suppierk.build.ConstantComparisonCheck"/>
 		<module name="NeedBraces">

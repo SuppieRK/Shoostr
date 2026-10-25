@@ -19,6 +19,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import org.eclipse.jetty.http.HttpCookie.SameSite;
 import org.eclipse.jetty.session.DefaultSessionCache;
 import org.eclipse.jetty.session.FileSessionDataStore;
 import org.eclipse.jetty.session.SessionHandler;
@@ -220,7 +221,7 @@ class SessionTest {
       app.sessions(
           handler -> {
             handler.setSessionCookie("WEBSESSION");
-            handler.setSameSite(org.eclipse.jetty.http.HttpCookie.SameSite.STRICT);
+            handler.setSameSite(SameSite.STRICT);
             handler.setMaxCookieAge(60);
           });
       app.routes()

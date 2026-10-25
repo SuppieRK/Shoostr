@@ -4,5 +4,7 @@
  * body handler; assertions and scoped/shared fixture lifetimes belong to the caller's testing
  * framework.
  */
-@org.jspecify.annotations.NullMarked
+@NullMarked
 package io.github.suppierk.shoostr.testing;
+
+import org.jspecify.annotations.NullMarked;

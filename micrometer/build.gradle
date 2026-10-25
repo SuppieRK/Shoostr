@@ -3,4 +3,5 @@ dependencies {
 	api project(':core')
 	api 'io.micrometer:micrometer-core:1.17.2'
 	testImplementation project(':test')
+	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 }

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.Shoostr;
+import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -51,7 +52,7 @@ class ExistingApplicationTest {
         var client = HttpClient.newHttpClient()) {
       app.routes().get("/value", (ignored2, response) -> response.text("still running"));
       app.start();
-      var target = java.net.URI.create("http://127.0.0.1:" + app.port() + "/value");
+      var target = URI.create("http://127.0.0.1:" + app.port() + "/value");
 
       assertThrows(IllegalStateException.class, () -> TestServer.start(app));
       assertEquals(

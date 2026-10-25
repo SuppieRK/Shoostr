@@ -18,6 +18,7 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import reactor.core.publisher.Mono;
 
 class McpToolTest {
   @ParameterizedTest
@@ -148,7 +149,7 @@ class McpToolTest {
                             .tool(tool)
                             .callHandler(
                                 (ignored13, ignored14) ->
-                                    reactor.core.publisher.Mono.just(
+                                    Mono.just(
                                         McpSchema.CallToolResult.builder()
                                             .addTextContent("hello from async Shoostr")
                                             .build()))

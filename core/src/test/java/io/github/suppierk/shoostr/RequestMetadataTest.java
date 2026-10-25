@@ -44,6 +44,7 @@ import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.io.EndPoint;
 import org.eclipse.jetty.server.ConnectionMetaData;
+import org.eclipse.jetty.server.Request.Wrapper;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -116,7 +117,7 @@ class RequestMetadataTest {
                                   "getServerAuthority".equals(method.getName())
                                       ? null
                                       : method.invoke(nativeMetadata, arguments));
-                  return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
+                  return new Wrapper(nativeRequest) {
                     @Override
                     public HttpURI getHttpURI() {
                       return uri;
@@ -185,7 +186,7 @@ class RequestMetadataTest {
                                   "getConnection".equals(method.getName())
                                       ? connection
                                       : method.invoke(nativeMetadata, arguments));
-                  return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
+                  return new Wrapper(nativeRequest) {
                     @Override
                     public ConnectionMetaData getConnectionMetaData() {
                       return metadata;
@@ -245,7 +246,7 @@ class RequestMetadataTest {
 
                                 return method.invoke(original, arguments);
                               });
-                  return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
+                  return new Wrapper(nativeRequest) {
                     @Override
                     public HttpFields getHeaders() {
                       return fields;
@@ -335,7 +336,7 @@ class RequestMetadataTest {
                 (nativeRequest, ignored9) -> {
                   var fields = HttpFields.build(nativeRequest.getHeaders());
                   transportHeaders.set(fields);
-                  return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
+                  return new Wrapper(nativeRequest) {
                     @Override
                     public HttpFields getHeaders() {
                       return fields;

@@ -28,6 +28,7 @@ allprojects {
 	apply plugin: 'com.diffplug.spotless'
 	apply plugin: 'checkstyle'
 	apply plugin: 'java'
+	apply from: rootProject.file('config/gradle/errorprone.gradle')
 
 	java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 	tasks.withType(JavaCompile).configureEach {
@@ -41,7 +42,7 @@ allprojects {
 		groovyGradle { greclipse() }
 	}
 	checkstyle {
-		toolVersion = '14.1.0'
+		toolVersion = '14.3.0'
 		configFile = rootProject.file('config/checkstyle/checkstyle.xml')
 	}
 	dependencies {
@@ -88,6 +89,9 @@ subprojects {
 			configFile = rootProject.file(
 					sourceSet.name == 'test' ? 'config/checkstyle/java-test.xml' : 'config/checkstyle/java.xml')
 		}
+		tasks.named("checkstyle${sourceSet.name.capitalize()}") {
+			dependsOn javaRules
+		}
 		tasks.named('check') { dependsOn javaRules }
 	}
 }
@@ -124,6 +128,8 @@ dependencies {
 tasks.named('check') {
 	dependsOn checkstyleBuildLogic, checkstyleBuildLogicTests
 }
+tasks.named('checkstyleMain') { dependsOn checkstyleBuildLogic }
+tasks.named('checkstyleTest') { dependsOn checkstyleBuildLogicTests }
 
 tasks.named('check') {
 	dependsOn subprojects.collect {

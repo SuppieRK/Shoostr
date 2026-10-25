@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import org.eclipse.jetty.http.HttpURI;
@@ -20,7 +21,10 @@ import org.eclipse.jetty.util.HostPort;
 import org.eclipse.jetty.util.QuotedStringTokenizer;
 import org.jspecify.annotations.Nullable;
 
-/** Applies explicit proxy trust without wrapping the underlying transport request. */
+/**
+ * Applies explicit proxy trust without wrapping the underlying transport request. Equality uses the
+ * predicate object's own equality contract and the selected forwarding header family.
+ */
 final class TrustedProxy {
   private static final int MAX_FORWARDING_ELEMENTS = 64;
   private static final String X_FORWARDED_FOR = "X-Forwarded-For";
@@ -56,10 +60,34 @@ final class TrustedProxy {
    *
    * @param trusted application-owned thread-safe peer predicate
    * @param headers selected forwarding header family
+   * @throws NullPointerException if either configuration value is null
    */
   TrustedProxy(Predicate<InetAddress> trusted, ForwardedHeaders headers) {
-    this.trusted = trusted;
-    this.headers = headers;
+    this.trusted = Objects.requireNonNull(trusted);
+    this.headers = Objects.requireNonNull(headers);
+  }
+
+  /**
+   * Compares the configured predicate and forwarding header family.
+   *
+   * @param other object to compare
+   * @return whether both configurations have equal predicates and the same header family
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return other instanceof TrustedProxy proxy
+        && trusted.equals(proxy.trusted)
+        && headers == proxy.headers;
+  }
+
+  /**
+   * Computes a hash from the trust predicate and header family.
+   *
+   * @return hash of both configuration values
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(trusted, headers);
   }
 
   /**

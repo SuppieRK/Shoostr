@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr.http;
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -16,12 +17,46 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import nl.jqno.equalsverifier.EqualsVerifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class ProblemDetailsTest {
+  @Test
+  void satisfiesEqualsAndHashCodeContract() {
+    EqualsVerifier.forClass(ProblemDetails.class).withNonnullFields("extensions").verify();
+  }
+
+  @Test
+  void equalContentsHaveEqualHashesRegardlessOfExtensionOrder() {
+    var first =
+        ProblemDetails.builder()
+            .type(URI.create("/problems/invalid-order"))
+            .title("Invalid order")
+            .status(422)
+            .detail("Quantity must be positive")
+            .instance(URI.create("/orders/123"))
+            .extension("errors", List.of(Map.of("field", "quantity", "reason", "positive")))
+            .extension("trace", null)
+            .build();
+    var second =
+        ProblemDetails.builder()
+            .type(URI.create("/problems/invalid-order"))
+            .title("Invalid order")
+            .status(422)
+            .detail("Quantity must be positive")
+            .instance(URI.create("/orders/123"))
+            .extension("trace", null)
+            .extension("errors", List.of(Map.of("reason", "positive", "field", "quantity")))
+            .build();
+
+    assertNotSame(first, second);
+    assertEquals(first, second);
+    assertEquals(first.hashCode(), second.hashCode());
+  }
+
   @Test
   void omitsEveryUnsetStandardMember() {
     var problem = ProblemDetails.builder().build();

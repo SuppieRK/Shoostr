@@ -62,6 +62,7 @@ import org.eclipse.jetty.http.HostPortHttpField;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.MetaData;
+import org.eclipse.jetty.http2.api.Session.Listener;
 import org.eclipse.jetty.http2.api.Stream;
 import org.eclipse.jetty.http2.client.HTTP2Client;
 import org.eclipse.jetty.http2.frames.DataFrame;
@@ -1755,7 +1756,7 @@ public class WebSocketRoutesTest {
             .connect(
                 secure ? client.getClientConnector().getSslContextFactory() : null,
                 new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
-                new org.eclipse.jetty.http2.api.Session.Listener() {
+                new Listener() {
                   @Override
                   public void onSettings(
                       org.eclipse.jetty.http2.api.Session session, SettingsFrame frame) {

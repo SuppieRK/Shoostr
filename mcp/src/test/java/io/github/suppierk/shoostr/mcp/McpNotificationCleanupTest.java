@@ -16,6 +16,7 @@ import java.io.InputStreamReader;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
@@ -118,8 +119,7 @@ class McpNotificationCleanupTest {
           var reply =
               McpJsonDefaults.getMapper()
                   .writeValueAsBytes(
-                      McpSchema.JSONRPCResponse.result(
-                          roots.id(), Map.of("roots", java.util.List.of())));
+                      McpSchema.JSONRPCResponse.result(roots.id(), Map.of("roots", List.of())));
           var replied =
               test.send(
                   request ->

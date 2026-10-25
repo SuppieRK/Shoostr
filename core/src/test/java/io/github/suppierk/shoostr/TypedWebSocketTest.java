@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import io.github.suppierk.shoostr.WebSocket.MessageHandler;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -142,7 +143,7 @@ class TypedWebSocketTest {
             return super.read(source, type);
           }
         };
-    io.github.suppierk.shoostr.WebSocket.MessageHandler<byte[]> raw = WebSocketConnection::send;
+    MessageHandler<byte[]> raw = WebSocketConnection::send;
     var app =
         new Shoostr()
             .codec(codec)

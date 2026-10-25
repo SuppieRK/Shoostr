@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.TreeSet;
 import org.jspecify.annotations.Nullable;
@@ -16,10 +17,9 @@ import org.jspecify.annotations.Nullable;
 /**
  * Scoped browser response sharing, resolved before authentication and request admission.
  *
- * <p>S6206 is suppressed because each extension instance identifies a distinct owner, even when
- * instances share the same policy.
+ * <p>Equality compares the immutable policy. Installation and route selection identify the exact
+ * extension instance independently of this value comparison.
  */
-@SuppressWarnings("java:S6206")
 public final class Cors implements Extension<Cors.Configuration> {
   private static final Map<String, String> VARIATION =
       Map.of(HttpHeaders.VARY.value(), HttpHeaders.ORIGIN.value());
@@ -40,7 +40,7 @@ public final class Cors implements Extension<Cors.Configuration> {
    * @param policy immutable permissions
    */
   public Cors(CorsPolicy policy) {
-    this.policy = java.util.Objects.requireNonNull(policy);
+    this.policy = Objects.requireNonNull(policy);
   }
 
   /**
@@ -50,6 +50,27 @@ public final class Cors implements Extension<Cors.Configuration> {
    */
   public CorsPolicy policy() {
     return policy;
+  }
+
+  /**
+   * Compares the complete cross-origin permissions.
+   *
+   * @param other object to compare
+   * @return whether both extensions have equal policies
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return other instanceof Cors cors && policy.equals(cors.policy);
+  }
+
+  /**
+   * Computes a hash from the immutable policy.
+   *
+   * @return policy hash
+   */
+  @Override
+  public int hashCode() {
+    return policy.hashCode();
   }
 
   /** {@inheritDoc} */
@@ -72,8 +93,8 @@ public final class Cors implements Extension<Cors.Configuration> {
      * @param inherited enclosing configuration, or null
      */
     private Configuration(Extensions endpoint, Cors cors, @Nullable Configuration inherited) {
-      this.endpoint = java.util.Objects.requireNonNull(endpoint);
-      this.cors = java.util.Objects.requireNonNull(cors);
+      this.endpoint = Objects.requireNonNull(endpoint);
+      this.cors = Objects.requireNonNull(cors);
       policy = inherited == null ? cors.policy : inherited.policy;
       endpoint.cors(cors, policy);
     }
@@ -88,7 +109,7 @@ public final class Cors implements Extension<Cors.Configuration> {
      */
     public Configuration policy(CorsPolicy contribution) {
       endpoint.requireMutable();
-      var combined = java.util.Objects.requireNonNull(contribution);
+      var combined = Objects.requireNonNull(contribution);
       endpoint.cors(cors, combined);
 
       policy = combined;

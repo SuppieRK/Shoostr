@@ -5,6 +5,7 @@ import io.github.suppierk.shoostr.http.HttpMethods;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumSet;
 import java.util.HashMap;
@@ -19,7 +20,11 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.regex.Pattern;
 import org.jspecify.annotations.Nullable;
 
-/** Frozen compressed path patterns with literal, constrained, parameter and catch-all branches. */
+/**
+ * Frozen compressed path patterns with literal, constrained, parameter and catch-all branches.
+ * Equality compares the concrete node kind and stored route data, including child arrays by value.
+ * Callback and resource components retain their own equality contracts.
+ */
 class RadixRoutes {
   private static final String CATCH_ALL_EDGE = "{*}";
   private static final String CONSTRAINT_PREFIX = "{:";
@@ -49,6 +54,7 @@ class RadixRoutes {
    * @param children sorted literal branches
    * @param parameter parameter branch, or null if absent
    * @param staticFiles fallback static mounts retained by the root node
+   * @throws NullPointerException if a required collection or child array is null
    */
   private RadixRoutes(
       @Nullable String edge,
@@ -59,10 +65,45 @@ class RadixRoutes {
       List<StaticFiles> staticFiles) {
     this.edge = edge;
     this.label = label;
-    this.endpoints = endpoints;
-    this.children = children;
+    this.endpoints = Objects.requireNonNull(endpoints);
+    this.children = Objects.requireNonNull(children);
     this.parameter = parameter;
-    this.staticFiles = staticFiles;
+    this.staticFiles = Objects.requireNonNull(staticFiles);
+  }
+
+  /**
+   * Compares the node kind and frozen route state without executing handlers.
+   *
+   * <p>EqualsGetClass is suppressed because node subclasses implement different matching behavior
+   * and must remain unequal even when their shared fields match.
+   *
+   * @param other candidate node
+   * @return whether both nodes have the same kind and stored state
+   */
+  @Override
+  @SuppressWarnings("EqualsGetClass")
+  public boolean equals(@Nullable Object other) {
+    if (other == null || getClass() != other.getClass()) {
+      return false;
+    }
+
+    var node = (RadixRoutes) other;
+    return label == node.label
+        && Objects.equals(edge, node.edge)
+        && endpoints.equals(node.endpoints)
+        && Arrays.equals(children, node.children)
+        && Objects.equals(parameter, node.parameter)
+        && staticFiles.equals(node.staticFiles);
+  }
+
+  /**
+   * Hashes the same node state used by equality, including child array contents.
+   *
+   * @return hash of the stored node state
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(edge, label, endpoints, Arrays.hashCode(children), parameter, staticFiles);
   }
 
   /**
@@ -1205,6 +1246,29 @@ class RadixRoutes {
         List<StaticFiles> staticFiles) {
       super(null, CONSTRAINT_LABEL, endpoints, children, parameter, staticFiles);
       this.constraint = Objects.requireNonNull(constraint);
+    }
+
+    /**
+     * Compares the node state and its compiled character constraint.
+     *
+     * @param other candidate node
+     * @return whether the node and constraint state match
+     */
+    @Override
+    public boolean equals(@Nullable Object other) {
+      return other instanceof ConstrainedRoutes node
+          && super.equals(node)
+          && constraint.equals(node.constraint);
+    }
+
+    /**
+     * Hashes the node state and compiled character constraint.
+     *
+     * @return hash of the complete constrained node state
+     */
+    @Override
+    public int hashCode() {
+      return 31 * super.hashCode() + constraint.hashCode();
     }
 
     /**

@@ -1,0 +1,11 @@
+apply plugin: 'net.ltgt.errorprone'
+
+dependencies {
+	errorprone 'com.google.errorprone:error_prone_core:2.51.0'
+}
+
+tasks.withType(JavaCompile).configureEach {
+	// Previously unchecked build logic and benchmarks enable only the explicit project rule.
+	options.errorprone.disableAllChecks = true
+	options.errorprone.error('UnnecessarilyFullyQualified')
+}

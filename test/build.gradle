@@ -4,4 +4,5 @@ plugins {
 
 dependencies {
 	api project(':core')
+	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 }

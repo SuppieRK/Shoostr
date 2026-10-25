@@ -14,6 +14,7 @@ import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
+import io.opentelemetry.api.common.AttributeKey;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
@@ -351,10 +352,7 @@ class SelectedTracingTest {
       assertEquals("GET /selected", spans.getFirst().getName());
       assertEquals(
           404L,
-          spans
-              .getFirst()
-              .getAttributes()
-              .get(io.opentelemetry.api.common.AttributeKey.longKey("http.response.status_code")));
+          spans.getFirst().getAttributes().get(AttributeKey.longKey("http.response.status_code")));
     }
   }
 

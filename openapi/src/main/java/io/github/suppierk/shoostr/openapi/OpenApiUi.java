@@ -7,6 +7,7 @@ import io.swagger.v3.core.util.Json31;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
@@ -14,6 +15,8 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Exact startup-prepared UI URL allowlist, not a classpath/filesystem server or route registrar.
+ * Equality compares the configured UI and specification paths. The derived asset cache is excluded,
+ * so startup preparation preserves equality and hashing.
  */
 final class OpenApiUi implements Handler {
   private static final String HTML =
@@ -44,6 +47,29 @@ final class OpenApiUi implements Handler {
     }
 
     resources = new AtomicReference<>();
+  }
+
+  /**
+   * Compares configured paths independently of startup asset preparation.
+   *
+   * @param other candidate UI handler
+   * @return whether both handlers have the same configured paths
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return other instanceof OpenApiUi ui
+        && basePath.equals(ui.basePath)
+        && specPath.equals(ui.specPath);
+  }
+
+  /**
+   * Hashes configured paths without reading the derived asset cache.
+   *
+   * @return hash of the UI configuration
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(basePath, specPath);
   }
 
   /**
@@ -166,6 +192,29 @@ final class OpenApiUi implements Handler {
     private Resource(String contentType, byte[] bytes) {
       this.contentType = Objects.requireNonNull(contentType);
       this.bytes = Objects.requireNonNull(bytes);
+    }
+
+    /**
+     * Compares media type and owned body bytes by content.
+     *
+     * @param other candidate resource
+     * @return whether metadata and byte contents match
+     */
+    @Override
+    public boolean equals(@Nullable Object other) {
+      return other instanceof Resource resource
+          && contentType.equals(resource.contentType)
+          && Arrays.equals(bytes, resource.bytes);
+    }
+
+    /**
+     * Hashes the media type and byte contents used by equality.
+     *
+     * @return hash of the resource contents
+     */
+    @Override
+    public int hashCode() {
+      return 31 * contentType.hashCode() + Arrays.hashCode(bytes);
     }
   }
 }

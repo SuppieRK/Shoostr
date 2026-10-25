@@ -11,8 +11,13 @@ import io.micrometer.core.instrument.Timer;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Function;
+import org.jspecify.annotations.Nullable;
 
-/** Optional metrics registered with Shoostr.observe; the application owns the supplied registry. */
+/**
+ * Optional metrics registered with Shoostr.observe; the application owns the supplied registry.
+ * Equality compares the registry, active timer and registration flags through their own equality
+ * contracts. Configuration and installation changes can change equality and hash codes.
+ */
 public final class MicrometerMetrics
     implements Extension<Void>, Function<Request, RequestObservation> {
   private final MeterRegistry registry;
@@ -31,6 +36,31 @@ public final class MicrometerMetrics
         LongTaskTimer.builder("http.server.requests.active")
             .description("Requests admitted but not yet terminal")
             .register(registry);
+  }
+
+  /**
+   * Compares all stored collaborators and registration state.
+   *
+   * @param other candidate provider
+   * @return whether both providers have equal stored state
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return other instanceof MicrometerMetrics provider
+        && registry.equals(provider.registry)
+        && active.equals(provider.active)
+        && allRequests == provider.allRequests
+        && installed == provider.installed;
+  }
+
+  /**
+   * Hashes the same collaborators and registration state used by equality.
+   *
+   * @return hash of the current provider state
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(registry, active, allRequests, installed);
   }
 
   /**

@@ -33,8 +33,11 @@ import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.QuotedQualityCSV;
 import org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory;
 import org.eclipse.jetty.http2.server.HTTP2ServerConnectionFactory;
+import org.eclipse.jetty.server.Handler.Abstract;
+import org.eclipse.jetty.server.Handler.Wrapper;
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.HttpConnectionFactory;
+import org.eclipse.jetty.server.Request.Handler.AbortException;
 import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
@@ -845,12 +848,9 @@ public final class Shoostr implements Closeable {
    * Reentrant closure during provider setup defers final callbacks until that setup unwinds and
    * completes provider cleanup.
    *
-   * <p>ReferenceEquality is suppressed because cleanup may detach only the owned executor instance.
-   *
    * @throws IOException if resources cannot be closed
    */
   @Override
-  @SuppressWarnings("ReferenceEquality")
   public synchronized void close() throws IOException {
     if (closed) {
       return;
@@ -902,7 +902,7 @@ public final class Shoostr implements Closeable {
         try {
           if (server != null
               && server.getThreadPool() instanceof QueuedThreadPool pool
-              && pool.getVirtualThreadsExecutor() == ownedVirtualThreads) {
+              && ownedVirtualThreads.equals(pool.getVirtualThreadsExecutor())) {
             // Let native late cleanup use Jetty's policy instead of a closed virtual delegate.
             pool.setVirtualThreadsExecutor(null);
           }
@@ -1262,22 +1262,18 @@ public final class Shoostr implements Closeable {
   /**
    * Runs native server and session customization, then verifies Shoostr still owns the listener.
    *
-   * <p>ReferenceEquality is suppressed because native hooks must preserve the owned handler
-   * instances.
-   *
    * @param server unstarted transport server
    * @param graceful root graceful-shutdown handler
    * @param applicationHandler request dispatcher
    * @param connector default listener owned by Shoostr
    * @throws IllegalStateException if native configuration changes owned wiring or closes Shoostr
    */
-  @SuppressWarnings("ReferenceEquality")
   private void configureNativeServer(
       Server server,
       GracefulHandler graceful,
       org.eclipse.jetty.server.Handler applicationHandler,
       ServerConnector connector) {
-    var installedHandler = graceful.getHandler();
+    var installedHandler = Objects.requireNonNull(graceful.getHandler());
     for (var configuration : List.copyOf(serverConfigurations)) {
       configuration.accept(server);
       if (closed) {
@@ -1300,8 +1296,8 @@ public final class Shoostr implements Closeable {
 
     if (!server.isStopped()
         || server.getStopAtShutdown()
-        || server.getDescendant(GracefulHandler.class) != graceful
-        || graceful.getHandler() != installedHandler
+        || !graceful.equals(server.getDescendant(GracefulHandler.class))
+        || !installedHandler.equals(graceful.getHandler())
         || !List.of(server.getConnectors()).contains(connector)) {
       throw new IllegalStateException(
           "Jetty configuration must preserve Shoostr lifecycle, handler and default connector");
@@ -1363,8 +1359,7 @@ public final class Shoostr implements Closeable {
               }
 
               response.fail();
-              upgradeCallback.failed(
-                  new org.eclipse.jetty.server.Request.Handler.AbortException(writeFailure));
+              upgradeCallback.failed(new AbortException(writeFailure));
             }
 
             return null;
@@ -1661,7 +1656,7 @@ public final class Shoostr implements Closeable {
   }
 
   /** Request dispatcher with one immutable startup snapshot and no registration locks. */
-  private final class ApplicationHandler extends org.eclipse.jetty.server.Handler.Wrapper {
+  private final class ApplicationHandler extends Wrapper {
     private final RadixRoutes compiledRoutes;
     private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors;
     private final Map<Integer, Handler> statuses;
@@ -1728,7 +1723,7 @@ public final class Shoostr implements Closeable {
       interceptPreflights = extensions.stream().anyMatch(Cors.class::isInstance);
 
       sessionContinuation =
-          new org.eclipse.jetty.server.Handler.Abstract() {
+          new Abstract() {
             /** {@inheritDoc} */
             @Override
             public boolean handle(
@@ -1865,17 +1860,14 @@ public final class Shoostr implements Closeable {
     /**
      * Rejects native callbacks that detach or replace the owned application dispatcher.
      *
-     * <p>ReferenceEquality is suppressed because native hooks must preserve the exact owned wiring.
-     *
      * @throws IllegalStateException if native configuration changes the owned handler chain
      */
-    @SuppressWarnings("ReferenceEquality")
     private void validateApplicationWiring() {
       var owner = Objects.requireNonNull(server);
       if (owner.getDescendant(ApplicationHandler.class) != this
-          || getServer() != owner
-          || getHandler()
-              != (applicationSessions == null ? sessionContinuation : applicationSessions)) {
+          || !owner.equals(getServer())
+          || !(applicationSessions == null ? sessionContinuation : applicationSessions)
+              .equals(getHandler())) {
         throw new IllegalStateException(
             "Native configuration must preserve the application handler chain");
       }
@@ -1884,7 +1876,8 @@ public final class Shoostr implements Closeable {
     /**
      * Checks the owned native handler lifecycle and shared server session identifier manager.
      *
-     * <p>ReferenceEquality is suppressed because sessions must retain their owned native instances.
+     * <p>ReferenceEquality is suppressed because the shared session manager must be the same
+     * instance.
      *
      * @param started whether native managers have completed startup
      * @throws IllegalStateException if native configuration changes owned wiring or lifecycle
@@ -1893,8 +1886,8 @@ public final class Shoostr implements Closeable {
     private void validateSessions(boolean started) {
       validateApplicationWiring();
       if (applicationSessions != null) {
-        if (applicationSessions.getServer() != server
-            || applicationSessions.getHandler() != sessionContinuation
+        if (!Objects.requireNonNull(server).equals(applicationSessions.getServer())
+            || !sessionContinuation.equals(applicationSessions.getHandler())
             || (started ? !applicationSessions.isStarted() : !applicationSessions.isStopped())) {
           throw new IllegalStateException(
               "Session configuration must preserve owned native wiring");
@@ -2043,8 +2036,7 @@ public final class Shoostr implements Closeable {
 
       try {
         if (terminalFailure != null) {
-          callback.failed(
-              new org.eclipse.jetty.server.Request.Handler.AbortException(terminalFailure));
+          callback.failed(new AbortException(terminalFailure));
         }
       } finally {
         if (observation != null) {

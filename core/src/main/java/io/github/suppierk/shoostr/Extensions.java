@@ -188,9 +188,13 @@ public final class Extensions {
   /**
    * Selects the immutable CSRF owner.
    *
+   * <p>ReferenceEquality is suppressed because selection requires the same installed instance, even
+   * when two extensions trust the same origins.
+   *
    * @param owner selected protection
    * @throws IllegalArgumentException if a different CSRF owner is already selected
    */
+  @SuppressWarnings("ReferenceEquality")
   void csrf(Csrf owner) {
     requireMutable();
     if (csrf != null && csrf != owner) {
@@ -203,10 +207,14 @@ public final class Extensions {
   /**
    * Selects the immutable CORS owner.
    *
+   * <p>ReferenceEquality is suppressed because selection requires the same installed instance, even
+   * when two extensions have equal policies.
+   *
    * @param owner selected sharing policy
    * @param policy resolved immutable permissions
    * @throws IllegalArgumentException if a different CORS owner is already selected
    */
+  @SuppressWarnings("ReferenceEquality")
   void cors(Cors owner, CorsPolicy policy) {
     requireMutable();
     if (cors != null && cors != owner) {

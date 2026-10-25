@@ -45,6 +45,7 @@ import org.eclipse.jetty.http2.frames.HeadersFrame;
 import org.eclipse.jetty.http2.frames.ResetFrame;
 import org.eclipse.jetty.io.QuietException;
 import org.eclipse.jetty.server.HttpStream;
+import org.eclipse.jetty.server.Request.Wrapper;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Test;
@@ -439,7 +440,7 @@ class BufferedRequestLifecycleTest {
                       return nativeRequest;
                     }
 
-                    return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
+                    return new Wrapper(nativeRequest) {
                       @Override
                       public long getLength() {
                         return 3;

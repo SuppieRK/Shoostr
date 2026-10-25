@@ -157,7 +157,6 @@ export default defineConfig({
           label: 'Observability',
           collapsed: false,
           items: [
-            { slug: 'observability/logging' },
             { slug: 'observability/metrics' },
             { slug: 'observability/tracing' },
           ],

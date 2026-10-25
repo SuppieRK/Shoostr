@@ -39,6 +39,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.server.Context;
 import org.eclipse.jetty.server.Server;
+import org.eclipse.jetty.server.handler.ContextHandler;
+import org.eclipse.jetty.server.handler.ContextHandler.ContextScopeListener;
 import org.eclipse.jetty.util.component.LifeCycle;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.websocket.api.Session;
@@ -1117,13 +1119,9 @@ class ManagedWebSocketTest {
                           nativeClosed.countDown();
                         }
                       });
-                  var context =
-                      server
-                          .getContainedBeans(org.eclipse.jetty.server.handler.ContextHandler.class)
-                          .iterator()
-                          .next();
+                  var context = server.getContainedBeans(ContextHandler.class).iterator().next();
                   context.addEventListener(
-                      new org.eclipse.jetty.server.handler.ContextHandler.ContextScopeListener() {
+                      new ContextScopeListener() {
                         @Override
                         public void enterScope(
                             Context scope, org.eclipse.jetty.server.Request request) {
