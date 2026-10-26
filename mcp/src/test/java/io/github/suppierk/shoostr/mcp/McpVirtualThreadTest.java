@@ -53,6 +53,12 @@ class McpVirtualThreadTest {
     runFixture("shutdown");
   }
 
+  @Test
+  @Timeout(40)
+  void continuesIdleMcpHeartbeatsAfterTheWaitTimesOut() throws Exception {
+    runFixture("heartbeat");
+  }
+
   private void runFixture(String scenario) throws Exception {
     var log = temporary.resolve(scenario + ".log");
     var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
@@ -70,7 +76,7 @@ class McpVirtualThreadTest {
             .start();
 
     try {
-      var exited = process.waitFor(20, TimeUnit.SECONDS);
+      var exited = process.waitFor("heartbeat".equals(scenario) ? 30 : 20, TimeUnit.SECONDS);
       var output = Files.readString(log);
       assertTrue(exited, "MCP carrier fixture did not exit: " + output);
       assertEquals(0, process.exitValue(), output);
@@ -191,6 +197,13 @@ class McpVirtualThreadTest {
             }
 
             awaitClosed(bodies, Duration.ofSeconds(3));
+          } else if ("heartbeat".equals(args[0])) {
+            assertEquals(
+                ":\n\n", new String(bodies.getFirst().readNBytes(3), StandardCharsets.UTF_8));
+            assertTrue(
+                Duration.ofNanos(System.nanoTime() - started).compareTo(Duration.ofSeconds(14))
+                    >= 0,
+                "An idle heartbeat must wait for the configured interval");
           } else {
             assertReady(test);
           }

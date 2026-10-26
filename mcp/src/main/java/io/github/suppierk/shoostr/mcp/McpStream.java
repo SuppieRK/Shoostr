@@ -11,7 +11,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Objects;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import org.jspecify.annotations.Nullable;
@@ -60,13 +59,15 @@ final class McpStream implements McpStreamableServerTransport {
       output.heartbeat();
       while (true) {
         Frame frame;
+        boolean done;
         lock.lock();
 
         try {
-          if (frames.isEmpty() && !finished) {
+          var remaining = HEARTBEAT.toNanos();
+          while (frames.isEmpty() && !finished && remaining > 0) {
             // Unlike Object.wait(), a condition can release an idle Java 21 virtual thread's
             // carrier.
-            changed.await(HEARTBEAT.toMillis(), TimeUnit.MILLISECONDS);
+            remaining = changed.awaitNanos(remaining);
           }
 
           if (failure != null) {
@@ -74,11 +75,13 @@ final class McpStream implements McpStreamableServerTransport {
           }
 
           frame = frames.pollFirst();
-          if (frame == null && finished) {
-            return;
-          }
+          done = frame == null && finished;
         } finally {
           lock.unlock();
+        }
+
+        if (done) {
+          return;
         }
 
         if (frame == null) {
