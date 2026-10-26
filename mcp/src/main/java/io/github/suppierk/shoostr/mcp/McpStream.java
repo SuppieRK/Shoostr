@@ -11,6 +11,9 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.ReentrantLock;
 import org.jspecify.annotations.Nullable;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.MonoSink;
@@ -25,6 +28,8 @@ final class McpStream implements McpStreamableServerTransport {
   private final McpJsonMapper mapper;
   private final ArrayDeque<Frame> frames;
   private final @Nullable Instant expiresAt;
+  private final ReentrantLock lock;
+  private final Condition changed;
   private boolean finished;
   private @Nullable Throwable failure;
 
@@ -38,6 +43,8 @@ final class McpStream implements McpStreamableServerTransport {
     this.mapper = Objects.requireNonNull(mapper);
     this.expiresAt = expiresAt;
     frames = new ArrayDeque<>();
+    lock = new ReentrantLock();
+    changed = lock.newCondition();
   }
 
   /**
@@ -53,9 +60,13 @@ final class McpStream implements McpStreamableServerTransport {
       output.heartbeat();
       while (true) {
         Frame frame;
-        synchronized (this) {
+        lock.lock();
+
+        try {
           if (frames.isEmpty() && !finished) {
-            wait(HEARTBEAT.toMillis());
+            // Unlike Object.wait(), a condition can release an idle Java 21 virtual thread's
+            // carrier.
+            changed.await(HEARTBEAT.toMillis(), TimeUnit.MILLISECONDS);
           }
 
           if (failure != null) {
@@ -66,7 +77,10 @@ final class McpStream implements McpStreamableServerTransport {
           if (frame == null && finished) {
             return;
           }
+        } finally {
+          lock.unlock();
         }
+
         if (frame == null) {
           output.heartbeat();
         } else {
@@ -99,9 +113,15 @@ final class McpStream implements McpStreamableServerTransport {
   }
 
   /** Signals normal stream completion without touching the HTTP response. */
-  synchronized void finish() {
-    finished = true;
-    notifyAll();
+  void finish() {
+    lock.lock();
+
+    try {
+      finished = true;
+      changed.signalAll();
+    } finally {
+      lock.unlock();
+    }
   }
 
   /**
@@ -109,9 +129,16 @@ final class McpStream implements McpStreamableServerTransport {
    *
    * @param error native dispatch failure
    */
-  synchronized void fail(Throwable error) {
-    failure = Objects.requireNonNull(error);
-    finish();
+  void fail(Throwable error) {
+    lock.lock();
+
+    try {
+      failure = Objects.requireNonNull(error);
+      finished = true;
+      changed.signalAll();
+    } finally {
+      lock.unlock();
+    }
   }
 
   /**
@@ -152,16 +179,21 @@ final class McpStream implements McpStreamableServerTransport {
           }
 
           boolean accepted;
-          synchronized (this) {
+          lock.lock();
+
+          try {
             accepted =
                 !finished
                     && frames.size() < CAPACITY
                     && (expiresAt == null || expiresAt.isAfter(Instant.now()));
             if (accepted) {
               frames.addLast(new Frame(event, sink));
-              notifyAll();
+              changed.signalAll();
             }
+          } finally {
+            lock.unlock();
           }
+
           if (!accepted) {
             sink.error(new IOException("MCP stream is closed or its frame mailbox is full"));
           }
@@ -191,15 +223,20 @@ final class McpStream implements McpStreamableServerTransport {
     return mapper.convertValue(data, typeRef);
   }
 
-  /** Releases pending acknowledgments outside the mailbox monitor. */
+  /** Releases pending acknowledgments outside mailbox synchronization. */
   private void discardPending() {
     Frame frame;
     while (true) {
-      synchronized (this) {
+      lock.lock();
+
+      try {
         finished = true;
         frame = frames.pollFirst();
-        notifyAll();
+        changed.signalAll();
+      } finally {
+        lock.unlock();
       }
+
       if (frame == null) {
         return;
       }
