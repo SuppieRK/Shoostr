@@ -30,6 +30,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.eclipse.jetty.server.ServerConnector;
+import org.eclipse.jetty.websocket.api.Session.Listener;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -449,7 +450,7 @@ class WebSocketExampleTest {
             (request, ignored) -> {
               WebSocketExample.requireSessionOrigin(request);
               listenerCreations.incrementAndGet();
-              return new org.eclipse.jetty.websocket.api.Session.Listener() {};
+              return new Listener() {};
             });
     return app;
   }

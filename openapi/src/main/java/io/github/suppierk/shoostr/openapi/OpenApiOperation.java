@@ -11,6 +11,7 @@ import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import org.jspecify.annotations.Nullable;
@@ -228,7 +229,7 @@ public final class OpenApiOperation {
       var parameter = OpenApi.copy(value, Parameter.class);
       if (parameter.getName() == null
           || parameter.getName().isBlank()
-          || !java.util.Set.of("path", "query", "header").contains(parameter.getIn())) {
+          || !Set.of("path", "query", "header").contains(parameter.getIn())) {
         throw new IllegalArgumentException(
             "Explicit parameters need a name and path/query/header location");
       }
@@ -286,7 +287,7 @@ public final class OpenApiOperation {
     synchronized (owner) {
       owner.requireMutable();
       operation.setSecurity(
-          new ArrayList<>(java.util.List.of(OpenApi.copy(requirement, SecurityRequirement.class))));
+          new ArrayList<>(List.of(OpenApi.copy(requirement, SecurityRequirement.class))));
       return this;
     }
   }

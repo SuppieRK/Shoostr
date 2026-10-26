@@ -212,7 +212,7 @@ public final class ManagedWebSocket implements Session.Listener {
     } catch (RejectedExecutionException ignored) {
       synchronized (events) {
         pending.cancel(false);
-        if (task != pending) {
+        if (!pending.equals(task)) {
           return;
         }
 
@@ -245,7 +245,7 @@ public final class ManagedWebSocket implements Session.Listener {
   @SuppressWarnings({"java:S1181", "java:S2139"})
   private void run(FutureTask<Void> pending) {
     synchronized (events) {
-      if (task != pending || dispatchClosed) {
+      if (!pending.equals(task) || dispatchClosed) {
         return;
       }
 
@@ -355,7 +355,7 @@ public final class ManagedWebSocket implements Session.Listener {
         // Cancellation uses this same lock; no task interrupt can arrive after ownership clears.
         Thread.interrupted();
         worker = null;
-        if (task == pending) {
+        if (pending.equals(task)) {
           task = null;
         }
       }

@@ -11,6 +11,7 @@ import java.lang.reflect.Modifier;
 import java.util.HashSet;
 import java.util.Locale;
 import java.util.Set;
+import nl.jqno.equalsverifier.EqualsVerifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
@@ -60,6 +61,11 @@ class HttpHeadersTest {
           "URI",
           "WANT_DIGEST",
           "WARNING");
+
+  @Test
+  void satisfiesEqualsAndHashCodeContract() {
+    EqualsVerifier.forClass(HttpHeaders.class).withNonnullFields("value").verify();
+  }
 
   @Test
   void retainsTheRegisteredBuiltInInventoryAndWireSpelling() throws IllegalAccessException {

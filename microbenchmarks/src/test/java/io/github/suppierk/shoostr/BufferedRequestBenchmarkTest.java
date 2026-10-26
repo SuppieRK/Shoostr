@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
+import java.util.Arrays;
 import java.util.stream.Stream;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
@@ -18,7 +19,7 @@ class BufferedRequestBenchmarkTest {
     benchmark.headers = headers;
     benchmark.setup();
     var expected = new byte[size];
-    java.util.Arrays.fill(expected, (byte) 0x5A);
+    Arrays.fill(expected, (byte) 0x5A);
     assertArrayEquals(expected, benchmark.bodyBytes());
   }
 

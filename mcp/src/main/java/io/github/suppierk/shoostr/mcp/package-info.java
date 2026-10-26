@@ -1,3 +1,5 @@
 /** Optional native MCP SDK integration for explicitly registered Shoostr routes. */
-@org.jspecify.annotations.NullMarked
+@NullMarked
 package io.github.suppierk.shoostr.mcp;
+
+import org.jspecify.annotations.NullMarked;

@@ -579,6 +579,37 @@ class ShoostrLifecycleTest {
   }
 
   @Test
+  void rejectsHandlerReplacementEvenWhenItsEqualsClaimsTheOwnedHandler() throws Exception {
+    try (var app =
+        new Shoostr()
+            .modifyServer(
+                server -> {
+                  ((ServerConnector) server.getConnectors()[0]).setPort(0);
+                  var graceful = server.getDescendant(GracefulHandler.class);
+                  var owned = assertInstanceOf(Handler.class, graceful.getHandler());
+                  graceful.setHandler(
+                      new Handler.Wrapper(owned) {
+                        @Override
+                        public boolean equals(Object other) {
+                          return owned.equals(other)
+                              || (other instanceof Handler.Wrapper wrapper
+                                  && owned.equals(wrapper.getHandler()));
+                        }
+
+                        @Override
+                        public int hashCode() {
+                          return owned.hashCode();
+                        }
+                      });
+                })) {
+      var failure = assertThrows(IllegalStateException.class, app::start);
+      assertEquals(
+          "Jetty configuration must preserve Shoostr lifecycle, handler and default connector",
+          failure.getMessage());
+    }
+  }
+
+  @Test
   @SuppressWarnings("NullAway") // These calls verify rejection of null callbacks.
   void additionalNativeConnectorsAndHandlerWrappersShareAppRoutesAndLifecycle() throws Exception {
     var additional = new AtomicReference<ServerConnector>();

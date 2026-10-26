@@ -8,6 +8,7 @@ import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredExceptio
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import java.util.List;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 import org.pac4j.core.authorization.authorizer.Authorizer;
 import org.pac4j.core.client.DirectClient;
 import org.pac4j.core.context.CallContext;
@@ -16,6 +17,8 @@ import org.pac4j.core.context.CallContext;
  * A reusable stateless authentication policy using an application-configured pac4j direct client.
  * Configure the client and its thread-safe authenticator before creating this policy; do not mutate
  * them while serving requests. The application owns credentials, keys, and identity stores.
+ * Equality compares the client, challenge and authorizer through their own Java equality contracts;
+ * it does not infer equivalent authentication or authorization behavior.
  *
  * <p>The pac4j context reports security through {@link Request#isEffectivelySecure()}: an
  * explicitly selected trusted forwarding protocol takes precedence, with direct transport TLS as
@@ -49,6 +52,30 @@ public final class Pac4j extends AuthenticationExtension {
     this.challenge = new AuthenticationRequiredException(challenge).challenge();
     this.authorizer = Objects.requireNonNull(authorizer);
     client.init();
+  }
+
+  /**
+   * Compares the stored client, challenge and authorization callback.
+   *
+   * @param other candidate policy
+   * @return whether both policies have equal stored configuration
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return other instanceof Pac4j policy
+        && client.equals(policy.client)
+        && challenge.equals(policy.challenge)
+        && authorizer.equals(policy.authorizer);
+  }
+
+  /**
+   * Hashes the same client, challenge and authorizer used by equality.
+   *
+   * @return hash of the policy configuration
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(client, challenge, authorizer);
   }
 
   /**

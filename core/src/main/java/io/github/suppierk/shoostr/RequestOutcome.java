@@ -8,8 +8,14 @@ import org.jspecify.annotations.Nullable;
  * request or response; callbacks may retain it. Failure references are diagnostic objects, not safe
  * response bodies or metric labels.
  *
+ * <p>For framework-produced summaries, {@code routePattern} is the application-registered template,
+ * such as {@code /orders/{id}}, without captured request values or an appended query string. It is
+ * null when no endpoint was selected; the framework never substitutes the raw request path. The
+ * template is not escaped for a particular log format, and caller-constructed summaries retain
+ * their supplied values.
+ *
  * @param method original wire method
- * @param routePattern composed named route template, or null if no endpoint was selected
+ * @param routePattern composed registered route template, or null if no endpoint was selected
  * @param statusCode committed final response or upgrade status, or zero if none was committed
  * @param durationNanos monotonic duration from framework admission through completion
  * @param applicationFailure initiating application failure, or null

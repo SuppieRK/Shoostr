@@ -1,3 +1,5 @@
 /** Native WebSocket listeners, per-connection context and handshake versus message failures. */
-@org.jspecify.annotations.NullMarked
+@NullMarked
 package io.github.suppierk.shoostr.example.websocket;
+
+import org.jspecify.annotations.NullMarked;

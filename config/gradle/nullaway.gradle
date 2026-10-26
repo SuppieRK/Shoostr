@@ -3,8 +3,7 @@ apply plugin: 'net.ltgt.nullaway'
 
 dependencies {
 	compileOnly 'org.jspecify:jspecify:1.0.1'
-	errorprone 'com.google.errorprone:error_prone_core:2.48.0'
-	errorprone 'com.uber.nullaway:nullaway:0.14.1'
+	errorprone 'com.uber.nullaway:nullaway:0.14.3'
 }
 
 nullaway {
@@ -14,10 +13,14 @@ nullaway {
 
 // Runtime validation tests deliberately pass null; production nullness violations remain errors.
 tasks.withType(JavaCompile).configureEach {
+	// Libraries and examples retain their existing default Error Prone checks.
+	options.errorprone.disableAllChecks = false
 	def nullawayOptions = options.errorprone.nullaway
 	if (options.errorprone.compilingTestOnlyCode.get()) {
 		nullawayOptions.disable()
 	} else {
+		// Checkstyle requires Javadocs on anonymous methods; NotJavadoc rejects that project policy.
+		options.errorprone.disable('NotJavadoc')
 		nullawayOptions.error()
 	}
 }

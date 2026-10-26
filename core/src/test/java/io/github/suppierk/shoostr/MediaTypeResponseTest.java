@@ -18,6 +18,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.server.Request.Wrapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -162,7 +163,7 @@ class MediaTypeResponseTest {
                   (nativeRequest, ignored4) -> {
                     var fields = HttpFields.build(nativeRequest.getHeaders());
                     transportHeaders.set(fields);
-                    return new org.eclipse.jetty.server.Request.Wrapper(nativeRequest) {
+                    return new Wrapper(nativeRequest) {
                       @Override
                       public HttpFields getHeaders() {
                         return fields;

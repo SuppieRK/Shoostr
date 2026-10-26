@@ -24,6 +24,7 @@ import java.security.KeyStore;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -356,7 +357,7 @@ class NativeSessionLifecycleTest {
         var cookie = created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
         await().atMost(Duration.ofSeconds(5)).until(() -> cache.get().getSessionsCurrent() == 0);
         loads.set(0);
-        for (var origin : java.util.List.of("https://client.example", "https://denied.example")) {
+        for (var origin : List.of("https://client.example", "https://denied.example")) {
           var preflight =
               test.send(
                   r ->
@@ -489,7 +490,7 @@ class NativeSessionLifecycleTest {
               });
 
       try (var test = TestServer.start(app)) {
-        assertEquals(java.util.List.of("server", "sessions"), callbacks);
+        assertEquals(List.of("server", "sessions"), callbacks);
         assertTrue(nativeHandler.get().isStarted());
         var absent = test.send(r -> r.path("/peek"), HttpResponse.BodyHandlers.ofString());
         assertEquals("absent", absent.body());

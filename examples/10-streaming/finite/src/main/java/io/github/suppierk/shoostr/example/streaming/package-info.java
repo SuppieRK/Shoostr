@@ -1,3 +1,5 @@
 /** Narrow static mounts and finite handler-owned streams. */
-@org.jspecify.annotations.NullMarked
+@NullMarked
 package io.github.suppierk.shoostr.example.streaming;
+
+import org.jspecify.annotations.NullMarked;

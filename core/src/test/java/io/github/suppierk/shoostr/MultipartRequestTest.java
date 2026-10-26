@@ -8,6 +8,8 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
+import io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -34,6 +36,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 import org.eclipse.jetty.http.HttpTester;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
@@ -888,12 +891,8 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) -> {
-                assertThrows(
-                    io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException.class,
-                    request::files);
-                assertThrows(
-                    io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException.class,
-                    request::formParamMap);
+                assertThrows(ContentTooLargeException.class, request::files);
+                assertThrows(ContentTooLargeException.class, request::formParamMap);
                 response.text("rejected");
               });
       app.start();
@@ -928,12 +927,8 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) -> {
-                assertThrows(
-                    io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException.class,
-                    request::files);
-                assertThrows(
-                    io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException.class,
-                    request::formParamMap);
+                assertThrows(ContentTooLargeException.class, request::files);
+                assertThrows(ContentTooLargeException.class, request::formParamMap);
                 response.text("rejected");
               });
       app.start();
@@ -1108,12 +1103,8 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) -> {
-                assertThrows(
-                    io.github.suppierk.shoostr.http.exceptions.BadRequestException.class,
-                    request::files);
-                assertThrows(
-                    io.github.suppierk.shoostr.http.exceptions.BadRequestException.class,
-                    request::formParamMap);
+                assertThrows(BadRequestException.class, request::files);
+                assertThrows(BadRequestException.class, request::formParamMap);
                 response.text("rejected");
               });
 
@@ -1141,12 +1132,8 @@ class MultipartRequestTest {
           .post(
               "/upload",
               (request, response) -> {
-                assertThrows(
-                    io.github.suppierk.shoostr.http.exceptions.BadRequestException.class,
-                    request::files);
-                assertThrows(
-                    io.github.suppierk.shoostr.http.exceptions.BadRequestException.class,
-                    request::formParamMap);
+                assertThrows(BadRequestException.class, request::files);
+                assertThrows(BadRequestException.class, request::formParamMap);
                 response.text("rejected");
               });
 
@@ -1462,7 +1449,7 @@ class MultipartRequestTest {
                   response.text(
                       request.files("document").stream()
                           .map(Upload::fileName)
-                          .collect(java.util.stream.Collectors.joining(","))));
+                          .collect(Collectors.joining(","))));
 
       try (var test = TestServer.start(app)) {
         var result =

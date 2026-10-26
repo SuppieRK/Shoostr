@@ -1,3 +1,5 @@
 /** A small lifecycle and route-registration example. */
-@org.jspecify.annotations.NullMarked
+@NullMarked
 package io.github.suppierk.shoostr.example.hello;
+
+import org.jspecify.annotations.NullMarked;

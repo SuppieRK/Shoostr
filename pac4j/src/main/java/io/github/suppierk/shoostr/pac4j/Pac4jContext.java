@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.pac4j;
 
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
+import io.github.suppierk.shoostr.http.Cookie.SameSite;
 import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import java.io.IOException;
@@ -172,8 +173,7 @@ final class Pac4jContext implements WebContext {
     var sameSite =
         cookie.getSameSitePolicy() == null
             ? null
-            : io.github.suppierk.shoostr.http.Cookie.SameSite.valueOf(
-                cookie.getSameSitePolicy().toUpperCase(Locale.ROOT));
+            : SameSite.valueOf(cookie.getSameSitePolicy().toUpperCase(Locale.ROOT));
     var converted =
         new io.github.suppierk.shoostr.http.Cookie(
             cookie.getName(),

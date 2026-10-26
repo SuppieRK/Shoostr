@@ -173,7 +173,8 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
   }
 
   /**
-   * Encodes within existing write admission without blocking independent closure.
+   * Rejects an already closed connection before interruptible admission, then encodes within
+   * existing write admission without blocking independent closure.
    *
    * @param codec configured finite conversion
    * @param value nonnull application value
@@ -183,14 +184,11 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
   @SuppressWarnings("java:S112")
   final void sendEncoded(Codec codec, Object value) throws Exception {
     Objects.requireNonNull(value);
+    requireOpen();
     writes.lockInterruptibly();
 
     try {
-      synchronized (lifecycle) {
-        if (terminal || !session.isOpen()) {
-          throw new IOException("WebSocket is closed");
-        }
-      }
+      requireOpen();
       // The raw send rechecks closure after conversion and owns the copied binary bytes.
       send(Objects.requireNonNull(codec.write(value), "Codec returned null bytes"));
     } finally {
@@ -201,10 +199,14 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
   /**
    * Serializes write submission through completion without blocking lifecycle bookkeeping.
    *
+   * <p>ReferenceEquality is suppressed because write ownership compares futures by identity, not
+   * their results.
+   *
    * @param submit native complete-message write
    * @throws IOException if transport rejects or fails the write
    * @throws InterruptedException if this producer is interrupted
    */
+  @SuppressWarnings("ReferenceEquality")
   private void write(Consumer<Callback> submit) throws IOException, InterruptedException {
     writes.lockInterruptibly();
     var completion = new CompletableFuture<Void>();
@@ -240,6 +242,19 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
         }
       }
       writes.unlock();
+    }
+  }
+
+  /**
+   * Checks connection state without waiting for write admission or clearing interruption.
+   *
+   * @throws IOException if this connection has closed
+   */
+  private void requireOpen() throws IOException {
+    synchronized (lifecycle) {
+      if (terminal || !session.isOpen()) {
+        throw new IOException("WebSocket is closed");
+      }
     }
   }
 

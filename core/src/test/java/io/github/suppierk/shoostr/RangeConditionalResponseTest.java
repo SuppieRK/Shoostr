@@ -14,6 +14,7 @@ import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
@@ -902,7 +903,7 @@ class RangeConditionalResponseTest {
     var archive = temporaryDirectory.resolve("content.zip");
 
     try (var filesystem =
-            java.nio.file.FileSystems.newFileSystem(
+            FileSystems.newFileSystem(
                 URI.create("jar:" + archive.toUri()), Map.of("create", "true"));
         var app = new Shoostr()) {
       var file = filesystem.getPath("/file.txt");

@@ -15,6 +15,8 @@ dependencies {
 // Only this benchmark module processes annotations; production compilation stays disabled.
 tasks.named('compileJava', JavaCompile) {
 	options.compilerArgs.removeAll { it == '-proc:none' }
+	// JMH owns its generated harness; apply the import rule to the authored benchmark sources.
+	options.errorprone.excludedPaths = '.*[/\\\\]microbenchmarks[/\\\\]build[/\\\\]generated[/\\\\].*'
 }
 
 application {

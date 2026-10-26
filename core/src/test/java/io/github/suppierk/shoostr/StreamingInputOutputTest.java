@@ -519,7 +519,7 @@ class StreamingInputOutputTest {
 
       try (var test = TestServer.start(app)) {
         assertThrows(
-            java.io.IOException.class,
+            IOException.class,
             () ->
                 test.send(
                     request -> request.path("/read-error").timeout(Duration.ofSeconds(3)),

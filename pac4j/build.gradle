@@ -6,6 +6,7 @@ dependencies {
 	api project(':core')
 	api 'org.pac4j:pac4j-core:6.6.0'
 	testImplementation project(':test')
+	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 	testImplementation 'org.pac4j:pac4j-http:6.6.0'
 	testImplementation 'org.pac4j:pac4j-jwt:6.6.0'
 }

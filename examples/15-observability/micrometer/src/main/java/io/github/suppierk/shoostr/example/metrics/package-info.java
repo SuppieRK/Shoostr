@@ -1,3 +1,5 @@
 /** Real request metrics through Prometheus and Grafana. */
-@org.jspecify.annotations.NullMarked
+@NullMarked
 package io.github.suppierk.shoostr.example.metrics;
+
+import org.jspecify.annotations.NullMarked;

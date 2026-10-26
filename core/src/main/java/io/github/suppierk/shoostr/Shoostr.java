@@ -33,8 +33,10 @@ import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.QuotedQualityCSV;
 import org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory;
 import org.eclipse.jetty.http2.server.HTTP2ServerConnectionFactory;
+import org.eclipse.jetty.server.Handler.Wrapper;
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.HttpConnectionFactory;
+import org.eclipse.jetty.server.Request.Handler.AbortException;
 import org.eclipse.jetty.server.SecureRequestCustomizer;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
@@ -899,7 +901,7 @@ public final class Shoostr implements Closeable {
         try {
           if (server != null
               && server.getThreadPool() instanceof QueuedThreadPool pool
-              && pool.getVirtualThreadsExecutor() == ownedVirtualThreads) {
+              && ownedVirtualThreads.equals(pool.getVirtualThreadsExecutor())) {
             // Let native late cleanup use Jetty's policy instead of a closed virtual delegate.
             pool.setVirtualThreadsExecutor(null);
           }
@@ -1270,7 +1272,7 @@ public final class Shoostr implements Closeable {
       GracefulHandler graceful,
       org.eclipse.jetty.server.Handler applicationHandler,
       ServerConnector connector) {
-    var installedHandler = graceful.getHandler();
+    var installedHandler = Objects.requireNonNull(graceful.getHandler());
     for (var configuration : List.copyOf(serverConfigurations)) {
       configuration.accept(server);
       if (closed) {
@@ -1293,8 +1295,8 @@ public final class Shoostr implements Closeable {
 
     if (!server.isStopped()
         || server.getStopAtShutdown()
-        || server.getDescendant(GracefulHandler.class) != graceful
-        || graceful.getHandler() != installedHandler
+        || !graceful.equals(server.getDescendant(GracefulHandler.class))
+        || !installedHandler.equals(graceful.getHandler())
         || !List.of(server.getConnectors()).contains(connector)) {
       throw new IllegalStateException(
           "Jetty configuration must preserve Shoostr lifecycle, handler and default connector");
@@ -1304,6 +1306,8 @@ public final class Shoostr implements Closeable {
   /**
    * Hands a matched upgrade to Jetty while keeping factory rejection inside its creator callback.
    * Jetty owns the response callback whenever this method returns true.
+   *
+   * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
    *
    * @param container context's WebSocket container
    * @param endpoint matched WebSocket route
@@ -1317,8 +1321,10 @@ public final class Shoostr implements Closeable {
    * @param runtime app-owned WebSocket message dispatch
    * @return whether Jetty handled the exchange
    */
-  @SuppressWarnings(
-      "java:S107") // Keep the hot handshake path free of a per-request argument holder.
+  @SuppressWarnings({
+    "java:S107",
+    "ReferenceEquality"
+  }) // Keep the hot handshake path free of a per-request argument holder.
   private static boolean upgradeWebSocket(
       ServerWebSocketContainer container,
       RadixRoutes.Endpoint endpoint,
@@ -1352,8 +1358,7 @@ public final class Shoostr implements Closeable {
               }
 
               response.fail();
-              upgradeCallback.failed(
-                  new org.eclipse.jetty.server.Request.Handler.AbortException(writeFailure));
+              upgradeCallback.failed(new AbortException(writeFailure));
             }
 
             return null;
@@ -1417,6 +1422,8 @@ public final class Shoostr implements Closeable {
   /**
    * Runs an application error handler with the framework's safe fallback on handler failure.
    *
+   * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+   *
    * @param errorHandler selected application handler
    * @param failure initiating application failure
    * @param request live request
@@ -1424,7 +1431,10 @@ public final class Shoostr implements Closeable {
    * @param observation optional terminal observation
    * @throws Throwable if error response submission fails after commitment
    */
-  @SuppressWarnings("java:S112") // A committed response propagates its original transport failure.
+  @SuppressWarnings({
+    "java:S112",
+    "ReferenceEquality"
+  }) // A committed response propagates its original transport failure.
   private static void renderCustomFailure(
       ExceptionHandler<Exception> errorHandler,
       Throwable failure,
@@ -1645,7 +1655,7 @@ public final class Shoostr implements Closeable {
   }
 
   /** Request dispatcher with one immutable startup snapshot and no registration locks. */
-  private final class ApplicationHandler extends org.eclipse.jetty.server.Handler.Wrapper {
+  private final class ApplicationHandler extends Wrapper {
     private final RadixRoutes compiledRoutes;
     private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors;
     private final Map<Integer, Handler> statuses;
@@ -1712,7 +1722,7 @@ public final class Shoostr implements Closeable {
       interceptPreflights = extensions.stream().anyMatch(Cors.class::isInstance);
 
       sessionContinuation =
-          new org.eclipse.jetty.server.Handler.Abstract() {
+          new Abstract() {
             /** {@inheritDoc} */
             @Override
             public boolean handle(
@@ -1854,9 +1864,9 @@ public final class Shoostr implements Closeable {
     private void validateApplicationWiring() {
       var owner = Objects.requireNonNull(server);
       if (owner.getDescendant(ApplicationHandler.class) != this
-          || getServer() != owner
-          || getHandler()
-              != (applicationSessions == null ? sessionContinuation : applicationSessions)) {
+          || !owner.equals(getServer())
+          || !(applicationSessions == null ? sessionContinuation : applicationSessions)
+              .equals(getHandler())) {
         throw new IllegalStateException(
             "Native configuration must preserve the application handler chain");
       }
@@ -1865,14 +1875,18 @@ public final class Shoostr implements Closeable {
     /**
      * Checks the owned native handler lifecycle and shared server session identifier manager.
      *
+     * <p>ReferenceEquality is suppressed because the shared session manager must be the same
+     * instance.
+     *
      * @param started whether native managers have completed startup
      * @throws IllegalStateException if native configuration changes owned wiring or lifecycle
      */
+    @SuppressWarnings("ReferenceEquality")
     private void validateSessions(boolean started) {
       validateApplicationWiring();
       if (applicationSessions != null) {
-        if (applicationSessions.getServer() != server
-            || applicationSessions.getHandler() != sessionContinuation
+        if (!Objects.requireNonNull(server).equals(applicationSessions.getServer())
+            || !sessionContinuation.equals(applicationSessions.getHandler())
             || (started ? !applicationSessions.isStarted() : !applicationSessions.isStopped())) {
           throw new IllegalStateException(
               "Session configuration must preserve owned native wiring");
@@ -1952,12 +1966,15 @@ public final class Shoostr implements Closeable {
     /**
      * Attempts a safe error response or returns the cause that must abort committed output.
      *
+     * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+     *
      * @param failure unwrapped application or transport failure
      * @param request live request
      * @param response live response
      * @param observation optional terminal observation
      * @return terminal abort cause, or null when error rendering completed
      */
+    @SuppressWarnings("ReferenceEquality")
     private @Nullable Throwable recoverFailure(
         Throwable failure, Request request, Response response, @Nullable Completion observation) {
       response.disableFlushHooksAfterBeforeFailure();
@@ -1982,6 +1999,8 @@ public final class Shoostr implements Closeable {
     /**
      * Releases request-scoped resources and reports final application and transport outcomes.
      *
+     * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+     *
      * @param request live request
      * @param response live response
      * @param observation optional terminal observation
@@ -1989,6 +2008,7 @@ public final class Shoostr implements Closeable {
      * @param applicationFailure initiating application failure, or null
      * @param terminalFailure transport abort cause, or null
      */
+    @SuppressWarnings("ReferenceEquality")
     private void finishRequest(
         Request request,
         Response response,
@@ -2015,8 +2035,7 @@ public final class Shoostr implements Closeable {
 
       try {
         if (terminalFailure != null) {
-          callback.failed(
-              new org.eclipse.jetty.server.Request.Handler.AbortException(terminalFailure));
+          callback.failed(new AbortException(terminalFailure));
         }
       } finally {
         if (observation != null) {
@@ -2782,9 +2801,12 @@ public final class Shoostr implements Closeable {
     /**
      * Records application cleanup before allowing a terminal notification.
      *
+     * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+     *
      * @param routePattern selected named template, or null for unmatched requests
      * @param failure initiating processing failure, or null
      */
+    @SuppressWarnings("ReferenceEquality")
     private void finish(@Nullable String routePattern, @Nullable Throwable failure) {
       RequestOutcome outcome;
       synchronized (this) {

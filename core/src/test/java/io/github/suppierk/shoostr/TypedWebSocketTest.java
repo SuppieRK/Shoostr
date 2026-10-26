@@ -4,11 +4,13 @@ import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
+import io.github.suppierk.shoostr.WebSocket.MessageHandler;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -142,7 +144,7 @@ class TypedWebSocketTest {
             return super.read(source, type);
           }
         };
-    io.github.suppierk.shoostr.WebSocket.MessageHandler<byte[]> raw = WebSocketConnection::send;
+    MessageHandler<byte[]> raw = WebSocketConnection::send;
     var app =
         new Shoostr()
             .codec(codec)
@@ -314,10 +316,12 @@ class TypedWebSocketTest {
     }
   }
 
-  @Test
-  void rejectsObjectSendsAfterClosureBeforeCallingTheCodec() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void rejectsInterruptedObjectSendsBeforeEncoding(boolean closed) throws Exception {
     var writes = new AtomicInteger();
-    var checked = new CompletableFuture<Boolean>();
+    var checked = new CompletableFuture<Exception>();
+    var interrupted = new CompletableFuture<Boolean>();
     var codec =
         new TextCodec() {
           @Override
@@ -336,10 +340,21 @@ class TypedWebSocketTest {
                         socket ->
                             socket.onOpen(
                                 connection -> {
-                                  connection.close();
-                                  assertThrows(
-                                      IOException.class, () -> connection.sendObject("late"));
-                                  checked.complete(true);
+                                  if (closed) {
+                                    connection.close();
+                                  }
+
+                                  // Native close timing must not decide the admission result.
+                                  Thread.currentThread().interrupt();
+
+                                  try {
+                                    connection.sendObject("late");
+                                    checked.complete(null);
+                                  } catch (Exception failure) {
+                                    checked.complete(failure);
+                                  } finally {
+                                    interrupted.complete(Thread.interrupted());
+                                  }
                                 })));
 
     try (var server = TestServer.start(app);
@@ -347,7 +362,14 @@ class TypedWebSocketTest {
       var socket = connect(client, server, "/closed", new Messages());
 
       try {
-        assertTrue(checked.get(3, TimeUnit.SECONDS));
+        var failure = checked.get(3, TimeUnit.SECONDS);
+        if (closed) {
+          assertInstanceOf(IOException.class, failure);
+        } else {
+          assertInstanceOf(InterruptedException.class, failure);
+        }
+
+        assertEquals(Boolean.valueOf(closed), interrupted.get(3, TimeUnit.SECONDS));
         assertEquals(0, writes.get());
       } finally {
         socket.abort();

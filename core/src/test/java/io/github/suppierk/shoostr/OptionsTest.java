@@ -3,11 +3,22 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import nl.jqno.equalsverifier.EqualsVerifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 class OptionsTest {
+  @Test
+  void satisfiesEqualsAndHashCodeContract() {
+    var firstMultipart = new MultipartOptions(1000, 500, 7, 256, 64, null);
+    var secondMultipart = new MultipartOptions(2000, 750, 8, 512, 128, null);
+    var first = new Options(64, 128, 32, 4, firstMultipart);
+    var second = new Options(65, 129, 33, 5, secondMultipart);
+
+    EqualsVerifier.forExamples(first, second).withNonnullFields("multipart").verify();
+  }
+
   @ParameterizedTest
   @CsvSource({
     "0, 128, 32, 4",

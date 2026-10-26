@@ -13,11 +13,21 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
+import nl.jqno.equalsverifier.EqualsVerifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class MediaTypeTest {
+  @Test
+  void satisfiesEqualsAndHashCodeContract() {
+    // The canonical value includes the name; the separate name supports charset replacement.
+    EqualsVerifier.forClass(MediaType.class)
+        .withNonnullFields("name", "value")
+        .withIgnoredFields("name")
+        .verify();
+  }
+
   @Test
   void commonTypesHaveValueSemantics() {
     assertEquals("application/json", MediaType.APPLICATION_JSON.value());

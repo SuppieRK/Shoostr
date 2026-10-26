@@ -225,7 +225,7 @@ class BufferedRequestBodyTest {
                       case "getLength" -> declaredLength;
                       case "read" -> {
                         var failed = failure.get();
-                        if (failed != Content.Chunk.EMPTY) {
+                        if (!Content.Chunk.EMPTY.equals(failed)) {
                           yield failed;
                         }
 

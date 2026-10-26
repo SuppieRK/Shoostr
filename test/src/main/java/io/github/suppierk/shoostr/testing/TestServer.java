@@ -220,8 +220,9 @@ public final class TestServer implements Closeable {
           failure.addSuppressed(cleanup);
         }
 
-        if (failure == bindingBridge.get()) {
-          var original = Objects.requireNonNull(((UncheckedIOException) failure).getCause());
+        var bridge = bindingBridge.get();
+        if (bridge != null && bridge.equals(failure)) {
+          var original = Objects.requireNonNull(bridge.getCause());
           for (var cleanup : failure.getSuppressed()) {
             original.addSuppressed(cleanup);
           }

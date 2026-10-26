@@ -686,7 +686,8 @@ class McpInitializationCleanupTest {
                                   new McpStreamableServerSession(
                                       id,
                                       McpSchema.ClientCapabilities.builder().build(),
-                                      new McpSchema.Implementation("cleanup-client", "1.0"),
+                                      McpSchema.Implementation.builder("cleanup-client", "1.0")
+                                          .build(),
                                       Duration.ofSeconds(5),
                                       Map.of(),
                                       Map.of(),
@@ -702,7 +703,8 @@ class McpInitializationCleanupTest {
                                   McpSchema.InitializeResult.builder(
                                           "2025-11-25",
                                           McpSchema.ServerCapabilities.builder().build(),
-                                          new McpSchema.Implementation("cleanup-server", "1.0"))
+                                          McpSchema.Implementation.builder("cleanup-server", "1.0")
+                                              .build())
                                       .build();
                               return new McpStreamableServerSession.McpStreamableServerSessionInit(
                                   session, results.apply(result));

@@ -1,3 +1,5 @@
 /** Request input and application-owned dependency substitution. */
-@org.jspecify.annotations.NullMarked
+@NullMarked
 package io.github.suppierk.shoostr.example.requests;
+
+import org.jspecify.annotations.NullMarked;

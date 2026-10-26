@@ -28,6 +28,9 @@ import org.jspecify.annotations.Nullable;
  * then select {@code extensions.with(csrf)} on browser routes. Installation alone does not enable
  * protection or sessions. Token values are never put in a cookie or URL; an application embeds
  * {@link #token(Request)} in a page or response body.
+ *
+ * <p>Equality compares configured trusted origins independently of generator state and token
+ * history. Installation and endpoint selection still identify the exact extension instance.
  */
 public final class Csrf implements Extension<Csrf> {
   /** A token is valid only while its issuing session keeps the same identifier. */
@@ -86,6 +89,27 @@ public final class Csrf implements Extension<Csrf> {
    */
   public static Builder builder() {
     return new Builder();
+  }
+
+  /**
+   * Compares the configured additional browser-origin permissions.
+   *
+   * @param other object to compare
+   * @return whether both instances trust the same additional origins
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return other instanceof Csrf csrf && trustedOrigins.equals(csrf.trustedOrigins);
+  }
+
+  /**
+   * Computes a hash from the immutable trusted origins.
+   *
+   * @return trusted-origin set hash
+   */
+  @Override
+  public int hashCode() {
+    return trustedOrigins.hashCode();
   }
 
   /** {@inheritDoc} */

@@ -18,13 +18,26 @@ import java.util.Objects;
 import java.util.function.Function;
 import org.jspecify.annotations.Nullable;
 
-/** Optional SERVER spans with application-owned SDK, exporters and propagation configuration. */
+/**
+ * Optional SERVER spans with application-owned SDK, exporters and propagation configuration.
+ * Equality compares the telemetry provider, tracer and registration flags through their own
+ * equality contracts. Configuration and installation changes can change equality and hash codes.
+ */
 public final class OpenTelemetryTracing
     implements Extension<OpenTelemetryTracing>, Function<Request, RequestObservation> {
   private static final TextMapGetter<Request> HEADERS =
       new TextMapGetter<>() {
-        /** {@inheritDoc} */
+        /**
+         * Retains header enumeration for propagators that use the deprecated upstream method.
+         *
+         * <p>Deprecation is suppressed because this upstream callback still serves propagators that
+         * enumerate request headers.
+         *
+         * @param carrier request providing the header names
+         * @return incoming header names
+         */
         @Override
+        @SuppressWarnings("deprecation")
         public Iterable<String> keys(Request carrier) {
           return carrier.headerMap().keySet();
         }
@@ -49,6 +62,31 @@ public final class OpenTelemetryTracing
   public OpenTelemetryTracing(OpenTelemetry telemetry) {
     this.telemetry = Objects.requireNonNull(telemetry);
     tracer = telemetry.getTracer("io.github.suppierk.shoostr");
+  }
+
+  /**
+   * Compares all stored collaborators and registration state.
+   *
+   * @param other candidate provider
+   * @return whether both providers have equal stored state
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return other instanceof OpenTelemetryTracing provider
+        && telemetry.equals(provider.telemetry)
+        && tracer.equals(provider.tracer)
+        && allRequests == provider.allRequests
+        && installed == provider.installed;
+  }
+
+  /**
+   * Hashes the same collaborators and registration state used by equality.
+   *
+   * @return hash of the current provider state
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(telemetry, tracer, allRequests, installed);
   }
 
   /**

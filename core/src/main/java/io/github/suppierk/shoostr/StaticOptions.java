@@ -73,6 +73,29 @@ public final class StaticOptions {
   }
 
   /**
+   * Compares the welcome and SPA filenames using case-sensitive string equality.
+   *
+   * @param other object to compare
+   * @return whether both configured filenames match, including disabled values
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return other instanceof StaticOptions options
+        && Objects.equals(welcomeFile, options.welcomeFile)
+        && Objects.equals(spaFallback, options.spaFallback);
+  }
+
+  /**
+   * Computes a hash from the welcome and SPA filenames.
+   *
+   * @return hash of both configured filenames
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(welcomeFile, spaFallback);
+  }
+
+  /**
    * Restricts configured resources to simple leaf names inside their selected directory.
    *
    * @param fileName requested filename

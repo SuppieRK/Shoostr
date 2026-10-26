@@ -1,3 +1,5 @@
 /** Explicit typed JSON conversion and scoped HTTP error rendering. */
-@org.jspecify.annotations.NullMarked
+@NullMarked
 package io.github.suppierk.shoostr.example.json;
+
+import org.jspecify.annotations.NullMarked;

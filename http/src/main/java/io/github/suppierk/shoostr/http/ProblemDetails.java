@@ -15,7 +15,9 @@ import org.jspecify.annotations.Nullable;
  * are optional. Supplied maps and lists are recursively copied into unmodifiable containers; other
  * custom objects and map keys remain caller-owned references. This does not guarantee deep
  * immutability of arbitrary custom objects or JSON encodability. Copied maps use ordinary key
- * equality; a copy that would collapse distinct entries is rejected.
+ * equality; a copy that would collapse distinct entries is rejected. Equality and hashing use the
+ * stored standard members and extensions. Mutating caller-owned objects or keys can change equality
+ * results and hash codes.
  *
  * @see <a href="https://www.rfc-editor.org/rfc/rfc9457.html">RFC 9457</a>
  */
@@ -143,6 +145,33 @@ public final class ProblemDetails {
 
     result.putAll(extensions);
     return result;
+  }
+
+  /**
+   * Compares supplied standard members and extensions using their Java equality semantics.
+   *
+   * @param other candidate value, or null
+   * @return true when all stored members are equal
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return other instanceof ProblemDetails problem
+        && Objects.equals(type, problem.type)
+        && Objects.equals(title, problem.title)
+        && Objects.equals(status, problem.status)
+        && Objects.equals(detail, problem.detail)
+        && Objects.equals(instance, problem.instance)
+        && extensions.equals(problem.extensions);
+  }
+
+  /**
+   * Hashes the standard members and extensions used by equality.
+   *
+   * @return hash consistent with equality
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(type, title, status, detail, instance, extensions);
   }
 
   /**

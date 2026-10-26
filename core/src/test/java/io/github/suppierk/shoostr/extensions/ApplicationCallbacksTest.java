@@ -12,6 +12,7 @@ import io.github.suppierk.shoostr.RequestObservation;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.net.http.HttpResponse;
 import java.util.Arrays;
@@ -46,7 +47,7 @@ class ApplicationCallbacksTest {
             "afterResponseFlush",
             "afterRequest",
             "observe"),
-        methods.stream().map(java.lang.reflect.Method::getName).collect(Collectors.toSet()));
+        methods.stream().map(Method::getName).collect(Collectors.toSet()));
     assertEquals(0, ApplicationCallbacks.class.getConstructors().length);
     assertTrue(
         methods.stream().allMatch(method -> method.getReturnType() == ApplicationCallbacks.class));

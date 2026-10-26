@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -61,7 +62,7 @@ class ResponseHeaderGetterTest {
             test.send(request -> request.path("/headers"), HttpResponse.BodyHandlers.ofString());
         assertEquals(200, response.statusCode());
         assertEquals("checked", response.body());
-        assertEquals(java.util.List.of("first", "second"), response.headers().allValues("X-Value"));
+        assertEquals(List.of("first", "second"), response.headers().allValues("X-Value"));
       }
     }
   }
