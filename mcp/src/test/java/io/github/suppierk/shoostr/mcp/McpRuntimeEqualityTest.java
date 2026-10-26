@@ -124,33 +124,7 @@ class McpRuntimeEqualityTest {
             lifetime.stream(streams.get(index));
             subscriptions.add(
                 Mono.<Void>create(acknowledgments::add).subscribe(value -> {}, failures::add));
-            assertEquals(
-                202,
-                post(
-                        servers.get(index),
-                        """
-                {"jsonrpc":"2.0","method":"notifications/initialized"}
-                """,
-                        identifiers.get(index))
-                    .statusCode());
-            assertNotNull(completed.poll(3, TimeUnit.SECONDS));
-            var ping =
-                post(
-                    servers.get(index),
-                    """
-                {"jsonrpc":"2.0","id":2,"method":"ping"}
-                """,
-                    identifiers.get(index));
-            assertEquals(200, ping.statusCode());
-            assertTrue(ping.body().contains("\"id\":2"));
-            assertNotNull(completed.poll(3, TimeUnit.SECONDS));
-            var output =
-                servers
-                    .get(index)
-                    .send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
-            assertEquals(200, output.statusCode());
-            assertTrue(output.body().contains("notice"));
-            assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+            exerciseProtocol(servers.get(index), identifiers.get(index), completed);
           }
           assertEquals(2, flushed.get());
           var frames =
@@ -275,6 +249,36 @@ class McpRuntimeEqualityTest {
       assertTrue(retained.remove(entry.getKey()));
     }
     assertTrue(retained.isEmpty());
+  }
+
+  private static void exerciseProtocol(
+      TestServer server, String identifier, LinkedBlockingQueue<RequestOutcome> completed)
+      throws Exception {
+    assertEquals(
+        202,
+        post(
+                server,
+                """
+        {"jsonrpc":"2.0","method":"notifications/initialized"}
+        """,
+                identifier)
+            .statusCode());
+    assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+    var ping =
+        post(
+            server,
+            """
+        {"jsonrpc":"2.0","id":2,"method":"ping"}
+        """,
+            identifier);
+    assertEquals(200, ping.statusCode());
+    assertTrue(ping.body().contains("\"id\":2"));
+    assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+    var output =
+        server.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
+    assertEquals(200, output.statusCode());
+    assertTrue(output.body().contains("notice"));
+    assertNotNull(completed.poll(3, TimeUnit.SECONDS));
   }
 
   private static HttpResponse<String> post(TestServer server, String body, String session)

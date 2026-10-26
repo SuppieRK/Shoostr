@@ -45,7 +45,7 @@ class StaticFilesEqualityTest {
   }
 
   @Test
-  void separateOpeningsOfTheSameDirectoryRetainDistinctOwnedDescriptors() throws Exception {
+  void separateOpeningsOfTheSameDirectoryRetainDistinctOwnedDescriptors() {
     try (var first = new StaticFiles("/files", directory);
         var second = new StaticFiles("/files", directory)) {
       assertNotEquals(first, second);

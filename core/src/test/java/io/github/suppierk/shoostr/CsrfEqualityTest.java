@@ -62,17 +62,17 @@ class CsrfEqualityTest {
     assertEquals(first, second);
 
     try (var app = new Shoostr().sessions().extensions(first, second)) {
+      var routes = app.routes();
       assertThrows(
           IllegalArgumentException.class,
           () ->
-              app.routes()
-                  .get(
-                      "/shared",
-                      (ignored, ignored2) -> {},
-                      extensions -> {
-                        extensions.with(first);
-                        extensions.with(second);
-                      }));
+              routes.get(
+                  "/shared",
+                  (ignored, ignored2) -> {},
+                  extensions -> {
+                    extensions.with(first);
+                    extensions.with(second);
+                  }));
       app.routes()
           .get("/first", (ignored3, ignored4) -> {}, extensions -> extensions.with(first))
           .get("/second", (ignored5, ignored6) -> {}, extensions -> extensions.with(second));

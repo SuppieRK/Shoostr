@@ -19,8 +19,10 @@ import org.jspecify.annotations.Nullable;
  *
  * <p>Equality compares the immutable policy. Installation and route selection identify the exact
  * extension instance independently of this value comparison.
+ *
+ * @param policy immutable cross-origin permissions
  */
-public final class Cors implements Extension<Cors.Configuration> {
+public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
   private static final Map<String, String> VARIATION =
       Map.of(HttpHeaders.VARY.value(), HttpHeaders.ORIGIN.value());
   static final Map<String, String> OPTIONS_VARIATION =
@@ -32,15 +34,13 @@ public final class Cors implements Extension<Cors.Configuration> {
               HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value(),
               HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value()));
 
-  private final CorsPolicy policy;
-
   /**
    * Creates immutable sharing behavior from validated permissions.
    *
    * @param policy immutable permissions
    */
-  public Cors(CorsPolicy policy) {
-    this.policy = Objects.requireNonNull(policy);
+  public Cors {
+    Objects.requireNonNull(policy);
   }
 
   /**
@@ -48,29 +48,9 @@ public final class Cors implements Extension<Cors.Configuration> {
    *
    * @return configured policy
    */
+  @Override
   public CorsPolicy policy() {
     return policy;
-  }
-
-  /**
-   * Compares the complete cross-origin permissions.
-   *
-   * @param other object to compare
-   * @return whether both extensions have equal policies
-   */
-  @Override
-  public boolean equals(@Nullable Object other) {
-    return other instanceof Cors cors && policy.equals(cors.policy);
-  }
-
-  /**
-   * Computes a hash from the immutable policy.
-   *
-   * @return policy hash
-   */
-  @Override
-  public int hashCode() {
-    return policy.hashCode();
   }
 
   /** {@inheritDoc} */

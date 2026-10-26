@@ -54,7 +54,6 @@ class UploadEqualityTest {
       other.close();
     }
 
-    assertEquals(upload, upload);
     assertEquals(initialHash, upload.hashCode());
     assertTrue(uploads.remove(upload));
     assertTrue(uploads.remove(other));

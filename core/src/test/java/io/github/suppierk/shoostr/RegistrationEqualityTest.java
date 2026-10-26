@@ -167,8 +167,8 @@ class RegistrationEqualityTest {
 
   @Test
   void webSocketConfigurationRetainsRegistrationIdentity() {
-    var first = new WebSocket().onText((connection, message) -> connection.send(message));
-    var second = new WebSocket().onBinary((connection, message) -> connection.send(message));
+    var first = new WebSocket().onText(WebSocketConnection::send);
+    var second = new WebSocket().onBinary(WebSocketConnection::send);
     EqualsVerifier.forClass(WebSocket.class)
         .withRedefinedSubclass(TypedWebSocket.class)
         .withPrefabValues(WebSocket.class, first, second)

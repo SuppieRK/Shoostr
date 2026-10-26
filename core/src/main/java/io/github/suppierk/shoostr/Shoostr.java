@@ -33,7 +33,6 @@ import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.QuotedQualityCSV;
 import org.eclipse.jetty.http2.server.HTTP2CServerConnectionFactory;
 import org.eclipse.jetty.http2.server.HTTP2ServerConnectionFactory;
-import org.eclipse.jetty.server.Handler.Abstract;
 import org.eclipse.jetty.server.Handler.Wrapper;
 import org.eclipse.jetty.server.HttpConfiguration;
 import org.eclipse.jetty.server.HttpConnectionFactory;

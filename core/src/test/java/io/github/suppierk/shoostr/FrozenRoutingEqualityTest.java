@@ -123,15 +123,15 @@ class FrozenRoutingEqualityTest {
               .withPrefabValues(RadixRoutes.Endpoint.class, firstEndpoint, secondEndpoint)
               .withPrefabValues(StaticFiles.class, firstMount, secondMount)
               .withNonnullFields("endpoints", "children", "staticFiles");
-      if ("ConstrainedRoutes".equals(type.getSimpleName())) {
+      if (type.equals(Class.forName(RadixRoutes.class.getName() + "$ConstrainedRoutes"))) {
         var constraint = Class.forName(RadixRoutes.class.getName() + "$Constraint");
         verifier =
             verifier
                 .withRedefinedSuperclass()
                 .withPrefabValuesForField(
                     "constraint",
-                    record(constraint, "[0-9]+", 1L, 2L, 1, 10, Map.of(firstEndpoint, 1)),
-                    record(constraint, "[a-z]+", 4L, 8L, 2, 20, Map.of(secondEndpoint, 2)))
+                    constructRecord(constraint, "[0-9]+", 1L, 2L, 1, 10, Map.of(firstEndpoint, 1)),
+                    constructRecord(constraint, "[a-z]+", 4L, 8L, 2, 20, Map.of(secondEndpoint, 2)))
                 .withNonnullFields("endpoints", "children", "staticFiles", "constraint");
       }
 
@@ -146,7 +146,7 @@ class FrozenRoutingEqualityTest {
             .toList());
   }
 
-  private static Object record(Class<?> type, Object... values)
+  private static Object constructRecord(Class<?> type, Object... values)
       throws ReflectiveOperationException {
     var signature =
         Arrays.stream(type.getRecordComponents())

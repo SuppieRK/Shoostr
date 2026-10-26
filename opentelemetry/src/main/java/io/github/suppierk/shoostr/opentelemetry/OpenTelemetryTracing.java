@@ -30,17 +30,14 @@ public final class OpenTelemetryTracing
         /**
          * Retains header enumeration for propagators that use the deprecated upstream method.
          *
-         * <p>InlineMeSuggester is suppressed because this override retains an external interface
-         * method, and the suggested InlineMe annotation is outside Shoostr's annotation policy.
+         * <p>Deprecation is suppressed because this upstream callback still serves propagators that
+         * enumerate request headers.
          *
          * @param carrier request providing the header names
          * @return incoming header names
-         * @deprecated Read known propagation fields through {@link TextMapGetter#get(Object,
-         *     String)} or {@link TextMapGetter#getAll(Object, String)} instead.
          */
-        @Deprecated
         @Override
-        @SuppressWarnings("InlineMeSuggester")
+        @SuppressWarnings("deprecation")
         public Iterable<String> keys(Request carrier) {
           return carrier.headerMap().keySet();
         }
