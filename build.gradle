@@ -6,7 +6,7 @@ buildscript {
 			because 'Align Jib build dependencies with the patched Jackson version used by the project.'
 		}
 		constraints {
-			classpath('org.apache.commons:commons-lang3:3.18.0') {
+			classpath('org.apache.commons:commons-lang3:3.21.0') {
 				because 'Fix CVE-2025-48924 in the transitive Jib build dependency.'
 			}
 		}
