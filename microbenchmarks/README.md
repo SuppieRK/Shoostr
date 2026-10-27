@@ -63,7 +63,7 @@ fixture supplies no new performance evidence.
 
 ## Buffered request bodies
 
-`BufferedRequestBenchmark` measures `Request.bodyBytes()` with a fresh Jetty
+`BufferedRequestBenchmark.bodyBytes` measures `Request.bodyBytes()` with a fresh Jetty
 `ByteBufferContentSource` behind its `Content.Source.asInputStream` adapter. It
 includes the framework request wrapper, body cache and public defensive copy;
 the payload and response sink are prepared outside the timed operation. The
@@ -73,7 +73,7 @@ The companion candidate-only k6 echo workload measures the complete HTTP path.
 
 ```sh
 cmdshape ./gradlew :microbenchmarks:test :microbenchmarks:installDist
-cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks BufferedRequestBenchmark -prof gc -foe true -rf json -rff benchmark-results/buffered-request.json
+cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks BufferedRequestBenchmark.bodyBytes -prof gc -foe true -rf json -rff benchmark-results/buffered-request.json
 ```
 
 Compare `gc.alloc.rate.norm` in bytes per operation and average time separately.
@@ -81,6 +81,27 @@ Run before and after measurements with the same JVM and JMH settings; a sampled
 JFR allocation share is not a substitute for the JMH allocation result. The
 historical issue 50 comparison used the same complete-path distinction; its
 local recordings are retired during the Actions migration.
+
+
+`BufferedRequestBenchmark.bodyText` uses the same bounded read and additionally decodes
+with an explicit charset. `charset=UTF-8` and `content=ascii` are the defaults.
+Supported charset overrides are `UTF-8`, `ISO-8859-1`, and `UTF-16BE`; `content=unicode`
+uses repeated `é` characters instead of ASCII `Z`. The payload is encoded during setup,
+and `bytes` always denotes encoded bytes, including for UTF-16BE. Each size must contain
+whole encoded characters. The byte-read benchmark retains its fixed `Z` payload.
+
+Use fixed headers when comparing decoding, and retain both declared-length modes:
+
+```sh
+cmdshape mkdir -p benchmark-results
+cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks BufferedRequestBenchmark.bodyText -p bytes=0,1024,16384,1048576 -p length=known,unknown -p headers=4 -p charset=UTF-8 -p content=ascii -prof gc -foe true -rf json -rff benchmark-results/body-text-utf8.json
+cmdshape microbenchmarks/build/install/microbenchmarks/bin/microbenchmarks BufferedRequestBenchmark.bodyText -p bytes=16384 -p length=known,unknown -p headers=4 -p charset=UTF-8,ISO-8859-1,UTF-16BE -p content=unicode -prof gc -foe true -rf json -rff benchmark-results/body-text-charsets.json
+```
+
+These measurements include reading, caching, request construction and decoding; they do
+not isolate decoder cost or measure HTTP latency. Compare identical fixtures and JVM
+settings before and after a library change. The [fixture tests](src/test/java/io/github/suppierk/shoostr/BufferedRequestBenchmarkTest.java)
+check known byte and text values for the configured shapes.
 
 ## Composed pattern workloads
 

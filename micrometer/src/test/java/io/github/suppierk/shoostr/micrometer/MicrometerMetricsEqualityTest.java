@@ -19,7 +19,7 @@ import org.junit.jupiter.api.Test;
 
 class MicrometerMetricsEqualityTest {
   @Test
-  void comparesAllStoredProviderState() {
+  void comparesRegistryActiveTimerAndRegistrationState() {
     var first = new SimpleMeterRegistry();
     var second = new SimpleMeterRegistry();
 
@@ -31,6 +31,7 @@ class MicrometerMetricsEqualityTest {
               LongTaskTimer.builder("first").register(first),
               LongTaskTimer.builder("second").register(second))
           .withNonnullFields("registry", "active")
+          .withIgnoredFields("completed")
           .suppress(Warning.NONFINAL_FIELDS)
           .verify();
     } finally {

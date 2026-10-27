@@ -272,7 +272,9 @@ final class StaticFiles implements Closeable {
     IOException failure = null;
     if (rootDirectory != null) {
       try {
-        rootDirectory.close();
+        synchronized (rootDirectory) {
+          rootDirectory.close();
+        }
       } catch (IOException closeFailure) {
         failure = closeFailure;
       }
@@ -422,62 +424,88 @@ final class StaticFiles implements Closeable {
    * @return selected resource, or null when unavailable
    * @throws IOException if descriptor-relative access fails
    */
-  @SuppressWarnings("java:S1181") // Fatal failures still require descriptor cleanup before rethrow.
   private @Nullable Selected filesystemResource(String relative) throws IOException {
-    synchronized (Objects.requireNonNull(rootDirectory)) {
-      var directories = directories(relative);
-      if (directories == null) {
-        return null;
+    if (!relative.contains(HttpCharacters.PATH_SEPARATOR_STRING)) {
+      synchronized (Objects.requireNonNull(rootDirectory)) {
+        return selectFilesystemResource(relative);
       }
-
-      SeekableByteChannel channel = null;
-      Selected selected = null;
-      Throwable operationFailure = null;
-
-      try {
-        var file = fileName(relative);
-        var attributes = attributes(directories.getLast(), file);
-        if (attributes != null) {
-          channel =
-              directories
-                  .getLast()
-                  .newByteChannel(
-                      Path.of(file), Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
-          var revalidated = attributes(directories.getLast(), file);
-          if (revalidated != null && sameSelection(attributes, revalidated)) {
-            selected =
-                new Selected(
-                    channel, channel.size(), revalidated.lastModifiedTime().toInstant(), file);
-            channel = null;
-          }
-        }
-      } catch (IOException | RuntimeException | Error failure) {
-        operationFailure = failure;
-      }
-
-      var cleanupFailure = closeSelection(channel, selected, directories);
-      if (operationFailure != null) {
-        if (cleanupFailure != null) {
-          operationFailure.addSuppressed(cleanupFailure);
-        }
-
-        if (operationFailure instanceof IOException failure) {
-          throw failure;
-        }
-
-        if (operationFailure instanceof RuntimeException failure) {
-          throw failure;
-        }
-
-        throw (Error) operationFailure;
-      }
-
-      if (cleanupFailure != null) {
-        throw cleanupFailure;
-      }
-
-      return selected;
     }
+
+    return selectFilesystemResource(relative);
+  }
+
+  /**
+   * Selects through owned parents, or a shallow borrowed root protected by the caller's monitor.
+   *
+   * @param relative validated relative resource path
+   * @return selected channel transferred to the response, or null for unavailable files
+   * @throws IOException if selection or descriptor cleanup fails
+   */
+  @SuppressWarnings({
+    "java:S1181",
+    "ReferenceEquality"
+  }) // Fatal cleanup preserves throwable identity and avoids self-suppression.
+  private @Nullable Selected selectFilesystemResource(String relative) throws IOException {
+    var directories = directories(relative);
+    if (directories == null) {
+      return null;
+    }
+
+    SeekableByteChannel channel = null;
+    Selected selected = null;
+    Throwable operationFailure = null;
+
+    try {
+      var file = fileName(relative);
+      var attributes = attributes(directories.getLast(), file);
+      if (attributes != null) {
+        channel =
+            directories
+                .getLast()
+                .newByteChannel(
+                    Path.of(file), Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
+        var revalidated = attributes(directories.getLast(), file);
+        if (revalidated != null && sameSelection(attributes, revalidated)) {
+          selected =
+              new Selected(
+                  channel, channel.size(), revalidated.lastModifiedTime().toInstant(), file);
+          channel = null;
+        }
+      }
+    } catch (IOException | RuntimeException | Error failure) {
+      operationFailure = failure;
+    }
+
+    var cleanupFailure = closeSelection(channel, selected, directories);
+    if (operationFailure != null) {
+      if (cleanupFailure != null && cleanupFailure != operationFailure) {
+        operationFailure.addSuppressed(cleanupFailure);
+      }
+
+      if (operationFailure instanceof IOException failure) {
+        throw failure;
+      }
+
+      if (operationFailure instanceof RuntimeException failure) {
+        throw failure;
+      }
+
+      throw (Error) operationFailure;
+    }
+
+    if (cleanupFailure instanceof IOException failure) {
+      throw failure;
+    }
+
+    if (cleanupFailure instanceof RuntimeException failure) {
+      throw failure;
+    }
+
+    if (cleanupFailure instanceof Error failure) {
+      throw failure;
+    }
+
+    return selected;
   }
 
   /**
@@ -488,25 +516,29 @@ final class StaticFiles implements Closeable {
    * @param directories root-to-parent descriptors
    * @return aggregated cleanup failure, or null when all descriptors closed
    */
-  private static @Nullable IOException closeSelection(
+  @SuppressWarnings({
+    "java:S1181",
+    "ReferenceEquality"
+  }) // Preserve identity while cleaning up after unchecked provider failures.
+  private static @Nullable Throwable closeSelection(
       @Nullable SeekableByteChannel channel,
       @Nullable Selected selected,
       List<SecureDirectoryStream<Path>> directories) {
-    IOException failure = null;
+    Throwable failure = null;
     if (channel != null) {
       try {
         channel.close();
-      } catch (IOException closeFailure) {
+      } catch (IOException | RuntimeException | Error closeFailure) {
         failure = closeFailure;
       }
     }
 
     try {
       closeNestedDirectories(directories);
-    } catch (IOException closeFailure) {
+    } catch (IOException | RuntimeException | Error closeFailure) {
       if (failure == null) {
         failure = closeFailure;
-      } else {
+      } else if (failure != closeFailure) {
         failure.addSuppressed(closeFailure);
       }
     }
@@ -514,8 +546,10 @@ final class StaticFiles implements Closeable {
     if (failure != null && selected != null) {
       try {
         selected.close();
-      } catch (IOException closeFailure) {
-        failure.addSuppressed(closeFailure);
+      } catch (IOException | RuntimeException | Error closeFailure) {
+        if (failure != closeFailure) {
+          failure.addSuppressed(closeFailure);
+        }
       }
     }
 
@@ -523,42 +557,57 @@ final class StaticFiles implements Closeable {
   }
 
   /**
-   * Reads anchored metadata without opening a file descriptor during route lookup.
+   * Reads anchored metadata without opening the resource byte channel during route lookup.
    *
    * @param relative validated relative resource path
    * @return regular-file metadata, or null when unavailable
    * @throws IOException if descriptor-relative access fails
    */
   private @Nullable BasicFileAttributes filesystemAttributes(String relative) throws IOException {
-    synchronized (Objects.requireNonNull(rootDirectory)) {
-      var directories = directories(relative);
-      if (directories == null) {
-        return null;
+    if (!relative.contains(HttpCharacters.PATH_SEPARATOR_STRING)) {
+      synchronized (Objects.requireNonNull(rootDirectory)) {
+        return attributes(rootDirectory, relative);
       }
+    }
 
-      try {
-        return attributes(directories.getLast(), fileName(relative));
-      } finally {
-        closeNestedDirectories(directories);
-      }
+    var directories = directories(relative);
+    if (directories == null) {
+      return null;
+    }
+
+    try (Closeable ignored = () -> closeNestedDirectories(directories)) {
+      return attributes(directories.getLast(), fileName(relative));
     }
   }
 
   /**
-   * Traverses child directories through the retained root descriptor without following links.
+   * Acquires an independent first child for nested paths; shallow callers protect the root.
    *
    * @param relative validated relative resource path
-   * @return root-to-parent descriptors, or null when a path component is unavailable
+   * @return borrowed root followed by owned parent descriptors, or null for unavailable components
    * @throws IOException if descriptor traversal fails
    */
+  @SuppressWarnings({
+    "java:S1181",
+    "ReferenceEquality"
+  }) // Preserve failure identity while releasing acquired descriptors.
   private @Nullable List<SecureDirectoryStream<Path>> directories(String relative)
       throws IOException {
-    var directories = new ArrayList<SecureDirectoryStream<Path>>();
-    directories.add(Objects.requireNonNull(rootDirectory));
     var segments = relative.split(HttpCharacters.PATH_SEPARATOR_STRING, -1);
+    var directories = new ArrayList<SecureDirectoryStream<Path>>(segments.length);
+    var root = Objects.requireNonNull(rootDirectory);
+    // Index zero is borrowed; every later descriptor is owned by this selection.
+    directories.add(root);
+    if (segments.length == 1) {
+      // The shallow caller retains the root monitor; no extra descriptor is needed.
+      return directories;
+    }
 
     try {
-      for (int index = 0; index < segments.length - 1; index++) {
+      synchronized (root) {
+        directories.add(root.newDirectoryStream(Path.of(segments[0]), LinkOption.NOFOLLOW_LINKS));
+      }
+      for (int index = 1; index < segments.length - 1; index++) {
         var nested =
             directories
                 .getLast()
@@ -570,8 +619,15 @@ final class StaticFiles implements Closeable {
     } catch (NoSuchFileException | NotDirectoryException ignored3) {
       closeNestedDirectories(directories);
       return null;
-    } catch (IOException | RuntimeException failure) {
-      closeNestedDirectories(directories);
+    } catch (IOException | RuntimeException | Error failure) {
+      try {
+        closeNestedDirectories(directories);
+      } catch (IOException | RuntimeException | Error cleanup) {
+        if (failure != cleanup) {
+          failure.addSuppressed(cleanup);
+        }
+      }
+
       throw failure;
     }
   }
@@ -616,23 +672,35 @@ final class StaticFiles implements Closeable {
    * @param directories root-to-parent descriptors
    * @throws IOException if a child descriptor cannot be closed
    */
+  @SuppressWarnings({
+    "java:S1181",
+    "ReferenceEquality"
+  }) // Close every descriptor and retain failure identity before rethrow.
   private static void closeNestedDirectories(List<SecureDirectoryStream<Path>> directories)
       throws IOException {
-    IOException failure = null;
+    Throwable failure = null;
     for (int index = directories.size() - 1; index > 0; index--) {
       try {
         directories.get(index).close();
-      } catch (IOException closeFailure) {
+      } catch (IOException | RuntimeException | Error closeFailure) {
         if (failure == null) {
           failure = closeFailure;
-        } else {
+        } else if (failure != closeFailure) {
           failure.addSuppressed(closeFailure);
         }
       }
     }
 
-    if (failure != null) {
-      throw failure;
+    if (failure instanceof IOException io) {
+      throw io;
+    }
+
+    if (failure instanceof RuntimeException runtime) {
+      throw runtime;
+    }
+
+    if (failure instanceof Error error) {
+      throw error;
     }
   }
 

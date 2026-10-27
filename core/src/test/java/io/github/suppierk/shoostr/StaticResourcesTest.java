@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
@@ -36,12 +37,16 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -1484,6 +1489,168 @@ class StaticResourcesTest {
 
         assertEquals(200, result.statusCode());
         assertEquals("mounted content", result.body());
+      }
+    }
+  }
+
+  @Test
+  @Timeout(20)
+  void servesConcurrentShallowAndNestedRequestsFromTheAnchoredMountAfterItsPathIsReplaced()
+      throws Exception {
+    assumeSecureDirectoryOperations();
+    var mounted = Files.createDirectories(temporaryDirectory.resolve("mounted"));
+    var outside = Files.createDirectories(temporaryDirectory.resolve("outside"));
+    for (var base : List.of(mounted, outside)) {
+      Files.createDirectories(base.resolve("nested/deeper"));
+      for (int index = 0; index < 4; index++) {
+        for (var prefix : List.of("", "nested/deeper/")) {
+          Files.writeString(
+              base.resolve(prefix + "file-" + index + ".txt"),
+              (base.equals(mounted) ? "mounted:" : "outside:") + prefix + index);
+        }
+      }
+    }
+
+    try (var app = new Shoostr()) {
+      app.routes().staticFiles("/assets", mounted);
+      Files.move(mounted, temporaryDirectory.resolve("relocated"));
+      Files.createSymbolicLink(mounted, outside);
+
+      try (var test = TestServer.start(app);
+          var clients = Executors.newVirtualThreadPerTaskExecutor()) {
+        var ready = new CountDownLatch(8);
+        var start = new CountDownLatch(1);
+        var tasks = new ArrayList<Future<?>>();
+        for (int worker = 0; worker < 8; worker++) {
+          final int id = worker;
+          tasks.add(
+              clients.submit(
+                  () -> {
+                    ready.countDown();
+                    assertTrue(start.await(3, TimeUnit.SECONDS));
+                    for (int turn = 0; turn < 16; turn++) {
+                      var prefix = (turn & 1) == 0 ? "" : "nested/deeper/";
+                      int index = (id + turn) % 4;
+                      var response =
+                          test.send(
+                              request ->
+                                  request
+                                      .path("/assets/" + prefix + "file-" + index + ".txt")
+                                      .timeout(Duration.ofSeconds(3)),
+                              HttpResponse.BodyHandlers.ofString());
+                      assertEquals(200, response.statusCode());
+                      assertEquals("mounted:" + prefix + index, response.body());
+                    }
+                    return null;
+                  }));
+        }
+
+        try {
+          assertTrue(ready.await(3, TimeUnit.SECONDS));
+        } finally {
+          start.countDown();
+        }
+
+        for (var task : tasks) task.get(10, TimeUnit.SECONDS);
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"directory,500", "leaf,404", "missing,404"})
+  void rejectsNestedSymlinkSubstitutionAndMissingParentsAfterRouteSelection(
+      String change, int expectedStatus) throws Exception {
+    assumeSecureDirectoryOperations();
+    var mounted = Files.createDirectories(temporaryDirectory.resolve("mounted/nested/deeper"));
+    var outside = Files.createDirectories(temporaryDirectory.resolve("outside/deeper"));
+    Files.writeString(mounted.resolve("file.txt"), "mounted content");
+    Files.writeString(outside.resolve("file.txt"), "outside secret");
+    var root = temporaryDirectory.resolve("mounted");
+
+    try (var app = new Shoostr()) {
+      app.beforeRouteHandler(
+          (request, response) -> {
+            if ("directory".equals(change)) {
+              Files.move(root.resolve("nested"), temporaryDirectory.resolve("relocated"));
+              Files.createSymbolicLink(
+                  root.resolve("nested"), temporaryDirectory.resolve("outside"));
+            } else {
+              Files.delete(mounted.resolve("file.txt"));
+              if ("leaf".equals(change)) {
+                Files.createSymbolicLink(mounted.resolve("file.txt"), outside.resolve("file.txt"));
+              } else {
+                Files.delete(mounted);
+              }
+            }
+          });
+      app.routes().staticFiles("/assets", root);
+
+      try (var server = TestServer.start(app)) {
+        var result =
+            server.send(
+                request -> request.path("/assets/nested/deeper/file.txt"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(expectedStatus, result.statusCode());
+        assertFalse(result.body().contains("outside secret"));
+      }
+    }
+  }
+
+  @Test
+  @Timeout(15)
+  void completesShutdownWhileConcurrentShallowAndNestedRequestsAreAdmitted() throws Exception {
+    assumeSecureDirectoryOperations();
+    Files.createDirectories(temporaryDirectory.resolve("nested/deeper"));
+    Files.writeString(temporaryDirectory.resolve("file.txt"), "mounted content");
+    Files.writeString(temporaryDirectory.resolve("nested/deeper/file.txt"), "mounted content");
+    var entered = new CountDownLatch(2);
+    var release = new CountDownLatch(1);
+
+    try (var app = new Shoostr();
+        var client = HttpClient.newHttpClient()) {
+      app.modifyServer(
+              nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))
+          .beforeClose(release::countDown)
+          .beforeRouteHandler(
+              (request, response) -> {
+                entered.countDown();
+                if (!release.await(5, TimeUnit.SECONDS)) {
+                  throw new IOException("Request gate timed out");
+                }
+              });
+      app.routes().staticFiles("/assets", temporaryDirectory);
+      app.start();
+      var origin = "http://127.0.0.1:" + app.port();
+      var pending =
+          List.of("/assets/file.txt", "/assets/nested/deeper/file.txt").stream()
+              .map(
+                  path ->
+                      client.sendAsync(
+                          HttpRequest.newBuilder(URI.create(origin + path))
+                              .timeout(Duration.ofSeconds(5))
+                              .build(),
+                          HttpResponse.BodyHandlers.ofString()))
+              .toList();
+
+      try {
+        assertTrue(entered.await(3, TimeUnit.SECONDS));
+        app.close();
+      } finally {
+        release.countDown();
+      }
+
+      assertThrows(IllegalStateException.class, app::port);
+      for (var exchange : pending) {
+        try {
+          var response = exchange.get(3, TimeUnit.SECONDS);
+          if (response.statusCode() == 200) {
+            assertEquals("mounted content", response.body());
+          } else {
+            assertTrue(response.statusCode() >= 400 && response.statusCode() < 600);
+          }
+        } catch (ExecutionException failure) {
+          assertInstanceOf(IOException.class, failure.getCause());
+        }
       }
     }
   }

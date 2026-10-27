@@ -12,7 +12,10 @@ import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
+import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.Tag;
+import io.micrometer.core.instrument.config.MeterFilter;
+import io.micrometer.core.instrument.config.MeterFilterReply;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.io.IOException;
 import java.net.http.HttpResponse;
@@ -22,11 +25,14 @@ import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -421,6 +427,151 @@ class MicrometerMetricsTest {
         assertTrue(timer.totalTime(TimeUnit.NANOSECONDS) > 0);
         assertEquals("none", timer.getId().getTag("error"));
       }
+    } finally {
+      registry.close();
+    }
+  }
+
+  @Test
+  @Timeout(20)
+  void sharesOneObserverAcrossConcurrentFilteredMeterIdsWithoutEagerCompletedMeters()
+      throws Exception {
+    var entered = new CountDownLatch(8);
+    var release = new CountDownLatch(1);
+    var terminal = new CountDownLatch(24);
+    var registry = new SimpleMeterRegistry();
+
+    try (var app = new Shoostr().virtualThreads();
+        var clients = Executors.newVirtualThreadPerTaskExecutor()) {
+      registry.config().meterFilter(MeterFilter.commonTags(List.of(Tag.of("deployment", "test"))));
+      app.extensions(new MicrometerMetrics(registry).allRequests());
+      app.afterRequest(outcome -> terminal.countDown());
+      app.routes()
+          .get(
+              "/items/{id}",
+              (request, response) -> {
+                entered.countDown();
+                if (!release.await(5, TimeUnit.SECONDS)) {
+                  throw new IOException("Request gate timed out");
+                }
+
+                response.text("done");
+              })
+          .post(
+              "/items/{id}",
+              (request, response) -> {
+                entered.countDown();
+                if (!release.await(5, TimeUnit.SECONDS)) {
+                  throw new IOException("Request gate timed out");
+                }
+
+                response.status(503).text("busy");
+              });
+      assertTrue(registry.find("http.server.requests").timers().isEmpty());
+
+      try (var server = TestServer.start(app)) {
+        assertTrue(registry.find("http.server.requests").timers().isEmpty());
+        var pending = new ArrayList<Future<?>>();
+        for (int index = 0; index < 24; index++) {
+          final int id = index;
+          pending.add(
+              clients.submit(
+                  () -> {
+                    int kind = id % 3;
+                    var result =
+                        server.send(
+                            request ->
+                                request
+                                    .method(kind == 1 ? "POST" : "GET")
+                                    .path((kind == 2 ? "/missing/" : "/items/") + "private-" + id)
+                                    .timeout(Duration.ofSeconds(3)),
+                            HttpResponse.BodyHandlers.discarding());
+                    assertEquals(kind == 0 ? 200 : kind == 1 ? 503 : 404, result.statusCode());
+                    return null;
+                  }));
+        }
+
+        try {
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
+        } finally {
+          release.countDown();
+        }
+
+        for (var request : pending) request.get(5, TimeUnit.SECONDS);
+        assertTrue(terminal.await(3, TimeUnit.SECONDS));
+        assertEquals(3, registry.find("http.server.requests").timers().size());
+        for (var timer : registry.find("http.server.requests").timers()) {
+          assertEquals(8, timer.count());
+          assertEquals("Terminal request count and duration", timer.getId().getDescription());
+          assertEquals("test", timer.getId().getTag("deployment"));
+          assertEquals(5, timer.getId().getTags().size());
+        }
+        assertEquals(
+            8,
+            registry
+                .get("http.server.requests")
+                .tags("method", "GET", "route", "/items/{id}", "status", "200", "error", "none")
+                .timer()
+                .count());
+        assertEquals(
+            8,
+            registry
+                .get("http.server.requests")
+                .tags("method", "POST", "route", "/items/{id}", "status", "503", "error", "server")
+                .timer()
+                .count());
+        assertEquals(
+            8,
+            registry
+                .get("http.server.requests")
+                .tags("method", "GET", "route", "UNMATCHED", "status", "404", "error", "none")
+                .timer()
+                .count());
+        assertEquals(0, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
+      }
+
+      assertFalse(registry.isClosed());
+    } finally {
+      release.countDown();
+      registry.close();
+    }
+  }
+
+  @Test
+  @Timeout(10)
+  void releasesTheActiveSampleWhenCompletedMeterRegistrationFails() throws Exception {
+    var registry = new SimpleMeterRegistry();
+    var completed = new CountDownLatch(1);
+    registry
+        .config()
+        .meterFilter(
+            new MeterFilter() {
+              @Override
+              public MeterFilterReply accept(Meter.Id id) {
+                if ("http.server.requests".equals(id.getName())) {
+                  throw new IllegalStateException("Completed registration failed");
+                }
+
+                return MeterFilterReply.NEUTRAL;
+              }
+            });
+
+    try (var app = new Shoostr()) {
+      app.extensions(new MicrometerMetrics(registry).allRequests());
+      app.afterRequest(outcome -> completed.countDown());
+      app.routes().get("/metrics", (request, response) -> response.text("done"));
+
+      try (var server = TestServer.start(app)) {
+        var response =
+            server.send(request -> request.path("/metrics"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
+        assertEquals("done", response.body());
+        assertTrue(completed.await(3, TimeUnit.SECONDS));
+        assertTrue(registry.find("http.server.requests").timers().isEmpty());
+        assertEquals(0, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
+      }
+
+      assertFalse(registry.isClosed());
     } finally {
       registry.close();
     }
