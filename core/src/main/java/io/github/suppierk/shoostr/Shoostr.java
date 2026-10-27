@@ -948,9 +948,7 @@ public final class Shoostr implements Closeable {
       fatal = signallingFailure;
     } finally {
       try {
-        if (server != null) {
-          server.stop();
-        }
+        stopServer();
       } catch (Exception stopFailure) {
         if (stopFailure instanceof InterruptedException) {
           Thread.currentThread().interrupt();
@@ -968,23 +966,7 @@ public final class Shoostr implements Closeable {
         try {
           failure = finishManagedWebSocketDispatch(failure);
           failure = closeStaticResources(failure);
-
-          if (ownedVirtualThreads != null) {
-            try {
-              if (server != null
-                  && server.getThreadPool() instanceof QueuedThreadPool pool
-                  && ownedVirtualThreads.equals(pool.getVirtualThreadsExecutor())) {
-                // Let native late cleanup use Jetty's policy instead of a closed virtual delegate.
-                pool.setVirtualThreadsExecutor(null);
-              }
-
-              ownedVirtualThreads.shutdownNow();
-            } catch (RuntimeException executorFailure) {
-              failure =
-                  appendCloseFailure(failure, "Could not close HTTP executor", executorFailure);
-            }
-          }
-
+          failure = closeOwnedVirtualThreads(failure);
           failure = cancelPendingMatches(failure);
 
           removeShutdownHook();
@@ -1006,6 +988,42 @@ public final class Shoostr implements Closeable {
       }
 
       throw fatal;
+    }
+
+    return failure;
+  }
+
+  /**
+   * Stops the native server when startup acquired one.
+   *
+   * @throws Exception if native shutdown fails
+   */
+  private void stopServer() throws Exception {
+    if (server != null) {
+      server.stop();
+    }
+  }
+
+  /**
+   * Detaches and interrupts the owned executor while leaving borrowed executors untouched.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException closeOwnedVirtualThreads(@Nullable IOException failure) {
+    if (ownedVirtualThreads != null) {
+      try {
+        if (server != null
+            && server.getThreadPool() instanceof QueuedThreadPool pool
+            && ownedVirtualThreads.equals(pool.getVirtualThreadsExecutor())) {
+          // Let native late cleanup use Jetty's policy instead of a closed virtual delegate.
+          pool.setVirtualThreadsExecutor(null);
+        }
+
+        ownedVirtualThreads.shutdownNow();
+      } catch (RuntimeException executorFailure) {
+        return appendCloseFailure(failure, "Could not close HTTP executor", executorFailure);
+      }
     }
 
     return failure;
@@ -1076,7 +1094,9 @@ public final class Shoostr implements Closeable {
     }
 
     if (additional instanceof Error && !(current instanceof Error)) {
-      return mergeCloseFailure(additional, current);
+      var earlier = current;
+      current = additional;
+      additional = earlier;
     }
 
     for (var retained : current.getSuppressed()) {
@@ -1135,11 +1155,7 @@ public final class Shoostr implements Closeable {
   private @Nullable IOException signalExtensionsBeforeStop(@Nullable IOException failure) {
     try {
       for (int index = extensions.size() - 1; index >= 0; index--) {
-        try {
-          extensions.get(index).beforeStop();
-        } catch (RuntimeException stopFailure) {
-          failure = appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
-        }
+        failure = signalExtensionBeforeStop(extensions.get(index), failure);
       }
       return failure;
     } catch (Error fatal) {
@@ -1148,6 +1164,23 @@ public final class Shoostr implements Closeable {
       }
 
       throw fatal;
+    }
+  }
+
+  /**
+   * Signals one extension while retaining an ordinary failure for the enclosing phase.
+   *
+   * @param extension owned extension being signalled
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private static @Nullable IOException signalExtensionBeforeStop(
+      Extension<?> extension, @Nullable IOException failure) {
+    try {
+      extension.beforeStop();
+      return failure;
+    } catch (RuntimeException stopFailure) {
+      return appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
     }
   }
 
@@ -1161,11 +1194,7 @@ public final class Shoostr implements Closeable {
   private @Nullable IOException closeExtensions(@Nullable IOException failure) {
     try {
       for (int index = extensions.size() - 1; index >= 0; index--) {
-        try {
-          extensions.get(index).close();
-        } catch (IOException | RuntimeException closeFailure) {
-          failure = appendCloseFailure(failure, "Could not close extension", closeFailure);
-        }
+        failure = closeExtension(extensions.get(index), failure);
       }
       extensions.clear();
       return failure;
@@ -1175,6 +1204,23 @@ public final class Shoostr implements Closeable {
       }
 
       throw fatal;
+    }
+  }
+
+  /**
+   * Closes one extension while retaining an ordinary failure for the enclosing phase.
+   *
+   * @param extension owned extension being closed
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private static @Nullable IOException closeExtension(
+      Extension<?> extension, @Nullable IOException failure) {
+    try {
+      extension.close();
+      return failure;
+    } catch (IOException | RuntimeException closeFailure) {
+      return appendCloseFailure(failure, "Could not close extension", closeFailure);
     }
   }
 
@@ -1192,12 +1238,7 @@ public final class Shoostr implements Closeable {
         pending = List.copyOf(pendingMatches);
       }
       for (var task : pending) {
-        try {
-          task.cancel();
-        } catch (RuntimeException cancellationFailure) {
-          failure =
-              appendCloseFailure(failure, "Could not cancel queued request", cancellationFailure);
-        }
+        failure = cancelPendingMatch(task, failure);
       }
       return failure;
     } catch (Error fatal) {
@@ -1206,6 +1247,23 @@ public final class Shoostr implements Closeable {
       }
 
       throw fatal;
+    }
+  }
+
+  /**
+   * Cancels one queued exchange while retaining an ordinary failure for the enclosing phase.
+   *
+   * @param task pending matched request
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private static @Nullable IOException cancelPendingMatch(
+      ApplicationHandler.MatchedTask task, @Nullable IOException failure) {
+    try {
+      task.cancel();
+      return failure;
+    } catch (RuntimeException cancellationFailure) {
+      return appendCloseFailure(failure, "Could not cancel queued request", cancellationFailure);
     }
   }
 

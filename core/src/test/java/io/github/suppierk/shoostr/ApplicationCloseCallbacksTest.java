@@ -585,6 +585,7 @@ class ApplicationCloseCallbacksTest {
   }
 
   @Test
+  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
   void keepsTheInstallationErrorPrimaryWhenShutdownAndFinalCallbacksAlsoFail() throws Exception {
     var installation = assertionFailure("Install failed");
     var shutdown = assertionFailure("Signalling failed");

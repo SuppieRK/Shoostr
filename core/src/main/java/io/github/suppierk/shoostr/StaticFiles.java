@@ -482,30 +482,31 @@ final class StaticFiles implements Closeable {
         operationFailure.addSuppressed(cleanupFailure);
       }
 
-      if (operationFailure instanceof IOException failure) {
-        throw failure;
-      }
-
-      if (operationFailure instanceof RuntimeException failure) {
-        throw failure;
-      }
-
-      throw (Error) operationFailure;
+      throwSelectionFailure(operationFailure);
     }
 
-    if (cleanupFailure instanceof IOException failure) {
-      throw failure;
-    }
-
-    if (cleanupFailure instanceof RuntimeException failure) {
-      throw failure;
-    }
-
-    if (cleanupFailure instanceof Error failure) {
-      throw failure;
-    }
-
+    throwSelectionFailure(cleanupFailure);
     return selected;
+  }
+
+  /**
+   * Propagates a selection or cleanup failure without replacing its type or identity.
+   *
+   * @param failure observed failure, or null when the operation succeeded
+   * @throws IOException if descriptor access or cleanup failed with a checked exception
+   */
+  private static void throwSelectionFailure(@Nullable Throwable failure) throws IOException {
+    if (failure instanceof IOException checked) {
+      throw checked;
+    }
+
+    if (failure instanceof RuntimeException unchecked) {
+      throw unchecked;
+    }
+
+    if (failure instanceof Error fatal) {
+      throw fatal;
+    }
   }
 
   /**
