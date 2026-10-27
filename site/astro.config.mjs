@@ -174,6 +174,7 @@ export default defineConfig({
           collapsed: false,
           items: [
             { slug: 'mcp/server' },
+            { slug: 'mcp/operations' },
             { slug: 'mcp/security' },
             { slug: 'mcp/interactions' },
           ],

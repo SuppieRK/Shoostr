@@ -133,6 +133,10 @@ class McpRuntimeEqualityTest {
                   frame(new SseEvent("second", "message", "second", null), acknowledgments.get(1)));
           var configuration =
               EqualsVerifier.configure()
+                  .withPrefabValues(
+                      McpOperationLimits.class,
+                      McpOperationLimits.defaults(),
+                      new McpOperationLimits(8, 4, 2, Duration.ofSeconds(1)))
                   .withPrefabValues(Mcp.class, first, second)
                   .withPrefabValues(
                       McpSessionLimits.class,
@@ -185,6 +189,11 @@ class McpRuntimeEqualityTest {
                   configuration, sessions.getFirst().getClass(), sessions.get(0), sessions.get(1));
           configuration =
               prefab(configuration, frames.getFirst().getClass(), frames.get(0), frames.get(1));
+          var firstDispatch = dispatch(providers.get(0), sessions.get(0), streams.get(0), "first");
+          var secondDispatch =
+              dispatch(providers.get(1), sessions.get(1), streams.get(1), "second");
+          configuration =
+              prefab(configuration, firstDispatch.getClass(), firstDispatch, secondDispatch);
           configuration
               .forClass(Mcp.class)
               .withPrefabValuesForField("server", first.server(), second.server())
@@ -310,6 +319,16 @@ class McpRuntimeEqualityTest {
     var constructor = type.getDeclaredConstructor(SseEvent.class, MonoSink.class);
     constructor.setAccessible(true);
     return constructor.newInstance(event, acknowledgment);
+  }
+
+  private static Object dispatch(Object provider, Object session, McpStream stream, String id)
+      throws ReflectiveOperationException {
+    var type = Class.forName(provider.getClass().getName() + "$Dispatch");
+    var constructor =
+        type.getDeclaredConstructor(
+            session.getClass(), McpStream.class, Object.class, boolean.class);
+    constructor.setAccessible(true);
+    return constructor.newInstance(session, stream, id, false);
   }
 
   private static <T> ConfiguredEqualsVerifier prefab(
