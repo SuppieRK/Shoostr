@@ -437,20 +437,26 @@ public final class Shoostr implements Closeable {
         observationFactories.addAll(callbacks.observations);
       }
     } catch (RuntimeException | Error failure) {
+      Throwable primary = failure;
+
       try {
         close();
-      } catch (IOException cleanup) {
-        failure.addSuppressed(cleanup);
+      } catch (IOException | Error cleanup) {
+        primary = mergeCloseFailure(primary, cleanup);
       }
 
       var cleanup =
           runCloseCallbacks(
               afterCloseCallbacks.reversed(), null, "Could not run afterClose callback");
       if (cleanup != null) {
-        failure.addSuppressed(cleanup);
+        primary = mergeCloseFailure(primary, cleanup);
       }
 
-      throw failure;
+      if (primary instanceof Error fatal) {
+        throw fatal;
+      }
+
+      throw (RuntimeException) primary;
     } finally {
       installing = false;
     }
@@ -843,13 +849,18 @@ public final class Shoostr implements Closeable {
    * and before framework resource disposal. Application afterClose callbacks run in reverse order
    * after extension cleanup. Both run synchronously while this method holds the application
    * monitor; do not wait on another thread that needs a synchronized application operation. Runtime
-   * callback failures join the collected IOException without skipping remaining callbacks.
-   * Reentrant closure during provider setup defers final callbacks until that setup unwinds and
-   * completes provider cleanup.
+   * callback failures join the collected IOException without skipping remaining callbacks. An Error
+   * stops its callback list, but framework cleanup and the separate afterClose phase still run. The
+   * first Error is rethrown after cleanup; other failures remain suppressed. During provider
+   * installation, an Error takes precedence over an ordinary installation failure. Reentrant
+   * closure during provider setup defers final callbacks until that setup unwinds and completes
+   * provider cleanup.
    *
-   * @throws IOException if resources cannot be closed
+   * @throws IOException if resources cannot be closed without an Error
+   * @throws Error if a shutdown callback or cleanup fails fatally
    */
   @Override
+  @SuppressWarnings("java:S1181") // Retain fatal failures while completing the shutdown phases.
   public synchronized void close() throws IOException {
     if (closed) {
       return;
@@ -860,72 +871,144 @@ public final class Shoostr implements Closeable {
       stoppingMatches = true;
     }
     routes.endRegistration();
-    IOException failure =
-        runCloseCallbacks(beforeCloseCallbacks, null, "Could not run beforeClose callback");
-    exceptionHandlers.clear();
-    statusHandlers.clear();
-    requestHeaderHandlers.clear();
-    routeMatchedHandlers.clear();
-    beforeHandlers.clear();
-    afterRouteHandlers.clear();
-    beforeFlushHandlers.clear();
-    afterFlushHandlers.clear();
-    afterHandlers.clear();
-    observationFactories.clear();
-    failure = closeRouteResources(failure);
-
-    serverConfigurations.clear();
-    httpConfigurations.clear();
-    tlsConfiguration = null;
-    sessionConfiguration = null;
-
-    failure = signalManagedWebSocketsBeforeStop(failure);
-
-    failure = signalExtensionsBeforeStop(failure);
+    Throwable failure = null;
 
     try {
-      if (server != null) {
-        server.stop();
-      }
-    } catch (Exception stopFailure) {
-      if (stopFailure instanceof InterruptedException) {
-        Thread.currentThread().interrupt();
-      }
-
-      failure = appendCloseFailure(failure, "Could not stop HTTP server", stopFailure);
+      failure = runCloseCallbacks(beforeCloseCallbacks, null, "Could not run beforeClose callback");
     } finally {
-      failure = finishManagedWebSocketDispatch(failure);
-      failure = closeStaticResources(failure);
-
-      if (ownedVirtualThreads != null) {
-        try {
-          if (server != null
-              && server.getThreadPool() instanceof QueuedThreadPool pool
-              && ownedVirtualThreads.equals(pool.getVirtualThreadsExecutor())) {
-            // Let native late cleanup use Jetty's policy instead of a closed virtual delegate.
-            pool.setVirtualThreadsExecutor(null);
+      try {
+        var cleanup = closeResources(failure instanceof IOException ordinary ? ordinary : null);
+        if (failure instanceof Error) {
+          if (cleanup != null) {
+            failure = mergeCloseFailure(failure, cleanup);
           }
-
-          ownedVirtualThreads.shutdownNow();
-        } catch (RuntimeException executorFailure) {
-          failure = appendCloseFailure(failure, "Could not close HTTP executor", executorFailure);
+        } else {
+          failure = cleanup;
+        }
+      } catch (Error cleanup) {
+        // closeResources already retains its ordinary aggregate, including an incoming IOException.
+        failure = mergeCloseFailure(failure, cleanup);
+      } finally {
+        if (!installing) {
+          failure =
+              runCloseCallbacks(
+                  afterCloseCallbacks.reversed(), failure, "Could not run afterClose callback");
         }
       }
+    }
 
-      failure = cancelPendingMatches(failure);
+    if (failure instanceof Error fatal) {
+      throw fatal;
+    }
 
-      removeShutdownHook();
-      failure = closeExtensions(failure);
-      if (!installing) {
-        failure =
-            runCloseCallbacks(
-                afterCloseCallbacks.reversed(), failure, "Could not run afterClose callback");
+    if (failure instanceof IOException ordinary) {
+      throw ordinary;
+    }
+  }
+
+  /**
+   * Disposes framework-owned resources while retaining ordinary failures before an Error.
+   *
+   * @param failure earlier ordinary callback failures, or null
+   * @return accumulated ordinary failure, or null
+   * @throws Error if resource disposal fails fatally, with earlier ordinary failures suppressed
+   */
+  @SuppressWarnings("java:S1181") // Preserve earlier ordinary failures when disposal throws Error.
+  private @Nullable IOException closeResources(@Nullable IOException failure) {
+    Error fatal = null;
+
+    try {
+      exceptionHandlers.clear();
+      statusHandlers.clear();
+      requestHeaderHandlers.clear();
+      routeMatchedHandlers.clear();
+      beforeHandlers.clear();
+      afterRouteHandlers.clear();
+      beforeFlushHandlers.clear();
+      afterFlushHandlers.clear();
+      afterHandlers.clear();
+      observationFactories.clear();
+      failure = closeRouteResources(failure);
+
+      serverConfigurations.clear();
+      httpConfigurations.clear();
+      tlsConfiguration = null;
+      sessionConfiguration = null;
+
+      failure = signalManagedWebSocketsBeforeStop(failure);
+
+      failure = signalExtensionsBeforeStop(failure);
+
+    } catch (Error signallingFailure) {
+      if (failure != null) {
+        mergeCloseFailure(signallingFailure, failure);
+        failure = null;
+      }
+
+      fatal = signallingFailure;
+    } finally {
+      try {
+        if (server != null) {
+          server.stop();
+        }
+      } catch (Exception stopFailure) {
+        if (stopFailure instanceof InterruptedException) {
+          Thread.currentThread().interrupt();
+        }
+
+        failure = appendCloseFailure(failure, "Could not stop HTTP server", stopFailure);
+      } catch (Error stopFailure) {
+        if (failure != null) {
+          mergeCloseFailure(stopFailure, failure);
+          failure = null;
+        }
+
+        fatal = (Error) mergeCloseFailure(fatal, stopFailure);
+      } finally {
+        try {
+          failure = finishManagedWebSocketDispatch(failure);
+          failure = closeStaticResources(failure);
+
+          if (ownedVirtualThreads != null) {
+            try {
+              if (server != null
+                  && server.getThreadPool() instanceof QueuedThreadPool pool
+                  && ownedVirtualThreads.equals(pool.getVirtualThreadsExecutor())) {
+                // Let native late cleanup use Jetty's policy instead of a closed virtual delegate.
+                pool.setVirtualThreadsExecutor(null);
+              }
+
+              ownedVirtualThreads.shutdownNow();
+            } catch (RuntimeException executorFailure) {
+              failure =
+                  appendCloseFailure(failure, "Could not close HTTP executor", executorFailure);
+            }
+          }
+
+          failure = cancelPendingMatches(failure);
+
+          removeShutdownHook();
+          failure = closeExtensions(failure);
+        } catch (Error cleanupFailure) {
+          if (failure != null) {
+            mergeCloseFailure(cleanupFailure, failure);
+            failure = null;
+          }
+
+          fatal = (Error) mergeCloseFailure(fatal, cleanupFailure);
+        }
       }
     }
 
-    if (failure != null) {
-      throw failure;
+    if (fatal != null) {
+      if (failure != null) {
+        mergeCloseFailure(fatal, failure);
+      }
+
+      throw fatal;
     }
+
+    return failure;
   }
 
   /**
@@ -956,20 +1039,53 @@ public final class Shoostr implements Closeable {
    * @param message context for a callback failure
    * @return aggregated failure, or null if shutdown has not failed
    */
-  private static @Nullable IOException runCloseCallbacks(
-      List<Runnable> callbacks, @Nullable IOException failure, String message) {
+  @SuppressWarnings("java:S1181") // An Error stops this phase while its caller performs cleanup.
+  private static @Nullable Throwable runCloseCallbacks(
+      List<Runnable> callbacks, @Nullable Throwable failure, String message) {
     try {
       for (var callback : callbacks) {
         try {
           callback.run();
         } catch (RuntimeException callbackFailure) {
-          failure = appendCloseFailure(failure, message, callbackFailure);
+          failure =
+              failure instanceof Error
+                  ? mergeCloseFailure(failure, callbackFailure)
+                  : appendCloseFailure((IOException) failure, message, callbackFailure);
+        } catch (Error callbackFailure) {
+          failure = mergeCloseFailure(failure, callbackFailure);
+          break;
         }
       }
       return failure;
     } finally {
       callbacks.clear();
     }
+  }
+
+  /**
+   * Keeps the first Error primary, or preserves the first ordinary failure.
+   *
+   * @param current earlier failure, or null
+   * @param additional next observed failure
+   * @return primary failure retaining the other distinct failure as suppressed
+   */
+  @SuppressWarnings("ReferenceEquality") // One Throwable instance cannot suppress itself.
+  private static Throwable mergeCloseFailure(@Nullable Throwable current, Throwable additional) {
+    if (current == null || current == additional) {
+      return additional;
+    }
+
+    if (additional instanceof Error && !(current instanceof Error)) {
+      return mergeCloseFailure(additional, current);
+    }
+
+    for (var retained : current.getSuppressed()) {
+      if (retained == additional) {
+        return current;
+      }
+    }
+    current.addSuppressed(additional);
+    return current;
   }
 
   /**
@@ -1015,15 +1131,24 @@ public final class Shoostr implements Closeable {
    * @param failure earlier shutdown failure, or null
    * @return accumulated shutdown failure, or null
    */
+  @SuppressWarnings("java:S1181") // Retain ordinary failures before propagating Error.
   private @Nullable IOException signalExtensionsBeforeStop(@Nullable IOException failure) {
-    for (int index = extensions.size() - 1; index >= 0; index--) {
-      try {
-        extensions.get(index).beforeStop();
-      } catch (RuntimeException stopFailure) {
-        failure = appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
+    try {
+      for (int index = extensions.size() - 1; index >= 0; index--) {
+        try {
+          extensions.get(index).beforeStop();
+        } catch (RuntimeException stopFailure) {
+          failure = appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
+        }
       }
+      return failure;
+    } catch (Error fatal) {
+      if (failure != null) {
+        mergeCloseFailure(fatal, failure);
+      }
+
+      throw fatal;
     }
-    return failure;
   }
 
   /**
@@ -1032,16 +1157,25 @@ public final class Shoostr implements Closeable {
    * @param failure earlier shutdown failure, or null
    * @return accumulated shutdown failure, or null
    */
+  @SuppressWarnings("java:S1181") // Preserve earlier extension failures before propagating Error.
   private @Nullable IOException closeExtensions(@Nullable IOException failure) {
-    for (int index = extensions.size() - 1; index >= 0; index--) {
-      try {
-        extensions.get(index).close();
-      } catch (IOException | RuntimeException closeFailure) {
-        failure = appendCloseFailure(failure, "Could not close extension", closeFailure);
+    try {
+      for (int index = extensions.size() - 1; index >= 0; index--) {
+        try {
+          extensions.get(index).close();
+        } catch (IOException | RuntimeException closeFailure) {
+          failure = appendCloseFailure(failure, "Could not close extension", closeFailure);
+        }
       }
+      extensions.clear();
+      return failure;
+    } catch (Error fatal) {
+      if (failure != null) {
+        mergeCloseFailure(fatal, failure);
+      }
+
+      throw fatal;
     }
-    extensions.clear();
-    return failure;
   }
 
   /**
@@ -1050,20 +1184,29 @@ public final class Shoostr implements Closeable {
    * @param failure earlier shutdown failure, or null
    * @return accumulated shutdown failure, or null
    */
+  @SuppressWarnings("java:S1181") // Retain ordinary failures before propagating Error.
   private @Nullable IOException cancelPendingMatches(@Nullable IOException failure) {
-    List<ApplicationHandler.MatchedTask> pending;
-    synchronized (pendingMatches) {
-      pending = List.copyOf(pendingMatches);
-    }
-    for (var task : pending) {
-      try {
-        task.cancel();
-      } catch (RuntimeException cancellationFailure) {
-        failure =
-            appendCloseFailure(failure, "Could not cancel queued request", cancellationFailure);
+    try {
+      List<ApplicationHandler.MatchedTask> pending;
+      synchronized (pendingMatches) {
+        pending = List.copyOf(pendingMatches);
       }
+      for (var task : pending) {
+        try {
+          task.cancel();
+        } catch (RuntimeException cancellationFailure) {
+          failure =
+              appendCloseFailure(failure, "Could not cancel queued request", cancellationFailure);
+        }
+      }
+      return failure;
+    } catch (Error fatal) {
+      if (failure != null) {
+        mergeCloseFailure(fatal, failure);
+      }
+
+      throw fatal;
     }
-    return failure;
   }
 
   /**
