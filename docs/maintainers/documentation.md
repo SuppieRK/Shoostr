@@ -3,7 +3,9 @@
 The Starlight site in `site/` is for library consumers.
 The root README provides a short product overview. Other repository documents are for maintainers.
 Keep contribution procedures, build diagnostics, provenance, and agent instructions out of the consumer site.
-Do not add dependency-wiring, dependency-injection, or service-composition guides to the consumer site.
+Show focused library composition through public Shoostr interfaces, with caller-owned
+configuration and resources. Keep dependency-wiring, dependency-injection and general service
+architecture guides out of the consumer site.
 Library dependency declarations are separate from application dependency wiring.
 
 ## Build and preview

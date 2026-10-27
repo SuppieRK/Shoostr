@@ -1,11 +1,13 @@
 ---
-title: Select endpoint executors and carry observation context
-description: Use native platform execution or opt into virtual threads, select caller-owned endpoint executors, and carry observation context across dispatch.
+title: Select endpoint executors and compose stream admission
+description: Select endpoint execution, carry observation context, and compose stream admission with a caller-owned Resilience4j bulkhead.
 ---
 
 import { Code } from '@astrojs/starlight/components';
 import application from '../../../../../examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/ExecutorExample.java?raw';
 import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/ExecutorExampleTest.java?raw';
+import bulkhead from '../../../../../examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/StreamBulkheadExample.java?raw';
+import bulkheadTest from '../../../../../examples/12-lifecycle/src/test/java/io/github/suppierk/shoostr/example/lifecycle/StreamBulkheadExampleTest.java?raw';
 
 ## Description
 
@@ -43,3 +45,40 @@ The tests exercise default platform execution, explicit virtual opt-in, a named 
 Terminal outcomes verify the rejection is an application failure, while a subsequent task on the same worker checks that its previous context was restored.
 
 <Code code={test} lang="java" title="ExecutorExampleTest.java" />
+
+## Compose stream admission
+
+A long-lived handler occupies its task while waiting for events or writing output.
+Virtual execution lets idle tasks release their carriers; application admission
+still controls how many HTTP exchanges remain active.
+Add `resilience4j-bulkhead` to use an application-configured semaphore bulkhead
+without introducing another worker pool or Shoostr policy object.
+
+This public `/events` endpoint sends `ready`, waits for its application producer,
+then sends the producer's text. `/health` uses the same HTTP server and stays outside
+the stream bulkhead. Select `maxConcurrentCalls` for the deployment and set
+`maxWaitDuration(Duration.ZERO)` for immediate rejection. The example maps a full
+bulkhead to HTTP 503 before starting SSE; this mapping is application policy.
+
+Admission uses the existing route lifecycle. The observation retains only a detached
+acquisition flag. Its terminal `complete(...)` releases the permit after both
+application cleanup and transport termination, including the framework's final write.
+Observation `close()` and handler return happen earlier and cannot release this
+HTTP-lifetime permit. A rejected request acquired no permit and releases none.
+
+The caller owns the bulkhead and producer. The producer runs on the HTTP owner and
+must return or cooperate with interruption; admission does not forcibly stop Java work.
+A disconnected idle client releases capacity only after the handler/transport observes
+termination. Coordinate producers during shutdown. This example limits its event route,
+not MCP native callbacks, all application traffic or a distributed deployment.
+
+<Code code={bulkhead} lang="java" title="StreamBulkheadExample.java" />
+
+### Test stream admission
+
+The tests hold more streams open than the configured native platform-worker budget,
+verify prompt health responses and excess-stream rejection, then release producers
+and reuse capacity. Additional checks cover terminal output, failure and shutdown.
+These deadlines are test bounds, not a production service-level guarantee.
+
+<Code code={bulkheadTest} lang="java" title="StreamBulkheadExampleTest.java" />

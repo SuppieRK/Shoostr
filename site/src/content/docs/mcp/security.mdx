@@ -33,9 +33,10 @@ The deliberately small limits allow four sessions overall, two per owner and ten
 Initialization and native cleanup both count against capacity, so an expired session can become unavailable before its reservation is released.
 The short-lived credential ends an open stream at its fixed expiry without deleting the owner's session; fresh credentials for that owner can still use it.
 Idle expiry and explicit session deletion instead end session ownership, with cleanup releasing capacity afterward.
-These session policies are separate from [operation admission, managed execution and cancellation](../operations/).
 
 <Code code={application} lang="java" title="McpSecurityExample.java" />
+
+Session limits govern native session allocation. Compose [application work limits](../server/#compose-blocking-tools-with-resilience4j) independently through existing libraries.
 
 ## Test
 

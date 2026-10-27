@@ -6,6 +6,8 @@ description: Mount a native MCP SDK server over Streamable HTTP, configure synch
 import { Code } from '@astrojs/starlight/components';
 import application from '../../../../../examples/17-mcp/src/main/java/io/github/suppierk/shoostr/example/mcp/McpServerExample.java?raw';
 import test from '../../../../../examples/17-mcp/src/test/java/io/github/suppierk/shoostr/example/mcp/McpServerExampleTest.java?raw';
+import composed from '../../../../../examples/17-mcp/src/main/java/io/github/suppierk/shoostr/example/mcp/McpOperationsExample.java?raw';
+import composedTest from '../../../../../examples/17-mcp/src/test/java/io/github/suppierk/shoostr/example/mcp/McpOperationsExampleTest.java?raw';
 
 ## Description
 
@@ -30,9 +32,7 @@ For sampling, elicitation and resource subscriptions, see [Request MCP client in
 
 Create a separate extension for each application and mount it once on a literal group endpoint.
 Shoostr owns its native server and transport cleanup; `mcp.server()` provides borrowed management access and must not be closed independently.
-Raw callbacks follow the native SDK's scheduling and transport context.
-Existing factories apply finite operation admission defaults; use the [operation recipe](../operations/) to configure limits, reserve control capacity and submit blocking callables to owned execution through native async handlers.
-Never retain a live Shoostr request or response in a native callback.
+Callbacks follow the native SDK's scheduling and transport context, rather than the lifetime of a retained Shoostr request or response.
 
 This adapter supplies Streamable HTTP, not stdio, legacy HTTP+SSE or a stateless transport.
 The installed SDK is 2.1.0; these examples use the `2025-11-25` protocol revision rather than assuming support for newer specifications.
@@ -46,3 +46,51 @@ The native SDK client discovers and calls the tool, reads the resource through M
 A separate test invokes all three features through the asynchronous server factory and closes each client session explicitly.
 
 <Code code={test} lang="java" title="McpServerExampleTest.java" />
+
+## Compose blocking tools with Resilience4j
+
+Add `resilience4j-bulkhead` when the application needs to limit concurrent blocking
+work. Pass an application-configured semaphore `Bulkhead` and a Reactor `Scheduler`
+to this variant. The native async handler composes both libraries directly;
+Shoostr supplies the HTTP transport and owns native session cleanup.
+
+The `status` tool pings its client, then reads public status text. One application
+bulkhead protects the decorated callables across all clients using that instance.
+Configure `maxWaitDuration(Duration.ZERO)` to reject a full bulkhead without waiting.
+The example converts rejection into a tool result with `isError=true` and text
+`Status is busy`; it does not return an HTTP quota error.
+
+`Bulkhead.decorateCallable` holds its permit until the callable actually exits,
+including when the callable throws. A reactive subscription's cancellation alone
+does not prove an external operation stopped. Keep bulkhead ownership around the
+actual work rather than releasing it when the HTTP response ends. The supported
+protocol's [disconnect and cancellation rules](../interactions/) still apply.
+
+The scheduler executes the blocking callable and must also have application-selected
+thread and queue capacity. Bulkhead admission occurs when that callable starts;
+it does not bound pending scheduler tasks, every native operation, or per-user/session
+retention. The example's ping reply follows the normal protocol path outside this
+application bulkhead; this is not a reserved protocol-worker guarantee.
+The caller owns the scheduler and must coordinate outstanding work before disposing it.
+See [Resilience4j bulkheads](https://resilience4j.readme.io/docs/bulkhead) for other policies.
+
+HTTP execution remains separate: this variant selects `virtualThreads()` for idle
+HTTP pumps. To borrow an endpoint executor instead, register
+`mcp.routes(group, httpExecutor)`; that executor serves GET, POST and DELETE.
+A finite pool filled with streams can delay replies and deletion before their
+handlers run. Choose [execution and HTTP admission](../../lifecycle/executors/#compose-stream-admission)
+according to the workload. MCP session limits count allocations, not application
+operations. A mailbox holds at most 64 frames; it does not impose a byte-memory
+bound, so validate application result sizes before returning them.
+
+<Code code={composed} lang="java" title="McpOperationsExample.java" />
+
+### Test the composed tool
+
+The tests configure a one-call bulkhead and a separate bounded scheduler. Native
+SDK clients call `status`, receive the explicit busy result while another call is
+held, and succeed after it exits. Client ping replies and the health endpoint
+continue to work. A separate check verifies execution on the selected scheduler
+and its availability after application shutdown.
+
+<Code code={composedTest} lang="java" title="McpOperationsExampleTest.java" />

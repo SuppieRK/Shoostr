@@ -22,7 +22,6 @@ The audience form asks for a choice between developers and operators, never pass
 The tool captures the current status, asks the client to choose an audience, then requests a summary using that choice.
 It preserves a declined or cancelled form response without sampling afterward, validates accepted input, and rejects a blank or non-text summary.
 The server's two-minute timeout bounds its wait for each client reply; the client can impose its own shorter timeout.
-The adapter's default five-minute absolute operation deadline leaves room for the two sequential interactions and processing; [configure it explicitly](../operations/) for longer workflows.
 
 MCP logging and progress notifications go to the initiating client, not every session.
 Progress uses the caller's supplied `progressToken`, with updates for starting, accepting the audience and completing the summary; a call without that token produces no progress notifications.
@@ -33,10 +32,8 @@ The resource supports subscriptions, not resource-list changes, and an update no
 Shoostr owns native server cleanup, so do not close that borrowed server independently.
 
 An elicitation `CANCEL` response ends this example's summary workflow; it is not forced cancellation of arbitrary Java work.
-Shoostr handles matching `notifications/cancelled` requests in the adapter even though SDK 2.1.0 has no native handler.
-A disconnected HTTP stream does not cancel session-owned native work; operation deadlines, explicit session deletion and application shutdown also request cancellation.
-The [operation recipe](../operations/) explains managed execution and capacity retained until an interrupted callback actually exits.
-External operations cannot be forcibly stopped by cancelling their publisher.
+SDK 2.1.0 does not implement `notifications/cancelled`, and a disconnected HTTP stream does not cancel session-owned native work.
+Explicit session deletion and application shutdown end adapter ownership and cancel its owned work, without promising that an external operation can be forcibly stopped.
 The [transport recipe](../server/) also explains the absence of SSE replay.
 
 For additional native SDK features, see the protocol references for [client roots](https://modelcontextprotocol.io/specification/2025-11-25/client/roots), [prompt and resource-template argument completion](https://modelcontextprotocol.io/specification/2025-11-25/server/utilities/completion), and [URL elicitation](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation).

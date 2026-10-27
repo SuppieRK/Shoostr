@@ -11,7 +11,6 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 import org.jspecify.annotations.Nullable;
@@ -25,16 +24,11 @@ import reactor.core.publisher.MonoSink;
 final class McpStream implements McpStreamableServerTransport {
   private static final int CAPACITY = 64;
   private static final Duration HEARTBEAT = Duration.ofSeconds(15);
-  private static final int OPEN = 0;
-  private static final int RESPONDED = 1;
-  private static final int TIMED_OUT = 2;
-  private static final int CANCELLED = 3;
   private final McpJsonMapper mapper;
   private final ArrayDeque<Frame> frames;
   private final @Nullable Instant expiresAt;
   private final ReentrantLock lock;
   private final Condition changed;
-  private final AtomicInteger outcome;
   private boolean finished;
   private @Nullable Throwable failure;
 
@@ -50,7 +44,6 @@ final class McpStream implements McpStreamableServerTransport {
     frames = new ArrayDeque<>();
     lock = new ReentrantLock();
     changed = lock.newCondition();
-    outcome = new AtomicInteger(OPEN);
   }
 
   /**
@@ -172,68 +165,6 @@ final class McpStream implements McpStreamableServerTransport {
   @Override
   public Mono<Void> sendMessage(McpSchema.JSONRPCMessage message, @Nullable String messageId) {
     Objects.requireNonNull(message);
-    return Mono.defer(
-        () -> {
-          if (message instanceof McpSchema.JSONRPCResponse) {
-            if (!outcome.compareAndSet(OPEN, RESPONDED)) {
-              return Mono.empty();
-            }
-          } else if (outcome.get() != OPEN) {
-            return Mono.error(new IOException("MCP operation has ended"));
-          }
-
-          return enqueue(message, messageId);
-        });
-  }
-
-  /**
-   * Claims one terminal timeout response without invoking native callbacks or waiting for I/O.
-   *
-   * @param id originating request identifier
-   * @return whether native cancellation remains necessary after claiming or aborting the response
-   */
-  boolean timeout(Object id) {
-    if (!outcome.compareAndSet(OPEN, TIMED_OUT)) {
-      if (outcome.get() == RESPONDED) {
-        fail(new IOException("MCP response deadline exceeded"));
-        return true;
-      }
-
-      return false;
-    }
-
-    enqueue(
-            McpSchema.JSONRPCResponse.error(
-                id,
-                new McpSchema.JSONRPCResponse.JSONRPCError(
-                    -32001, "MCP operation timed out", null)),
-            null)
-        .subscribe(ignored -> {}, this::fail, this::finish);
-    return true;
-  }
-
-  /**
-   * Cancels a matching operation without producing a JSON-RPC response.
-   *
-   * @return whether cancellation won before another terminal response was claimed
-   */
-  boolean cancelResponse() {
-    if (!outcome.compareAndSet(OPEN, CANCELLED)) {
-      return false;
-    }
-
-    finish();
-    return true;
-  }
-
-  /**
-   * Serializes and queues one already-authorized frame within the finite mailbox.
-   *
-   * @param message native request, notification or claimed terminal response
-   * @param messageId optional native SSE event identifier
-   * @return acknowledgment after the owner flushes the frame, or a delivery failure
-   */
-  private Mono<Void> enqueue(McpSchema.JSONRPCMessage message, @Nullable String messageId) {
     return Mono.create(
         sink -> {
           if (expiresAt != null && !expiresAt.isAfter(Instant.now())) {

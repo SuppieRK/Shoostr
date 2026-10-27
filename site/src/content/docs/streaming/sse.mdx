@@ -17,6 +17,9 @@ For codec-backed payloads, use [object events](../sse-objects/).
 Comments and heartbeats do not dispatch data events, and each call sends its frame immediately.
 They are explicit writes rather than an automatic timer: the handler must remain active for further output, and returning finishes this finite stream.
 The [streaming lifetime and backpressure rules](../output/) also apply to event streams.
+A handler active for the feed's lifetime occupies its selected task; use
+[execution selection and application-owned bulkheads](../../lifecycle/executors/#compose-stream-admission)
+for long-lived feeds.
 
 Event names and IDs must fit on one line without NUL characters, while retry durations must be nonnegative and are sent in milliseconds.
 The model permits text IDs; the integer cursor used below is this application's replay policy, not a framework restriction.
