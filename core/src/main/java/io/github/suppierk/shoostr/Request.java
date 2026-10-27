@@ -799,9 +799,18 @@ public sealed class Request permits TypedRequest {
    * @throws IOException if input fails
    * @throws ContentTooLargeException if the body exceeds the configured limit
    */
+  @SuppressWarnings("ReferenceEquality") // Charset names do not identify trusted JDK instances.
   public String bodyText(Charset charset) throws IOException {
     Objects.requireNonNull(charset);
-    return new String(bodyBytes(), charset);
+    // Only these JDK instances can read the private cache; custom decoders receive a copy.
+    boolean standard =
+        charset == StandardCharsets.UTF_8
+            || charset == StandardCharsets.ISO_8859_1
+            || charset == StandardCharsets.US_ASCII
+            || charset == StandardCharsets.UTF_16
+            || charset == StandardCharsets.UTF_16BE
+            || charset == StandardCharsets.UTF_16LE;
+    return new String(standard ? bufferedBody() : bodyBytes(), charset);
   }
 
   /**
@@ -812,6 +821,18 @@ public sealed class Request permits TypedRequest {
    * @throws ContentTooLargeException if the body exceeds the configured limit
    */
   public byte[] bodyBytes() throws IOException {
+    var bytes = bufferedBody();
+    return Arrays.copyOf(bytes, bytes.length);
+  }
+
+  /**
+   * Selects buffered access and returns the private bounded cache for trusted internal use.
+   *
+   * @return private cached bytes, never exposed to application code
+   * @throws IOException if input fails
+   * @throws ContentTooLargeException if the cached or incoming body exceeds its byte limit
+   */
+  private byte[] bufferedBody() throws IOException {
     check();
     claim(BodyRepresentation.BUFFERED);
     if (body == null) {
@@ -822,7 +843,7 @@ public sealed class Request permits TypedRequest {
       throw new ContentTooLargeException();
     }
 
-    return Arrays.copyOf(body, body.length);
+    return body;
   }
 
   /**

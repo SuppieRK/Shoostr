@@ -27,7 +27,12 @@ Jetty stops its native platform pool with the server, and Shoostr closes the ded
 Executors supplied through native configuration remain caller-owned unless their lifecycle is explicitly registered with Jetty.
 
 A rejected route compilation leaves registration open for correction, whereas failures after compilation close acquired resources and prevent another startup attempt.
-`RuntimeException` failures from shutdown callbacks are collected without skipping later cleanup.
+`RuntimeException` failures from shutdown callbacks are collected without skipping later callbacks or cleanup.
+An `Error` stops the remaining callbacks in that phase. Framework cleanup is still attempted,
+and the separate `afterClose` phase begins after it; an error in that phase stops
+its remaining callbacks. The first `Error` is rethrown after cleanup, with other
+failures retained as suppressed exceptions. When no error occurs, ordinary failures
+keep the existing `IOException` contract.
 
 ## Example
 
@@ -39,6 +44,6 @@ The signal releases waiting requests while their resources remain available, and
 ## Test
 
 The live request test closes the application while a handler is waiting, then verifies its response and final cleanup.
-The other tests cover normal traffic, repeated closure, callback order before startup, and cleanup after an extension fails during startup.
+The other tests cover normal traffic, repeated closure, callback order before startup, cleanup after startup failure, and final resource disposal when a signalling callback throws `Error`.
 
 <Code code={test} lang="java" title="ShutdownExampleTest.java" />

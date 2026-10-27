@@ -11,8 +11,15 @@ import java.io.OutputStream;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.ByteBuffer;
+import java.nio.CharBuffer;
+import java.nio.charset.Charset;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CharsetEncoder;
+import java.nio.charset.CoderResult;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.HexFormat;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -73,6 +80,85 @@ class RequestBodyCharsetTest {
                         .path("/text")
                         .method("POST")
                         .body(new byte[] {(byte) 0xc3, (byte) 0xa9}),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("checked", result.body());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "UTF-8,Aé,41c3a9", "ISO-8859-1,Aé,41e9", "US-ASCII,Az,417a",
+    "UTF-16,Aé,feff004100e9", "UTF-16BE,Aé,004100e9", "UTF-16LE,Aé,4100e900"
+  })
+  void preservesCachedBytesAndDefensiveCopiesForEveryStandardCharset(
+      String name, String expected, String hex) throws Exception {
+    var charset =
+        switch (name) {
+          case "UTF-8" -> StandardCharsets.UTF_8;
+          case "ISO-8859-1" -> StandardCharsets.ISO_8859_1;
+          case "US-ASCII" -> StandardCharsets.US_ASCII;
+          case "UTF-16" -> StandardCharsets.UTF_16;
+          case "UTF-16BE" -> StandardCharsets.UTF_16BE;
+          case "UTF-16LE" -> StandardCharsets.UTF_16LE;
+          default -> throw new IllegalArgumentException(name);
+        };
+    var encoded = HexFormat.of().parseHex(hex);
+
+    try (var app = new Shoostr()) {
+      app.routes()
+          .post(
+              "/text",
+              (request, response) -> {
+                assertEquals(expected, request.bodyText(charset));
+                var copy = request.bodyBytes();
+                copy[0] ^= 0x7f;
+                assertArrayEquals(encoded, request.bodyBytes());
+                assertEquals(expected, request.bodyText(charset));
+                response.text("checked");
+              });
+
+      try (var server = TestServer.start(app)) {
+        var result =
+            server.send(
+                request -> request.path("/text").method("POST").body(encoded),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("checked", result.body());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"UTF-8", "x-mutating"})
+  void isolatesCachedBytesFromACustomDecoderThatMutatesAndRetainsItsInput(String name)
+      throws Exception {
+    var exposed = new AtomicReference<ByteBuffer>();
+    var charset = mutatingCharset(name, exposed);
+
+    try (var app = new Shoostr()) {
+      app.routes()
+          .post(
+              "/text",
+              (request, response) -> {
+                assertEquals("SAFE", request.bodyText(charset));
+                var retained = exposed.get();
+                if (retained != null && !retained.isReadOnly()) {
+                  for (int index = 0; index < retained.limit(); index++)
+                    retained.put(index, (byte) 'Y');
+                }
+
+                assertArrayEquals(new byte[] {'s', 'a', 'f', 'e'}, request.bodyBytes());
+                assertEquals("safe", request.bodyText());
+                response.text("checked");
+              });
+
+      try (var server = TestServer.start(app)) {
+        var result =
+            server.send(
+                request ->
+                    request.path("/text").method("POST").body(new byte[] {'s', 'a', 'f', 'e'}),
                 HttpResponse.BodyHandlers.ofString());
         assertEquals(200, result.statusCode());
         assertEquals("checked", result.body());
@@ -339,5 +425,38 @@ class RequestBodyCharsetTest {
             .get(3, TimeUnit.SECONDS);
       }
     }
+  }
+
+  private static Charset mutatingCharset(String name, AtomicReference<ByteBuffer> exposed) {
+    // A custom decoder can use a standard name; the name must not grant cache access.
+    return new Charset(name, new String[0]) {
+      @Override
+      public boolean contains(Charset charset) {
+        return false;
+      }
+
+      @Override
+      public CharsetDecoder newDecoder() {
+        return new CharsetDecoder(this, 1, 1) {
+          @Override
+          protected CoderResult decodeLoop(ByteBuffer input, CharBuffer output) {
+            while (input.hasRemaining() && output.hasRemaining()) {
+              output.put(Character.toUpperCase((char) Byte.toUnsignedInt(input.get())));
+            }
+            exposed.set(input);
+            if (!input.isReadOnly() && input.limit() > 0) {
+              input.put(0, (byte) 'X');
+            }
+
+            return input.hasRemaining() ? CoderResult.OVERFLOW : CoderResult.UNDERFLOW;
+          }
+        };
+      }
+
+      @Override
+      public CharsetEncoder newEncoder() {
+        throw new UnsupportedOperationException("Decoding fixture only");
+      }
+    };
   }
 }

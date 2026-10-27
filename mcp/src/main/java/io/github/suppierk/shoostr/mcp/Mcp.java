@@ -24,7 +24,6 @@ import io.modelcontextprotocol.json.TypeRef;
 import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.server.McpAsyncServer;
 import io.modelcontextprotocol.server.McpSyncServer;
-import io.modelcontextprotocol.spec.McpError;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpStreamableServerSession;
 import io.modelcontextprotocol.spec.McpStreamableServerTransportProvider;
@@ -33,46 +32,35 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.BiFunction;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import org.eclipse.jetty.http.HttpField;
 import org.jspecify.annotations.Nullable;
 import reactor.core.Disposable;
 import reactor.core.Disposables;
-import reactor.core.Exceptions;
 import reactor.core.publisher.BaseSubscriber;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.MonoSink;
 import reactor.core.publisher.SignalType;
 import reactor.core.publisher.Sinks;
-import reactor.core.scheduler.Scheduler;
 import reactor.core.scheduler.Schedulers;
 
 /**
  * Owns one native SDK server and its explicitly mounted Streamable HTTP transport. Configure tools,
  * schemas and capabilities directly through the SDK factory; installation adds no endpoint. The
- * returned native server is borrowed for management and must not be closed independently. Existing
- * factories apply finite admission defaults. Compose {@link McpWork#call} through a native async
- * handler for owned callback execution; raw native callback execution remains application-owned.
+ * returned native server is borrowed for management and must not be closed independently.
  *
  * @param <S> native SDK server type
  */
@@ -101,29 +89,6 @@ public final class Mcp<S> implements Extension<Void> {
       McpHttpSecurity security,
       McpSessionLimits limits,
       Function<McpStreamableServerTransportProvider, S> factory) {
-    this(
-        security,
-        limits,
-        McpOperationLimits.defaults(),
-        McpOperationLimits.defaults(),
-        nativeFactory(factory));
-  }
-
-  /**
-   * Creates finite session and operation ownership before invoking the native factory.
-   *
-   * @param security detached identity and HTTP authorization policy
-   * @param limits session allocation and idle policy
-   * @param ordinary ordinary admission and managed execution policy
-   * @param control independent reply and cancellation policy
-   * @param factory eager native factory receiving borrowed transport and managed work
-   */
-  private Mcp(
-      McpHttpSecurity security,
-      McpSessionLimits limits,
-      McpOperationLimits ordinary,
-      McpOperationLimits control,
-      BiFunction<McpStreamableServerTransportProvider, McpWork, S> factory) {
     this.security = Objects.requireNonNull(security);
     Objects.requireNonNull(limits);
     var metadata = security.resourceMetadata();
@@ -131,8 +96,7 @@ public final class Mcp<S> implements Extension<Void> {
         "Bearer error=\"invalid_token\""
             + (metadata == null ? "" : ", resource_metadata=\"" + metadata.toASCIIString() + "\"");
     Objects.requireNonNull(factory);
-    Objects.requireNonNull(ordinary);
-    Objects.requireNonNull(control);
+    provider = new Provider(limits);
     owned = new AtomicBoolean();
     deadlines =
         new ScheduledThreadPoolExecutor(
@@ -140,7 +104,6 @@ public final class Mcp<S> implements Extension<Void> {
     deadlines.setRemoveOnCancelPolicy(true);
     deadlines.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
     lifetimeAttribute = McpRequestLifetime.class.getName() + "." + UUID.randomUUID();
-    provider = new Provider(limits, ordinary, control, deadlines);
 
     server = createServer(factory);
   }
@@ -152,11 +115,11 @@ public final class Mcp<S> implements Extension<Void> {
    * @return non-null server bound to this transport
    * @throws IllegalArgumentException if the factory does not bind the supplied transport
    */
-  private S createServer(BiFunction<McpStreamableServerTransportProvider, McpWork, S> factory) {
+  private S createServer(Function<McpStreamableServerTransportProvider, S> factory) {
     boolean created = false;
 
     try {
-      var nativeServer = Objects.requireNonNull(factory.apply(provider, provider));
+      var nativeServer = Objects.requireNonNull(factory.apply(provider));
       if (provider.factory == null) {
         throw new IllegalArgumentException(
             "The native factory must bind the supplied MCP transport");
@@ -205,26 +168,6 @@ public final class Mcp<S> implements Extension<Void> {
   }
 
   /**
-   * Creates a native synchronous server with independent ordinary and control admission policies.
-   * Native callback execution remains application-owned.
-   *
-   * @param security explicit HTTP security
-   * @param sessions session capacity and idle policy
-   * @param ordinary ordinary operation capacity and deadline
-   * @param control reserved reply and cancellation capacity and deadline
-   * @param factory eager native server factory
-   * @return independently owned MCP capability
-   */
-  public static Mcp<McpSyncServer> sync(
-      McpHttpSecurity security,
-      McpSessionLimits sessions,
-      McpOperationLimits ordinary,
-      McpOperationLimits control,
-      Function<McpStreamableServerTransportProvider, McpSyncServer> factory) {
-    return new Mcp<>(security, sessions, ordinary, control, nativeFactory(factory));
-  }
-
-  /**
    * Creates an asynchronous native server without duplicating its configuration methods.
    *
    * @param security explicit HTTP security
@@ -250,48 +193,6 @@ public final class Mcp<S> implements Extension<Void> {
       McpSessionLimits limits,
       Function<McpStreamableServerTransportProvider, McpAsyncServer> factory) {
     return new Mcp<>(security, limits, factory);
-  }
-
-  /**
-   * Creates a native async server with independently configured ordinary/control admission and
-   * borrowed managed execution. Return or compose {@link McpWork#call} from native async handlers.
-   *
-   * @param security explicit HTTP security
-   * @param sessions session capacity and idle policy
-   * @param ordinary operation and managed execution capacities and absolute deadline
-   * @param control reserved reply/cancellation capacity and absolute deadline
-   * @param factory eager factory receiving native transport and borrowed managed work
-   * @return independently owned MCP capability
-   */
-  public static Mcp<McpAsyncServer> async(
-      McpHttpSecurity security,
-      McpSessionLimits sessions,
-      McpOperationLimits ordinary,
-      McpOperationLimits control,
-      BiFunction<McpStreamableServerTransportProvider, McpWork, McpAsyncServer> factory) {
-    return new Mcp<>(security, sessions, ordinary, control, factory);
-  }
-
-  /**
-   * Returns the borrowed execution facility for later native async callback registration.
-   *
-   * @return capability-owned managed work; never independently close it
-   */
-  public McpWork work() {
-    return provider;
-  }
-
-  /**
-   * Adapts an eagerly validated native factory without changing its callback execution.
-   *
-   * @param <T> native server type
-   * @param factory transport-only native factory
-   * @return factory that preserves application ownership of raw native callbacks
-   */
-  private static <T> BiFunction<McpStreamableServerTransportProvider, McpWork, T> nativeFactory(
-      Function<McpStreamableServerTransportProvider, T> factory) {
-    Objects.requireNonNull(factory);
-    return (transport, work) -> factory.apply(transport);
   }
 
   /**
@@ -361,9 +262,8 @@ public final class Mcp<S> implements Extension<Void> {
 
   /**
    * Mounts this instance using a caller-owned executor for matched HTTP lifecycle and handlers.
-   * Native callbacks retain their configured execution; managed work uses the capability's owned
-   * executor. The caller must keep the HTTP executor available until the app has closed; Shoostr
-   * never shuts it down.
+   * Native SDK callback scheduling is unchanged. The caller must keep the executor available until
+   * the app has closed; Shoostr never shuts it down.
    *
    * @param routes explicitly composed route group
    * @param executor caller-owned executor for POST, GET and DELETE
@@ -921,27 +821,9 @@ public final class Mcp<S> implements Extension<Void> {
   /**
    * Native SDK transport/session ownership, kept separate from the public configuration surface.
    */
-  private static final class Provider implements McpStreamableServerTransportProvider, McpWork {
+  private static final class Provider implements McpStreamableServerTransportProvider {
     private final McpJsonMapper mapper;
     private final McpSessionLimits limits;
-    private final McpOperationLimits operationLimits;
-    private final McpOperationLimits controlLimits;
-    private final Map<Disposable, Dispatch> operations;
-    private final Map<String, Integer> operationOwners;
-    private final Map<String, Integer> controlOwners;
-    private final Object workContext;
-    private final ExecutorService managed;
-    private final Scheduler nativeScheduler;
-    private final Set<Disposable> completedOperations;
-    private final Set<Disposable> cancelledOperations;
-    private final Map<Disposable, Integer> runningDispatches;
-    private final Map<Disposable, Thread> dispatchThreads;
-    private final Map<Disposable, ScheduledFuture<?>> operationDeadlines;
-    private final ScheduledThreadPoolExecutor timer;
-    private final Map<Disposable, Set<Execution<?>>> executions;
-    private final Map<String, Integer> executionOwners;
-    private final Map<Session, Integer> executionSessions;
-    private int executionCount;
     private final Map<String, Integer> owners;
     private final Map<Session, Mono<Void>> closing;
     private final Map<Session, Sinks.Empty<Void>> initializing;
@@ -957,35 +839,9 @@ public final class Mcp<S> implements Extension<Void> {
      * Creates protocol serialization and finite session ownership eagerly.
      *
      * @param limits configured session capacity and idle timeout
-     * @param operationLimits ordinary operation and managed execution policy
-     * @param controlLimits independent reply and cancellation policy
-     * @param timer owned deadline scheduler, never used for arbitrary native callbacks
      */
-    private Provider(
-        McpSessionLimits limits,
-        McpOperationLimits operationLimits,
-        McpOperationLimits controlLimits,
-        ScheduledThreadPoolExecutor timer) {
+    private Provider(McpSessionLimits limits) {
       this.limits = limits;
-      this.operationLimits = operationLimits;
-      this.controlLimits = controlLimits;
-      operations = new HashMap<>();
-      operationOwners = new HashMap<>();
-      controlOwners = new HashMap<>();
-      workContext = new Object();
-      managed =
-          Executors.newThreadPerTaskExecutor(
-              Thread.ofVirtual().name("shoostr-mcp-work-", 0).factory());
-      nativeScheduler = Schedulers.fromExecutorService(managed);
-      completedOperations = new HashSet<>();
-      cancelledOperations = new HashSet<>();
-      runningDispatches = new HashMap<>();
-      dispatchThreads = new HashMap<>();
-      operationDeadlines = new HashMap<>();
-      this.timer = timer;
-      executions = new HashMap<>();
-      executionOwners = new HashMap<>();
-      executionSessions = new HashMap<>();
       idleNanos =
           limits.idleTimeout().compareTo(Duration.ofNanos(Long.MAX_VALUE)) > 0
               ? Long.MAX_VALUE
@@ -1001,81 +857,6 @@ public final class Mcp<S> implements Extension<Void> {
                   .build());
       sessions = new ConcurrentHashMap<>();
       streams = new ConcurrentHashMap<>();
-    }
-
-    /**
-     * Executes only publishers composed within this capability's active native operation.
-     *
-     * @param <T> callable result type
-     * @param action application work submitted for owned execution
-     * @return publisher that validates originating ownership before scheduling the callable
-     */
-    @Override
-    public <T> Mono<T> call(Callable<? extends T> action) {
-      Objects.requireNonNull(action);
-      return Mono.deferContextual(
-          current -> {
-            Disposable operation = current.getOrDefault(workContext, null);
-            return Mono.create(
-                sink -> {
-                  Execution<T> execution;
-
-                  try {
-                    execution = reserveExecution(operation, action, sink);
-                  } catch (RuntimeException failure) {
-                    sink.error(failure);
-                    return;
-                  }
-
-                  sink.onCancel(execution::cancel);
-
-                  try {
-                    managed.execute(execution);
-                  } catch (RuntimeException failure) {
-                    execution.cancel();
-                    sink.error(failure);
-                  }
-                });
-          });
-    }
-
-    /**
-     * Checks ownership and reserves both scoped execution counts before scheduling user work.
-     *
-     * @param <T> callable result type
-     * @param operation originating native subscriber, or null when context is absent
-     * @param action application callable
-     * @param sink result and cancellation channel
-     * @return reserved execution whose lifetime ends only after actual exit or prevented start
-     * @throws IllegalStateException if originating ownership is missing or terminated
-     * @throws McpError if managed execution capacity is exhausted
-     */
-    private synchronized <T> Execution<T> reserveExecution(
-        @Nullable Disposable operation, Callable<? extends T> action, MonoSink<T> sink) {
-      var dispatch = operation == null ? null : operations.get(operation);
-      if (stopping
-          || dispatch == null
-          || dispatch.control()
-          || completedOperations.contains(operation)
-          || cancelledOperations.contains(operation)) {
-        throw new IllegalStateException("Managed MCP work requires an active operation");
-      }
-
-      var session = dispatch.session();
-      if (executionCount >= operationLimits.maxOperations()
-          || executionOwners.getOrDefault(session.owner(), 0)
-              >= operationLimits.maxOperationsPerOwner()
-          || executionSessions.getOrDefault(session, 0)
-              >= operationLimits.maxOperationsPerSession()) {
-        throw McpError.builder(-32000).message("MCP managed execution capacity exceeded").build();
-      }
-
-      var execution = new Execution<>(Objects.requireNonNull(operation), session, action, sink);
-      executionCount++;
-      executionOwners.merge(session.owner(), 1, Integer::sum);
-      executionSessions.merge(session, 1, Integer::sum);
-      executions.computeIfAbsent(operation, ignored -> new HashSet<>()).add(execution);
-      return execution;
     }
 
     /**
@@ -1113,7 +894,6 @@ public final class Mcp<S> implements Extension<Void> {
      */
     private boolean idle(Session session) {
       return session.dispatches().size() == 0
-          && operations.values().stream().noneMatch(dispatch -> session.equals(dispatch.session()))
           && session.notifications().get() == 0
           && System.nanoTime() - session.activity().get() >= idleNanos;
     }
@@ -1151,15 +931,6 @@ public final class Mcp<S> implements Extension<Void> {
         owners.remove(owner);
       } else {
         owners.put(owner, count - 1);
-      }
-
-      disposeExecutionIfUnallocated();
-    }
-
-    /** Keeps owned cleanup available until even late native factory allocations have returned. */
-    private synchronized void disposeExecutionIfUnallocated() {
-      if (stopping && allocations == 0) {
-        nativeScheduler.dispose();
       }
     }
 
@@ -1269,8 +1040,7 @@ public final class Mcp<S> implements Extension<Void> {
             }
             return Flux.fromIterable(terminations)
                 .flatMapDelayError(termination -> termination, 32, 1)
-                .then()
-                .doFinally(ignored -> disposeExecutionIfUnallocated());
+                .then();
           });
     }
 
@@ -1386,37 +1156,29 @@ public final class Mcp<S> implements Extension<Void> {
             }
           };
       McpStreamableServerSession.McpStreamableServerSessionStream nativeStream;
-      boolean admitted = false;
-      boolean attached = false;
+      synchronized (this) {
+        requireActive(session);
+        nativeStream = session.sdk().responseStream(stream);
+        session.dispatches().add(dispatch);
 
-      try {
-        synchronized (this) {
-          admit(session, dispatch, stream, request.id(), false);
-          admitted = true;
-          nativeStream = session.sdk().responseStream(stream);
-          streams.put(stream, session);
-          attached = true;
-        }
-      } finally {
-        if (admitted && !attached) {
-          abandonDispatch(dispatch);
-        }
+        session.activity().set(System.nanoTime());
+
+        streams.put(stream, session);
       }
 
       boolean subscribed = false;
 
       try {
-        startDispatch(
-            dispatch,
-            Mono.defer(() -> nativeStream.handle(request))
-                .contextWrite(
-                    current ->
-                        current.put(McpTransportContext.KEY, context).put(workContext, dispatch)));
+        nativeStream
+            .handle(request)
+            .contextWrite(current -> current.put(McpTransportContext.KEY, context))
+            .subscribeOn(Schedulers.boundedElastic())
+            .subscribe(dispatch);
         subscribed = true;
         return nativeStream;
       } finally {
         if (!subscribed) {
-          abandonDispatch(dispatch);
+          dispatch.dispose();
           nativeStream.releaseTransport();
           streams.remove(stream);
           stream.finish();
@@ -1462,94 +1224,37 @@ public final class Mcp<S> implements Extension<Void> {
             }
           };
       synchronized (this) {
-        boolean control =
-            message instanceof McpSchema.JSONRPCResponse
-                || (message instanceof McpSchema.JSONRPCNotification notification
-                    && "notifications/cancelled".equals(notification.method()));
-        admit(session, dispatch, null, null, control);
+        requireActive(session);
+        if (!session.dispatches().add(dispatch)) {
+          throw new NotFoundException();
+        }
+
+        session.activity().set(System.nanoTime());
       }
 
       boolean subscribed = false;
 
       try {
-        startDispatch(
-            dispatch,
-            Mono.defer(
-                    () -> {
-                      if (message instanceof McpSchema.JSONRPCNotification notification) {
-                        if ("notifications/cancelled".equals(notification.method())) {
-                          cancelRequest(session, notification.params());
-                          return Mono.empty();
-                        }
+        Mono.defer(
+                () -> {
+                  if (message instanceof McpSchema.JSONRPCNotification notification) {
+                    return session.sdk().accept(notification);
+                  }
 
-                        return session.sdk().accept(notification);
-                      }
+                  if (message instanceof McpSchema.JSONRPCResponse reply) {
+                    return session.sdk().accept(reply);
+                  }
 
-                      if (message instanceof McpSchema.JSONRPCResponse reply) {
-                        return session.sdk().accept(reply);
-                      }
-
-                      return Mono.error(new BadRequestException());
-                    })
-                .contextWrite(
-                    current ->
-                        current.put(McpTransportContext.KEY, context).put(workContext, dispatch)));
+                  return Mono.error(new BadRequestException());
+                })
+            .contextWrite(current -> current.put(McpTransportContext.KEY, context))
+            .subscribeOn(Schedulers.boundedElastic())
+            .subscribe(dispatch);
         subscribed = true;
       } finally {
         if (!subscribed) {
-          abandonDispatch(dispatch);
+          dispatch.dispose();
         }
-      }
-    }
-
-    /**
-     * Reconciles setup rollback even when disposal precedes the native subscription.
-     *
-     * @param dispatch admitted subscriber whose attachment or scheduling failed
-     */
-    private void abandonDispatch(Disposable dispatch) {
-      try {
-        dispatch.dispose();
-      } finally {
-        synchronized (this) {
-          completeIfDisposed(dispatch);
-          releaseOperation(dispatch);
-        }
-      }
-    }
-
-    /**
-     * Looks up only this verified session's matching request and cancels outside the registry.
-     *
-     * @param session freshly verified session
-     * @param parameters uncoerced cancellation parameters; malformed targets are ignored
-     */
-    private void cancelRequest(Session session, @Nullable Object parameters) {
-      Map.Entry<Disposable, Dispatch> target;
-      synchronized (this) {
-        requireActive(session);
-        if (!(parameters instanceof Map<?, ?> fields) || !validId(fields.get("requestId"))) {
-          return;
-        }
-
-        target =
-            operations.entrySet().stream()
-                .filter(
-                    entry ->
-                        session.equals(entry.getValue().session())
-                            && Objects.equals(fields.get("requestId"), entry.getValue().id()))
-                .findFirst()
-                .orElse(null);
-      }
-      if (target != null && Objects.requireNonNull(target.getValue().stream()).cancelResponse()) {
-        synchronized (this) {
-          if (!operations.containsKey(target.getKey())) {
-            return;
-          }
-
-          cancelledOperations.add(target.getKey());
-        }
-        cancelNative(target.getKey());
       }
     }
 
@@ -1560,379 +1265,8 @@ public final class Mcp<S> implements Extension<Void> {
      * @param dispatch finished native subscriber
      */
     private synchronized void dispatchComplete(Session session, Disposable dispatch) {
-      session.dispatches().remove(dispatch);
-      if (operations.containsKey(dispatch)) {
-        completedOperations.add(dispatch);
-        releaseOperation(dispatch);
-      }
-
-      session.activity().set(System.nanoTime());
-    }
-
-    /**
-     * Claims expiry before native cancellation, which runs away from the deadline thread.
-     *
-     * @param operation admitted subscriber whose absolute deadline elapsed
-     */
-    private void expireOperation(Disposable operation) {
-      Dispatch dispatch;
-      synchronized (this) {
-        var active = operations.get(operation);
-        if (stopping || active == null || cancelledOperations.contains(operation)) {
-          return;
-        }
-
-        dispatch = active;
-        cancelledOperations.add(operation);
-      }
-      if (dispatch.stream() == null
-          || dispatch.stream().timeout(Objects.requireNonNull(dispatch.id()))) {
-        cancelNative(operation);
-      }
-    }
-
-    /**
-     * Releases admission only after both native completion and actual managed execution exit.
-     *
-     * @param operation admitted subscriber checked while holding the provider monitor
-     */
-    private void releaseOperation(Disposable operation) {
-      if (completedOperations.contains(operation)
-          && !executions.containsKey(operation)
-          && !runningDispatches.containsKey(operation)) {
-        var dispatch = Objects.requireNonNull(operations.remove(operation));
-        var session = dispatch.session();
-        decrement(dispatch.control() ? controlOwners : operationOwners, session.owner());
-        var deadline = operationDeadlines.remove(operation);
-        if (deadline != null) {
-          deadline.cancel(false);
-        }
-
-        completedOperations.remove(operation);
-        cancelledOperations.remove(operation);
+      if (session.dispatches().remove(dispatch)) {
         session.activity().set(System.nanoTime());
-      }
-    }
-
-    /**
-     * Reserves one lane before retaining native work; callers hold the provider monitor.
-     *
-     * @param session verified native session
-     * @param operation cancellation-aware native subscriber
-     * @param stream detached response stream, or null for accepted notifications/replies
-     * @param id request identifier, or null when no response stream is owned
-     * @param control whether independently reserved control capacity applies
-     * @throws BadRequestException if a request identifier is already active in this session
-     * @throws ServiceUnavailableException if total capacity is exhausted or shutdown has begun
-     * @throws TooManyRequestsException if owner or session capacity is exhausted
-     * @throws NotFoundException if the session ended before admission
-     */
-    private void admit(
-        Session session,
-        Disposable operation,
-        @Nullable McpStream stream,
-        @Nullable Object id,
-        boolean control) {
-      requireActive(session);
-      if (id != null
-          && operations.values().stream()
-              .anyMatch(active -> session.equals(active.session()) && id.equals(active.id()))) {
-        throw new BadRequestException();
-      }
-
-      var policy = control ? controlLimits : operationLimits;
-      var counts = control ? controlOwners : operationOwners;
-      if (operations.values().stream().filter(active -> active.control() == control).count()
-          >= policy.maxOperations()) {
-        throw new ServiceUnavailableException();
-      }
-
-      if (counts.getOrDefault(session.owner(), 0) >= policy.maxOperationsPerOwner()
-          || operations.values().stream()
-                  .filter(active -> active.control() == control && session.equals(active.session()))
-                  .count()
-              >= policy.maxOperationsPerSession()) {
-        throw new TooManyRequestsException();
-      }
-
-      var dispatch = new Dispatch(session, stream, id, control);
-      if (!session.dispatches().add(operation)) {
-        throw new NotFoundException();
-      }
-
-      operations.put(operation, dispatch);
-      counts.merge(session.owner(), 1, Integer::sum);
-      boolean scheduled = false;
-
-      try {
-        var timeout = policy.timeout();
-        long delay =
-            timeout.compareTo(Duration.ofNanos(Long.MAX_VALUE)) > 0
-                ? Long.MAX_VALUE
-                : timeout.toNanos();
-        operationDeadlines.put(
-            operation,
-            timer.schedule(() -> expireOperation(operation), delay, TimeUnit.NANOSECONDS));
-        scheduled = true;
-      } finally {
-        if (!scheduled) {
-          operations.remove(operation);
-          decrement(counts, session.owner());
-          session.dispatches().remove(operation);
-        }
-      }
-
-      session.activity().set(System.nanoTime());
-    }
-
-    /**
-     * Owns native subscription execution until its actual runnable returns.
-     *
-     * @param dispatch already admitted native subscriber
-     * @param publisher native execution carrying detached operation context
-     */
-    private void startDispatch(BaseSubscriber<Void> dispatch, Mono<Void> publisher) {
-      synchronized (this) {
-        if (!operations.containsKey(dispatch) || cancelledOperations.contains(dispatch)) {
-          return;
-        }
-
-        runningDispatches.merge(dispatch, 1, Integer::sum);
-      }
-      boolean scheduled = false;
-
-      try {
-        managed.execute(
-            () -> {
-              try {
-                synchronized (this) {
-                  if (cancelledOperations.contains(dispatch)) {
-                    return;
-                  }
-
-                  dispatchThreads.put(dispatch, Thread.currentThread());
-                }
-                publisher.subscribe(dispatch);
-              } finally {
-                synchronized (this) {
-                  completeIfDisposed(dispatch);
-                  dispatchThreads.remove(dispatch);
-                  decrement(runningDispatches, dispatch);
-                  releaseOperation(dispatch);
-                }
-              }
-            });
-        scheduled = true;
-      } finally {
-        if (!scheduled) {
-          synchronized (this) {
-            decrement(runningDispatches, dispatch);
-            releaseOperation(dispatch);
-          }
-        }
-      }
-    }
-
-    /**
-     * Signals only owned threads directly; arbitrary native cancellation hooks run separately.
-     *
-     * @param operation admitted subscriber whose cancellation has been claimed
-     */
-    private void cancelNative(Disposable operation) {
-      Thread thread;
-      List<Execution<?>> active;
-      synchronized (this) {
-        if (!operations.containsKey(operation)) {
-          return;
-        }
-
-        runningDispatches.merge(operation, 1, Integer::sum);
-        thread = dispatchThreads.get(operation);
-        active = List.copyOf(executions.getOrDefault(operation, Set.of()));
-      }
-      if (thread != null) {
-        thread.interrupt();
-      }
-
-      active.forEach(Execution::cancel);
-      boolean scheduled = false;
-
-      try {
-        managed.execute(
-            () -> {
-              try {
-                operation.dispose();
-              } finally {
-                synchronized (this) {
-                  completeIfDisposed(operation);
-                  decrement(runningDispatches, operation);
-                  releaseOperation(operation);
-                }
-              }
-            });
-        scheduled = true;
-      } catch (RejectedExecutionException failure) {
-        synchronized (this) {
-          if (!stopping) {
-            throw failure;
-          }
-        }
-      } finally {
-        if (!scheduled) {
-          synchronized (this) {
-            decrement(runningDispatches, operation);
-            releaseOperation(operation);
-          }
-        }
-      }
-    }
-
-    /**
-     * Cancellation before native onSubscribe may not invoke the subscriber's final hook.
-     *
-     * @param operation subscriber checked after owned subscription or cancellation execution
-     */
-    private void completeIfDisposed(Disposable operation) {
-      var dispatch = operations.get(operation);
-      if (dispatch != null && operation.isDisposed()) {
-        dispatch.session().dispatches().remove(operation);
-        completedOperations.add(operation);
-      }
-    }
-
-    /**
-     * Removes zero-valued ownership counts while the provider monitor is held.
-     *
-     * @param <T> ownership key type
-     * @param counts scoped reservations
-     * @param key ownership whose reservation terminates
-     */
-    private static <T> void decrement(Map<T, Integer> counts, T key) {
-      int count = Objects.requireNonNull(counts.get(key));
-      if (count == 1) {
-        counts.remove(key);
-      } else {
-        counts.put(key, count - 1);
-      }
-    }
-
-    /** Correlates an admitted request with its detached stream and protocol identifier. */
-    private record Dispatch(
-        Session session, @Nullable McpStream stream, @Nullable Object id, boolean control) {
-      /**
-       * Validates detached request-only response ownership before registration.
-       *
-       * @param session verified session owning the admitted operation
-       * @param stream response mailbox, or null for notifications/replies
-       * @param id request identifier paired with a response mailbox
-       * @param control whether the independent control policy applies
-       * @throws IllegalArgumentException if response stream and request identifier do not agree
-       */
-      private Dispatch {
-        Objects.requireNonNull(session);
-        if ((stream == null) != (id == null) || (control && stream != null)) {
-          throw new IllegalArgumentException("Only ordinary requests own a response stream and ID");
-        }
-      }
-    }
-
-    /**
-     * Accounts for actual callable execution independently of its publisher.
-     *
-     * @param <T> callable result type
-     */
-    private final class Execution<T> implements Runnable {
-      private final Disposable operation;
-      private final Session session;
-      private final Callable<? extends T> action;
-      private final MonoSink<T> sink;
-      private @Nullable Thread thread;
-      private boolean started;
-      private boolean cancelled;
-      private boolean released;
-
-      /**
-       * Captures detached ownership before the callable can be scheduled.
-       *
-       * @param operation originating admitted subscriber
-       * @param session verified session owning the execution reservation
-       * @param action application callable
-       * @param sink result and cancellation channel
-       */
-      private Execution(
-          Disposable operation, Session session, Callable<? extends T> action, MonoSink<T> sink) {
-        this.operation = Objects.requireNonNull(operation);
-        this.session = Objects.requireNonNull(session);
-        this.action = Objects.requireNonNull(action);
-        this.sink = Objects.requireNonNull(sink);
-      }
-
-      /** Returns capacity after the callable exits, before delivering its result downstream. */
-      @Override
-      @SuppressWarnings(
-          "java:S1181") // Relay nonfatal publisher failures; fatal errors still escape.
-      public void run() {
-        synchronized (Provider.this) {
-          if (cancelled) {
-            return;
-          }
-
-          started = true;
-          thread = Thread.currentThread();
-        }
-
-        T result;
-
-        try {
-          try {
-            result = action.call();
-          } finally {
-            synchronized (Provider.this) {
-              thread = null;
-              release();
-            }
-          }
-        } catch (Throwable failure) {
-          Exceptions.throwIfFatal(failure);
-          sink.error(failure);
-          return;
-        }
-
-        sink.success(result);
-      }
-
-      /** Requests interruption after start, or prevents a queued callable from executing. */
-      private void cancel() {
-        Thread active;
-        synchronized (Provider.this) {
-          cancelled = true;
-          active = thread;
-          if (!started) {
-            release();
-          }
-        }
-        if (active != null) {
-          active.interrupt();
-        }
-      }
-
-      /** Returns execution capacity once, after actual exit or verified prevention of start. */
-      private void release() {
-        if (released) {
-          return;
-        }
-
-        released = true;
-        executionCount--;
-        decrement(executionOwners, session.owner());
-        decrement(executionSessions, session);
-        var owned = Objects.requireNonNull(executions.get(operation));
-        owned.remove(this);
-        if (owned.isEmpty()) {
-          executions.remove(operation);
-        }
-
-        releaseOperation(operation);
       }
     }
 
@@ -1952,7 +1286,7 @@ public final class Mcp<S> implements Extension<Void> {
      */
     private void cleanup(Mono<Void> termination) {
       termination
-          .subscribeOn(nativeScheduler)
+          .subscribeOn(Schedulers.boundedElastic())
           .subscribe(
               ignored9 -> {},
               failure ->

@@ -5,6 +5,10 @@ import exec from 'k6/execution';
 const base = __ENV.BASE_URL || 'http://127.0.0.1:8080';
 const workload = __ENV.WORKLOAD || 'plaintext';
 const routeGroups = Number(__ENV.ROUTE_GROUPS || 0);
+const staticFiles = __ENV.STATIC_FILES === undefined ? 0 : Number(__ENV.STATIC_FILES);
+if (__ENV.STATIC_FILES !== undefined && (!Number.isInteger(staticFiles) || staticFiles < 1)) {
+  throw new Error('Invalid STATIC_FILES');
+}
 const failureDetails = __ENV.FAILURE_DETAILS === '1';
 let failureReported = false;
 if (!Number.isInteger(routeGroups) || routeGroups < 0) throw new Error('Invalid ROUTE_GROUPS');
@@ -22,6 +26,10 @@ if (routeGroups > 0) {
     'not-found': ['Not found', 'text/plain; charset=utf-8', 404],
     'wrong-method': ['Method not allowed', 'text/plain; charset=utf-8', 405],
   });
+}
+if (staticFiles > 0) {
+  fixtures['static-shallow'] = ['x'.repeat(1024), 'application/octet-stream'];
+  fixtures['static-nested'] = ['x'.repeat(1024), 'application/octet-stream'];
 }
 if (!fixtures[workload]) throw new Error(`Unknown workload: ${workload}`);
 const expectedStatuses = Object.fromEntries(Object.entries(fixtures)
@@ -78,13 +86,27 @@ export function setup() {
     }
     const headers = Object.keys(response.headers).sort().join(',');
     // k6's Go transport removes Transfer-Encoding after decoding chunked bodies.
-    const expectedHeaders = name === 'stream'
+    const expectedHeaders = name.startsWith('static-')
+      ? ['Accept-Ranges', 'Cache-Control', 'Content-Length', 'Content-Type', 'Date', 'Etag', 'Last-Modified']
+      : name === 'stream'
       ? ['Content-Type', 'Date'] : ['Content-Type', 'Date', 'Content-Length'];
     if (name === 'wrong-method') expectedHeaders.push('Allow');
     if (headers !== expectedHeaders.sort().join(',')
         || !response.headers.Date || Number.isNaN(Date.parse(response.headers.Date))
         || (name !== 'stream' && Number(response.headers['Content-Length']) !== fixtures[name][0].length)) {
       fail(`Response header parity failed: ${name}: ${headers}`);
+    }
+    if (name.startsWith('static-')) {
+      if (response.headers['Cache-Control'] !== 'no-cache' || response.headers['Accept-Ranges'] !== 'bytes'
+          || !/^W\/"[^"]+"$/.test(response.headers.Etag || '')
+          || Number.isNaN(Date.parse(response.headers['Last-Modified'] || ''))) {
+        fail(`Static metadata parity failed: ${name}`);
+      }
+      for (let index = 1; index < staticFiles; index++) {
+        const file = send(name, index);
+        if (file.status !== 200 || file.body !== fixtures[name][0]
+            || contentType(file) !== fixtures[name][1]) fail(`Static corpus parity failed: ${name} ${index}`);
+      }
     }
     if (name === 'wrong-method' && allowedMethods(response) !== 'GET,POST') {
       fail('Expected complete allowed-method union');
@@ -106,6 +128,10 @@ function send(name, iteration = 0) {
     responseCallback: expectedStatuses[name],
     tags: { name },
   };
+  if (name.startsWith('static-')) {
+    const directory = name === 'static-nested' ? 'nested/deeper/' : '';
+    return http.get(`${base}/static/${directory}file-${iteration % staticFiles}.bin`, params);
+  }
   if (name === 'route-literal' || name === 'route-parameter'
       || name === 'not-found' || name === 'wrong-method') {
     const group = (iteration * 977) % routeGroups;

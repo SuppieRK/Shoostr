@@ -206,3 +206,64 @@ References: [manual workflow execution](https://docs.github.com/en/actions/how-t
 [k6 metric definitions](https://grafana.com/docs/k6/latest/using-k6/metrics/reference/),
 [JDK 21 diagnostic commands](https://docs.oracle.com/en/java/javase/21/docs/specs/man/jcmd.html),
 [JDK 21 JFR CLI](https://docs.oracle.com/en/java/javase/21/docs/specs/man/jfr.html).
+
+## Local static-file selection diagnostic
+
+The [HTTP fixture](src/main/java/io/github/suppierk/shoostr/bench/ServerMain.java) accepts
+an optional static-root directory after the port and
+route-group count. For example, `benchmarks 18080 1 /path/to/corpus` anchors one mount
+at `/static`. Without that argument, the fixture retains its existing endpoints.
+The application owns the anchored mount and closes it at shutdown.
+
+Prepare 64 files named `file-0.bin` through `file-63.bin` in both the corpus root and
+`nested/deeper/`. Use an existing directory on a filesystem provider that supports
+secure directory operations. Each file must contain exactly 1,024 ASCII `x` bytes. Corpus creation
+is outside the workload; the fixture does not generate files. Select a positive
+`STATIC_FILES` count matching the prepared corpus. The script checks every configured
+file before timing, including its body and content type, and checks the first response's
+static metadata and headers. It also verifies the existing HTTP fixture endpoints and
+platform-thread execution.
+
+Build the fixture distribution and start its generated launcher from the repository root:
+
+```sh
+cmdshape ./gradlew :benchmarks:installDist
+cmdshape .github/benchmarks/build/install/benchmarks/bin/benchmarks 18080 1 /path/to/corpus
+```
+
+In a second terminal, run the [k6 script](http.js) against that listener:
+
+```sh
+cmdshape k6 run -e BASE_URL=http://127.0.0.1:18080 -e ROUTE_GROUPS=1 -e STATIC_FILES=64 -e WORKLOAD=static-shallow -e RATE=100 -e DURATION=10s -e VUS=128 --summary-export shallow.json .github/benchmarks/http.js
+```
+
+The [fixture test](src/test/java/io/github/suppierk/shoostr/bench/ServerMainTest.java)
+checks distinct shallow and nested file selection through real HTTP.
+Run the script with either `WORKLOAD=static-shallow` or
+`WORKLOAD=static-nested`, `STATIC_FILES=64`, and the normal `BASE_URL`, `RATE`,
+`DURATION`, and `VUS` inputs. The static workload names remain stable as file indices
+vary; both path families use the same mount. These optional workloads are local
+diagnostics and are not added to the Actions campaign matrix.
+
+Warm the corpus, retain native k6 JSON and logs, and compare low and increasing
+arrival rates. Record offered load, completed requests, latency percentiles, failed
+requests, dropped iterations, and both server and client CPU use. k6's scenario-tagged
+rates include setup time in their denominator; retain the scheduled duration and
+completed counts when assessing achieved load. Record JVM flags, CPU affinity,
+filesystem/provider and location, corpus size and depth, and cache assumptions.
+A warm loopback workload does not establish deployment capacity or cold-storage latency.
+
+Capture JFR separately from timing runs. Enable monitor-enter events with an explicit
+threshold and inspect stacks for both static-file selection critical sections. Native
+file-read events do not cover every metadata read, directory operation, or descriptor
+open, so they do not isolate filesystem latency. Keep the recording and native reports.
+A synchronization change requires evidence of material contention and preservation of
+anchored `SecureDirectoryStream`, `NOFOLLOW_LINKS`, revalidation and descriptor cleanup.
+
+The current nested-path selector acquires an independent parent descriptor under the
+mount-root monitor, then traverses and reads metadata outside that shared monitor.
+Shallow selections retain the borrowed root under the monitor and require no additional
+directory acquisition. Shallow work can still delay a nested request's first acquisition;
+this reduces nested-path contention without eliminating per-mount contention. Include a
+mixed shallow/nested workload when evaluating that interaction, and inspect quiescent
+descriptor inventories after successful requests, missing paths and rejections.

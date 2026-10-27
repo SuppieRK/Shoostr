@@ -5,6 +5,7 @@ import io.github.suppierk.shoostr.Routes;
 import io.github.suppierk.shoostr.Shoostr;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import org.eclipse.jetty.server.ServerConnector;
@@ -25,52 +26,80 @@ public final class ServerMain {
   /**
    * Starts the fixture until process termination.
    *
-   * @param args optional port and number of route groups
+   * @param args optional port, number of route groups and static-root directory
    * @throws Exception if startup fails or the main thread is interrupted
    * @throws IllegalArgumentException if the number of route groups is not positive
    */
   public static void main(String[] args) throws Exception {
     int port = args.length > 0 ? Integer.parseInt(args[0]) : 18080;
     int routeGroups = args.length > 1 ? Integer.parseInt(args[1]) : 1000;
-    if (routeGroups < 1) {
-      throw new IllegalArgumentException("Route groups require a positive count");
-    }
-
-    var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(port));
-    app.routes(
-            routes -> {
-              routes.get(
-                  "/plaintext", (ignored, res) -> res.body("text/plain;charset=utf-8", PLAIN));
-              routes.get("/json-bytes", (ignored2, res) -> res.body("application/json", JSON));
-              routes.post(
-                  "/echo", (req, res) -> res.body("application/octet-stream", req.bodyBytes()));
-              routes.get(
-                  "/stream",
-                  (ignored3, res) -> {
-                    var stream = res.startStream("application/octet-stream");
-                    for (int index = 0; index < EVENT_COUNT; index++) {
-                      stream.write(CHUNK);
-                      stream.flush();
-                    }
-                  });
-              routes.get(
-                  "/virtual",
-                  (ignored4, res) ->
-                      res.text(Boolean.toString(Thread.currentThread().isVirtual())));
-              routes.sse("/sse-burst", (ignored5, res) -> sendEvents(res, 0, EVENT_PAYLOAD));
-              routes.sse("/sse-paced", (ignored6, res) -> sendEvents(res, 20, EVENT_PAYLOAD));
-              routes.sse("/sse-slow", (ignored7, res) -> sendEvents(res, 0, LARGE_EVENT_PAYLOAD));
-              routes.websocket("/ws-text", (ignored8, ignored9) -> new EchoListener());
-              routes.websocket("/ws-binary", (ignored10, ignored11) -> new EchoListener());
-              registerRouteGroups(routes, routeGroups);
-            })
+    var staticRoot = args.length > 2 ? Path.of(args[2]) : null;
+    fixture(routeGroups, staticRoot)
+        .modifyServer(
+            nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(port))
         .start();
 
     System.out.println("READY " + port);
     new CountDownLatch(1).await();
+  }
+
+  /**
+   * Creates an unstarted HTTP fixture with an optional single filesystem mount.
+   *
+   * @param routeGroups positive number of composed route groups
+   * @param staticRoot directory anchored at registration, or null to omit the filesystem mount
+   * @return application whose ownership transfers to the caller
+   * @throws IllegalArgumentException if groups or the static source are invalid
+   */
+  @SuppressWarnings("ReferenceEquality") // Throwable identity prevents self-suppression in cleanup.
+  public static Shoostr fixture(int routeGroups, @Nullable Path staticRoot) {
+    if (routeGroups < 1) {
+      throw new IllegalArgumentException("Route groups require a positive count");
+    }
+
+    var app = new Shoostr();
+
+    try {
+      return app.routes(
+          routes -> {
+            routes.get("/plaintext", (ignored, res) -> res.body("text/plain;charset=utf-8", PLAIN));
+            routes.get("/json-bytes", (ignored2, res) -> res.body("application/json", JSON));
+            routes.post(
+                "/echo", (req, res) -> res.body("application/octet-stream", req.bodyBytes()));
+            routes.get(
+                "/stream",
+                (ignored3, res) -> {
+                  var stream = res.startStream("application/octet-stream");
+                  for (int index = 0; index < EVENT_COUNT; index++) {
+                    stream.write(CHUNK);
+                    stream.flush();
+                  }
+                });
+            routes.get(
+                "/virtual",
+                (ignored4, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
+            routes.sse("/sse-burst", (ignored5, res) -> sendEvents(res, 0, EVENT_PAYLOAD));
+            routes.sse("/sse-paced", (ignored6, res) -> sendEvents(res, 20, EVENT_PAYLOAD));
+            routes.sse("/sse-slow", (ignored7, res) -> sendEvents(res, 0, LARGE_EVENT_PAYLOAD));
+            routes.websocket("/ws-text", (ignored8, ignored9) -> new EchoListener());
+            routes.websocket("/ws-binary", (ignored10, ignored11) -> new EchoListener());
+            if (staticRoot != null) {
+              routes.staticFiles("/static", staticRoot);
+            }
+
+            registerRouteGroups(routes, routeGroups);
+          });
+    } catch (RuntimeException | Error failure) {
+      try {
+        app.close();
+      } catch (Exception | Error cleanup) {
+        if (cleanup != failure) {
+          failure.addSuppressed(cleanup);
+        }
+      }
+
+      throw failure;
+    }
   }
 
   /**

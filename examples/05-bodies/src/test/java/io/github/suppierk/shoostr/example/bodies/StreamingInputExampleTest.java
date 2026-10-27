@@ -67,6 +67,8 @@ class StreamingInputExampleTest {
       var request =
           HttpRequest.newBuilder(test.baseUri().resolve("/checksum"))
               .timeout(Duration.ofSeconds(5))
+              // Await header-based rejection instead of racing it with the upload.
+              .expectContinue(!chunked)
               .POST(publisher)
               .build();
       var response = client.send(request, HttpResponse.BodyHandlers.ofString());

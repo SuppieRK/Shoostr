@@ -4,21 +4,34 @@ import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
+import org.eclipse.jetty.util.component.LifeCycle;
+import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -404,6 +417,372 @@ class ApplicationCloseCallbacksTest {
     }
 
     assertEquals(List.of("client", "registry"), closed);
+  }
+
+  @Test
+  void stopsOwnedResourcesAndRunsFinalCallbacksBeforeRethrowingABeforeCloseError()
+      throws Exception {
+    var rejected = assertionFailure("Stop failed");
+    var nativeServer = new AtomicReference<Server>();
+    var executor = new AtomicReference<ExecutorService>();
+    var extensionClosed = new AtomicBoolean();
+    var finalCallback = new AtomicBoolean();
+
+    try (var app = new Shoostr().virtualThreads();
+        var client = HttpClient.newHttpClient()) {
+      app.modifyServer(
+          server -> {
+            nativeServer.set(server);
+            ((ServerConnector) server.getConnectors()[0]).setPort(0);
+            executor.set(
+                (ExecutorService)
+                    ((QueuedThreadPool) server.getThreadPool()).getVirtualThreadsExecutor());
+          });
+      app.extensions(new ClaimingExtension(() -> {}, () -> {}, () -> extensionClosed.set(true)));
+      app.afterClose(() -> finalCallback.set(true));
+      app.beforeClose(
+          () -> {
+            throw rejected;
+          });
+      app.routes(routes -> routes.get("/ready", (request, response) -> response.text("ready")));
+      app.start();
+
+      try {
+        var request =
+            HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/ready")).build();
+        assertEquals(200, client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode());
+        assertSame(rejected, assertThrows(AssertionError.class, app::close));
+        assertTrue(nativeServer.get().isStopped());
+        assertTrue(executor.get().isShutdown());
+        assertTrue(extensionClosed.get());
+        assertTrue(finalCallback.get());
+        assertDoesNotThrow(app::close);
+      } finally {
+        // Retain cleanup for the failing pre-fix reproduction, whose closed guard prevents retry.
+        nativeServer.get().stop();
+        executor.get().shutdownNow();
+      }
+    }
+  }
+
+  @Test
+  void preservesTheFirstErrorAndAllEarlierOrdinaryFailuresAcrossShutdownPhases() throws Exception {
+    var events = new ArrayList<String>();
+    var early = new IllegalStateException("Earlier callback failure");
+    var primary = assertionFailure("Primary callback error");
+    var cleanup = new IllegalArgumentException("Earlier cleanup failure");
+    var cleanupError = assertionFailure("Cleanup error");
+    var finalError = assertionFailure("Final callback error");
+
+    try (var app = new Shoostr()) {
+      app.extensions(
+          new ClaimingExtension(
+              () -> {},
+              () -> {},
+              () -> {
+                events.add("cleanup-error");
+                throw cleanupError;
+              }),
+          new ClaimingExtension(
+              () -> {},
+              () -> {},
+              () -> {
+                events.add("cleanup-runtime");
+                throw cleanup;
+              }));
+      app.beforeClose(
+          () -> {
+            events.add("before-runtime");
+            throw early;
+          });
+      app.beforeClose(
+          () -> {
+            events.add("before-error");
+            throw primary;
+          });
+      app.beforeClose(() -> events.add("before-skipped"));
+      app.afterClose(() -> events.add("after-skipped"));
+      app.afterClose(
+          () -> {
+            events.add("after-error");
+            throw finalError;
+          });
+      assertSame(primary, assertThrows(AssertionError.class, app::close));
+      assertEquals(
+          List.of(
+              "before-runtime", "before-error", "cleanup-runtime", "cleanup-error", "after-error"),
+          events);
+      assertEquals(3, primary.getSuppressed().length);
+      assertSame(early, assertInstanceOf(IOException.class, primary.getSuppressed()[0]).getCause());
+      assertSame(cleanupError, primary.getSuppressed()[1]);
+      assertSame(finalError, primary.getSuppressed()[2]);
+      assertEquals(1, cleanupError.getSuppressed().length);
+      assertSame(
+          cleanup, assertInstanceOf(IOException.class, cleanupError.getSuppressed()[0]).getCause());
+      assertDoesNotThrow(app::close);
+    }
+  }
+
+  @Test
+  void doesNotSuppressTheSameErrorInstanceOntoItselfAcrossCallbackPhases() throws Exception {
+    var failure = assertionFailure("Shared failure");
+
+    try (var app = new Shoostr()) {
+      app.beforeClose(
+          () -> {
+            throw failure;
+          });
+      app.afterClose(
+          () -> {
+            throw failure;
+          });
+      assertSame(failure, assertThrows(AssertionError.class, app::close));
+      assertEquals(0, failure.getSuppressed().length);
+    }
+  }
+
+  @Test
+  void retainsAnOrdinaryAggregateOnlyOnceWhenResourceCleanupThrowsError() throws Exception {
+    var ordinary = new IllegalStateException("Before callback failure");
+    var failure = assertionFailure("Extension close failed");
+
+    try (var app = new Shoostr()) {
+      app.beforeClose(
+          () -> {
+            throw ordinary;
+          });
+      app.extensions(
+          new ClaimingExtension(
+              () -> {},
+              () -> {},
+              () -> {
+                throw failure;
+              }));
+      assertSame(failure, assertThrows(AssertionError.class, app::close));
+      assertEquals(1, failure.getSuppressed().length);
+      assertSame(
+          ordinary, assertInstanceOf(IOException.class, failure.getSuppressed()[0]).getCause());
+    }
+  }
+
+  @Test
+  void preservesAFatalShutdownFailureOverAnOrdinaryInstallationFailure() throws Exception {
+    var installation = new IllegalArgumentException("Install failed");
+    var fatal = assertionFailure("Signalling failed");
+    var finalized = new AtomicBoolean();
+
+    try (var app = new Shoostr()) {
+      app.beforeClose(
+          () -> {
+            throw fatal;
+          });
+      app.afterClose(() -> finalized.set(true));
+      var extension = new FailingInstallation(installation);
+      assertSame(fatal, assertThrows(AssertionError.class, () -> app.extensions(extension)));
+      assertArrayEquals(new Throwable[] {installation}, fatal.getSuppressed());
+      assertTrue(finalized.get());
+    }
+  }
+
+  @Test
+  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
+  void keepsTheInstallationErrorPrimaryWhenShutdownAndFinalCallbacksAlsoFail() throws Exception {
+    var installation = assertionFailure("Install failed");
+    var shutdown = assertionFailure("Signalling failed");
+    var last = assertionFailure("Final cleanup failed");
+
+    try (var app = new Shoostr()) {
+      app.beforeClose(
+          () -> {
+            throw shutdown;
+          });
+      app.afterClose(
+          () -> {
+            throw last;
+          });
+      var extension =
+          new Extension<Void>() {
+            @Override
+            public void install(ApplicationCallbacks callbacks) {
+              throw installation;
+            }
+          };
+      assertSame(installation, assertThrows(AssertionError.class, () -> app.extensions(extension)));
+      assertArrayEquals(new Throwable[] {shutdown, last}, installation.getSuppressed());
+    }
+  }
+
+  @Test
+  void runsDeferredFinalCallbacksAfterReentrantInstallationCleanupThrowsError() throws Exception {
+    var events = new ArrayList<String>();
+    var fatal = assertionFailure("Signalling failed");
+
+    try (var app = new Shoostr()) {
+      app.beforeClose(
+          () -> {
+            throw fatal;
+          });
+      app.afterClose(() -> events.add("after"));
+      var extension =
+          new Extension<Void>() {
+            @Override
+            public void install(ApplicationCallbacks callbacks) {
+              try {
+                app.close();
+              } catch (IOException failure) {
+                throw new UncheckedIOException(failure);
+              }
+            }
+
+            @Override
+            public void close() {
+              events.add("extension");
+            }
+          };
+      assertSame(fatal, assertThrows(AssertionError.class, () -> app.extensions(extension)));
+      assertEquals(List.of("extension", "after"), events);
+    }
+  }
+
+  @Test
+  void leavesBorrowedExecutorsAvailableAfterABeforeCloseError() throws Exception {
+    var fatal = assertionFailure("Signalling failed");
+
+    try (var borrowed = Executors.newSingleThreadExecutor();
+        var app = new Shoostr()) {
+      app.modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
+      app.routes(
+          routes -> routes.get("/borrowed", borrowed, (request, response) -> response.text("ok")));
+      app.beforeClose(
+          () -> {
+            throw fatal;
+          });
+      app.start();
+      assertSame(fatal, assertThrows(AssertionError.class, app::close));
+      assertFalse(borrowed.isShutdown());
+      assertEquals("available", borrowed.submit(() -> "available").get(2, TimeUnit.SECONDS));
+    }
+  }
+
+  @Test
+  void stopsNativeResourcesAfterOrdinaryAndFatalExtensionSignals() throws Exception {
+    var before = assertionFailure("Before callback failed");
+    var ordinary = new IllegalStateException("Ordinary signal failed");
+    var signal = assertionFailure("Fatal signal failed");
+    var server = new AtomicReference<Server>();
+    var workers = new AtomicReference<ExecutorService>();
+    var finalized = new AtomicBoolean();
+    var events = new ArrayList<String>();
+
+    try (var app = new Shoostr().virtualThreads()) {
+      app.modifyServer(
+          nativeServer -> {
+            server.set(nativeServer);
+            ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0);
+            workers.set(
+                (ExecutorService)
+                    ((QueuedThreadPool) nativeServer.getThreadPool()).getVirtualThreadsExecutor());
+          });
+      app.extensions(
+          new ClaimingExtension(
+              () -> {}, () -> events.add("skipped"), () -> events.add("close-first")),
+          new ClaimingExtension(
+              () -> {},
+              () -> {
+                events.add("fatal");
+                throw signal;
+              },
+              () -> events.add("close-second")),
+          new ClaimingExtension(
+              () -> {},
+              () -> {
+                events.add("ordinary");
+                throw ordinary;
+              },
+              () -> events.add("close-third")));
+      app.beforeClose(
+          () -> {
+            throw before;
+          });
+      app.afterClose(() -> finalized.set(true));
+      app.start();
+
+      try {
+        assertSame(before, assertThrows(AssertionError.class, app::close));
+        assertTrue(server.get().isStopped());
+        assertTrue(workers.get().isShutdown());
+        assertTrue(finalized.get());
+        assertEquals(
+            List.of("ordinary", "fatal", "close-third", "close-second", "close-first"), events);
+        assertArrayEquals(new Throwable[] {signal}, before.getSuppressed());
+        assertEquals(1, signal.getSuppressed().length);
+        assertSame(
+            ordinary, assertInstanceOf(IOException.class, signal.getSuppressed()[0]).getCause());
+      } finally {
+        server.get().stop();
+        workers.get().shutdownNow();
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void retainsNativeStopAndCleanupErrorsWithoutReplacingAnEarlierCallbackError(boolean beforeFails)
+      throws Exception {
+    var before = assertionFailure("Before callback failed");
+    var stopping = assertionFailure("Native stop failed");
+    var cleanup = assertionFailure("Extension cleanup failed");
+    var server = new AtomicReference<Server>();
+    var finalized = new AtomicBoolean();
+    var listener =
+        new LifeCycle.Listener() {
+          @Override
+          public void lifeCycleStopping(LifeCycle lifeCycle) {
+            throw stopping;
+          }
+        };
+
+    try (var app = new Shoostr()) {
+      app.modifyServer(
+          nativeServer -> {
+            server.set(nativeServer);
+            ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0);
+            nativeServer.addEventListener(listener);
+          });
+      app.extensions(
+          new ClaimingExtension(
+              () -> {},
+              () -> {},
+              () -> {
+                throw cleanup;
+              }));
+      if (beforeFails) {
+        app.beforeClose(
+            () -> {
+              throw before;
+            });
+      }
+
+      app.afterClose(() -> finalized.set(true));
+      app.start();
+
+      try {
+        var expected = beforeFails ? before : stopping;
+        assertSame(expected, assertThrows(AssertionError.class, app::close));
+        assertTrue(finalized.get());
+        assertArrayEquals(new Throwable[] {cleanup}, stopping.getSuppressed());
+        if (beforeFails) {
+          assertArrayEquals(new Throwable[] {stopping}, before.getSuppressed());
+        }
+      } finally {
+        server.get().removeEventListener(listener);
+        server.get().stop();
+      }
+    }
+  }
+
+  private static AssertionError assertionFailure(String message) {
+    return assertThrows(AssertionError.class, () -> fail(message));
   }
 
   private record ClaimingExtension(Runnable claim, Runnable stopping, Runnable cleanup)

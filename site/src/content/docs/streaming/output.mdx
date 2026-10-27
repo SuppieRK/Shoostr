@@ -23,7 +23,10 @@ The `/chunks` handler flushes the CSV header before writing two records; returni
 The `/input` handler opens a report and passes it to `response.input(...)`, which closes that source before returning, including when reading or output fails.
 
 Keep the response and stream on the handler thread and within its lifetime; retaining either for background work does not keep the HTTP response open.
-Do not close `Response` yourself, and release any other application-owned resource when the handler ends.
+Do not close `Response` yourself. Release handler-owned input resources when their use ends.
+After the handler returns, the framework still completes pending output and the final transport write.
+An admission permit protecting the HTTP exchange must remain held through terminal request completion;
+see [stream admission](../../lifecycle/executors/#compose-stream-admission).
 A disconnected client or a failure after commitment aborts output rather than producing a replacement error body; see [exception recovery](../../errors/exceptions/) for that boundary.
 For event framing and client replay, use [server-sent events](../sse/).
 

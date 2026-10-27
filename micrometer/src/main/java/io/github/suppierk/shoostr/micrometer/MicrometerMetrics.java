@@ -6,6 +6,7 @@ import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestObservation;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.micrometer.core.instrument.LongTaskTimer;
+import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Timer;
 import java.util.Objects;
@@ -22,6 +23,7 @@ public final class MicrometerMetrics
     implements Extension<Void>, Function<Request, RequestObservation> {
   private final MeterRegistry registry;
   private final LongTaskTimer active;
+  private final Meter.MeterProvider<Timer> completed;
   private boolean allRequests;
   private boolean installed;
 
@@ -32,6 +34,10 @@ public final class MicrometerMetrics
    */
   public MicrometerMetrics(MeterRegistry registry) {
     this.registry = Objects.requireNonNull(registry);
+    completed =
+        Timer.builder("http.server.requests")
+            .description("Terminal request count and duration")
+            .withRegistry(registry);
     active =
         LongTaskTimer.builder("http.server.requests.active")
             .description("Requests admitted but not yet terminal")
@@ -39,10 +45,10 @@ public final class MicrometerMetrics
   }
 
   /**
-   * Compares all stored collaborators and registration state.
+   * Compares the registry, active timer and registration state.
    *
    * @param other candidate provider
-   * @return whether both providers have equal stored state
+   * @return whether both providers have equal collaborators and registration state
    */
   @Override
   public boolean equals(@Nullable Object other) {
@@ -86,9 +92,8 @@ public final class MicrometerMetrics
           error = "none";
         }
 
-        Timer.builder("http.server.requests")
-            .description("Terminal request count and duration")
-            .tags(
+        completed
+            .withTags(
                 "method",
                 HttpMethods.httpMethod(outcome.method()).map(HttpMethods::value).orElse("OTHER"),
                 "route",
@@ -97,7 +102,6 @@ public final class MicrometerMetrics
                 Integer.toString(outcome.statusCode()),
                 "error",
                 error)
-            .register(registry)
             .record(outcome.durationNanos(), TimeUnit.NANOSECONDS);
       } finally {
         sample.stop();

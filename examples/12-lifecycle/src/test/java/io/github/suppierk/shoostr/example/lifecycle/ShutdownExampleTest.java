@@ -1,8 +1,10 @@
 package io.github.suppierk.shoostr.example.lifecycle;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import io.github.suppierk.shoostr.Extension;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -95,6 +97,23 @@ class ShutdownExampleTest {
       assertThrows(IllegalStateException.class, app::start);
       assertEquals(1, disposed.get());
       assertThrows(IllegalStateException.class, app::start);
+    }
+
+    assertEquals(1, disposed.get());
+  }
+
+  @Test
+  void disposesApplicationResourcesBeforeRethrowingASignallingError() throws Exception {
+    var disposed = new AtomicInteger();
+    var failure = assertThrows(AssertionError.class, () -> fail("Signalling failed"));
+
+    try (var app = ShutdownExample.application(disposed::incrementAndGet)) {
+      app.beforeClose(
+          () -> {
+            throw failure;
+          });
+      assertSame(failure, assertThrows(AssertionError.class, app::close));
+      assertEquals(1, disposed.get());
     }
 
     assertEquals(1, disposed.get());
