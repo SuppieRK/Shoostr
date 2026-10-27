@@ -1988,7 +1988,11 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     }
 
     configureHeadCompression();
+    prepareInputBeforeFlush();
+  }
 
+  /** Disposes available input or advertises finite closure before response commitment. */
+  private void prepareInputBeforeFlush() {
     if (discardInputBeforeFlush) {
       nativeRequest().consumeAvailable();
       discardInputBeforeFlush = false;
