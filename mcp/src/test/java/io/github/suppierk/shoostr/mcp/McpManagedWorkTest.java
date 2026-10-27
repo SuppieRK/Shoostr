@@ -191,10 +191,8 @@ class McpManagedWorkTest {
                 .requestTimeout(Duration.ofSeconds(3))
                 .build()) {
       client.initialize();
-      var failure =
-          assertThrows(
-              McpError.class,
-              () -> client.callTool(McpSchema.CallToolRequest.builder("foreign").build()));
+      var request = McpSchema.CallToolRequest.builder("foreign").build();
+      var failure = assertThrows(McpError.class, () -> client.callTool(request));
       assertTrue(failure.getMessage().contains("active operation"));
       assertEquals(0, invoked.get());
     }
@@ -381,10 +379,8 @@ class McpManagedWorkTest {
                 .requestTimeout(Duration.ofSeconds(2))
                 .build()) {
       client.initialize();
-      var failure =
-          assertThrows(
-              RuntimeException.class,
-              () -> client.callTool(McpSchema.CallToolRequest.builder("error").build()));
+      var request = McpSchema.CallToolRequest.builder("error").build();
+      var failure = assertThrows(RuntimeException.class, () -> client.callTool(request));
       assertTrue(
           failure.getMessage().contains("Fixture managed callable failure"), failure.toString());
       await()

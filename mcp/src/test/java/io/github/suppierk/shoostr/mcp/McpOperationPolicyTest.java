@@ -29,17 +29,17 @@ class McpOperationPolicyTest {
   @ParameterizedTest
   @CsvSource({"0,1,1", "-1,1,1", "1,0,1", "1,-1,1", "1,1,0", "1,1,-1"})
   void rejectsNonPositiveCapacity(int total, int owner, int session) {
+    var timeout = Duration.ofSeconds(1);
     assertThrows(
         IllegalArgumentException.class,
-        () -> new McpOperationLimits(total, owner, session, Duration.ofSeconds(1)));
+        () -> new McpOperationLimits(total, owner, session, timeout));
   }
 
   @ParameterizedTest
   @ValueSource(longs = {0, -1})
   void rejectsNonPositiveTimeout(long seconds) {
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> new McpOperationLimits(1, 1, 1, Duration.ofSeconds(seconds)));
+    var timeout = Duration.ofSeconds(seconds);
+    assertThrows(IllegalArgumentException.class, () -> new McpOperationLimits(1, 1, 1, timeout));
   }
 
   @Test
@@ -61,15 +61,20 @@ class McpOperationPolicyTest {
           invoked.incrementAndGet();
           return McpServer.sync(transport).build();
         };
+    var selectedSecurity = "security".equals(absent) ? null : security;
+    var selectedSessions = "sessions".equals(absent) ? null : McpSessionLimits.defaults();
+    var selectedOrdinary = "ordinary".equals(absent) ? null : McpOperationLimits.defaults();
+    var selectedControl = "control".equals(absent) ? null : McpOperationLimits.defaults();
+    var selectedFactory = "factory".equals(absent) ? null : factory;
     assertThrows(
         NullPointerException.class,
         () ->
             Mcp.sync(
-                "security".equals(absent) ? null : security,
-                "sessions".equals(absent) ? null : McpSessionLimits.defaults(),
-                "ordinary".equals(absent) ? null : McpOperationLimits.defaults(),
-                "control".equals(absent) ? null : McpOperationLimits.defaults(),
-                "factory".equals(absent) ? null : factory));
+                selectedSecurity,
+                selectedSessions,
+                selectedOrdinary,
+                selectedControl,
+                selectedFactory));
     assertEquals(0, invoked.get());
   }
 
@@ -82,20 +87,20 @@ class McpOperationPolicyTest {
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
             (identity, message) -> {});
     var mcp = Mcp.async(security, transport -> McpServer.async(transport).build());
+    var work = mcp.work();
+    var timeout = Duration.ofSeconds(1);
 
     try {
-      assertThrows(NullPointerException.class, () -> mcp.work().call(null));
-      assertThrows(
-          IllegalStateException.class,
-          () -> mcp.work().call(invoked::incrementAndGet).block(Duration.ofSeconds(1)));
+      assertThrows(NullPointerException.class, () -> work.call(null));
+      var action = work.call(invoked::incrementAndGet);
+      assertThrows(IllegalStateException.class, () -> action.block(timeout));
       assertEquals(0, invoked.get());
     } finally {
       mcp.close();
     }
 
-    assertThrows(
-        IllegalStateException.class,
-        () -> mcp.work().call(invoked::incrementAndGet).block(Duration.ofSeconds(1)));
+    var action = work.call(invoked::incrementAndGet);
+    assertThrows(IllegalStateException.class, () -> action.block(timeout));
     assertEquals(0, invoked.get());
   }
 }

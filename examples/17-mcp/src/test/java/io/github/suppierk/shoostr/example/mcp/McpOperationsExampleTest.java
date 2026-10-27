@@ -203,8 +203,7 @@ class McpOperationsExampleTest {
         Arguments.of(new McpOperationLimits(1, 1, 1, Duration.ofMinutes(5)), 503));
   }
 
-  private static BufferedReader openStatus(TestServer test, String session, int id)
-      throws Exception {
+  private static BufferedReader openStatus(TestServer test, String session, int id) {
     var accepted = new AtomicReference<HttpResponse<InputStream>>();
     await()
         .atMost(Duration.ofSeconds(3))
