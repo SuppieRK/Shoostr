@@ -1,6 +1,6 @@
 # 17 — MCP
 
-Maintainer interoperability fixture. Consumer recipes cover [MCP catalogs](../../site/src/content/docs/mcp/server.mdx), [security](../../site/src/content/docs/mcp/security.mdx) and [client interactions](../../site/src/content/docs/mcp/interactions.mdx).
+Maintainer interoperability fixture. Consumer recipes cover [MCP catalogs](../../site/src/content/docs/mcp/server.mdx), [operations](../../site/src/content/docs/mcp/operations.mdx), [security](../../site/src/content/docs/mcp/security.mdx) and [client interactions](../../site/src/content/docs/mcp/interactions.mdx).
 
 `McpServerExample` supplies the consumer recipe's synchronous and asynchronous
 catalog factories, with real SDK client tests in `McpServerExampleTest`.
@@ -8,6 +8,9 @@ catalog factories, with real SDK client tests in `McpServerExampleTest`.
 live transport-security tests, without claiming external-provider OAuth coverage.
 `McpInteractionsExample` covers client elicitation/sampling, targeted notifications
 and resource subscriptions, with public SDK and HTTP lifecycle checks.
+`McpOperationsExample` demonstrates independently configured admission/control policies
+and managed blocking work composed through native async handlers. Its executable tests
+cover reply progress, overload, matching cancellation and actual-exit accounting after timeout.
 The launcher and official compatibility catalog remain separate fixtures.
 
 This public app uses Shoostr's MCP extension and the official MCP Java SDK
@@ -223,10 +226,12 @@ tool or expected-failure baseline. This result does not prove replay support.
 
 SDK 2.1.0 removes pending bidirectional correlations on replies and terminal signals;
 the older 2.0.1 completed-correlation retention limitation no longer applies.
-Session limits and idle expiry still do not impose a heap or pending-work budget
-on a continuously active session. The SDK does not implement a
-`notifications/cancelled` handler, so closing an HTTP stream does not cancel detached
-session-owned work. See the [current MCP contracts](../../mcp/README.md) for ownership
+Session limits and idle expiry remain separate from configurable operation admission
+and managed execution bounds. Shoostr handles matching `notifications/cancelled`
+in the adapter; closing an HTTP stream alone does not cancel detached work.
+Started managed callables remain charged until actual exit, even after interruption.
+These count limits do not establish an encoded-message byte budget.
+See the [current MCP contracts](../../mcp/README.md) for ownership
 and transport limits. Shoostr does not fork the SDK or manipulate its private state.
 
 No external-provider OAuth example or end-to-end fixture is maintained. The official

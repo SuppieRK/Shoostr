@@ -6,6 +6,11 @@ tools, resources, prompts, schemas, completion and client interactions through
 the SDK; Shoostr supplies explicit routes, HTTP security and owned transport
 lifetime. The SDK is not included in `shoostr-core`.
 
+Consumer recipes cover [catalogs](../site/src/content/docs/mcp/server.mdx),
+[operation limits and managed work](../site/src/content/docs/mcp/operations.mdx),
+[security](../site/src/content/docs/mcp/security.mdx) and
+[client interactions](../site/src/content/docs/mcp/interactions.mdx).
+
 ```java
 var mcp = Mcp.sync(
     new McpHttpSecurity(
@@ -47,8 +52,10 @@ authorization server.
   `removeResource`, catalog notifications or elicitation completion. Do not close
   it independently. Close the app; it signals streams before graceful drain,
   then closes sessions and the expiry scheduler after the drain.
-- Native SDK callbacks may run on SDK/Reactor workers, not the Shoostr handler
-  thread. Never retain or pass a live Shoostr Request/Response into SDK callbacks.
+- Raw native SDK callbacks may run on SDK/Reactor workers. Native async handlers
+  can compose borrowed `McpWork.call(...)` for capability-owned execution.
+  Existing factories automatically apply finite admission limits; configure ordinary
+  and control policies independently. Never retain or pass a live Shoostr Request/Response into SDK callbacks.
   Use the detached `McpIdentity` and native transport context instead.
 - To select an HTTP executor, mount with
   `routes.path("/mcp", group -> mcp.routes(group, executor))`. This applies to
@@ -192,21 +199,24 @@ Attaching a replacement GET closes the previous listening connection. The adapte
 releases native HTTP transport handles without cancelling outstanding session-owned
 requests: a freshly authenticated POST can still answer a request issued over the
 old GET or POST after its HTTP response ends. Explicit session deletion and application
-shutdown remain responsible for cancelling owned work.
+shutdown, matching protocol cancellation and operation deadlines request cancellation
+of owned work. Managed callables retain capacity until actual exit.
 
 The [released session implementation](https://github.com/modelcontextprotocol/java-sdk/blob/v2.1.0/mcp-core/src/main/java/io/modelcontextprotocol/spec/McpStreamableServerSession.java)
 removes pending correlations on replies and terminal signals, including cancellation
 and timeout. The completed-correlation retention limitation of 2.0.1 no longer applies;
 the adapter does not fork or modify private SDK state. Session-count limits and quiescent
-expiry still reclaim abandoned sessions, but do not impose an absolute heap or pending-work
-budget on one continuously active session.
+expiry still reclaim abandoned sessions. Operation admission and managed execution
+have separate configurable bounds; none is an absolute heap or encoded-message byte budget.
 
 Newer protocol revisions, Tasks, built-in pagination and sampling-with-tools are
 not promised merely because newer specifications or schema types mention them.
 Use the selected released SDK's actual configured capabilities.
 
-The release has no implemented `notifications/cancelled` handler. Closing an HTTP
-stream is not a protocol cancellation signal: detached native work remains owned
-by its session until it completes or explicit session deletion/app closure cancels
-it. Stdio, legacy HTTP+SSE and stateless transport modes are not supplied by this
+Shoostr implements matching `notifications/cancelled` handling in the adapter.
+Closing an HTTP stream is not a protocol cancellation signal; native ownership
+continues until completion, operation cancellation/deadline or session termination.
+Raw callback execution remains application-owned. See the operation recipe for the
+managed execution guarantee and cancellation limitations.
+Stdio, legacy HTTP+SSE and stateless transport modes are not supplied by this
 Streamable HTTP adapter.
