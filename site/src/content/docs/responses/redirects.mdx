@@ -21,6 +21,9 @@ The method accepts relative references and non-HTTP schemes, so a syntactically 
 The `/old` endpoint points to `/current`, while the POST routes distinguish a receipt fetched with GET from a receiver that needs the original POST body.
 All destinations are constant application-relative paths.
 
+If the handler leaves request content unread, an early HTTP/1 response can close the connection.
+A client that follows the redirect must then use another connection; `307` still preserves the method and body.
+
 A redirect replaces the staged body and clears its content metadata while retaining unrelated headers.
 It does not commit the response or end the handler: return from the handler when later work must not run, and do not rely on a redirect alone to reject a request.
 
@@ -29,6 +32,7 @@ It does not commit the response or end the handler: return from the handler when
 ## Test
 
 The tests first inspect redirect status and `Location` with automatic following disabled, then use controlled local destinations to verify the GET after `303` and the preserved POST method and body after `307`.
+A larger POST checks that `307` preserves a body that spans multiple input buffers.
 An additional handler checks that code after `redirect(...)` still runs.
 
 <Code code={test} lang="java" title="RedirectExampleTest.java" />

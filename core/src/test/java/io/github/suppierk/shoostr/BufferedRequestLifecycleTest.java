@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
+import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
@@ -26,6 +27,8 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
@@ -50,12 +53,310 @@ import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class BufferedRequestLifecycleTest {
   private static final String PAYLOAD = "01234567890123456789012345678901";
+  @TempDir Path temporaryDirectory;
+
+  @ParameterizedTest
+  @CsvSource({
+    "200, false, HTTP/1.1",
+    "307, false, HTTP/1.1",
+    "200, true, HTTP/1.1",
+    "307, true, HTTP/1.1",
+    "200, true, HTTP/1.0"
+  })
+  void advertisesConnectionClosureWhenFiniteOutputLeavesRequestBytesUnavailable(
+      int status, boolean afterFlush, String protocol) throws Exception {
+    try (var app = new Shoostr()) {
+      if (afterFlush) {
+        app.afterResponseFlush((request, response) -> {});
+      }
+
+      app.routes()
+          .post(
+              "/finite",
+              (request, response) -> {
+                if (status == 307) {
+                  response.redirect("/next", HttpStatusCodes.TEMPORARY_REDIRECT);
+                } else {
+                  response.text("ok");
+                }
+              });
+
+      try (var test = TestServer.start(app);
+          var socket = new Socket()) {
+        connect(socket, test.baseUri().getPort());
+        socket
+            .getOutputStream()
+            .write(
+                ("POST /finite "
+                        + protocol
+                        + "\r\nHost: localhost\r\nContent-Length: 32\r\nConnection: keep-alive\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var result = receive(HttpTester.from(socket.getInputStream()));
+        assertEquals(status, result.getStatus());
+        assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
+        assertEquals(-1, socket.getInputStream().read());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void advertisesConnectionClosureBeforeSendingAFileWithUnavailableRequestBytes(boolean afterFlush)
+      throws Exception {
+    var file = temporaryDirectory.resolve("finite.txt");
+    Files.writeString(file, "file content");
+
+    try (var app = new Shoostr()) {
+      if (afterFlush) {
+        app.afterResponseFlush((request, response) -> {});
+      }
+
+      app.routes().post("/file", (request, response) -> response.file(file, "text/plain"));
+
+      try (var test = TestServer.start(app);
+          var socket = new Socket()) {
+        connect(socket, test.baseUri().getPort());
+        socket
+            .getOutputStream()
+            .write(
+                "POST /file HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var result = receive(HttpTester.from(socket.getInputStream()));
+        assertEquals(200, result.getStatus());
+        assertEquals("file content", result.getContent());
+        assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
+        assertEquals(-1, socket.getInputStream().read());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false, false", "true, false", "false, true", "true, true"})
+  void leavesTheFirstBodyReadAvailableToPostFlushCallbacks(boolean streamed, boolean chunked)
+      throws Exception {
+    var observed = new CompletableFuture<String>();
+
+    try (var app = new Shoostr()) {
+      app.afterResponseFlush(
+          (request, response) -> {
+            if (streamed) {
+              try (var input = request.input()) {
+                observed.complete(new String(input.readAllBytes(), StandardCharsets.US_ASCII));
+              }
+            } else {
+              observed.complete(request.bodyText());
+            }
+          });
+      app.routes().post("/body", (request, response) -> response.text("ok"));
+
+      try (var test = TestServer.start(app);
+          var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+        var bytes = PAYLOAD.getBytes(StandardCharsets.US_ASCII);
+        var publisher =
+            chunked
+                ? HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))
+                : HttpRequest.BodyPublishers.ofByteArray(bytes);
+        var result =
+            client.send(
+                HttpRequest.newBuilder(test.baseUri().resolve("body"))
+                    .timeout(Duration.ofSeconds(3))
+                    .POST(publisher)
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("ok", result.body());
+        assertEquals("close", result.headers().firstValue("Connection").orElseThrow());
+        assertEquals(PAYLOAD, observed.get(3, TimeUnit.SECONDS));
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false, false", "true, false", "false, true", "true, true"})
+  void reusesConnectionsForBodylessOrConsumedFiniteRequests(boolean afterFlush, boolean post)
+      throws Exception {
+    var before = new CompletableFuture<String>();
+    var after = new CompletableFuture<String>();
+
+    try (var app = new Shoostr()) {
+      app.beforeResponseFlush((request, response) -> before.complete(request.bodyText()));
+      if (afterFlush) {
+        app.afterResponseFlush((request, response) -> after.complete(request.bodyText()));
+      }
+
+      app.routes()
+          .post("/first", (request, response) -> response.text(peerPort(request)))
+          .get("/first", (request, response) -> response.text(peerPort(request)))
+          .get("/next", (request, response) -> response.text(peerPort(request)));
+
+      try (var test = TestServer.start(app);
+          var socket = new Socket()) {
+        connect(socket, test.baseUri().getPort());
+        var input = HttpTester.from(socket.getInputStream());
+        var outgoing =
+            post
+                ? "POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n" + PAYLOAD
+                : "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n";
+        socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var first = receive(input);
+        assertEquals(200, first.getStatus());
+        assertNull(first.get(HttpHeaders.CONNECTION.value()));
+        assertEquals(post ? PAYLOAD : "", before.get(3, TimeUnit.SECONDS));
+        if (afterFlush) {
+          assertEquals(post ? PAYLOAD : "", after.get(3, TimeUnit.SECONDS));
+        }
+
+        socket
+            .getOutputStream()
+            .write(
+                "GET /next HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var next = receive(input);
+        assertEquals(200, next.getStatus());
+        assertEquals(first.getContent(), next.getContent());
+        assertEquals(Integer.toString(socket.getLocalPort()), next.getContent());
+      }
+    }
+  }
+
+  @Test
+  void closesConsumedChunkedInputWhenPostFlushCallbacksRetainRequestAccess() throws Exception {
+    var observed = new CompletableFuture<String>();
+
+    try (var app = new Shoostr()) {
+      app.beforeResponseFlush((request, response) -> request.bodyText());
+      app.afterResponseFlush((request, response) -> observed.complete(request.bodyText()));
+      app.routes().post("/body", (request, response) -> response.text("ok"));
+
+      try (var test = TestServer.start(app);
+          var socket = new Socket()) {
+        connect(socket, test.baseUri().getPort());
+        socket
+            .getOutputStream()
+            .write(
+                ("POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
+                        + "20\r\n"
+                        + PAYLOAD
+                        + "\r\n0\r\n\r\n")
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var result = receive(HttpTester.from(socket.getInputStream()));
+        assertEquals(200, result.getStatus());
+        assertEquals("ok", result.getContent());
+        assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
+        assertEquals(PAYLOAD, observed.get(3, TimeUnit.SECONDS));
+        assertEquals(-1, socket.getInputStream().read());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void leavesRequestInputReadableAfterAnEarlyStreamingFlush(boolean afterFlush) throws Exception {
+    var flushed = new CompletableFuture<Void>();
+
+    try (var app = new Shoostr()) {
+      if (afterFlush) {
+        app.afterResponseFlush((request, response) -> {});
+      }
+
+      app.routes()
+          .post(
+              "/stream",
+              (request, response) -> {
+                var output = response.startStream("text/plain");
+                output.write("A");
+                output.flush();
+                flushed.complete(null);
+
+                try (var input = request.input()) {
+                  output.write(input.readAllBytes());
+                }
+              });
+
+      try (var test = TestServer.start(app);
+          var socket = new Socket()) {
+        connect(socket, test.baseUri().getPort());
+        socket
+            .getOutputStream()
+            .write(
+                "POST /stream HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        flushed.get(3, TimeUnit.SECONDS);
+        socket.getOutputStream().write("1\r\ny\r\n0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        var result = receive(HttpTester.from(socket.getInputStream()));
+        assertEquals(200, result.getStatus());
+        assertEquals("Axy", result.getContent());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void keepsHttp2ConnectionsAvailableAfterFiniteResponsesWithUnreadInput(boolean afterFlush)
+      throws Exception {
+    try (var app = new Shoostr();
+        var client = new HTTP2Client()) {
+      app.http2();
+      if (afterFlush) {
+        app.afterResponseFlush((request, response) -> {});
+      }
+
+      app.routes()
+          .post(
+              "/early",
+              (request, response) ->
+                  response.setHeader("X-Peer-Port", peerPort(request)).text("ok"))
+          .get("/next", (request, response) -> response.text(peerPort(request)));
+
+      try (var test = TestServer.start(app)) {
+        client.setConnectTimeout(3000);
+        client.setIdleTimeout(3000);
+        client.start();
+        var connection =
+            client
+                .connect(
+                    null,
+                    new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
+                    new Session.Listener() {})
+                .get(3, TimeUnit.SECONDS);
+        var response = new Http2Response();
+        var request =
+            new MetaData.Request(
+                "POST",
+                HttpURI.from(test.baseUri().resolve("early").toString()),
+                HttpVersion.HTTP_2,
+                HttpFields.build().put(HttpHeaders.CONTENT_LENGTH.value(), "32"));
+        connection
+            .newStream(new HeadersFrame(request, null, false), response)
+            .get(3, TimeUnit.SECONDS);
+        var headers = response.headers.get(3, TimeUnit.SECONDS);
+        assertEquals(200, headers.getStatus());
+        assertEquals(HttpVersion.HTTP_2, headers.getHttpVersion());
+        assertNull(headers.getHttpFields().get(HttpHeaders.CONNECTION.value()));
+        assertEquals("ok", response.body.get(3, TimeUnit.SECONDS));
+
+        var next = http2Request(connection, app, "GET", "/next", new byte[0]);
+        assertEquals(200, next.headers.get(3, TimeUnit.SECONDS).getStatus());
+        assertEquals(
+            headers.getHttpFields().get("X-Peer-Port"), next.body.get(3, TimeUnit.SECONDS));
+      }
+    }
+  }
 
   @ParameterizedTest
   @ValueSource(ints = {404, 405})

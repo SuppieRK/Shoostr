@@ -1179,6 +1179,10 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
    * @throws IllegalStateException if the selected status forbids a staged body
    */
   private void completeOpen() throws IOException {
+    if (afterFlush == null) {
+      discardInputBeforeFlush = true;
+    }
+
     if (resourceContent != null || resourceChannel != null) {
       completeResource();
       return;
@@ -1984,10 +1988,33 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     }
 
     configureHeadCompression();
+    prepareInputBeforeFlush();
+  }
 
+  /** Disposes available input or advertises finite closure before response commitment. */
+  private void prepareInputBeforeFlush() {
     if (discardInputBeforeFlush) {
       nativeRequest().consumeAvailable();
       discardInputBeforeFlush = false;
+    } else if (frameworkClosing && state == State.OPEN) {
+      advertiseUnreadInputClosure();
+    }
+  }
+
+  /** Advertises finite HTTP/1 closure while leaving input available to post-flush callbacks. */
+  private void advertiseUnreadInputClosure() {
+    var transportRequest = org.eclipse.jetty.server.Request.unWrap(nativeRequest());
+    var length = transportRequest.getLength();
+    boolean unread =
+        length > 0
+            && org.eclipse.jetty.server.Request.getContentBytesRead(transportRequest) < length;
+    boolean chunked =
+        length < 0 && transportRequest.getHeaders().contains(HttpHeader.TRANSFER_ENCODING);
+    if (unread || chunked) {
+      var version = transportRequest.getConnectionMetaData().getHttpVersion();
+      if (version == HttpVersion.HTTP_1_0 || version == HttpVersion.HTTP_1_1) {
+        delegate.getHeaders().put(HttpHeader.CONNECTION, "close");
+      }
     }
   }
 

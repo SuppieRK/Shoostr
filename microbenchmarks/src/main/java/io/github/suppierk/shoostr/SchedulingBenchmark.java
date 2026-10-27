@@ -206,6 +206,7 @@ public class SchedulingBenchmark {
                       switch (method.getName()) {
                         case "getMethod" -> "GET";
                         case "getHeaders" -> HttpFields.EMPTY;
+                        case "consumeAvailable" -> true;
                         default -> throw new UnsupportedOperationException(method.getName());
                       });
       sink =

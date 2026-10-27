@@ -28,6 +28,19 @@ Within each matched phase, local hooks run before application hooks, retaining r
 Application terminal observers also see unmatched requests, whose route pattern is absent, while local observers apply only to selected endpoints.
 An exception stops the ordinary phase; [exception handling](../../errors/exceptions/) determines how an uncommitted failure is rendered.
 
+During ordinary response completion, request content remains readable in both flush callbacks, including a first read in `afterResponseFlush`.
+For an ordinary finite response without an `afterResponseFlush` callback, Shoostr discards available unread input after `beforeResponseFlush` and before committing the response.
+If input remains unavailable, HTTP/1 closes the connection and advertises `Connection: close`.
+
+With an `afterResponseFlush` callback, Shoostr preserves input for that callback.
+Before committing a finite HTTP/1 response, it advertises closure if some known-length body bytes have not yet been read from the transport.
+For a chunked body of unknown length, it conservatively advertises closure even if the handler has consumed the body.
+Bodyless requests and fully consumed known-length bodies can retain connection reuse.
+Streaming responses keep request input available after an early flush, and HTTP/2 does not use this connection header.
+
+Error rendering and framework-generated rejection responses can discard available request input before flushing, even when a post-flush callback is registered.
+Such a callback must not rely on a first body read.
+
 Retain `RequestOutcome` instead of the live request or response: its status is the committed final status, or zero when none was committed, and its separate failure fields distinguish application and transport failures.
 Its `routePattern()` contains the composed registered template, such as `/jobs/{id}`, without substituting request identifiers or appending query strings; when no endpoint was selected, it remains `null` rather than exposing the requested path.
 Use this registration metadata to identify the endpoint in logs and metrics, applying any escaping your output format requires.
