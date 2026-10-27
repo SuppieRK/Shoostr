@@ -22,6 +22,7 @@ Unlike URL-encoded forms, multipart fields preserve literal `+` characters.
 An upload and its content streams are available only during the handler.
 Read them there, or [save the upload](../persist-upload/) before handing its content to later work.
 Shoostr removes unretained temporary files when the exchange completes, which can occur after the client receives its response.
+During the handler lifetime, valid zero-length content reads return `0`, including at EOF.
 
 ## Example
 

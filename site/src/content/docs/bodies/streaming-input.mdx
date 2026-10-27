@@ -17,6 +17,10 @@ The stream belongs to the active handler and is closed during framework finaliza
 The configured request-byte limit applies as bytes are consumed, including skipped bytes.
 Opening a stream or stopping early does not validate the unread remainder of an unknown-length body.
 
+For a fixed-size prefix, `input().readNBytes(n)` returns after `n` bytes arrive or the body ends.
+Once it has those bytes, it does not wait for a later chunk.
+During the handler lifetime, valid zero-length reads return `0` without waiting for content, including at EOF.
+
 ## Example
 
 The endpoint calculates SHA-256 with a per-request digest and a bounded transfer buffer, then returns the checksum only after successful consumption.

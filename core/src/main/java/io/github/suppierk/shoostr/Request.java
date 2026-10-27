@@ -1089,6 +1089,11 @@ public sealed class Request permits TypedRequest {
       @Override
       public int read(byte[] value, int offset, int length) throws IOException {
         check();
+        Objects.checkFromIndexSize(offset, length, value.length);
+        if (length == 0) {
+          return 0;
+        }
+
         var read = super.read(value, offset, length);
         if (read > 0) {
           count(read);

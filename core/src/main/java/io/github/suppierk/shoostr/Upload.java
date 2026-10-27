@@ -78,6 +78,11 @@ public final class Upload {
           @Override
           public int read(byte[] value, int offset, int length) throws IOException {
             access.run();
+            Objects.checkFromIndexSize(offset, length, value.length);
+            if (length == 0) {
+              return 0;
+            }
+
             return super.read(value, offset, length);
           }
 
