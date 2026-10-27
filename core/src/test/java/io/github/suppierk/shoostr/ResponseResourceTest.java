@@ -74,6 +74,7 @@ class ResponseResourceTest {
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> requestHeaders;
+                      case "consumeAvailable" -> true;
                       case "addHttpStreamWrapper" -> null;
                       default -> throw new UnsupportedOperationException(method.getName());
                     });

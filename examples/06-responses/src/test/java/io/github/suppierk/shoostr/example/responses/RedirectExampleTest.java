@@ -40,6 +40,30 @@ class RedirectExampleTest {
   }
 
   @Test
+  void preservesALargePostBodyWhenFollowingATemporaryRedirect() throws Exception {
+    var payload = "payload".repeat(32768);
+
+    try (var test =
+        TestServer.start(
+            RedirectExample.application(),
+            client -> client.followRedirects(HttpClient.Redirect.NORMAL))) {
+      // Replay spans multiple input buffers; the redirect handler leaves the original body unread.
+      var response =
+          test.send(
+              request ->
+                  request
+                      .path("/forward")
+                      .method("POST")
+                      .body(payload.getBytes(StandardCharsets.UTF_8)),
+              HttpResponse.BodyHandlers.ofString());
+      assertEquals(200, response.statusCode());
+      assertEquals("/receiver", response.uri().getPath());
+      assertEquals(307, response.previousResponse().orElseThrow().statusCode());
+      assertEquals("POST:" + payload, response.body());
+    }
+  }
+
+  @Test
   void keepsTheApplicationSelectedDestinationWhenAQuerySuggestsAnother() throws Exception {
     try (var test = TestServer.start(RedirectExample.application())) {
       var response =

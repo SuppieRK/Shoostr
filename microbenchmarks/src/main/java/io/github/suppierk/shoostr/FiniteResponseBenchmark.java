@@ -95,6 +95,7 @@ public class FiniteResponseBenchmark {
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> HttpFields.EMPTY;
+                      case "consumeAvailable" -> true;
                       case "addHttpStreamWrapper" -> null;
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
