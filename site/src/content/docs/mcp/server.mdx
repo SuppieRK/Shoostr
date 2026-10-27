@@ -82,6 +82,10 @@ handlers run. Choose [execution and HTTP admission](../../lifecycle/executors/#c
 according to the workload. MCP session limits count allocations, not application
 operations. A mailbox holds at most 64 frames; it does not impose a byte-memory
 bound, so validate application result sizes before returning them.
+Known closed/full mailboxes reject sends before JSON serialization. A concurrent
+close or competing send can still reject a message after serialization; this
+ordering does not impose a memory budget. The [status interaction example](../interactions/)
+validates its known application representation before publishing it.
 
 <Code code={composed} lang="java" title="McpOperationsExample.java" />
 

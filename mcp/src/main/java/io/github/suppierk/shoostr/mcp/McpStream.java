@@ -156,7 +156,8 @@ final class McpStream implements McpStreamableServerTransport {
   }
 
   /**
-   * Enqueues eagerly serialized data; acknowledgment follows owner-thread flush.
+   * Serializes on subscription after rejecting known closed/full state; acknowledgment follows
+   * owner-thread flush. Admission is checked again after serialization without reserving capacity.
    *
    * @param message native JSON-RPC message
    * @param messageId optional native event ID
@@ -169,6 +170,20 @@ final class McpStream implements McpStreamableServerTransport {
         sink -> {
           if (expiresAt != null && !expiresAt.isAfter(Instant.now())) {
             sink.error(new IOException("The MCP HTTP token expired"));
+            return;
+          }
+
+          boolean unavailable;
+          lock.lock();
+
+          try {
+            unavailable = finished || frames.size() >= CAPACITY;
+          } finally {
+            lock.unlock();
+          }
+
+          if (unavailable) {
+            sink.error(new IOException("MCP stream is closed or its frame mailbox is full"));
             return;
           }
 
