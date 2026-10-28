@@ -1,6 +1,6 @@
 # Contribution workflow
 
-Consumer documentation belongs in the [Starlight site](site/). Repository documentation is for maintainers.
+Consumer documentation belongs in the [Starlight site](site). Repository documentation is for maintainers.
 Shoostr uses [Apache License 2.0](LICENSE). Retain third-party license and notice files.
 
 For every tracked repository change, including documentation and benchmark fixtures:
@@ -146,21 +146,21 @@ Repeat hosting checks for `/` and the repository base path. Keep private researc
 This project uses a profile based on Simplified Technical English.
 It does not claim formal ASD-STE100 compliance or enforce its complete dictionary.
 
-| Rule | Requirement |
-| --- | --- |
-| W01 — Reader task | Use task-focused titles. State the result before background. |
-| W02 — Direct steps | Use active voice and imperative verbs. Give each instruction one main action. |
-| W03 — Natural flow | Use concise, connected prose with varied sentence lengths. Keep related ideas together rather than splitting paragraphs into abrupt statements. |
-| W04 — Stable terms | Use one term for one concept. Preserve exact identifiers, commands, protocol fields, and errors. |
-| W05 — Complete recipe | Show the task and its test as complete classes. State additional library requirements, essential constraints, and ownership. Do not repeat initial setup. |
-| W06 — Essential limits | State ownership, lifetime, security, and protocol limits where the reader acts. |
-| W07 — Evidence | Display compiled source files. Link primary references for deeper concepts. Label uncertainty and historical evidence. |
-| W08 — Audience | Keep consumer tasks in Starlight and maintainer procedures on GitHub. Keep READMEs short. |
-| W09 — Clean examples | Keep Sonar-specific suppressions, rule IDs, and analyzer comments out of example source. Explain resource ownership in ordinary terms. |
-| W10 — Java fluency | Explain task-specific choices and non-obvious contracts, not assertions, standard Java syntax, or automatic resource closure. |
-| W11 — In-code explanations | Comment meaningful choices, scope, ordering, ownership, and failure paths where the reader encounters them. Keep already-clear code concise. |
-| W12 — Fluent registration | Chain adjacent registrations on the same route scope, preserving call order and child boundaries. Keep setup and unrelated operations separate. |
-| W13 — Application setup | Show application construction and fluent configuration directly, without setup catch blocks, cleanup scaffolding, or route-only substitutes. |
+| Rule                       | Requirement                                                                                                                                               |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| W01 — Reader task          | Use task-focused titles. State the result before background.                                                                                              |
+| W02 — Direct steps         | Use active voice and imperative verbs. Give each instruction one main action.                                                                             |
+| W03 — Natural flow         | Use concise, connected prose with varied sentence lengths. Keep related ideas together rather than splitting paragraphs into abrupt statements.           |
+| W04 — Stable terms         | Use one term for one concept. Preserve exact identifiers, commands, protocol fields, and errors.                                                          |
+| W05 — Complete recipe      | Show the task and its test as complete classes. State additional library requirements, essential constraints, and ownership. Do not repeat initial setup. |
+| W06 — Essential limits     | State ownership, lifetime, security, and protocol limits where the reader acts.                                                                           |
+| W07 — Evidence             | Display compiled source files. Link primary references for deeper concepts. Label uncertainty and historical evidence.                                    |
+| W08 — Audience             | Keep consumer tasks in Starlight and maintainer procedures on GitHub. Keep READMEs short.                                                                 |
+| W09 — Clean examples       | Keep Sonar-specific suppressions, rule IDs, and analyzer comments out of example source. Explain resource ownership in ordinary terms.                    |
+| W10 — Java fluency         | Explain task-specific choices and non-obvious contracts, not assertions, standard Java syntax, or automatic resource closure.                             |
+| W11 — In-code explanations | Comment meaningful choices, scope, ordering, ownership, and failure paths where the reader encounters them. Keep already-clear code concise.              |
+| W12 — Fluent registration  | Chain adjacent registrations on the same route scope, preserving call order and child boundaries. Keep setup and unrelated operations separate.           |
+| W13 — Application setup    | Show application construction and fluent configuration directly, without setup catch blocks, cleanup scaffolding, or route-only substitutes.              |
 
 Review prose in context instead of treating sentence length or automated word counts as proof of clarity.
 Use short sentences where they help, such as a clear warning, without making every paragraph read like a checklist.
@@ -184,15 +184,15 @@ Use JUnit 5 tests at public behavior boundaries. Independently implement upstrea
 
 `HttpCompatibilityTest` adds black-box JUnit 5 cases for supported behavior identified while reviewing Javalin 7.2.3 and Jooby 4.5.4 tests. These are new implementations using this framework's API and the JDK HTTP client; no upstream test helpers, framework implementations, or test dependencies were copied.
 
-| Local test | Upstream behavioral reference | Local adaptation |
-| --- | --- | --- |
-| `dispatchesEveryExplicitlyRegisteredVerb` | Javalin [`TestRouting`, mapped verbs](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestRouting.kt) | Seven explicit verbs; HEAD verifies handler execution through a header and body suppression on the wire. No implicit HEAD fallback is assumed. |
-| `matchesLiteralPunctuationWithoutInterpretingItAsPatternSyntax` | Javalin [`TestRouting`, literal colon and path matching](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestRouting.kt) | Literal punctuation, query exclusion, and suffix misses through the actual listener. |
-| `preservesParameterValuesAtTheHttpBoundary` | Javalin [`TestRouting`, UTF-8 and parameter casing](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestRouting.kt) | Supported whole-segment parameter syntax, percent decoding, literal plus, and case-sensitive literal prefixes. |
-| `rejectsEncodedPercentBeforeInvokingTheHandler` | Additional local transport-policy regression discovered while adapting parameter scenarios | Percent-encoded percent is rejected before the handler; no URI compliance setting is weakened to claim parity. |
-| `cachesRequestBytesWithoutExposingMutableStorage` | Javalin [`TestMaxRequestSize`, repeated body reads](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestMaxRequestSize.kt); Jooby [`ByteArrayBodyTest`, content access and empty bodies](https://github.com/jooby-project/jooby/blob/v4.5.4/jooby/src/test/java/io/jooby/internal/ByteArrayBodyTest.java) | Repeated bytes/text access, empty and UTF-8 bodies, plus our defensive-copy guarantee; assertions use a real HTTP request rather than mock Context objects. |
-| `acceptsTheByteLimitAndRejectsOneAdditionalByte` | Javalin [`TestMaxRequestSize`, size boundaries](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestMaxRequestSize.kt) | Exact byte limit and limit+1 using multibyte text, with known-length and unknown-length JDK publishers. |
-| `readsAndReplacesHeadersCaseInsensitively` | Javalin [`TestResponse`, setting headers and overwriting values](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestResponse.kt); Jooby [`DefaultContextTest`, response headers/status](https://github.com/jooby-project/jooby/blob/v4.5.4/jooby/src/test/java/io/jooby/DefaultContextTest.java) | Header spelling variants, missing request header, replacement rather than append, selected status, and UTF-8 Content-Length. |
+| Local test                                                      | Upstream behavioral reference                                                                                                                                                                                                                                                                                                                           | Local adaptation                                                                                                                                            |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dispatchesEveryExplicitlyRegisteredVerb`                       | Javalin [`TestRouting`, mapped verbs](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestRouting.kt)                                                                                                                                                                                                     | Seven explicit verbs; HEAD verifies handler execution through a header and body suppression on the wire. No implicit HEAD fallback is assumed.              |
+| `matchesLiteralPunctuationWithoutInterpretingItAsPatternSyntax` | Javalin [`TestRouting`, literal colon and path matching](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestRouting.kt)                                                                                                                                                                                  | Literal punctuation, query exclusion, and suffix misses through the actual listener.                                                                        |
+| `preservesParameterValuesAtTheHttpBoundary`                     | Javalin [`TestRouting`, UTF-8 and parameter casing](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestRouting.kt)                                                                                                                                                                                       | Supported whole-segment parameter syntax, percent decoding, literal plus, and case-sensitive literal prefixes.                                              |
+| `rejectsEncodedPercentBeforeInvokingTheHandler`                 | Additional local transport-policy regression discovered while adapting parameter scenarios                                                                                                                                                                                                                                                              | Percent-encoded percent is rejected before the handler; no URI compliance setting is weakened to claim parity.                                              |
+| `cachesRequestBytesWithoutExposingMutableStorage`               | Javalin [`TestMaxRequestSize`, repeated body reads](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestMaxRequestSize.kt); Jooby [`ByteArrayBodyTest`, content access and empty bodies](https://github.com/jooby-project/jooby/blob/v4.5.4/jooby/src/test/java/io/jooby/internal/ByteArrayBodyTest.java) | Repeated bytes/text access, empty and UTF-8 bodies, plus our defensive-copy guarantee; assertions use a real HTTP request rather than mock Context objects. |
+| `acceptsTheByteLimitAndRejectsOneAdditionalByte`                | Javalin [`TestMaxRequestSize`, size boundaries](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestMaxRequestSize.kt)                                                                                                                                                                                    | Exact byte limit and limit+1 using multibyte text, with known-length and unknown-length JDK publishers.                                                     |
+| `readsAndReplacesHeadersCaseInsensitively`                      | Javalin [`TestResponse`, setting headers and overwriting values](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/javalin/src/test/java/io/javalin/TestResponse.kt); Jooby [`DefaultContextTest`, response headers/status](https://github.com/jooby-project/jooby/blob/v4.5.4/jooby/src/test/java/io/jooby/DefaultContextTest.java)         | Header spelling variants, missing request header, replacement rather than append, selected status, and UTF-8 Content-Length.                                |
 
 Both upstream repositories carry Apache License 2.0: [Javalin license](https://github.com/javalin/javalin/blob/javalin-parent-7.2.3/LICENSE), [Jooby license](https://github.com/jooby-project/jooby/blob/v4.5.4/LICENSE). Preserve applicable license/notice requirements if future work copies source instead of independently implementing scenarios.
 
@@ -483,16 +483,16 @@ For a module-specific diagnostic rerun, use its task directly, for example
 
 ### Targets and exclusions
 
-| Module | Production targets and tests | Reason |
-| --- | --- | --- |
-| `core` | All module-local production classes and all tests | Routing, requests/responses, streaming, transport/lifecycle, files, browser security and session contracts. |
-| `http` | All module-local production classes and all tests | HTTP value validation, formatting, parsing and exception/status contracts. |
-| `micrometer` | All module-local production classes and all tests | Metrics registration, request measurements and cleanup. |
-| `opentelemetry` | All module-local production classes and all tests | Instrumentation scope, span completion and propagation. |
-| `openapi` | All module-local production classes and all tests | OpenAPI generation, document delivery, and UI configuration. |
-| `mcp` | All module-local production classes and all tests | MCP transport, protocol dispatch, and session ownership. |
-| `pac4j` | All module-local production classes and all tests | Authentication/authorization adaptation and request context. |
-| `test` | All module-local production classes and all tests | Consumer test application/client and resource ownership. |
+| Module          | Production targets and tests                      | Reason                                                                                                      |
+| --------------- | ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `core`          | All module-local production classes and all tests | Routing, requests/responses, streaming, transport/lifecycle, files, browser security and session contracts. |
+| `http`          | All module-local production classes and all tests | HTTP value validation, formatting, parsing and exception/status contracts.                                  |
+| `micrometer`    | All module-local production classes and all tests | Metrics registration, request measurements and cleanup.                                                     |
+| `opentelemetry` | All module-local production classes and all tests | Instrumentation scope, span completion and propagation.                                                     |
+| `openapi`       | All module-local production classes and all tests | OpenAPI generation, document delivery, and UI configuration.                                                |
+| `mcp`           | All module-local production classes and all tests | MCP transport, protocol dispatch, and session ownership.                                                    |
+| `pac4j`         | All module-local production classes and all tests | Authentication/authorization adaptation and request context.                                                |
+| `test`          | All module-local production classes and all tests | Consumer test application/client and resource ownership.                                                    |
 
 Both class and test selectors are `io.github.suppierk.*`, including nested classes;
 PIT's mutable code paths are each module's own production output. Dependency classes

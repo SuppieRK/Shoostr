@@ -25,7 +25,7 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
   private final ManagedWebSocket listener;
   private final Object lifecycle;
   private final ReentrantLock writes;
-  private @Nullable CompletableFuture<Void> pending;
+  private @Nullable CompletableFuture<@Nullable Void> pending;
   private boolean terminal;
 
   /**
@@ -209,7 +209,7 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
   @SuppressWarnings("ReferenceEquality")
   private void write(Consumer<Callback> submit) throws IOException, InterruptedException {
     writes.lockInterruptibly();
-    var completion = new CompletableFuture<Void>();
+    var completion = new CompletableFuture<@Nullable Void>();
 
     try {
       synchronized (lifecycle) {

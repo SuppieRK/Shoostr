@@ -11,12 +11,12 @@ import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/s
 
 Configure the application and register shutdown callbacks before startup, keeping its owner responsible for closing it.
 
-| Method | When it runs |
-| --- | --- |
-| `start` | Called by the owner to compile routes and start the listener. Successful startup freezes registration. |
-| `close` | Called explicitly, by try-with-resources, or by the JVM shutdown hook. Startup failures after route compilation also invoke it; repeated calls do nothing. |
-| `beforeClose` | Registered callbacks run in registration order at the start of the first closure, before native graceful shutdown. Use them to signal long-lived work. |
-| `afterClose` | Registered callbacks run in reverse registration order after framework and extension cleanup. Use them for final disposal of application-owned resources. |
+| Method        | When it runs                                                                                                                                               |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `start`       | Called by the owner to compile routes and start the listener. Successful startup freezes registration.                                                     |
+| `close`       | Called explicitly, by try-with-resources, or by the JVM shutdown hook. Startup failures after route compilation also invoke it; repeated calls do nothing. |
+| `beforeClose` | Registered callbacks run in registration order at the start of the first closure, before native graceful shutdown. Use them to signal long-lived work.     |
+| `afterClose`  | Registered callbacks run in reverse registration order after framework and extension cleanup. Use them for final disposal of application-owned resources.  |
 
 Construction registers one JVM shutdown hook, even before startup; explicit closure removes it, while `start()` adds no further hook.
 Both shutdown callback lists run synchronously on the closing thread, including when an application closes without starting, and a closed application cannot restart.

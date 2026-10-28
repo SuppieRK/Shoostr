@@ -37,11 +37,11 @@ Consumer recipes: [managed messages](../../site/src/content/docs/websockets/mana
 [object messages](../../site/src/content/docs/websockets/objects.mdx),
 and [native listeners](../../site/src/content/docs/websockets/native.mdx).
 
-| Recipe | Example | Test |
-| --- | --- | --- |
+| Recipe           | Example                                                                                                            | Test                                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
 | Managed messages | [ManagedWebSocketExample](src/main/java/io/github/suppierk/shoostr/example/websocket/ManagedWebSocketExample.java) | [Test](src/test/java/io/github/suppierk/shoostr/example/websocket/ManagedWebSocketExampleTest.java) |
-| Binary objects | [TypedWebSocketExample](src/main/java/io/github/suppierk/shoostr/example/websocket/TypedWebSocketExample.java) | [Test](src/test/java/io/github/suppierk/shoostr/example/websocket/TypedWebSocketExampleTest.java) |
-| Native listeners | [NativeWebSocketExample](src/main/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExample.java) | [Test](src/test/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExampleTest.java) |
+| Binary objects   | [TypedWebSocketExample](src/main/java/io/github/suppierk/shoostr/example/websocket/TypedWebSocketExample.java)     | [Test](src/test/java/io/github/suppierk/shoostr/example/websocket/TypedWebSocketExampleTest.java)   |
+| Native listeners | [NativeWebSocketExample](src/main/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExample.java)   | [Test](src/test/java/io/github/suppierk/shoostr/example/websocket/NativeWebSocketExampleTest.java)  |
 
 Gradle project: `websocket-example`.
 
@@ -87,14 +87,12 @@ demo fault injection, not a production operation.
 ### Opt-in session-authenticated Origin admission
 
 The default launcher and `application()` keep the development-only endpoints above unchanged.
-To register the separate `/session-echo` recipe on your own application:
+To add the separate `/session-echo` endpoint, enable native sessions with `app.sessions()`
+and register `WebSocketExample::sessionEcho` through `app.routes(...)` before startup.
+The [compiled fixture tests](src/test/java/io/github/suppierk/shoostr/example/websocket/WebSocketExampleTest.java)
+show this setup.
 
-```java
-var app = new Shoostr().sessions();
-app.routes(WebSocketExample::sessionEcho);
-```
-
-This creates an unstarted, caller-owned app. Configure your trusted authentication flow and
+Configure your trusted authentication flow and
 session-cookie policy before startup. Only that authentication flow may set the existing
 server-side session attribute `authenticated` to `true`; merely receiving an Authorization
 header or a client-supplied flag is not authentication. No login endpoint or SSO flow is included.

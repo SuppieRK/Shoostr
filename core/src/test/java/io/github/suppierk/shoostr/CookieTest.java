@@ -475,7 +475,7 @@ class CookieTest {
               assertThrows(IllegalArgumentException.class, () -> base.withMaxAge(-2));
               assertThrows(IllegalArgumentException.class, () -> base.withExpires(Instant.MIN));
               assertThrows(IllegalArgumentException.class, () -> base.withExpires(Instant.MAX));
-              assertThrows(NullPointerException.class, () -> response.cookie((Cookie) null));
+              assertThrows(NullPointerException.class, () -> response.cookie(null));
               assertThrows(NullPointerException.class, () -> response.cookie(null, "v"));
               assertThrows(NullPointerException.class, () -> response.cookie("id", null));
               assertEquals(List.of("id=kept; Path=/"), response.headers("Set-Cookie"));

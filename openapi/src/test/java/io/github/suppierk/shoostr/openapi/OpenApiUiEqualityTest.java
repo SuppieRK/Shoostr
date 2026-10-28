@@ -45,8 +45,8 @@ class OpenApiUiEqualityTest {
     var ui = document.uiHandler("/docs/", "/openapi.json");
     var sameConfiguration = new OpenApiUi("/docs/", "/openapi.json");
     assertEquals(ui, sameConfiguration);
-    assertNotEquals(ui, new OpenApiUi("/different/", "/openapi.json"));
-    assertNotEquals(ui, new OpenApiUi("/docs/", "/different.json"));
+    assertNotEquals(new OpenApiUi("/different/", "/openapi.json"), ui);
+    assertNotEquals(new OpenApiUi("/docs/", "/different.json"), ui);
     var initialHash = ui.hashCode();
     var handlers = new HashSet<Handler>();
     handlers.add(ui);

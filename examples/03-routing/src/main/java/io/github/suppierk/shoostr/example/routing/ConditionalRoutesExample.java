@@ -21,22 +21,24 @@ public final class ConditionalRoutesExample {
 
     return new Shoostr()
         .routes(
-            routes -> {
-              routes
-                  .get("/preview/{*tail}", (ignored, response) -> response.text("fallback"))
-                  // A false condition hides the selected literal with 404; it does not retry the
-                  // tail.
-                  .when(
-                      enabled,
-                      live ->
-                          live.when(
-                              // The live flag is checked before this query-dependent condition.
-                              request ->
-                                  request.queryParam("preview").filter("true"::equals).isPresent(),
-                              available ->
-                                  available.get(
-                                      "/preview/latest",
-                                      (ignored2, response) -> response.text("preview"))));
-            });
+            routes ->
+                routes
+                    .get("/preview/{*tail}", (ignored, response) -> response.text("fallback"))
+                    // A false condition hides the selected literal with 404; it does not retry the
+                    // tail.
+                    .when(
+                        enabled,
+                        live ->
+                            live.when(
+                                // The live flag is checked before this query-dependent condition.
+                                request ->
+                                    request
+                                        .queryParam("preview")
+                                        .filter("true"::equals)
+                                        .isPresent(),
+                                available ->
+                                    available.get(
+                                        "/preview/latest",
+                                        (ignored2, response) -> response.text("preview")))));
   }
 }

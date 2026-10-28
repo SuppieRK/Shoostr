@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.concurrent.TimeUnit;
+import org.jspecify.annotations.Nullable;
 import org.openjdk.jmh.annotations.Benchmark;
 import org.openjdk.jmh.annotations.BenchmarkMode;
 import org.openjdk.jmh.annotations.Fork;
@@ -155,7 +156,7 @@ public class RouteLookupBenchmark {
       HttpMethods method = query % 2 == 0 ? HttpMethods.GET : HttpMethods.POST;
       switch (selectedOutcome) {
         case "hit" -> {}
-        case "earlyMiss" -> path = "/!" + path.substring(2);
+        case "earlyMiss", "catchAllMiss" -> path = "/!" + path.substring(2);
         case "lateMiss" -> path += "!";
         case "wrongMethod" -> method = HttpMethods.DELETE;
         case "catchAllHit" -> path += "/attachments/receipt";
@@ -164,7 +165,6 @@ public class RouteLookupBenchmark {
           path += "/attachments/receipt";
           method = HttpMethods.DELETE;
         }
-        case "catchAllMiss" -> path = "/!" + path.substring(2);
         default -> throw new IllegalArgumentException("Unknown outcome: " + selectedOutcome);
       }
       characters[i] = path.toCharArray();
@@ -265,7 +265,7 @@ public class RouteLookupBenchmark {
    * @param method query method
    * @return handler identity or the corresponding 404/405 sentinel
    */
-  private static Object resolve(Map<HttpMethods, Handler> endpoints, HttpMethods method) {
+  private static Object resolve(@Nullable Map<HttpMethods, Handler> endpoints, HttpMethods method) {
     if (endpoints == null) {
       return NOT_FOUND;
     }

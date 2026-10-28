@@ -1,5 +1,8 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.assertNotBeforeExpiry;
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.awaitTermination;
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -22,7 +25,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -34,17 +37,20 @@ class McpGetLifetimeTest {
   void aFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(String ending)
       throws Exception {
     var roots = new CompletableFuture<List<McpSchema.Root>>();
+    var expiry = new AtomicReference<Instant>();
     var mcp =
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                request ->
-                    new McpIdentity(
-                        "alice:client",
-                        McpTransportContext.EMPTY,
-                        request.header("X-Old-Token").isPresent()
-                            ? Instant.now().plusSeconds(2)
-                            : null),
+                request -> {
+                  if (request.header("X-Old-Token").isEmpty()) {
+                    return new McpIdentity("alice:client", McpTransportContext.EMPTY, null);
+                  }
+
+                  var verifiedExpiry = Instant.now().plusSeconds(2);
+                  expiry.set(verifiedExpiry);
+                  return new McpIdentity("alice:client", McpTransportContext.EMPTY, verifiedExpiry);
+                },
                 (ignored, ignored2) -> {}),
             new McpSessionLimits(1, 1, Duration.ofSeconds(1)),
             transport ->
@@ -85,8 +91,11 @@ class McpGetLifetimeTest {
                       .header("MCP-Protocol-Version", "2025-11-25"),
               HttpResponse.BodyHandlers.ofInputStream());
 
-      try (var reader =
-          new BufferedReader(new InputStreamReader(oldGet.body(), StandardCharsets.UTF_8))) {
+      var body = oldGet.body();
+      // Close native input first: a blocked readLine holds the BufferedReader's monitor.
+
+      try (var reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8));
+          body) {
         var notified =
             test.send(
                 request ->
@@ -125,10 +134,11 @@ class McpGetLifetimeTest {
                     // EOF and a closed transport both end the original HTTP owner.
                   }
 
-                  return null;
+                  return Instant.now();
                 });
         if ("expiry".equals(ending)) {
-          oldEnded.get(5, TimeUnit.SECONDS);
+          awaitTermination(expiry.get(), oldEnded::isDone);
+          assertNotBeforeExpiry(expiry.get(), oldEnded.get());
         }
 
         var refreshed =
@@ -143,7 +153,10 @@ class McpGetLifetimeTest {
 
         try (var ignored5 = refreshed.body()) {
           assertEquals(200, refreshed.statusCode());
-          oldEnded.get(5, TimeUnit.SECONDS);
+          await("superseded GET transport ends")
+              .atMost(Duration.ofSeconds(5))
+              .until(oldEnded::isDone);
+          oldEnded.get();
           var expected = new McpSchema.Root("file:///workspace/refreshed", "refreshed");
           var replyBody =
               mapper.writeValueAsBytes(
@@ -164,7 +177,10 @@ class McpGetLifetimeTest {
                           .header("MCP-Protocol-Version", "2025-11-25")
                           .body(replyBody));
           assertEquals(202, reply.statusCode());
-          assertEquals(List.of(expected), roots.get(5, TimeUnit.SECONDS));
+          await("fresh reply completes the roots callback")
+              .atMost(Duration.ofSeconds(5))
+              .until(roots::isDone);
+          assertEquals(List.of(expected), roots.get());
         }
       }
     }

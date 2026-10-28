@@ -15,14 +15,14 @@ Shoostr delegates these conversions without choosing a serialization library or 
 Register the codec with `app.codec(codec)` and register handlers through the returned typed view, as the example does with `.routes(...)`.
 HTTP handlers receive `TypedRequest` and `TypedResponse`; the same registration view also supplies typed WebSocket callbacks and an SSE event writer with these conversion helpers:
 
-| Helper | Codec operation | Result |
-| --- | --- | --- |
-| `request.body(Class<T>)` | `read(bytes, type)` | Decode the buffered request body to the requested class. |
-| `response.body(MediaType, Object)` | `write(value)` | Encode an object and stage its bytes with explicit media metadata. |
-| `response.body(String, Object)` | `write(value)` | Encode an object and stage its bytes with a media type supplied as a string. |
-| `socket.onObject(Class<T>, handler)` | `read(bytes, type)` | Decode a complete [binary WebSocket message](../../websockets/objects/). |
-| `connection.sendObject(Object)` | `write(value)` | Encode and send a [binary WebSocket message](../../websockets/objects/). |
-| `events.sendObject(Object)` | `write(value)` | Encode UTF-8 text as [SSE event data](../../streaming/sse-objects/). |
+| Helper                               | Codec operation     | Result                                                                       |
+| ------------------------------------ | ------------------- | ---------------------------------------------------------------------------- |
+| `request.body(Class<T>)`             | `read(bytes, type)` | Decode the buffered request body to the requested class.                     |
+| `response.body(MediaType, Object)`   | `write(value)`      | Encode an object and stage its bytes with explicit media metadata.           |
+| `response.body(String, Object)`      | `write(value)`      | Encode an object and stage its bytes with a media type supplied as a string. |
+| `socket.onObject(Class<T>, handler)` | `read(bytes, type)` | Decode a complete [binary WebSocket message](../../websockets/objects/).     |
+| `connection.sendObject(Object)`      | `write(value)`      | Encode and send a [binary WebSocket message](../../websockets/objects/).     |
+| `events.sendObject(Object)`          | `write(value)`      | Encode UTF-8 text as [SSE event data](../../streaming/sse-objects/).         |
 
 For this JSON recipe, `response.body(MediaType.APPLICATION_JSON, user)` sets `application/json` as the response media type; the codec produces the bytes without choosing that metadata.
 Ordinary `app.routes(...)` registrations keep their original handler types.

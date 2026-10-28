@@ -17,11 +17,11 @@ To decode a Java model from buffered input, use an [explicit JSON codec](../../j
 
 Choose one body mode for each request:
 
-| Mode | Accessors | Reading behavior |
-| --- | --- | --- |
-| Buffered | `bodyText()`, `bodyText(Charset)`, `bodyBytes()`, URL-encoded form fields | Cached input supports repeated reads |
-| Streaming | `input()` | One bounded stream advances as bytes are consumed |
-| Multipart | Multipart fields and file accessors | Parsed parts remain scoped to the request |
+| Mode      | Accessors                                                                 | Reading behavior                                  |
+| --------- | ------------------------------------------------------------------------- | ------------------------------------------------- |
+| Buffered  | `bodyText()`, `bodyText(Charset)`, `bodyBytes()`, URL-encoded form fields | Cached input supports repeated reads              |
+| Streaming | `input()`                                                                 | One bounded stream advances as bytes are consumed |
+| Multipart | Multipart fields and file accessors                                       | Parsed parts remain scoped to the request         |
 
 Do not combine these modes, except that URL-encoded form access shares the buffered body.
 A file lookup on a nonmultipart request returns empty without claiming its input.

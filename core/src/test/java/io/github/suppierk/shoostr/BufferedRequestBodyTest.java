@@ -49,7 +49,7 @@ class BufferedRequestBodyTest {
   void readsFragmentedBodiesAtSizeBoundaries(int size, boolean known) throws Exception {
     var expected = new byte[size];
     Arrays.fill(expected, (byte) 0x5A);
-    var request = request(known ? size : -1, 1_048_576, fragments(expected, 1024));
+    var request = request(known ? size : -1, 1_048_576, fragments(expected));
 
     assertArrayEquals(expected, request.bodyBytes());
   }
@@ -110,9 +110,7 @@ class BufferedRequestBodyTest {
   @Test
   void releasesPartiallyConsumedChunkAfterSizeRejection() {
     var releases = new AtomicInteger();
-    var chunk =
-        Content.Chunk.from(
-            ByteBuffer.wrap(new byte[32]), true, (Runnable) releases::incrementAndGet);
+    var chunk = Content.Chunk.from(ByteBuffer.wrap(new byte[32]), true, releases::incrementAndGet);
     var request = request(-1, 16, chunk);
 
     assertThrows(ContentTooLargeException.class, request::bodyBytes);
@@ -147,9 +145,7 @@ class BufferedRequestBodyTest {
   @Test
   void releasesPartiallyConsumedChunkAfterDeclaredLengthMismatch() {
     var releases = new AtomicInteger();
-    var chunk =
-        Content.Chunk.from(
-            ByteBuffer.wrap(new byte[32]), true, (Runnable) releases::incrementAndGet);
+    var chunk = Content.Chunk.from(ByteBuffer.wrap(new byte[32]), true, releases::incrementAndGet);
     var request = request(3, 16, chunk);
 
     assertThrows(BadRequestException.class, request::bodyBytes);
@@ -190,7 +186,8 @@ class BufferedRequestBodyTest {
     assertThrows(ContentTooLargeException.class, request::bodyBytes);
   }
 
-  private static Content.Chunk[] fragments(byte[] bytes, int size) {
+  private static Content.Chunk[] fragments(byte[] bytes) {
+    int size = 1024;
     if (bytes.length == 0) {
       return new Content.Chunk[] {Content.Chunk.from(ByteBuffer.wrap(bytes), true)};
     }

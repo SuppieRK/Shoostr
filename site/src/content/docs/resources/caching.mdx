@@ -17,13 +17,13 @@ Preconditions run before range selection.
 `If-Match` takes precedence over `If-Unmodified-Since`, and `If-None-Match` takes precedence over `If-Modified-Since`.
 For the GET endpoint below, the main outcomes are:
 
-| Request condition | Response |
-| --- | --- |
-| Matching `If-None-Match`, or an eligible unchanged date | `304` without a body |
-| An eligible `If-Match` or `If-Unmodified-Since` precondition fails | `412` without a body |
-| One satisfiable byte range | `206` with `Content-Range` and the selected bytes |
-| A valid but unsatisfiable range | `416` with `Content-Range: bytes */length` |
-| Unsupported, multiple or malformed ranges | The full `200` representation |
+| Request condition                                                  | Response                                          |
+| ------------------------------------------------------------------ | ------------------------------------------------- |
+| Matching `If-None-Match`, or an eligible unchanged date            | `304` without a body                              |
+| An eligible `If-Match` or `If-Unmodified-Since` precondition fails | `412` without a body                              |
+| One satisfiable byte range                                         | `206` with `Content-Range` and the selected bytes |
+| A valid but unsatisfiable range                                    | `416` with `Content-Range: bytes */length`        |
+| Unsupported, multiple or malformed ranges                          | The full `200` representation                     |
 
 Range selection applies to `GET` responses with status `200`, not to `HEAD`.
 A [strong ETag](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.8.1) identifies an exact, byte-for-byte file revision and must change whenever the file's bytes change.

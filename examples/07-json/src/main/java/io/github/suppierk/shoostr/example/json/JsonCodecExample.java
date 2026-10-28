@@ -27,29 +27,29 @@ public final class JsonCodecExample {
     // This registration view supplies typed helpers without changing ordinary app.routes().
     app.codec(new UserCodec())
         .routes(
-            routes -> {
-              routes
-                  .exception(
-                      BadRequestException.class,
-                      (ignored, ignored2, response) ->
-                          response
-                              .status(400)
-                              // Error bytes bypass the codec, which only supports the User class.
-                              .body(
-                                  MediaType.APPLICATION_JSON,
-                                  "{\"error\":\"invalid_user\"}".getBytes(StandardCharsets.UTF_8)))
-                  // The same codec decodes the request into User and encodes the returned User.
-                  .post(
-                      "/users",
-                      (request, response) ->
-                          response
-                              .status(201)
-                              .body(MediaType.APPLICATION_JSON, request.body(User.class)))
-                  .get(
-                      "/help",
-                      (ignored3, response) ->
-                          response.text("Send a JSON object with a nonblank name"));
-            });
+            routes ->
+                routes
+                    .exception(
+                        BadRequestException.class,
+                        (ignored, ignored2, response) ->
+                            response
+                                .status(400)
+                                // Error bytes bypass the codec, which only supports the User class.
+                                .body(
+                                    MediaType.APPLICATION_JSON,
+                                    "{\"error\":\"invalid_user\"}"
+                                        .getBytes(StandardCharsets.UTF_8)))
+                    // The same codec decodes the request into User and encodes the returned User.
+                    .post(
+                        "/users",
+                        (request, response) ->
+                            response
+                                .status(201)
+                                .body(MediaType.APPLICATION_JSON, request.body(User.class)))
+                    .get(
+                        "/help",
+                        (ignored3, response) ->
+                            response.text("Send a JSON object with a nonblank name")));
     return app;
   }
 

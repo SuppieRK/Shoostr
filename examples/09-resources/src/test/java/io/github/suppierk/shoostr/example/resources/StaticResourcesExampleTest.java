@@ -3,13 +3,16 @@ package io.github.suppierk.shoostr.example.resources;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -135,11 +138,13 @@ class StaticResourcesExampleTest {
   }
 
   @Test
-  void rejectsTraversalAndNeverServesTheTargetOfAnExternalSymlink() throws Exception {
+  void rejectsTraversalAndNeverServesTheTargetOfAnExternalDirectoryAlias() throws Exception {
     var files = Files.createDirectory(directory.resolve("files"));
     Files.writeString(files.resolve("index.html"), "shell");
-    var secret = Files.writeString(directory.resolve("private.txt"), "private data");
-    Files.createSymbolicLink(files.resolve("escape.txt"), secret);
+    var external = Files.createDirectory(directory.resolve("external"));
+    Files.writeString(external.resolve("private.txt"), "private data");
+    directoryAlias(files.resolve("escape"), external);
+    assertEquals("private data", Files.readString(files.resolve("escape/private.txt")));
     Files.createDirectory(directory.resolve("recipe-public"));
     var previous = Thread.currentThread().getContextClassLoader();
 
@@ -148,16 +153,45 @@ class StaticResourcesExampleTest {
 
       try (var test = TestServer.start(StaticResourcesExample.application(files))) {
         assertEquals(
-            400, test.send(request -> request.path("/files/%2e%2e/private.txt")).statusCode());
-        assertEquals(404, test.send(request -> request.path("/files/escape.txt")).statusCode());
+            400,
+            test.send(request -> request.path("/files/%2e%2e/external/private.txt")).statusCode());
+        assertEquals(
+            404, test.send(request -> request.path("/files/escape/private.txt")).statusCode());
         var fallback =
             test.send(
-                request -> request.path("/app/escape.txt"), HttpResponse.BodyHandlers.ofString());
+                request -> request.path("/app/escape/private.txt"),
+                HttpResponse.BodyHandlers.ofString());
         assertEquals(200, fallback.statusCode());
         assertEquals("shell", fallback.body());
       }
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
+    }
+  }
+
+  private static void directoryAlias(Path alias, Path target) throws Exception {
+    if (!System.getProperty("os.name").startsWith("Windows")) {
+      Files.createSymbolicLink(alias, target);
+      return;
+    }
+
+    // Windows directory junctions exercise alias rejection without symlink privileges.
+    var log = Files.createTempFile(alias.getParent(), "junction-", ".log");
+    var process =
+        new ProcessBuilder(
+                "cmd.exe", "/d", "/c", "mklink", "/J", alias.toString(), target.toString())
+            .redirectErrorStream(true)
+            .redirectOutput(log.toFile())
+            .start();
+
+    try {
+      assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction creation timed out");
+      assertEquals(
+          0, process.exitValue(), new String(Files.readAllBytes(log), StandardCharsets.UTF_8));
+    } finally {
+      process.destroyForcibly();
+      assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction command did not exit");
+      Files.deleteIfExists(log);
     }
   }
 }

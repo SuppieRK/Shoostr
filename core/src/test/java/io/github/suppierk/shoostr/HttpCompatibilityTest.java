@@ -103,11 +103,7 @@ class HttpCompatibilityTest {
             (request, response) -> response.text(request.pathParam("item").orElseThrow()));
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
-      String expected =
-          switch (raw) {
-            case "M%C3%BCnchen" -> "München";
-            default -> raw;
-          };
+      String expected = "M%C3%BCnchen".equals(raw) ? "München" : raw;
       var response =
           test.send(
               request -> request.path("/values/" + raw).timeout(Duration.ofSeconds(3)),
@@ -201,9 +197,7 @@ class HttpCompatibilityTest {
                 ? HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))
                 : HttpRequest.BodyPublishers.ofByteArray(bytes);
         var response =
-            client.send(
-                request("/bounded").POST(publisher).build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+            client.send(request().POST(publisher).build(), HttpResponse.BodyHandlers.ofByteArray());
         assertEquals(bytes.length == 16 ? 200 : 413, response.statusCode());
         if (bytes.length == 16) {
           assertArrayEquals(atLimit, response.body());
@@ -271,8 +265,8 @@ class HttpCompatibilityTest {
     }
   }
 
-  private HttpRequest.Builder request(String path) {
-    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
+  private HttpRequest.Builder request() {
+    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/bounded"))
         .timeout(Duration.ofSeconds(3));
   }
 }

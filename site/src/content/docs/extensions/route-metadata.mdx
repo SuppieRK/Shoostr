@@ -33,14 +33,14 @@ Exclusion does not undo installation callbacks or release resources owned by the
 
 Each extension method has a specific role:
 
-| Method | Purpose and timing |
-| --- | --- |
+| Method                               | Purpose and timing                                                                                                                                                                                                             |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | <code>claim<wbr />Ownership()</code> | Accept ownership before installation. Override it to reject reuse when the extension owns application-specific state or resources; a successful claim makes the application responsible for cleanup even if later setup fails. |
-| `install(callbacks)` | Register application-wide request hooks and observations as soon as the instance is installed. The supplied registration object stops accepting callbacks when this method finishes. |
-| `configure(endpoint, inherited)` | Create the extension's own typed settings and register behavior for a selected route or group. Shoostr also calls it when a child inherits the selection. |
-| <code>before<wbr />Start()</code> | Finalize collected route facts and prepare owned resources after route metadata arrives, before the listener accepts traffic. |
-| <code>before<wbr />Stop()</code> | Promptly signal owned work to finish before native graceful shutdown, including cleanup after incomplete installation or startup. Final disposal belongs in `close()`. |
-| `close()` | Release owned resources after a successful ownership claim, including when installation or startup fails. Do not close borrowed dependencies. |
+| `install(callbacks)`                 | Register application-wide request hooks and observations as soon as the instance is installed. The supplied registration object stops accepting callbacks when this method finishes.                                           |
+| `configure(endpoint, inherited)`     | Create the extension's own typed settings and register behavior for a selected route or group. Shoostr also calls it when a child inherits the selection.                                                                      |
+| <code>before<wbr />Start()</code>    | Finalize collected route facts and prepare owned resources after route metadata arrives, before the listener accepts traffic.                                                                                                  |
+| <code>before<wbr />Stop()</code>     | Promptly signal owned work to finish before native graceful shutdown, including cleanup after incomplete installation or startup. Final disposal belongs in `close()`.                                                         |
+| `close()`                            | Release owned resources after a successful ownership claim, including when installation or startup fails. Do not close borrowed dependencies.                                                                                  |
 
 Implement `configure(...)` to contribute behavior for selected routes and groups and, when needed, expose their settings.
 Its return type `C` defines those settings: the catalog returns a `Description`, and `extensions.with(catalog).summary(...)` changes that scope's description.
@@ -59,19 +59,19 @@ Inside `configure(...)`, use `endpoint.lifecycle()` for request behavior on sele
 Cold route metadata remains on `endpoint.onRoute(...)`; it is separate from the request lifecycle.
 The registration methods below belong to the lifecycle collector unless marked as application-only, metadata or installation checks:
 
-| Registration method | What it provides |
-| --- | --- |
-| <code>on<wbr />Request<wbr />Headers(...)</code> | Application-only hook before matched-route processing, including unmatched requests. |
-| <code>on<wbr />Route<wbr />Matched(...)</code> | Application or local hook after a route matches, when its composed route pattern is available. |
-| <code>before<wbr />Route<wbr />Handler(...)</code> | Application or local admission hook before the handler. Throw to reject the request; response streaming is unavailable in this phase. |
-| <code>after<wbr />Route<wbr />Handler(...)</code> | Application or local hook after the handler returns successfully; skipped when it throws. |
-| <code>before<wbr />Response<wbr />Flush(...)</code> | Application or local read-only hook before each framework-owned response flush. |
-| <code>after<wbr />Response<wbr />Flush(...)</code> | Application or local read-only hook after each committed framework-owned response flush. |
-| <code>after<wbr />Request(...)</code> | Application or local terminal observer with a detached `RequestOutcome` after application finalization and transport termination. |
-| `observe(...)` | Application or local request observation with context attachment and cleanup across executor handoffs. Application observations include unmatched requests; local observations begin only after a route matches. |
-| <code>on<wbr />Route(...)</code> | Local registration metadata for HTTP and SSE routes: method, composed path template and conditional availability. Runs before `beforeStart()` without invoking handlers or evaluating conditions. |
-| `status(...)` | Local renderer for a framework-generated status. A matching local renderer takes precedence over the application renderer. |
-| <code>require<wbr />Installed(...)</code> | Check that another exact extension instance is installed in this application, without selecting its configuration or adding request behavior. |
+| Registration method                                 | What it provides                                                                                                                                                                                                 |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| <code>on<wbr />Request<wbr />Headers(...)</code>    | Application-only hook before matched-route processing, including unmatched requests.                                                                                                                             |
+| <code>on<wbr />Route<wbr />Matched(...)</code>      | Application or local hook after a route matches, when its composed route pattern is available.                                                                                                                   |
+| <code>before<wbr />Route<wbr />Handler(...)</code>  | Application or local admission hook before the handler. Throw to reject the request; response streaming is unavailable in this phase.                                                                            |
+| <code>after<wbr />Route<wbr />Handler(...)</code>   | Application or local hook after the handler returns successfully; skipped when it throws.                                                                                                                        |
+| <code>before<wbr />Response<wbr />Flush(...)</code> | Application or local read-only hook before each framework-owned response flush.                                                                                                                                  |
+| <code>after<wbr />Response<wbr />Flush(...)</code>  | Application or local read-only hook after each committed framework-owned response flush.                                                                                                                         |
+| <code>after<wbr />Request(...)</code>               | Application or local terminal observer with a detached `RequestOutcome` after application finalization and transport termination.                                                                                |
+| `observe(...)`                                      | Application or local request observation with context attachment and cleanup across executor handoffs. Application observations include unmatched requests; local observations begin only after a route matches. |
+| <code>on<wbr />Route(...)</code>                    | Local registration metadata for HTTP and SSE routes: method, composed path template and conditional availability. Runs before `beforeStart()` without invoking handlers or evaluating conditions.                |
+| `status(...)`                                       | Local renderer for a framework-generated status. A matching local renderer takes precedence over the application renderer.                                                                                       |
+| <code>require<wbr />Installed(...)</code>           | Check that another exact extension instance is installed in this application, without selecting its configuration or adding request behavior.                                                                    |
 
 The [request lifecycle reference](../../lifecycle/hooks/) explains callback order and completion rules, while [endpoint executors](../../lifecycle/executors/) explains observation context across thread handoffs.
 

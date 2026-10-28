@@ -556,31 +556,24 @@ class RadixRoutes {
    * @throws IllegalArgumentException if the repetition form is unsupported
    */
   private static int[] repetitionBounds(String repetition) {
-    if (repetition.isEmpty()) {
-      return new int[] {1, 1};
-    }
+    return switch (repetition) {
+      case "" -> new int[] {1, 1};
+      case "+" -> new int[] {1, Integer.MAX_VALUE};
+      case "*" -> new int[] {0, Integer.MAX_VALUE};
+      case "?" -> new int[] {0, 1};
+      default -> {
+        if (!validBoundedRepetition(repetition)) {
+          throw new IllegalArgumentException(
+              "Unsupported route constraint repetition: " + repetition);
+        }
 
-    if ("+".equals(repetition)) {
-      return new int[] {1, Integer.MAX_VALUE};
-    }
-
-    if ("*".equals(repetition)) {
-      return new int[] {0, Integer.MAX_VALUE};
-    }
-
-    if ("?".equals(repetition)) {
-      return new int[] {0, 1};
-    }
-
-    if (!validBoundedRepetition(repetition)) {
-      throw new IllegalArgumentException("Unsupported route constraint repetition: " + repetition);
-    }
-
-    String bounds = repetition.substring(1, repetition.length() - 1);
-    int comma = bounds.indexOf(',');
-    int minimum = Integer.parseInt(comma < 0 ? bounds : bounds.substring(0, comma));
-    int maximum = comma < 0 ? minimum : Integer.parseInt(bounds.substring(comma + 1));
-    return new int[] {minimum, maximum};
+        String bounds = repetition.substring(1, repetition.length() - 1);
+        int comma = bounds.indexOf(',');
+        int minimum = Integer.parseInt(comma < 0 ? bounds : bounds.substring(0, comma));
+        int maximum = comma < 0 ? minimum : Integer.parseInt(bounds.substring(comma + 1));
+        yield new int[] {minimum, maximum};
+      }
+    };
   }
 
   /**

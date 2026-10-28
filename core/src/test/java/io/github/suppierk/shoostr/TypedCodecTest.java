@@ -155,12 +155,12 @@ class TypedCodecTest {
 
   private static class GreetingCodec implements Codec {
     @Override
-    public <T> T read(byte[] source, Class<T> type) throws Exception {
+    public <T> T read(byte[] source, Class<T> type) {
       return type.cast(new Greeting(new String(source, StandardCharsets.UTF_8)));
     }
 
     @Override
-    public byte[] write(Object value) throws Exception {
+    public byte[] write(Object value) {
       var greeting = (Greeting) value;
       return ("{\"name\":\"" + greeting.name() + "\"}").getBytes(StandardCharsets.UTF_8);
     }

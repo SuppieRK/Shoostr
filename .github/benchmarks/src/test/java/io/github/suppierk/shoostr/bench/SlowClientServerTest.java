@@ -1,9 +1,9 @@
 package io.github.suppierk.shoostr.bench;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -168,23 +168,18 @@ class SlowClientServerTest {
     }
   }
 
-  private static void awaitState(HttpClient client, int port, Predicate<String> expected)
-      throws Exception {
-    var deadline = System.nanoTime() + Duration.ofSeconds(3).toNanos();
-    var last = "";
-
-    while (System.nanoTime() < deadline) {
-      var response = get(client, port, "/state");
-      assertEquals(200, response.statusCode());
-      last = response.body();
-      if (expected.test(last)) {
-        return;
-      }
-
-      Thread.sleep(10);
-    }
-
-    fail("Fixture state did not recover: " + last);
+  private static void awaitState(HttpClient client, int port, Predicate<String> expected) {
+    await("fixture state recovers")
+        .atMost(Duration.ofSeconds(3))
+        .pollDelay(Duration.ZERO)
+        .pollInterval(Duration.ofMillis(10))
+        .until(
+            () -> {
+              var response = get(client, port, "/state");
+              assertEquals(200, response.statusCode());
+              return response.body();
+            },
+            expected);
   }
 
   private static HttpResponse<String> get(HttpClient client, int port, String path)

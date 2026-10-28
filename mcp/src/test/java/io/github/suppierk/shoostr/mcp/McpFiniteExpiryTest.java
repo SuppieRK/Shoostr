@@ -1,5 +1,8 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.assertNotBeforeExpiry;
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.awaitExpiry;
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.awaitTermination;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -9,15 +12,22 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
+import java.io.BufferedReader;
+import java.io.EOFException;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.Socket;
+import java.net.SocketException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -79,8 +89,10 @@ class McpFiniteExpiryTest {
         authorizations.set(0);
       }
 
-      try (var socket = new Socket(test.baseUri().getHost(), test.baseUri().getPort())) {
-        socket.setSoTimeout(5000);
+      // Close the socket before joining a reader that may be blocked in native I/O.
+
+      try (var reader = Executors.newSingleThreadExecutor();
+          var socket = new Socket(test.baseUri().getHost(), test.baseUri().getPort())) {
         var message =
             switch (kind) {
               case "notification" ->
@@ -99,36 +111,38 @@ class McpFiniteExpiryTest {
                 + "\r\n\r\n";
         socket.getOutputStream().write(headers.getBytes(StandardCharsets.UTF_8));
         socket.getOutputStream().flush();
-        assertTrue(extracted.await(5, TimeUnit.SECONDS));
+        // Read the early rejection while the upload is delayed, before a later write can reset it.
+        var received = reader.submit(() -> responseHeaders(socket));
+        await("MCP identity extracted")
+            .atMost(Duration.ofSeconds(5))
+            .until(() -> extracted.getCount() == 0);
         assertTrue(expiry.get().isAfter(Instant.now()));
 
-        var target = expiry.get().plusMillis(100);
-        var started = System.nanoTime();
-        var initial = Duration.between(Instant.now(), target);
-        await("the finite request body follows the verified expiry")
-            .pollInSameThread()
-            .pollDelay(Duration.ZERO)
-            .pollInterval(Duration.ofMillis(10))
-            .atMost(Duration.ofSeconds(5))
-            .until(
-                () -> {
-                  if (Thread.interrupted()) {
-                    throw new InterruptedException("The finite expiry wait was interrupted");
-                  }
+        awaitExpiry(expiry.get().plusMillis(100));
 
-                  return Duration.ofNanos(System.nanoTime() - started).compareTo(initial) >= 0
-                      && !Instant.now().isBefore(target);
-                });
+        try {
+          socket.getOutputStream().write(body);
+          socket.getOutputStream().flush();
+        } catch (SocketException ignored) {
+          // Early rejection may also reject the upload; a complete 401 is still required below.
+        }
 
-        socket.getOutputStream().write(body);
-        socket.getOutputStream().flush();
-        var response = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        assertTrue(response.startsWith("HTTP/1.1 401"), response);
-        assertTrue(
-            response
-                .toLowerCase(Locale.ROOT)
-                .contains("www-authenticate: bearer error=\"invalid_token\""));
-        assertFalse(response.toLowerCase(Locale.ROOT).contains("mcp-session-id:"));
+        await("complete MCP expiry challenge")
+            .atMost(Duration.ofSeconds(2))
+            .until(received::isDone);
+        var response = received.get();
+        assertTrue(response.getFirst().startsWith("HTTP/1.1 401 "), response.toString());
+        assertEquals(
+            List.of("Bearer error=\"invalid_token\""),
+            response.stream()
+                .skip(1)
+                .filter(line -> line.toLowerCase(Locale.ROOT).startsWith("www-authenticate:"))
+                .map(line -> line.substring(line.indexOf(':') + 1).strip())
+                .toList());
+        assertFalse(
+            response.stream()
+                .skip(1)
+                .anyMatch(line -> line.toLowerCase(Locale.ROOT).startsWith("mcp-session-id:")));
         assertEquals(0, authorizations.get());
       }
     }
@@ -137,18 +151,24 @@ class McpFiniteExpiryTest {
   @Test
   @Timeout(15)
   void returnsTheExpiryChallengeWhenInitializationAuthorizationOutlivesItsToken() throws Exception {
+    var expiry = new AtomicReference<Instant>();
+    var interruptedAt = new AtomicReference<Instant>();
+    var hold = new CountDownLatch(1);
     var mcp =
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                ignored3 ->
-                    new McpIdentity(
-                        "alice:client", McpTransportContext.EMPTY, Instant.now().plusSeconds(1)),
+                ignored3 -> {
+                  var verifiedExpiry = Instant.now().plusSeconds(1);
+                  expiry.set(verifiedExpiry);
+                  return new McpIdentity("alice:client", McpTransportContext.EMPTY, verifiedExpiry);
+                },
                 (ignored4, ignored5) -> {
                   try {
                     // Keep authorization interruptible so the deadline can abort it.
-                    new CountDownLatch(1).await(5, TimeUnit.SECONDS);
+                    hold.await();
                   } catch (InterruptedException failure) {
+                    interruptedAt.set(Instant.now());
                     Thread.currentThread().interrupt();
                     throw new IllegalStateException("Authorization was interrupted", failure);
                   }
@@ -157,22 +177,51 @@ class McpFiniteExpiryTest {
     var app = new Shoostr();
     app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
 
-    try (var test = TestServer.start(app)) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(401, response.statusCode());
-      assertEquals(
-          "Bearer error=\"invalid_token\"",
-          response.headers().firstValue("WWW-Authenticate").orElseThrow());
-      assertTrue(response.headers().firstValue("Mcp-Session-Id").isEmpty());
+    try (var client = Executors.newSingleThreadExecutor();
+        var test = TestServer.start(app)) {
+      try {
+        var received =
+            client.submit(
+                () ->
+                    test.send(
+                        request ->
+                            request
+                                .path("/mcp")
+                                .method("POST")
+                                .header("Content-Type", "application/json")
+                                .header("Accept", "application/json, text/event-stream")
+                                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)),
+                        HttpResponse.BodyHandlers.ofString()));
+        await("authorization received a verified identity")
+            .atMost(Duration.ofSeconds(5))
+            .until(() -> expiry.get() != null);
+        var verifiedExpiry = expiry.get();
+        awaitTermination(verifiedExpiry, () -> received.isDone() && interruptedAt.get() != null);
+        var response = received.get();
+        assertEquals(401, response.statusCode());
+        assertEquals(
+            "Bearer error=\"invalid_token\"",
+            response.headers().firstValue("WWW-Authenticate").orElseThrow());
+        assertTrue(response.headers().firstValue("Mcp-Session-Id").isEmpty());
+        assertNotBeforeExpiry(verifiedExpiry, interruptedAt.get());
+      } finally {
+        hold.countDown();
+      }
     }
+  }
+
+  private static List<String> responseHeaders(Socket socket) throws IOException {
+    var input =
+        new BufferedReader(
+            new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1));
+    var headers = new ArrayList<String>();
+    for (String line; (line = input.readLine()) != null; ) {
+      if (line.isEmpty()) {
+        return headers;
+      }
+
+      headers.add(line);
+    }
+    throw new EOFException("MCP response ended before its headers were complete");
   }
 }

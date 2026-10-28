@@ -51,32 +51,31 @@ public final class OpenApiUiExample {
         .extensions(docs)
         // Protect the specification and every local UI asset, not just the HTML entry point.
         .routes(
-            routes -> {
-              routes
-                  .get(
-                      "/openapi.json",
-                      docs.handler(),
-                      extensions -> extensions.with(authentication))
-                  .path(
-                      "/docs",
-                      group -> group.get("/", ui).get("/{*asset}", ui),
-                      extensions -> {
-                        extensions.with(authentication);
-                        // UI resource endpoints are not operations in the generated API document.
-                        extensions.with(docs).hidden();
-                      })
-                  .get(
-                      "/me",
-                      (request, response) ->
-                          response.text(request.principal().orElseThrow().getName()),
-                      extensions -> {
-                        extensions.with(authentication);
-                        extensions
-                            .with(docs)
-                            .summary("Read the authenticated identity")
-                            .security(BASIC_SECURITY_SCHEME)
-                            .response(200, "Identity", MediaType.TEXT_PLAIN);
-                      });
-            });
+            routes ->
+                routes
+                    .get(
+                        "/openapi.json",
+                        docs.handler(),
+                        extensions -> extensions.with(authentication))
+                    .path(
+                        "/docs",
+                        group -> group.get("/", ui).get("/{*asset}", ui),
+                        extensions -> {
+                          extensions.with(authentication);
+                          // UI resource endpoints are not operations in the generated API document.
+                          extensions.with(docs).hidden();
+                        })
+                    .get(
+                        "/me",
+                        (request, response) ->
+                            response.text(request.principal().orElseThrow().getName()),
+                        extensions -> {
+                          extensions.with(authentication);
+                          extensions
+                              .with(docs)
+                              .summary("Read the authenticated identity")
+                              .security(BASIC_SECURITY_SCHEME)
+                              .response(200, "Identity", MediaType.TEXT_PLAIN);
+                        }));
   }
 }

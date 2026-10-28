@@ -101,9 +101,7 @@ class ProblemDetailsTest {
   @ParameterizedTest
   @ValueSource(ints = {Integer.MIN_VALUE, -1, 0, 99, 600, Integer.MAX_VALUE})
   void rejectsOutOfRangeStatusBeforeBuilding(int status) {
-    var builder = ProblemDetails.builder();
-
-    assertThrows(IllegalArgumentException.class, () -> builder.status(status));
+    assertThrows(IllegalArgumentException.class, () -> ProblemDetails.builder().status(status));
   }
 
   @ParameterizedTest

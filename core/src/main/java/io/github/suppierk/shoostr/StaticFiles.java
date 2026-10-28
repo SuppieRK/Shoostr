@@ -13,20 +13,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
-import java.nio.file.NoSuchFileException;
-import java.nio.file.NotDirectoryException;
 import java.nio.file.Path;
-import java.nio.file.SecureDirectoryStream;
 import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.BasicFileAttributeView;
-import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
+import java.util.function.Function;
+import org.eclipse.jetty.util.URIUtil;
 import org.eclipse.jetty.util.resource.Resource;
 import org.eclipse.jetty.util.resource.ResourceFactory;
 import org.jspecify.annotations.Nullable;
@@ -42,17 +37,17 @@ final class StaticFiles implements Closeable {
   private final String mount;
   private @Nullable EndpointBehavior behavior;
   private final StaticOptions options;
-  private final @Nullable SecureDirectoryStream<Path> rootDirectory;
-  private final ResourceFactory.@Nullable Closeable resourceFactory;
-  private final @Nullable Resource source;
+  private final boolean filesystem;
+  private final ResourceFactory.Closeable resourceFactory;
+  private final Resource source;
 
   /**
-   * Validates and anchors a filesystem directory mount at registration time.
+   * Validates a filesystem directory mount at registration time.
    *
    * @param mount mounted request path
    * @param directory source directory
-   * @throws IllegalArgumentException if the source cannot be resolved, is not a directory, or its
-   *     filesystem cannot anchor relative operations safely
+   * @throws IllegalArgumentException if the source cannot be resolved or is not a readable
+   *     directory
    */
   StaticFiles(String mount, Path directory) {
     this(mount, directory, StaticOptions.defaults());
@@ -67,28 +62,7 @@ final class StaticFiles implements Closeable {
    * @throws IllegalArgumentException if the directory cannot be mounted safely
    */
   StaticFiles(String mount, Path directory, StaticOptions options) {
-    this.mount = Objects.requireNonNull(mount);
-    this.options = Objects.requireNonNull(options);
-    Path root;
-
-    try {
-      root = Objects.requireNonNull(directory).toRealPath();
-    } catch (IOException failure) {
-      throw new IllegalArgumentException("Static-file source cannot be resolved", failure);
-    }
-
-    if (!Files.isDirectory(root)) {
-      throw new IllegalArgumentException("Static-file source must be a directory");
-    }
-
-    try {
-      rootDirectory = openSecureDirectory(root);
-    } catch (IOException failure) {
-      throw new IllegalArgumentException("Static-file source cannot be opened", failure);
-    }
-
-    resourceFactory = null;
-    source = null;
+    this(mount, options, true, factory -> factory.newResource(realDirectory(directory)));
   }
 
   /**
@@ -111,14 +85,51 @@ final class StaticFiles implements Closeable {
    * @throws IllegalArgumentException if the directory cannot be mounted safely
    */
   StaticFiles(String mount, String directory, StaticOptions options) {
+    this(
+        mount,
+        options,
+        false,
+        factory -> factory.newClassLoaderResource(Objects.requireNonNull(directory)));
+  }
+
+  /**
+   * Creates and validates an owned native source before publishing this mount.
+   *
+   * @param mount mounted request path
+   * @param options welcome-file and fallback options
+   * @param filesystem whether response selection opens a native filesystem channel
+   * @param resolve factory operation that locates the root directory
+   */
+  @SuppressWarnings(
+      "java:S1181") // Release native resources even when initialization fails fatally.
+  private StaticFiles(
+      String mount,
+      StaticOptions options,
+      boolean filesystem,
+      Function<ResourceFactory.Closeable, @Nullable Resource> resolve) {
     this.mount = Objects.requireNonNull(mount);
     this.options = Objects.requireNonNull(options);
-    rootDirectory = null;
+    this.filesystem = filesystem;
     resourceFactory = ResourceFactory.closeable();
-    source = resourceFactory.newClassLoaderResource(Objects.requireNonNull(directory));
-    if (source == null || !source.exists() || !source.isDirectory() || !source.isReadable()) {
-      resourceFactory.close();
-      throw new IllegalArgumentException("Static classpath source must be a readable directory");
+
+    try {
+      var resolved = resolve.apply(resourceFactory);
+      if (resolved == null
+          || !resolved.exists()
+          || !resolved.isDirectory()
+          || !resolved.isReadable()) {
+        throw new IllegalArgumentException("Static source must be a readable directory");
+      }
+
+      source = resolved;
+    } catch (RuntimeException | Error failure) {
+      try {
+        resourceFactory.close();
+      } catch (RuntimeException | Error cleanup) {
+        failure.addSuppressed(cleanup);
+      }
+
+      throw failure;
     }
   }
 
@@ -134,7 +145,7 @@ final class StaticFiles implements Closeable {
         && mount.equals(files.mount)
         && Objects.equals(behavior, files.behavior)
         && options.equals(files.options)
-        && Objects.equals(rootDirectory, files.rootDirectory)
+        && filesystem == files.filesystem
         && Objects.equals(resourceFactory, files.resourceFactory)
         && Objects.equals(source, files.source);
   }
@@ -146,45 +157,7 @@ final class StaticFiles implements Closeable {
    */
   @Override
   public int hashCode() {
-    return Objects.hash(mount, behavior, options, rootDirectory, resourceFactory, source);
-  }
-
-  /**
-   * Retains an independent descriptor while always closing the stream used to check capabilities.
-   *
-   * @param root resolved filesystem directory
-   * @return descriptor retained until this mount closes
-   * @throws IOException if a directory descriptor cannot be opened or closed
-   * @throws IllegalArgumentException if the filesystem lacks secure directory operations
-   */
-  @SuppressWarnings({
-    "java:S1181",
-    "java:S2583"
-  }) // TWR close can fail after retaining the descriptor.
-  private static SecureDirectoryStream<Path> openSecureDirectory(Path root) throws IOException {
-    SecureDirectoryStream<Path> retained = null;
-
-    try (var stream = Files.newDirectoryStream(root)) {
-      if (!(stream instanceof SecureDirectoryStream<Path> secure)) {
-        throw new IllegalArgumentException(
-            "Static-file source requires secure directory operations");
-      }
-
-      retained =
-          secure.newDirectoryStream(Path.of(HttpCharacters.DOT_STRING), LinkOption.NOFOLLOW_LINKS);
-    } catch (IOException | RuntimeException | Error failure) {
-      if (retained != null) {
-        try {
-          retained.close();
-        } catch (IOException | RuntimeException | Error closeFailure) {
-          failure.addSuppressed(closeFailure);
-        }
-      }
-
-      throw failure;
-    }
-
-    return Objects.requireNonNull(retained);
+    return Objects.hash(mount, behavior, options, filesystem, resourceFactory, source);
   }
 
   /**
@@ -193,7 +166,7 @@ final class StaticFiles implements Closeable {
    * @return archive filesystem, or null for filesystem mounts and classpath directories
    */
   @Nullable FileSystem archiveFileSystem() {
-    var path = source == null ? null : source.getPath();
+    var path = source.getPath();
     return path == null || path.getFileSystem().equals(FileSystems.getDefault())
         ? null
         : path.getFileSystem();
@@ -213,7 +186,7 @@ final class StaticFiles implements Closeable {
    */
   @SuppressWarnings("java:S4449")
   RadixRoutes.@Nullable Endpoint endpoint(String path, @Nullable HttpMethods method) {
-    if (method == null || (method != HttpMethods.GET && method != HttpMethods.HEAD)) {
+    if (method != HttpMethods.GET && method != HttpMethods.HEAD) {
       return null;
     }
 
@@ -262,31 +235,10 @@ final class StaticFiles implements Closeable {
     behavior = EndpointBehavior.withErrors(behavior, errors);
   }
 
-  /**
-   * Releases the anchored filesystem directory or classpath archive resources.
-   *
-   * @throws IllegalStateException if the filesystem source cannot be closed
-   */
+  /** Releases the owned native resource factory, including mounted classpath archives. */
   @Override
   public void close() {
-    IOException failure = null;
-    if (rootDirectory != null) {
-      try {
-        synchronized (rootDirectory) {
-          rootDirectory.close();
-        }
-      } catch (IOException closeFailure) {
-        failure = closeFailure;
-      }
-    }
-
-    if (resourceFactory != null) {
-      resourceFactory.close();
-    }
-
-    if (failure != null) {
-      throw new IllegalStateException("Could not close static-file source", failure);
-    }
+    resourceFactory.close();
   }
 
   /**
@@ -298,7 +250,7 @@ final class StaticFiles implements Closeable {
    * @throws IOException if the resource cannot be staged
    */
   private void serve(String relative, Response response) throws IOException {
-    if (rootDirectory == null) {
+    if (!filesystem) {
       serveClasspath(relative, response);
       return;
     }
@@ -331,7 +283,7 @@ final class StaticFiles implements Closeable {
    * @throws IOException if the resource cannot be staged
    */
   private void serveClasspath(String relative, Response response) throws IOException {
-    var resource = Objects.requireNonNull(source).resolve(relative);
+    var resource = source.resolve(URIUtil.encodePath(relative));
     if (!resource.exists()
         || resource.isDirectory()
         || !resource.isReadable()
@@ -403,305 +355,66 @@ final class StaticFiles implements Closeable {
     }
 
     try {
-      if (rootDirectory == null) {
-        var resource = Objects.requireNonNull(source).resolve(relative);
-        return resource.exists()
-            && !resource.isDirectory()
-            && resource.isReadable()
-            && !resource.isAlias();
-      }
-
-      return filesystemAttributes(relative) != null;
-    } catch (IOException ignored2) {
+      var resource = source.resolve(URIUtil.encodePath(relative));
+      return readable(resource);
+    } catch (InvalidPathException ignored) {
       return false;
     }
   }
 
   /**
-   * Opens an anchored filesystem resource and captures its descriptor-relative metadata.
+   * Checks a fresh resource without opening its contents. Alias checks reject symbolic links and
+   * noncanonical names; they are not atomic with a later open and require a trusted publication
+   * tree.
    *
-   * @param relative validated relative resource path
-   * @return selected resource, or null when unavailable
-   * @throws IOException if descriptor-relative access fails
+   * @param resource freshly resolved child resource
+   * @return whether the selected resource is a readable file within this mount
    */
-  private @Nullable Selected filesystemResource(String relative) throws IOException {
-    if (!relative.contains(HttpCharacters.PATH_SEPARATOR_STRING)) {
-      synchronized (Objects.requireNonNull(rootDirectory)) {
-        return selectFilesystemResource(relative);
-      }
+  private boolean readable(Resource resource) {
+    if (!resource.exists()
+        || resource.isDirectory()
+        || !resource.isReadable()
+        || resource.isAlias()
+        || !source.contains(resource)) {
+      return false;
     }
 
-    return selectFilesystemResource(relative);
+    var path = resource.getPath();
+    return !filesystem || (path != null && Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS));
   }
 
   /**
-   * Selects through owned parents, or a shallow borrowed root protected by the caller's monitor.
+   * Opens the selected pathname after admission and retains its channel for response completion.
+   * Length comes from the channel; modification time is sampled from the trusted pathname.
    *
    * @param relative validated relative resource path
-   * @return selected channel transferred to the response, or null for unavailable files
-   * @throws IOException if selection or descriptor cleanup fails
+   * @return selected channel and metadata, or null when the resource is unavailable
+   * @throws IOException if opening or reading metadata fails
    */
-  @SuppressWarnings({
-    "java:S1181",
-    "ReferenceEquality"
-  }) // Fatal cleanup preserves throwable identity and avoids self-suppression.
-  private @Nullable Selected selectFilesystemResource(String relative) throws IOException {
-    var directories = directories(relative);
-    if (directories == null) {
+  @SuppressWarnings("java:S1181") // Release the channel if metadata selection fails fatally.
+  private @Nullable Selected filesystemResource(String relative) throws IOException {
+    var resource = source.resolve(URIUtil.encodePath(relative));
+    if (!readable(resource)) {
       return null;
     }
 
-    SeekableByteChannel channel = null;
-    Selected selected = null;
-    Throwable operationFailure = null;
+    var path = Objects.requireNonNull(resource.getPath());
+    var channel = Files.newByteChannel(path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
 
     try {
-      var file = fileName(relative);
-      var attributes = attributes(directories.getLast(), file);
-      if (attributes != null) {
-        channel =
-            directories
-                .getLast()
-                .newByteChannel(
-                    Path.of(file), Set.of(StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS));
-        var revalidated = attributes(directories.getLast(), file);
-        if (revalidated != null && sameSelection(attributes, revalidated)) {
-          selected =
-              new Selected(
-                  channel, channel.size(), revalidated.lastModifiedTime().toInstant(), file);
-          channel = null;
-        }
-      }
+      return new Selected(
+          channel,
+          channel.size(),
+          Files.getLastModifiedTime(path).toInstant(),
+          resource.getFileName());
     } catch (IOException | RuntimeException | Error failure) {
-      operationFailure = failure;
-    }
-
-    var cleanupFailure = closeSelection(channel, selected, directories);
-    if (operationFailure != null) {
-      if (cleanupFailure != null && cleanupFailure != operationFailure) {
-        operationFailure.addSuppressed(cleanupFailure);
-      }
-
-      throwSelectionFailure(operationFailure);
-    }
-
-    throwSelectionFailure(cleanupFailure);
-    return selected;
-  }
-
-  /**
-   * Propagates a selection or cleanup failure without replacing its type or identity.
-   *
-   * @param failure observed failure, or null when the operation succeeded
-   * @throws IOException if descriptor access or cleanup failed with a checked exception
-   */
-  private static void throwSelectionFailure(@Nullable Throwable failure) throws IOException {
-    if (failure instanceof IOException checked) {
-      throw checked;
-    }
-
-    if (failure instanceof RuntimeException unchecked) {
-      throw unchecked;
-    }
-
-    if (failure instanceof Error fatal) {
-      throw fatal;
-    }
-  }
-
-  /**
-   * Releases untransferred file and nested-directory descriptors after one selection attempt.
-   *
-   * @param channel opened file descriptor not yet transferred, or null
-   * @param selected selected descriptor transferred to a caller, or null
-   * @param directories root-to-parent descriptors
-   * @return aggregated cleanup failure, or null when all descriptors closed
-   */
-  @SuppressWarnings({
-    "java:S1181",
-    "ReferenceEquality"
-  }) // Preserve identity while cleaning up after unchecked provider failures.
-  private static @Nullable Throwable closeSelection(
-      @Nullable SeekableByteChannel channel,
-      @Nullable Selected selected,
-      List<SecureDirectoryStream<Path>> directories) {
-    Throwable failure = null;
-    if (channel != null) {
       try {
         channel.close();
-      } catch (IOException | RuntimeException | Error closeFailure) {
-        failure = closeFailure;
-      }
-    }
-
-    try {
-      closeNestedDirectories(directories);
-    } catch (IOException | RuntimeException | Error closeFailure) {
-      if (failure == null) {
-        failure = closeFailure;
-      } else if (failure != closeFailure) {
-        failure.addSuppressed(closeFailure);
-      }
-    }
-
-    if (failure != null && selected != null) {
-      try {
-        selected.close();
-      } catch (IOException | RuntimeException | Error closeFailure) {
-        if (failure != closeFailure) {
-          failure.addSuppressed(closeFailure);
-        }
-      }
-    }
-
-    return failure;
-  }
-
-  /**
-   * Reads anchored metadata without opening the resource byte channel during route lookup.
-   *
-   * @param relative validated relative resource path
-   * @return regular-file metadata, or null when unavailable
-   * @throws IOException if descriptor-relative access fails
-   */
-  private @Nullable BasicFileAttributes filesystemAttributes(String relative) throws IOException {
-    if (!relative.contains(HttpCharacters.PATH_SEPARATOR_STRING)) {
-      synchronized (Objects.requireNonNull(rootDirectory)) {
-        return attributes(rootDirectory, relative);
-      }
-    }
-
-    var directories = directories(relative);
-    if (directories == null) {
-      return null;
-    }
-
-    try (Closeable ignored = () -> closeNestedDirectories(directories)) {
-      return attributes(directories.getLast(), fileName(relative));
-    }
-  }
-
-  /**
-   * Acquires an independent first child for nested paths; shallow callers protect the root.
-   *
-   * @param relative validated relative resource path
-   * @return borrowed root followed by owned parent descriptors, or null for unavailable components
-   * @throws IOException if descriptor traversal fails
-   */
-  @SuppressWarnings({
-    "java:S1181",
-    "ReferenceEquality"
-  }) // Preserve failure identity while releasing acquired descriptors.
-  private @Nullable List<SecureDirectoryStream<Path>> directories(String relative)
-      throws IOException {
-    var segments = relative.split(HttpCharacters.PATH_SEPARATOR_STRING, -1);
-    var directories = new ArrayList<SecureDirectoryStream<Path>>(segments.length);
-    var root = Objects.requireNonNull(rootDirectory);
-    // Index zero is borrowed; every later descriptor is owned by this selection.
-    directories.add(root);
-    if (segments.length == 1) {
-      // The shallow caller retains the root monitor; no extra descriptor is needed.
-      return directories;
-    }
-
-    try {
-      synchronized (root) {
-        directories.add(root.newDirectoryStream(Path.of(segments[0]), LinkOption.NOFOLLOW_LINKS));
-      }
-      for (int index = 1; index < segments.length - 1; index++) {
-        var nested =
-            directories
-                .getLast()
-                .newDirectoryStream(Path.of(segments[index]), LinkOption.NOFOLLOW_LINKS);
-        directories.add(nested);
-      }
-
-      return directories;
-    } catch (NoSuchFileException | NotDirectoryException ignored3) {
-      closeNestedDirectories(directories);
-      return null;
-    } catch (IOException | RuntimeException | Error failure) {
-      try {
-        closeNestedDirectories(directories);
       } catch (IOException | RuntimeException | Error cleanup) {
-        if (failure != cleanup) {
-          failure.addSuppressed(cleanup);
-        }
+        failure.addSuppressed(cleanup);
       }
 
       throw failure;
-    }
-  }
-
-  /**
-   * Reads metadata for one non-symlink regular leaf through its parent descriptor.
-   *
-   * @param directory anchored parent descriptor
-   * @param file leaf filename
-   * @return metadata, or null when the leaf is missing, linked, or not a regular file
-   * @throws IOException if descriptor-relative metadata cannot be read
-   */
-  private static @Nullable BasicFileAttributes attributes(
-      SecureDirectoryStream<Path> directory, String file) throws IOException {
-    try {
-      var view =
-          directory.getFileAttributeView(
-              Path.of(file), BasicFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
-      var attributes = view.readAttributes();
-      return attributes.isRegularFile() ? attributes : null;
-    } catch (NoSuchFileException ignored4) {
-      return null;
-    }
-  }
-
-  /**
-   * Compares metadata captured on both sides of opening a leaf descriptor.
-   *
-   * @param first metadata before opening the descriptor
-   * @param second metadata after opening the descriptor
-   * @return true when both reads identify the same directory entry
-   */
-  private static boolean sameSelection(BasicFileAttributes first, BasicFileAttributes second) {
-    return Objects.equals(first.fileKey(), second.fileKey())
-        && first.lastModifiedTime().equals(second.lastModifiedTime())
-        && first.size() == second.size();
-  }
-
-  /**
-   * Closes child descriptors while retaining the mounted root descriptor for later requests.
-   *
-   * @param directories root-to-parent descriptors
-   * @throws IOException if a child descriptor cannot be closed
-   */
-  @SuppressWarnings({
-    "java:S1181",
-    "ReferenceEquality"
-  }) // Close every descriptor and retain failure identity before rethrow.
-  private static void closeNestedDirectories(List<SecureDirectoryStream<Path>> directories)
-      throws IOException {
-    Throwable failure = null;
-    for (int index = directories.size() - 1; index > 0; index--) {
-      try {
-        directories.get(index).close();
-      } catch (IOException | RuntimeException | Error closeFailure) {
-        if (failure == null) {
-          failure = closeFailure;
-        } else if (failure != closeFailure) {
-          failure.addSuppressed(closeFailure);
-        }
-      }
-    }
-
-    if (failure instanceof IOException io) {
-      throw io;
-    }
-
-    if (failure instanceof RuntimeException runtime) {
-      throw runtime;
-    }
-
-    if (failure instanceof Error error) {
-      throw error;
     }
   }
 
@@ -774,13 +487,18 @@ final class StaticFiles implements Closeable {
   }
 
   /**
-   * Returns the leaf filename from a validated slash-separated relative resource path.
+   * Resolves a configured filesystem root before creating its native resource.
    *
-   * @param relative validated relative resource path
-   * @return leaf filename
+   * @param directory configured publication directory
+   * @return canonical directory path
+   * @throws IllegalArgumentException if the directory cannot be resolved
    */
-  private static String fileName(String relative) {
-    return relative.substring(relative.lastIndexOf(HttpCharacters.PATH_SEPARATOR) + 1);
+  private static Path realDirectory(Path directory) {
+    try {
+      return Objects.requireNonNull(directory).toRealPath();
+    } catch (IOException failure) {
+      throw new IllegalArgumentException("Static-file source cannot be resolved", failure);
+    }
   }
 
   /**
@@ -807,7 +525,7 @@ final class StaticFiles implements Closeable {
     return true;
   }
 
-  /** One anchored filesystem descriptor and its captured metadata. */
+  /** One open filesystem channel and its captured metadata. */
   private record Selected(
       SeekableByteChannel channel, long length, Instant lastModified, String name)
       implements Closeable {

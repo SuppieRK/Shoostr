@@ -1,7 +1,9 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.awaitTermination;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Shoostr;
@@ -19,12 +21,14 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -174,11 +178,12 @@ class McpVirtualThreadTest {
               assertEquals(200, deleted.statusCode());
             }
 
-            awaitClosed(bodies, Duration.ofSeconds(3));
+            awaitClosed(bodies, Duration.ofSeconds(3), Optional.empty(), owners);
           } else if ("expiry".equals(args[0])) {
-            for (var endedAt : awaitClosed(bodies, Duration.ofSeconds(7))) {
-              assertTrue(
-                  !endedAt.isBefore(expiry.get()),
+            for (var endedAt :
+                awaitClosed(bodies, Duration.ofSeconds(2), Optional.of(expiry.get()), owners)) {
+              assertFalse(
+                  endedAt.isBefore(expiry.get()),
                   "An idle MCP listener ended before its authenticated expiry");
             }
           } else if ("shutdown".equals(args[0])) {
@@ -196,7 +201,7 @@ class McpVirtualThreadTest {
               }
             }
 
-            awaitClosed(bodies, Duration.ofSeconds(3));
+            awaitClosed(bodies, Duration.ofSeconds(3), Optional.empty(), owners);
           } else if ("heartbeat".equals(args[0])) {
             assertEquals(
                 ":\n\n", new String(bodies.getFirst().readNBytes(3), StandardCharsets.UTF_8));
@@ -208,14 +213,13 @@ class McpVirtualThreadTest {
             assertReady(test);
           }
         } finally {
-          for (var body : bodies) {
-            body.close();
-          }
+          closeBodies(bodies);
         }
       }
     }
 
-    private static List<Instant> awaitClosed(List<InputStream> bodies, Duration timeout)
+    private static List<Instant> awaitClosed(
+        List<InputStream> bodies, Duration timeout, Optional<Instant> expiry, Set<Thread> owners)
         throws Exception {
       try (var readers = Executors.newFixedThreadPool(4)) {
         var endings = new ArrayList<Future<Instant>>();
@@ -234,15 +238,50 @@ class McpVirtualThreadTest {
                       return Instant.now();
                     }));
           }
+          BooleanSupplier terminated =
+              () ->
+                  endings.stream().allMatch(Future::isDone)
+                      && owners.stream().noneMatch(Thread::isAlive);
+          if (expiry.isPresent()) {
+            awaitTermination(expiry.orElseThrow(), terminated);
+          } else {
+            await("all MCP listeners and their owners terminate")
+                .atMost(timeout)
+                .until(terminated::getAsBoolean);
+          }
+
           var completed = new ArrayList<Instant>();
           for (var ending : endings) {
-            completed.add(ending.get(timeout.toMillis(), TimeUnit.MILLISECONDS));
+            completed.add(ending.get());
           }
 
           return completed;
         } finally {
-          readers.shutdownNow();
+          // Unblock native input before the executor's close joins its reader tasks.
+          try {
+            closeBodies(bodies);
+          } finally {
+            readers.shutdownNow();
+          }
         }
+      }
+    }
+
+    private static void closeBodies(List<InputStream> bodies) throws IOException {
+      IOException failure = null;
+      for (var body : bodies) {
+        try {
+          body.close();
+        } catch (IOException closeFailure) {
+          if (failure == null) {
+            failure = closeFailure;
+          } else {
+            failure.addSuppressed(closeFailure);
+          }
+        }
+      }
+      if (failure != null) {
+        throw failure;
       }
     }
 

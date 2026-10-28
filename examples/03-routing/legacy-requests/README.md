@@ -49,15 +49,15 @@ and DELETE acknowledges a request without deleting a stored resource.
 `patch`, `delete`, `head` and `options` registrations all serve `/echo` itself.
 Use these commands against `http://127.0.0.1:8080/echo`:
 
-| Method | curl options | Observable response |
-| --- | --- | --- |
-| GET | none | 200, instructions for submitting a body |
-| POST | `-H 'Content-Type: text/plain' --data-binary 'Hello, 世界!'` | 200, the same UTF-8 text |
-| PUT | `-X PUT --data-binary 'raw bytes'` | 200, unchanged bytes with `application/octet-stream` |
-| PATCH | `-X PATCH --data-binary 'partial input'` | 200, the same text and `X-Request-Method: PATCH` |
-| DELETE | `-i -X DELETE` | 204, no body |
-| HEAD | `-I` | 200, `X-Echo-Mode: stateless`, no body |
-| OPTIONS | `-i -X OPTIONS` | 204, explicit `Allow` listing all seven methods, no body |
+| Method  | curl options                                                 | Observable response                                      |
+|---------|--------------------------------------------------------------|----------------------------------------------------------|
+| GET     | none                                                         | 200, instructions for submitting a body                  |
+| POST    | `-H 'Content-Type: text/plain' --data-binary 'Hello, 世界!'` | 200, the same UTF-8 text                                 |
+| PUT     | `-X PUT --data-binary 'raw bytes'`                           | 200, unchanged bytes with `application/octet-stream`     |
+| PATCH   | `-X PATCH --data-binary 'partial input'`                     | 200, the same text and `X-Request-Method: PATCH`         |
+| DELETE  | `-i -X DELETE`                                               | 204, no body                                             |
+| HEAD    | `-I`                                                         | 200, `X-Echo-Mode: stateless`, no body                   |
+| OPTIONS | `-i -X OPTIONS`                                              | 204, explicit `Allow` listing all seven methods, no body |
 
 HEAD and OPTIONS are explicit registrations: GET does not imply HEAD, and ordinary
 OPTIONS is not generated automatically. An unregistered method on a known path
@@ -70,16 +70,16 @@ This demonstrates dispatch and body access, not a query language or a proxy tunn
 
 ## Inputs, response headers and cookies
 
-| Endpoint | Input capability | Expected result |
-| --- | --- | --- |
-| `GET /greetings/Ada` | Named path parameter and supplied greeting operation | `Hello, Ada!` |
-| `GET /welcome` | Optional query input | `Hello, World!` |
-| `GET /welcome?name=Grace` | Explicit query value | `Hello, Grace!`; blank values return400 |
-| `GET /search?tag=java&tag=HTTP%20API` | Ordered, repeated decoded query values | `java,HTTP API`; no tags gives empty text |
-| `POST /forms` | URL-encoded first/repeated form values, separate from query values | Greeting and ordered tags; missing/blank name returns400 |
-| `GET /preferences?theme=light` | Incoming request header/cookie and outgoing header/cookie | Echoes `X-Request-Id`, returns incoming `theme`, sets the next theme cookie |
-| `GET /items/42` | Constrained named segment `{id:[0-9]+}` | `42`; `/items/abc` returns404 |
-| `GET /paths/guides/HTTP%20API` | Named terminal catch-all `{*tail}` | `guides/HTTP API`; does not access the filesystem |
+| Endpoint                              | Input capability                                                   | Expected result                                                             |
+|---------------------------------------|--------------------------------------------------------------------|-----------------------------------------------------------------------------|
+| `GET /greetings/Ada`                  | Named path parameter and supplied greeting operation               | `Hello, Ada!`                                                               |
+| `GET /welcome`                        | Optional query input                                               | `Hello, World!`                                                             |
+| `GET /welcome?name=Grace`             | Explicit query value                                               | `Hello, Grace!`; blank values return400                                     |
+| `GET /search?tag=java&tag=HTTP%20API` | Ordered, repeated decoded query values                             | `java,HTTP API`; no tags gives empty text                                   |
+| `POST /forms`                         | URL-encoded first/repeated form values, separate from query values | Greeting and ordered tags; missing/blank name returns400                    |
+| `GET /preferences?theme=light`        | Incoming request header/cookie and outgoing header/cookie          | Echoes `X-Request-Id`, returns incoming `theme`, sets the next theme cookie |
+| `GET /items/42`                       | Constrained named segment `{id:[0-9]+}`                            | `42`; `/items/abc` returns404                                               |
+| `GET /paths/guides/HTTP%20API`        | Named terminal catch-all `{*tail}`                                 | `guides/HTTP API`; does not access the filesystem                           |
 
 For form decoding:
 

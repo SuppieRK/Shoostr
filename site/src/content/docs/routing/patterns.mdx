@@ -12,12 +12,12 @@ import test from '../../../../../examples/03-routing/src/test/java/io/github/sup
 Use named parameters to capture path segments, adding a constraint when only a restricted set of characters should match.
 Shoostr selects the most specific complete match for the requested method in this order:
 
-| Pattern | Match |
-| --- | --- |
-| `/items/latest` | The literal path |
-| `/items/{id:[0-9]+}` | One segment containing digits |
-| `/items/{name}` | Any single nonempty segment |
-| `/items/{*tail}` | One or more remaining segments |
+| Pattern              | Match                          |
+| -------------------- | ------------------------------ |
+| `/items/latest`      | The literal path               |
+| `/items/{id:[0-9]+}` | One segment containing digits  |
+| `/items/{name}`      | Any single nonempty segment    |
+| `/items/{*tail}`     | One or more remaining segments |
 
 A method or suffix mismatch can fall back to a less-specific complete match, while overlapping constrained routes use registration order.
 For example, `/codes/7` selects the earlier single-digit constraint, but `/codes/12` selects the later one-to-three-digit constraint.

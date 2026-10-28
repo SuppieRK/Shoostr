@@ -49,48 +49,47 @@ public final class SessionExample {
               handler.setSessionCache(cache);
             })
         .routes(
-            routes -> {
-              routes
-                  .get(
-                      "/preferences/session",
-                      (request, response) -> {
-                        // Only this endpoint creates a missing session and initializes its
-                        // preference.
-                        var session = request.getOrCreateSession();
-                        if (session.getAttribute(THEME_ATTRIBUTE) == null) {
-                          session.setAttribute(THEME_ATTRIBUTE, "dark");
-                        }
+            routes ->
+                routes
+                    .get(
+                        "/preferences/session",
+                        (request, response) -> {
+                          // Only this endpoint creates a missing session and initializes its
+                          // preference.
+                          var session = request.getOrCreateSession();
+                          if (session.getAttribute(THEME_ATTRIBUTE) == null) {
+                            session.setAttribute(THEME_ATTRIBUTE, "dark");
+                          }
 
-                        response.text((String) session.getAttribute(THEME_ATTRIBUTE));
-                      })
-                  // Inspection uses getSession(), so a read does not create server-side state.
-                  .get(
-                      "/preferences/state",
-                      (request, response) ->
-                          response.text(
-                              request
-                                  .getSession()
-                                  .map(session -> (String) session.getAttribute(THEME_ATTRIBUTE))
-                                  .orElse("absent")))
-                  .post(
-                      "/preferences/renew",
-                      (request, response) -> {
-                        if (request.getSession().isEmpty()) {
-                          throw new NotFoundException();
-                        }
+                          response.text((String) session.getAttribute(THEME_ATTRIBUTE));
+                        })
+                    // Inspection uses getSession(), so a read does not create server-side state.
+                    .get(
+                        "/preferences/state",
+                        (request, response) ->
+                            response.text(
+                                request
+                                    .getSession()
+                                    .map(session -> (String) session.getAttribute(THEME_ATTRIBUTE))
+                                    .orElse("absent")))
+                    .post(
+                        "/preferences/renew",
+                        (request, response) -> {
+                          if (request.getSession().isEmpty()) {
+                            throw new NotFoundException();
+                          }
 
-                        // Rotate the identifier while preserving the existing session attributes.
-                        request.renewSessionId();
-                        response.text("renewed");
-                      })
-                  .post(
-                      "/preferences/reset",
-                      (request, response) -> {
-                        // Invalidation clears server-side session state, not just the browser
-                        // cookie.
-                        request.getSession().ifPresent(Session::invalidate);
-                        response.text("cleared");
-                      });
-            });
+                          // Rotate the identifier while preserving the existing session attributes.
+                          request.renewSessionId();
+                          response.text("renewed");
+                        })
+                    .post(
+                        "/preferences/reset",
+                        (request, response) -> {
+                          // Invalidation clears server-side session state, not just the browser
+                          // cookie.
+                          request.getSession().ifPresent(Session::invalidate);
+                          response.text("cleared");
+                        }));
   }
 }

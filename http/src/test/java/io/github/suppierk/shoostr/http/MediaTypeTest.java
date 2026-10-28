@@ -97,7 +97,7 @@ class MediaTypeTest {
   @Test
   void replacesCharsetImmutably() {
     var base = MediaType.of("text/plain");
-    var utf8 = base.withCharset(Charset.forName("utf8"));
+    var utf8 = base.withCharset(StandardCharsets.UTF_8);
     var latin1 = utf8.withCharset(StandardCharsets.ISO_8859_1);
 
     assertEquals("text/plain", base.value());

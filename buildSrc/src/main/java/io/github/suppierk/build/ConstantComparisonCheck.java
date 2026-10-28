@@ -3,6 +3,7 @@ package io.github.suppierk.build;
 import com.puppycrawl.tools.checkstyle.api.AbstractCheck;
 import com.puppycrawl.tools.checkstyle.api.DetailAST;
 import com.puppycrawl.tools.checkstyle.api.TokenTypes;
+import java.util.Objects;
 import java.util.regex.Pattern;
 
 /** Requires constant-first equality calls using the project's uppercase constant convention. */
@@ -57,7 +58,7 @@ public final class ConstantComparisonCheck extends AbstractCheck {
       return;
     }
 
-    var arguments = token.findFirstToken(TokenTypes.ELIST);
+    var arguments = Objects.requireNonNull(token.findFirstToken(TokenTypes.ELIST));
     var argument = arguments.getFirstChild();
     if (argument != null
         && argument.getNextSibling() == null
@@ -99,7 +100,8 @@ public final class ConstantComparisonCheck extends AbstractCheck {
     if (expression.getType() == TokenTypes.METHOD_CALL) {
       var method = expression.getFirstChild();
       if (method.getType() != TokenTypes.DOT
-          || expression.findFirstToken(TokenTypes.ELIST).getFirstChild() != null) {
+          || Objects.requireNonNull(expression.findFirstToken(TokenTypes.ELIST)).getFirstChild()
+              != null) {
         return false;
       }
 

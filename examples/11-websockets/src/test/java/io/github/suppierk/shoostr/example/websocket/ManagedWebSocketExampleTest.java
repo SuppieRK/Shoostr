@@ -200,11 +200,6 @@ class ManagedWebSocketExampleTest {
     }
 
     @Override
-    public void onOpen(WebSocket socket) {
-      socket.request(1);
-    }
-
-    @Override
     public CompletionStage<?> onText(WebSocket socket, CharSequence data, boolean last) {
       partial.append(data);
       if (last) {

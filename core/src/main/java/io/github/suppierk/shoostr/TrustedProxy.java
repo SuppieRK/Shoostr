@@ -123,7 +123,7 @@ final class TrustedProxy {
     }
 
     List<Map<String, String>> chain = new ArrayList<>();
-    List<InetSocketAddress> addresses = new ArrayList<>();
+    List<@Nullable InetSocketAddress> addresses = new ArrayList<>();
 
     try {
       parseForwarding(forwarding, chain, addresses);
@@ -131,12 +131,7 @@ final class TrustedProxy {
       throw new BadRequestException();
     }
 
-    int selected = chain.size() - 1;
-    while (selected > 0
-        && addresses.get(selected) != null
-        && trusted.test(addresses.get(selected).getAddress())) {
-      selected--;
-    }
+    int selected = boundaryIndex(addresses);
     var fields = chain.get(selected);
 
     try {
@@ -167,7 +162,9 @@ final class TrustedProxy {
    * @throws IllegalArgumentException if a forwarding element or address is malformed
    */
   private static void parseForwarding(
-      List<String> forwarding, List<Map<String, String>> chain, List<InetSocketAddress> addresses) {
+      List<String> forwarding,
+      List<Map<String, String>> chain,
+      List<@Nullable InetSocketAddress> addresses) {
     for (var header : forwarding) {
       parseForwardingHeader(header, chain, addresses);
     }
@@ -182,7 +179,7 @@ final class TrustedProxy {
    * @throws IllegalArgumentException if an element or address is malformed
    */
   private static void parseForwardingHeader(
-      String header, List<Map<String, String>> chain, List<InetSocketAddress> addresses) {
+      String header, List<Map<String, String>> chain, List<@Nullable InetSocketAddress> addresses) {
     var elements = ELEMENTS.tokenize(header);
     boolean elementExpected = true;
     while (elements.hasNext()) {
@@ -230,7 +227,7 @@ final class TrustedProxy {
     var hosts = aligned(request.headers(X_FORWARDED_HOST), forwarded.size());
     var protocols = aligned(request.headers(X_FORWARDED_PROTO), forwarded.size());
     var ports = aligned(request.headers(X_FORWARDED_PORT), forwarded.size());
-    var addresses = new ArrayList<InetSocketAddress>();
+    var addresses = new ArrayList<@Nullable InetSocketAddress>();
 
     try {
       for (var value : forwarded) {
@@ -242,12 +239,7 @@ final class TrustedProxy {
       throw new BadRequestException();
     }
 
-    int selected = addresses.size() - 1;
-    while (selected > 0
-        && addresses.get(selected) != null
-        && trusted.test(addresses.get(selected).getAddress())) {
-      selected--;
-    }
+    int selected = boundaryIndex(addresses);
 
     try {
       var uri = HttpURI.build(request.fullUrl());
@@ -611,5 +603,25 @@ final class TrustedProxy {
     }
 
     return port;
+  }
+
+  /**
+   * Stops at the first untrusted or undisclosed address when walking toward the client.
+   *
+   * @param addresses parsed nonempty forwarding chain
+   * @return index of the selected trust boundary
+   */
+  private int boundaryIndex(List<@Nullable InetSocketAddress> addresses) {
+    int selected = addresses.size() - 1;
+    while (selected > 0) {
+      var address = addresses.get(selected);
+      if (address == null || !trusted.test(address.getAddress())) {
+        break;
+      }
+
+      selected--;
+    }
+
+    return selected;
   }
 }

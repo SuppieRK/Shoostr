@@ -120,9 +120,9 @@ class JavadocPolicyTest {
         testViolations(
             """
             class Example {
-              String value = \"\"\"
+              String value = \"""
               /** not a comment */
-              \"\"\";
+              \""";
             }
             """));
   }

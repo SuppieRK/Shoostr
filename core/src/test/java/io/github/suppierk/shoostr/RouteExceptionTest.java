@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.github.suppierk.shoostr.http.exceptions.AuthorizationDeniedException;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -17,7 +16,6 @@ import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SecureDirectoryStream;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -310,12 +308,6 @@ class RouteExceptionTest {
 
   @Test
   void mapsAStaticMountAdmissionFailure() throws Exception {
-    try (var stream = Files.newDirectoryStream(directory)) {
-      assumeTrue(
-          stream instanceof SecureDirectoryStream<?>,
-          "Filesystem static mounts require SecureDirectoryStream support");
-    }
-
     Files.writeString(directory.resolve("hello.txt"), "hello");
 
     try (var app = new Shoostr()) {

@@ -22,30 +22,30 @@ public final class ResponseBodyExample {
     var options = new Options(1024, 64, 512, 1000, MultipartOptions.defaults());
     return new Shoostr(options)
         .routes(
-            routes -> {
-              routes
-                  .post(
-                      "/messages",
-                      (ignored, response) ->
-                          response.status(HttpStatusCodes.CREATED.value()).text("café"))
-                  .get(
-                      "/bytes",
-                      (ignored2, response) ->
-                          response.body(
-                              MediaType.APPLICATION_OCTET_STREAM,
-                              new byte[] {0, 1, 127, (byte) 0xff}))
-                  // The selected charset controls both text encoding and Content-Type metadata.
-                  .get(
-                      "/latin1",
-                      (ignored3, response) -> response.text("café", StandardCharsets.ISO_8859_1))
-                  .get("/message", (ignored4, response) -> response.text("café"))
-                  // Reuse GET's representation; HEAD keeps its headers but sends no body bytes.
-                  .route(
-                      HttpMethods.HEAD, "/message", (ignored5, response) -> response.text("café"))
-                  // Leave the body unset for 204 instead of asking completion to discard content.
-                  .delete(
-                      "/messages",
-                      (ignored6, response) -> response.status(HttpStatusCodes.NO_CONTENT.value()));
-            });
+            routes ->
+                routes
+                    .post(
+                        "/messages",
+                        (ignored, response) ->
+                            response.status(HttpStatusCodes.CREATED.value()).text("café"))
+                    .get(
+                        "/bytes",
+                        (ignored2, response) ->
+                            response.body(
+                                MediaType.APPLICATION_OCTET_STREAM,
+                                new byte[] {0, 1, 127, (byte) 0xff}))
+                    // The selected charset controls both text encoding and Content-Type metadata.
+                    .get(
+                        "/latin1",
+                        (ignored3, response) -> response.text("café", StandardCharsets.ISO_8859_1))
+                    .get("/message", (ignored4, response) -> response.text("café"))
+                    // Reuse GET's representation; HEAD keeps its headers but sends no body bytes.
+                    .route(
+                        HttpMethods.HEAD, "/message", (ignored5, response) -> response.text("café"))
+                    // Leave the body unset for 204 instead of asking completion to discard content.
+                    .delete(
+                        "/messages",
+                        (ignored6, response) ->
+                            response.status(HttpStatusCodes.NO_CONTENT.value())));
   }
 }

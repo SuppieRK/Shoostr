@@ -13,13 +13,13 @@ Use `Options` to set the limits that Shoostr enforces when it reads requests and
 The application below echoes POST bodies at `/echo`, rejecting buffered bodies above 1,024 bytes with `413`.
 Configure the listener, HTTP parsing, and native thread pool through the [Jetty configuration hooks](../native-configuration/).
 
-| Option | Default | Copy method |
-| --- | --- | --- |
-| <code>max<wbr />Request<wbr />Bytes</code> | 1,048,576 buffered request bytes | <code>with<wbr />Max<wbr />Request<wbr />Bytes</code> |
-| <code>max<wbr />Response<wbr />Bytes</code> | 1,048,576 staged finite-response bytes | <code>with<wbr />Max<wbr />Response<wbr />Bytes</code> |
-| <code>stream<wbr />Buffer<wbr />Bytes</code> | 8,192 bytes per streaming response buffer | <code>with<wbr />Stream<wbr />Buffer<wbr />Bytes</code> |
-| <code>max<wbr />Parameters</code> | 1,000 decoded pairs per query or URL-encoded form | <code>with<wbr />Max<wbr />Parameters</code> |
-| `multipart` | <code>Multipart<wbr />Options.<wbr />defaults()</code> | <code>with<wbr />Multipart</code> |
+| Option                                       | Default                                                | Copy method                                             |
+| -------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
+| <code>max<wbr />Request<wbr />Bytes</code>   | 1,048,576 buffered request bytes                       | <code>with<wbr />Max<wbr />Request<wbr />Bytes</code>   |
+| <code>max<wbr />Response<wbr />Bytes</code>  | 1,048,576 staged finite-response bytes                 | <code>with<wbr />Max<wbr />Response<wbr />Bytes</code>  |
+| <code>stream<wbr />Buffer<wbr />Bytes</code> | 8,192 bytes per streaming response buffer              | <code>with<wbr />Stream<wbr />Buffer<wbr />Bytes</code> |
+| <code>max<wbr />Parameters</code>            | 1,000 decoded pairs per query or URL-encoded form      | <code>with<wbr />Max<wbr />Parameters</code>            |
+| `multipart`                                  | <code>Multipart<wbr />Options.<wbr />defaults()</code> | <code>with<wbr />Multipart</code>                       |
 
 Create limits with `Options.defaults()` and its copy methods, or pass all five values to the record constructor.
 Each value is immutable and validated during construction; copying it does not change an existing application.

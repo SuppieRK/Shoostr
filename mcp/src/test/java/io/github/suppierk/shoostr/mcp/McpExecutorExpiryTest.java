@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr.mcp;
 
-import static org.awaitility.Awaitility.await;
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.assertNotBeforeExpiry;
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.awaitTermination;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.suppierk.shoostr.Shoostr;
@@ -10,13 +11,11 @@ import io.modelcontextprotocol.server.McpServer;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -34,6 +33,7 @@ class McpExecutorExpiryTest {
             : Executors.newSingleThreadExecutor(
                 Thread.ofPlatform().name("mcp-http-worker").factory());
     var owner = new AtomicReference<Thread>();
+    var expiry = new AtomicReference<Instant>();
     var mcp =
         Mcp.sync(
             new McpHttpSecurity(
@@ -41,8 +41,10 @@ class McpExecutorExpiryTest {
                 request -> {
                   if ("GET".equals(request.method())) {
                     owner.set(Thread.currentThread());
+                    var verifiedExpiry = Instant.now().plusSeconds(1);
+                    expiry.set(verifiedExpiry);
                     return new McpIdentity(
-                        "alice:client", McpTransportContext.EMPTY, Instant.now().plusSeconds(1));
+                        "alice:client", McpTransportContext.EMPTY, verifiedExpiry);
                   }
 
                   return new McpIdentity("alice:client", McpTransportContext.EMPTY, null);
@@ -105,16 +107,11 @@ class McpExecutorExpiryTest {
                     // A committed stream may end with transport failure rather than clean EOF.
                   }
 
-                  return null;
+                  return Instant.now();
                 });
-        await("the listening stream remains open until token expiry")
-            .pollDelay(Duration.ZERO)
-            .pollInterval(Duration.ofMillis(10))
-            .during(Duration.ofMillis(100))
-            .atMost(Duration.ofMillis(1100))
-            .failFast("the listening stream ended prematurely", ended::isDone)
-            .until(() -> !ended.isDone());
-        ended.get(4, TimeUnit.SECONDS);
+        var verifiedExpiry = expiry.get();
+        awaitTermination(verifiedExpiry, ended::isDone);
+        assertNotBeforeExpiry(verifiedExpiry, ended.get());
       }
 
       var probe = test.send(request -> request.path("/probe"));

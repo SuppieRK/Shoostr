@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import io.github.suppierk.shoostr.extensions.AdmissionExtension;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
@@ -12,7 +11,6 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SecureDirectoryStream;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
@@ -178,12 +176,6 @@ class RoutePolicyTest {
 
   @Test
   void protectsStaticMountsInsidePolicyScopes() throws Exception {
-    try (var stream = Files.newDirectoryStream(directory)) {
-      assumeTrue(
-          stream instanceof SecureDirectoryStream<?>,
-          "Filesystem static mounts require SecureDirectoryStream support");
-    }
-
     Files.writeString(directory.resolve("secret.txt"), "secret");
 
     try (var app = new Shoostr()) {

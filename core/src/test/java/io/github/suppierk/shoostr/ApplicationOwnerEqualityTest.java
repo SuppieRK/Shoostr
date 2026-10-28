@@ -41,8 +41,8 @@ class ApplicationOwnerEqualityTest {
     var nativeServers = new ArrayList<Server>();
     var completed = new LinkedBlockingQueue<RequestOutcome>();
     var exchanges = new ArrayList<Map.Entry<Request, Response>>();
-    var tasks = new ArrayList<Object>();
-    var observations = new ArrayList<Object>();
+    var tasks = new ArrayList<>();
+    var observations = new ArrayList<>();
     var hashes = new HashMap<Object, Integer>();
     var entered = List.of(new CountDownLatch(1), new CountDownLatch(1));
     var release = List.of(new CountDownLatch(1), new CountDownLatch(1));

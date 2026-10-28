@@ -152,7 +152,7 @@
 .eyebrow,
 .section-number {
   color: var(--muted);
-  font-family: var(--sl-font-mono);
+  font-family: var(--sl-font-mono), monospace;
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -192,7 +192,7 @@
   background: #171414;
   color: #f8f1e9;
   box-shadow: 0 14px 30px #211b1814;
-  font-family: var(--sl-font-mono);
+  font-family: var(--sl-font-mono), monospace;
 }
 
 .terminal-bar {

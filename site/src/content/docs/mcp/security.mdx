@@ -41,7 +41,8 @@ Session limits govern native session allocation. Compose [application work limit
 ## Test
 
 The SDK client invokes a tool using detached verified claims, while the HTTP checks cover credentials, Origin admission, current scopes, credential refresh and user/client isolation.
-The quota checks begin at capacity and verify recovery after deletion or bounded idle cleanup.
-Bounded stream reads distinguish credential expiry from idle session eviction without sending keepalive requests to the quiet session.
+The quota checks begin at capacity and use Awaitility (`org.awaitility:awaitility`) to verify recovery after deletion or bounded idle cleanup.
+The credential-expiry check uses fresh credentials to keep the session active while the original stream expires, proving that fresh credentials do not extend that stream's deadline.
+A separate idle-expiry check leaves its session quiet and waits for the stream to close.
 
 <Code code={test} lang="java" title="McpSecurityExampleTest.java" />

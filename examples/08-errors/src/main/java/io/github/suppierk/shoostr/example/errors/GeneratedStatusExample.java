@@ -24,39 +24,38 @@ public final class GeneratedStatusExample {
             HttpStatusCodes.METHOD_NOT_ALLOWED.value(),
             (ignored2, response) -> response.text("Method unavailable"))
         .routes(
-            routes -> {
-              routes
-                  .get("/read-only", (ignored3, response) -> response.text("ready"))
-                  // This explicit response is not replaced by the generated 404 renderer.
-                  .get(
-                      "/manual",
-                      (ignored4, response) ->
-                          response
-                              .status(HttpStatusCodes.NOT_FOUND.value())
-                              .text("Chosen by the handler"))
-                  // A thrown HTTP exception follows exception rendering, not generated-status
-                  // hooks.
-                  .get(
-                      "/thrown",
-                      (ignored5, ignored6) -> {
-                        throw new NotFoundException("Private lookup diagnostics");
-                      })
-                  // The group's renderer customizes the concealed 404 from its unavailable route.
-                  .path(
-                      "/reports",
-                      reports ->
-                          reports.when(
-                              () -> false,
-                              unavailable ->
-                                  unavailable.get(
-                                      "/daily",
-                                      (ignored7, response) -> response.text("Report ready"))),
-                      configuration ->
-                          configuration
-                              .lifecycle()
-                              .status(
-                                  HttpStatusCodes.NOT_FOUND.value(),
-                                  (ignored8, response) -> response.text("Report unavailable")));
-            });
+            routes ->
+                routes
+                    .get("/read-only", (ignored3, response) -> response.text("ready"))
+                    // This explicit response is not replaced by the generated 404 renderer.
+                    .get(
+                        "/manual",
+                        (ignored4, response) ->
+                            response
+                                .status(HttpStatusCodes.NOT_FOUND.value())
+                                .text("Chosen by the handler"))
+                    // A thrown HTTP exception follows exception rendering, not generated-status
+                    // hooks.
+                    .get(
+                        "/thrown",
+                        (ignored5, ignored6) -> {
+                          throw new NotFoundException("Private lookup diagnostics");
+                        })
+                    // The group's renderer customizes the concealed 404 from its unavailable route.
+                    .path(
+                        "/reports",
+                        reports ->
+                            reports.when(
+                                () -> false,
+                                unavailable ->
+                                    unavailable.get(
+                                        "/daily",
+                                        (ignored7, response) -> response.text("Report ready"))),
+                        configuration ->
+                            configuration
+                                .lifecycle()
+                                .status(
+                                    HttpStatusCodes.NOT_FOUND.value(),
+                                    (ignored8, response) -> response.text("Report unavailable"))));
   }
 }

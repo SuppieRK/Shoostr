@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.mcp;
 
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -537,8 +538,9 @@ class McpInitializationCleanupTest {
                     try {
                       app.close();
                     } catch (IOException failure) {
-                      assertTrue(
-                          failure.getCause() instanceof TimeoutException,
+                      assertInstanceOf(
+                          TimeoutException.class,
+                          failure.getCause(),
                           "A deliberately blocked borrowed handler can exhaust Jetty's drain timeout");
                     }
 
