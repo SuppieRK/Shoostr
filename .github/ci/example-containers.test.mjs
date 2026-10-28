@@ -69,9 +69,9 @@ if (process.argv.includes('--matrix')) {
   }
   if (Object.hasOwn(process.env, 'EXAMPLE')) {
     const project = process.env.EXAMPLE;
-    assert.ok(Object.hasOwn(probes, project), `Unknown EXAMPLE: ${project}`);
     const base = process.env.BASE_URL ?? 'http://127.0.0.1:8080';
     test(`${project} serves its documented behavior from the selected image`, { timeout: 100_000 }, async () => {
+      assert.ok(Object.hasOwn(probes, project), `Unknown EXAMPLE: ${project}`);
       const [path, fixture, options = {}, status = 200] = probes[project];
       const expected = (project === 'resources-example' ? process.env.REPORT_CONTENT : undefined) ?? fixture;
       await ready(base);
