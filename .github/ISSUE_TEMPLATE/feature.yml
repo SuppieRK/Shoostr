@@ -1,0 +1,25 @@
+name: Feature request
+description: Describe a serving concern and the gap in existing composition.
+body:
+  - type: markdown
+    attributes:
+      value: "Read [Shoostr's scope](https://github.com/SuppieRK/Shoostr#scope). Prefer composition with established libraries where existing public interfaces suffice."
+  - type: textarea
+    id: need
+    attributes:
+      label: Serving need
+      description: What concrete application behavior is missing?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Existing interfaces and library composition
+      description: Which existing APIs and external libraries did you consider, and what gap remains?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed usage and verification
+      description: Show caller code and the public behavior a test should observe.

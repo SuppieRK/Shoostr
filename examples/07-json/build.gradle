@@ -1,3 +1,5 @@
+plugins { id 'application' }
+
 dependencies {
 	implementation project(':core')
 	implementation platform('com.fasterxml.jackson:jackson-bom:2.22.4')
@@ -5,3 +7,8 @@ dependencies {
 
 	testImplementation project(':test')
 }
+
+application {
+	mainClass = 'io.github.suppierk.shoostr.example.json.ExampleApplication'
+}
+apply from: rootProject.file('config/gradle/example-container.gradle')

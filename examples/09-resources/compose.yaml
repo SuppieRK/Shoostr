@@ -1,0 +1,15 @@
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: examples/09-resources/Dockerfile
+      target: runtime
+    image: shoostr/resources-example:local
+    environment:
+      EXAMPLE_REPORT: "${EXAMPLE_REPORT-/app/report.csv}"
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    mem_limit: 256m
+    read_only: true
+    tmpfs:
+      - /tmp

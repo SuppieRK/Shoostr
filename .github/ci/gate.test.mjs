@@ -37,6 +37,14 @@ for (const { name, payload, env = {} } of origins) {
     }
   });
 
+  test(`${name} rejects failed, cancelled, skipped, missing and unexpected example results`, () => {
+    for (const examples of ['failure', 'cancelled', 'skipped', '', 'unknown']) {
+      const result = runGate({ ...env, EXAMPLES_RESULT: examples }, payload);
+      assert.equal(result.status, 1, examples);
+      assert.match(result.stderr, /Example container validation did not succeed/);
+    }
+  });
+
   test(`${name} rejects missing, malformed and mismatched expected revisions`, () => {
     for (const expected of ['', 'not-a-revision', 'b'.repeat(40)]) {
       const result = runGate({ ...env, EXPECTED_REVISION: expected }, payload);
@@ -82,6 +90,7 @@ function runGate(overrides = {}, payload = event()) {
         GITHUB_ACTOR: 'maintainer',
         GITHUB_SHA: revision,
         VALIDATION_RESULT: 'success',
+        EXAMPLES_RESULT: 'success',
         EXPECTED_REVISION: revision,
         ...overrides,
       },

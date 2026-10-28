@@ -1,5 +1,9 @@
 services:
   app:
+    build:
+      context: ../../..
+      dockerfile: examples/15-observability/opentelemetry/Dockerfile
+      target: runtime
     image: shoostr/opentelemetry-example:local
     depends_on:
       - jaeger

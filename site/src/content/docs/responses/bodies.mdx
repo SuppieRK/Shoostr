@@ -11,6 +11,8 @@ import test from '../../../../../examples/06-responses/src/test/java/io/github/s
 
 Use `text(value)` for UTF-8 plain text, or `text(value, charset)` when the response needs another encoding; Shoostr encodes the text and sets matching charset metadata.
 When you already have encoded bytes, use `body(...)` with a matching `MediaType`, which labels those bytes without converting them.
+`MediaType.of(...)` accepts a bare type/subtype and normalizes case. Parameters, ranges, wildcards and surrounding whitespace are rejected; add charset metadata with `withCharset(...)`. This changes the label only, so the application must supply bytes in the declared encoding. Use a String content type when arbitrary parameters are required.
+
 Text encoding follows `String.getBytes(Charset)`: malformed or unmappable input uses replacement bytes rather than strict validation.
 For object output, use an [explicit JSON codec](../../json/codec/).
 Set a response status with `status(...)`, using a named `HttpStatusCodes` constant and its `value()` when that makes the result clearer.

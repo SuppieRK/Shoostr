@@ -18,6 +18,14 @@ Keep those responsibilities in the actual handlers and security configuration, e
 Likewise, separate documents provide separate descriptions, not access-control boundaries.
 The [OpenAPI 3.1.1 specification](https://spec.openapis.org/oas/v3.1.1.html) explains operations, reusable schemas and security descriptions in more detail.
 
+Construct native `Schema` models for OpenAPI 3.1 rather than relying on annotation scanning or model inference.
+Explicit path parameters must match the route template and be required. Constrained path parameters need an inline schema with exactly the string type; a referenced, content-based or non-string declaration is rejected. An existing pattern is intersected with the route constraint.
+Published catch-all paths, unsupported HTTP methods, missing path declarations and duplicate operation identifiers fail startup.
+Known local component references are checked against the document. External and other JSON Schema references are preserved without fetching them or claiming complete JSON Schema validation.
+
+Operation defaults are independent. Summary, description and operation identifier replace inherited scalar values; tags accumulate without duplicates. A parameter replaces the same name/location, and a response replaces the same status, preserving unrelated entries. Request-body and security declarations replace their entire inherited values. See [OpenApiOperation](https://github.com/SuppieRK/Shoostr/blob/main/openapi/src/main/java/io/github/suppierk/shoostr/openapi/OpenApiOperation.java) for replacement and accumulation rules.
+Generated JSON remains subject to the application's finite-response limit. Large schemas do not bypass that limit; UI assets use bounded streaming.
+
 ## Example
 
 The item API defines a reusable schema, a constrained path parameter, and JSON request and response representations.

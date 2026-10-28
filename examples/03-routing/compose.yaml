@@ -1,0 +1,13 @@
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: examples/03-routing/Dockerfile
+      target: runtime
+    image: shoostr/routing-example:local
+    ports:
+      - "127.0.0.1:${APP_PORT:-8080}:8080"
+    mem_limit: 256m
+    read_only: true
+    tmpfs:
+      - /tmp

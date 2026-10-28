@@ -18,6 +18,8 @@ Installation alone adds neither an endpoint nor authentication.
 The SDK distinguishes [tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) that perform named operations, [resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources) that supply URI-addressed context, and [prompts](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts) that supply reusable messages.
 Resource URIs are not HTTP routes, and retrieving a prompt does not invoke a language model.
 
+A supplied executor in `mcp.routes(routes, executor)` remains caller-owned, including after the application closes. Keep it available until request drain finishes, then close it yourself.
+
 ## Example
 
 Both factories expose the same greeting tool, guide resource and explanation prompt; choose one factory for your application.

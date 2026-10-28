@@ -1,4 +1,11 @@
+plugins { id 'application' }
+
 dependencies {
 	implementation project(':core')
 	testImplementation project(':test')
 }
+
+application {
+	mainClass = 'io.github.suppierk.shoostr.example.resources.ExampleApplication'
+}
+apply from: rootProject.file('config/gradle/example-container.gradle')

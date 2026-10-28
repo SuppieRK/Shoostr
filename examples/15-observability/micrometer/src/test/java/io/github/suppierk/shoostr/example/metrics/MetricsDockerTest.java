@@ -51,7 +51,8 @@ class MetricsDockerTest {
     client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
 
     try {
-      compose(false, "up", "-d");
+      compose(false, "pull", "--ignore-buildable");
+      compose(false, "up", "--no-build", "--pull", "never", "-d");
       for (var uri :
           List.of(
               APP.resolve("/metrics"),

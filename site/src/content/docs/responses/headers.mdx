@@ -22,6 +22,8 @@ The `/headers` endpoint captures two `Link` fields in a snapshot before appendin
 Its body returns both the current values and the unchanged snapshot values.
 `HttpHeaders` supplies standard names and also supports explicit custom names through `HttpHeaders.of(...)`.
 
+`HttpHeaders.of(name)` validates a custom field name and preserves its spelling; it does not register the name. `HttpHeaders.httpHeader(name)` looks up built-in wire names case-insensitively and returns an empty Optional for unknown names. Constants also include historical and reserved entries: availability does not make a field suitable for outbound use, and the reserved `CLOSE` field must not be sent.
+
 Set headers before output is committed, and inspect the live response only on its handler thread and within its lifetime.
 Shoostr owns framing fields such as `Content-Length` and `Transfer-Encoding`; attempts to set, append or remove them are rejected rather than overriding transport behavior.
 For the distinction between repeated fields and their combined interpretation, see [HTTP field lines](https://www.rfc-editor.org/rfc/rfc9110.html#section-5.2).

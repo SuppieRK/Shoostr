@@ -1,5 +1,38 @@
 # Explicit exception and status handling
 
+## Run with Docker
+
+Use Docker Engine with Compose v2 or later and Buildx. Run from the repository root;
+Java and Gradle are provided by the build image. Start one example at a time:
+
+```sh
+docker compose -f examples/08-errors/legacy-exceptions/compose.yaml up --build -d
+```
+
+Startup is asynchronous. Check diagnostics with `docker compose -f examples/08-errors/legacy-exceptions/compose.yaml logs -f app`.
+Open `http://127.0.0.1:8080/app-failure`. Expect HTTP 500 with Application failure.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
+are for trusted local development. Direct Java runs use the default wildcard listener.
+
+To build with Jib inside Docker instead, stop the stack and export/load its image:
+
+```sh
+docker compose -f examples/08-errors/legacy-exceptions/compose.yaml down --timeout 20
+docker buildx build -f examples/08-errors/legacy-exceptions/Dockerfile --target jib --output type=local,dest=build/exceptions-example-jib .
+docker load --input build/exceptions-example-jib/jib-image.tar
+docker compose -f examples/08-errors/legacy-exceptions/compose.yaml pull --ignore-buildable
+docker compose -f examples/08-errors/legacy-exceptions/compose.yaml up --no-build --pull never --force-recreate -d
+```
+
+Both paths use the same local image tag. Stop and remove the stack with
+`docker compose -f examples/08-errors/legacy-exceptions/compose.yaml down --timeout 20 --volumes`.
+Use `docker compose -f examples/08-errors/legacy-exceptions/compose.yaml logs` for diagnostics.
+Optional `./gradlew` commands below require a local Java 21 installation;
+container validation is described in [CONTRIBUTING](../../../CONTRIBUTING.md#example-container-validation).
+
+## Recipe and direct-run notes
+
 Maintainer launcher fixture. Consumer recipes belong in the [error-handling section](../../../site/src/content/docs/errors/exceptions.mdx).
 
 Run `./gradlew :exceptions-example:run`.
@@ -81,5 +114,4 @@ Build `./gradlew :exceptions-example:jibDockerBuild`, then run
 `docker compose -f examples/08-errors/legacy-exceptions/compose.yaml up -d`.
 Use the same curls, then clean up with
 `docker compose -f examples/08-errors/legacy-exceptions/compose.yaml down`.
-Set `APP_PORT=8081` if 8080 is occupied. See [the catalog](../../README.md) for prerequisites
-and the direct-run versus Docker listening-address distinction.
+Set `APP_PORT=8081` if 8080 is occupied. Docker prerequisites and listener exposure are described above.
