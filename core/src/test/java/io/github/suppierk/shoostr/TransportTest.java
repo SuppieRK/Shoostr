@@ -593,7 +593,7 @@ class TransportTest {
             streaming ? "first-two" : "complete-two", second.get(3, TimeUnit.SECONDS).body());
         closing.get(3, TimeUnit.SECONDS);
         assertTrue(nativeServer.get().isStopped());
-        assertTrue(((ServerConnector) nativeServer.get().getConnectors()[0]).isStopped());
+        assertTrue(nativeServer.get().getConnectors()[0].isStopped());
         assertTrue(tlsContext.get().isStopped());
         assertTrue(ownedExecutor.get().isShutdown());
         assertNull(VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()));
@@ -708,7 +708,7 @@ class TransportTest {
         assertInstanceOf(IOException.class, stopFailure.getCause());
         assertTrue(interrupted.await(2, TimeUnit.SECONDS));
         assertThrows(ExecutionException.class, () -> pending.get(3, TimeUnit.SECONDS));
-        assertTrue(((ServerConnector) nativeServer.get().getConnectors()[0]).isStopped());
+        assertTrue(nativeServer.get().getConnectors()[0].isStopped());
         assertTrue(tlsContext.get().isStopped());
         assertTrue(sessionHandler.get().isStopped());
         assertEquals(
@@ -1326,7 +1326,7 @@ class TransportTest {
       assertTrue(nativeServer.get().isStopped());
       assertTrue(sessionHandler.get().isStopped());
       assertTrue(tlsContext.get().isStopped());
-      assertTrue(((ServerConnector) nativeServer.get().getConnectors()[0]).isStopped());
+      assertTrue(nativeServer.get().getConnectors()[0].isStopped());
       assertTrue(ownedExecutor.get().isShutdown());
       assertNull(VirtualThreads.getVirtualThreadsExecutor(nativeServer.get().getThreadPool()));
     }

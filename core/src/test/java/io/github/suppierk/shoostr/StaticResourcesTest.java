@@ -26,11 +26,12 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.AccessDeniedException;
 import java.nio.file.FileSystem;
+import java.nio.file.FileSystemException;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.SecureDirectoryStream;
 import java.nio.file.attribute.FileTime;
 import java.security.KeyStore;
 import java.time.Duration;
@@ -52,6 +53,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.jar.JarEntry;
 import java.util.jar.JarOutputStream;
+import java.util.stream.Stream;
 import java.util.zip.GZIPInputStream;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
@@ -80,10 +82,6 @@ class StaticResourcesTest {
   @Timeout(10)
   void usesFilenameMimeGuessesAndBinaryFallbackForBothStaticSources(
       String fileName, String expectedType, boolean classpath) throws Exception {
-    if (!classpath) {
-      assumeSecureDirectoryOperations();
-    }
-
     var directory = Files.createDirectory(temporaryDirectory.resolve("issue76-mime"));
     var content = new byte[] {0, 1, 2, 3, (byte) 0xFF};
     Files.write(directory.resolve(fileName), content);
@@ -112,40 +110,73 @@ class StaticResourcesTest {
   }
 
   @Test
-  void rejectsParameterizedFilesystemMounts() {
-    var app = new Shoostr();
-    var routes = app.routes();
-
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> routes.staticFiles("/assets/{tenant}", temporaryDirectory));
+  void rejectsParameterizedFilesystemMounts() throws Exception {
+    try (var app = new Shoostr()) {
+      var routes = app.routes();
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> routes.staticFiles("/assets/{tenant}", temporaryDirectory));
+    }
   }
 
   @Test
-  void rejectsFilesystemProvidersWithoutSecureDirectoryOperations() throws Exception {
+  void rejectsFilesystemsWithoutANativeJettyResource() throws Exception {
     var archive = temporaryDirectory.resolve("resources.zip");
 
     try (var filesystem =
         FileSystems.newFileSystem(URI.create("jar:" + archive.toUri()), Map.of("create", "true"))) {
       var directory = Files.createDirectory(filesystem.getPath("/assets"));
-
       assertThrows(IllegalArgumentException.class, () -> new StaticFiles("/assets", directory));
     }
   }
 
   @Test
-  void rejectsClasspathMountsWhoseDirectoriesAreUnavailable() {
-    var app = new Shoostr();
-    var routes = app.routes();
+  void rejectsClasspathMountsWhoseDirectoriesAreUnavailable() throws Exception {
+    try (var app = new Shoostr()) {
+      var routes = app.routes();
+      assertThrows(
+          IllegalArgumentException.class,
+          () -> routes.classpathResources("/assets", "/missing-static-directory"));
+    }
+  }
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () -> routes.classpathResources("/assets", "/missing-static-directory"));
+  @ParameterizedTest
+  @CsvSource({
+    "space name.txt,space%20name.txt",
+    "café.txt,caf%C3%A9.txt",
+    "plus+name.txt,plus+name.txt"
+  })
+  void servesDecodedFilenamesWithoutDecodingThemTwice(String filename, String encoded)
+      throws Exception {
+    Files.writeString(temporaryDirectory.resolve(filename), filename);
+
+    try (var app = new Shoostr()) {
+      app.routes().staticFiles("/assets", temporaryDirectory);
+
+      try (var server = TestServer.start(app)) {
+        var response =
+            server.send(
+                request -> request.path("/assets/" + encoded),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
+        assertEquals(filename, response.body());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"percent%.txt,percent%25.txt", "literal%20.txt,literal%2520.txt"})
+  void resolvesLiteralPercentFilenamesWithoutASecondDecode(String filename, String encoded)
+      throws Exception {
+    Files.writeString(temporaryDirectory.resolve(filename), filename);
+
+    try (var mount = new StaticFiles("/assets", temporaryDirectory)) {
+      assertTrue(mount.exists("/assets/" + encoded));
+    }
   }
 
   @Test
   void servesFilesystemFilesBelowTheMountedPath() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
     try (var app = new Shoostr()) {
@@ -166,8 +197,66 @@ class StaticResourcesTest {
   }
 
   @Test
+  void retainsTheOpenedFileThroughBeforeFlushAndReleasesItAfterCompletion() throws Exception {
+    var selected = temporaryDirectory.resolve("site.txt");
+    var relocated = temporaryDirectory.resolve("relocated.txt");
+    Files.writeString(selected, "selected bytes");
+    var completed = new CountDownLatch(1);
+
+    try (var app = new Shoostr()) {
+      app.beforeResponseFlush(
+          (request, response) -> {
+            try {
+              Files.move(selected, relocated);
+              Files.writeString(selected, "replacement bytes");
+            } catch (AccessDeniedException denied) {
+              // Windows may prevent renaming an open file; the selected handle must still serve it.
+              assertTrue(Files.exists(selected));
+              assertFalse(Files.exists(relocated));
+            }
+          });
+      app.afterRequest(outcome -> completed.countDown());
+      app.routes().staticFiles("/assets", temporaryDirectory);
+
+      try (var server = TestServer.start(app)) {
+        var response =
+            server.send(
+                request -> request.path("/assets/site.txt"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
+        assertEquals("selected bytes", response.body());
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        // Deletion also proves that the Windows handle was released at terminal completion.
+        Files.deleteIfExists(selected);
+        Files.deleteIfExists(relocated);
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void rejectsDirectoryAliasesToInternalAndExternalTargets(boolean internal) throws Exception {
+    var publication = Files.createDirectory(temporaryDirectory.resolve("public"));
+    var target =
+        Files.createDirectory((internal ? publication : temporaryDirectory).resolve("target"));
+    Files.writeString(target.resolve("secret.txt"), "alias target");
+    directoryLink(publication.resolve("linked"), target);
+
+    try (var app = new Shoostr()) {
+      app.routes().staticFiles("/assets", publication);
+
+      try (var server = TestServer.start(app)) {
+        var response =
+            server.send(
+                request -> request.path("/assets/linked/secret.txt"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(404, response.statusCode());
+        assertFalse(response.body().contains("alias target"));
+      }
+    }
+  }
+
+  @Test
   void runsMatchedHooksInOrderWithTheStaticMountPattern() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
     try (var app = new Shoostr()) {
@@ -197,7 +286,6 @@ class StaticResourcesTest {
   @ParameterizedTest
   @ValueSource(strings = {"/assets/missing.txt", "/outside"})
   void skipsMatchedHooksWhenNoMountedResourceMatches(String path) throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
     var stages = new CopyOnWriteArrayList<String>();
 
@@ -230,7 +318,6 @@ class StaticResourcesTest {
 
   @Test
   void servesConfiguredWelcomeFilesAtTheMountAndNestedDirectories() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>root</h1>");
     var nested = Files.createDirectory(temporaryDirectory.resolve("nested"));
     Files.writeString(nested.resolve("index.html"), "<h1>nested</h1>");
@@ -271,7 +358,6 @@ class StaticResourcesTest {
 
   @Test
   void usesConfiguredSpaFallbackOnlyForMissingResourcesInsideTheMount() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
     Files.writeString(temporaryDirectory.resolve("app.js"), "console.log('app');");
 
@@ -325,7 +411,6 @@ class StaticResourcesTest {
 
   @Test
   void runsMatchedHooksInOrderWithTheSpaFallbackMountPattern() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
 
     try (var app = new Shoostr()) {
@@ -415,7 +500,6 @@ class StaticResourcesTest {
 
   @Test
   void appliesRouteAdmissionAndHeadSemanticsToSpaFallback() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
 
     try (var app = new Shoostr()) {
@@ -452,7 +536,6 @@ class StaticResourcesTest {
 
   @Test
   void corsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("index.html"), "<h1>app</h1>");
     var admissions = new AtomicInteger();
 
@@ -538,7 +621,6 @@ class StaticResourcesTest {
 
   @Test
   void doesNotSwitchToSpaFallbackWhenSelectedFileDisappearsAfterAdmission() throws Exception {
-    assumeSecureDirectoryOperations();
     var selected = temporaryDirectory.resolve("app.js");
     Files.writeString(selected, "selected");
     Files.writeString(temporaryDirectory.resolve("index.html"), "fallback");
@@ -564,12 +646,10 @@ class StaticResourcesTest {
 
   @Test
   void spaFallbackDoesNotExposeTraversalOrSymlinksOutsideMount() throws Exception {
-    assumeSecureDirectoryOperations();
     var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("public"));
     Files.writeString(publicDirectory.resolve("index.html"), "fallback");
     Files.writeString(temporaryDirectory.resolve("secret.txt"), "top-secret-content");
-    Files.createSymbolicLink(
-        publicDirectory.resolve("link.txt"), temporaryDirectory.resolve("secret.txt"));
+    fileLink(publicDirectory.resolve("link.txt"), temporaryDirectory.resolve("secret.txt"));
 
     try (var app = new Shoostr()) {
       app.routes()
@@ -596,7 +676,6 @@ class StaticResourcesTest {
 
   @Test
   void redirectAfterMountedFileDiscardsTheSelectedResource() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
     try (var app = new Shoostr()) {
@@ -662,7 +741,6 @@ class StaticResourcesTest {
   @Timeout(15)
   void validatesTheFallbackResourceSelectedFromComposedStaticSources(boolean filesystemFirst)
       throws Exception {
-    assumeSecureDirectoryOperations();
     var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
     var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
     var fallback = filesystemFirst ? classpath : filesystem;
@@ -708,7 +786,6 @@ class StaticResourcesTest {
   @Timeout(15)
   void returnsNotFoundWhenNeitherComposedStaticSourceContainsThePath(boolean filesystemFirst)
       throws Exception {
-    assumeSecureDirectoryOperations();
     var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
     var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
     Files.writeString(filesystem.resolve("shared.txt"), "filesystem content");
@@ -748,7 +825,6 @@ class StaticResourcesTest {
   @Timeout(15)
   void prefersTheFirstRegisteredStaticSourceWhenBothContainTheSamePath(boolean filesystemFirst)
       throws Exception {
-    assumeSecureDirectoryOperations();
     var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
     var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
     Files.writeString(filesystem.resolve("shared.txt"), "filesystem winner");
@@ -780,7 +856,6 @@ class StaticResourcesTest {
   @Timeout(15)
   void fallsBackBetweenFilesystemAndClasspathSourcesAtTheSamePrefix(boolean filesystemFirst)
       throws Exception {
-    assumeSecureDirectoryOperations();
     var filesystem = Files.createDirectory(temporaryDirectory.resolve("filesystem"));
     var classpath = Files.createDirectory(temporaryDirectory.resolve("issue76-composed"));
     Files.writeString(filesystem.resolve("filesystem-only.txt"), "filesystem content");
@@ -935,7 +1010,6 @@ class StaticResourcesTest {
 
   @Test
   void supportsHeadRangesAndValidatorsForMountedFiles() throws Exception {
-    assumeSecureDirectoryOperations();
     var file = temporaryDirectory.resolve("site.txt");
     Files.writeString(file, "filesystem resource");
 
@@ -977,7 +1051,6 @@ class StaticResourcesTest {
   @Timeout(10)
   void servesExactMountedFileBytesOverTheConfiguredProtocol(
       boolean tls, boolean http2, HttpClient.Version expectedVersion) throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
 
     try (var app =
@@ -1009,7 +1082,6 @@ class StaticResourcesTest {
   @Timeout(10)
   void returnsMountedFileHeadMetadataWithoutBytesOverTheConfiguredProtocol(
       boolean tls, boolean http2, HttpClient.Version expectedVersion) throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
 
     try (var app =
@@ -1044,7 +1116,6 @@ class StaticResourcesTest {
   @Timeout(10)
   void returnsNotModifiedForAnUnchangedMountedFileAcrossResponseDates(
       boolean tls, boolean http2, HttpClient.Version expectedVersion) throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
     Files.setLastModifiedTime(
         temporaryDirectory.resolve("site.txt"),
@@ -1108,7 +1179,6 @@ class StaticResourcesTest {
 
   @Test
   void compressesMountedFilesWhenGzipIsAccepted() throws Exception {
-    assumeSecureDirectoryOperations();
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
@@ -1139,7 +1209,6 @@ class StaticResourcesTest {
   @ParameterizedTest
   @ValueSource(strings = {"identity", "gzip;q=0"})
   void servesMountedFilesUnencodedWhenGzipIsNotAccepted(String acceptEncoding) throws Exception {
-    assumeSecureDirectoryOperations();
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
@@ -1172,7 +1241,6 @@ class StaticResourcesTest {
   })
   void returnsNotModifiedForMountedFileValidatorsWithCompressionEnabled(
       String acceptEncoding, String requestHeader, String responseHeader) throws Exception {
-    assumeSecureDirectoryOperations();
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
@@ -1212,7 +1280,6 @@ class StaticResourcesTest {
 
   @Test
   void givesExplicitEndpointsPrecedenceOverMountedFiles() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
     try (var app = new Shoostr()) {
@@ -1233,7 +1300,6 @@ class StaticResourcesTest {
 
   @Test
   void composesFilesystemMountsInsidePathGroups() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "composed resource");
 
     try (var app = new Shoostr()) {
@@ -1254,7 +1320,6 @@ class StaticResourcesTest {
 
   @Test
   void doesNotExposeAnEncodedTraversalOutsideTheMountedDirectory() throws Exception {
-    assumeSecureDirectoryOperations();
     var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("public"));
     Files.writeString(temporaryDirectory.resolve("secret.txt"), "top-secret-content");
 
@@ -1277,7 +1342,6 @@ class StaticResourcesTest {
   @ParameterizedTest
   @ValueSource(strings = {"/%252e%252e/secret.txt", "/..%5csecret.txt", "/site.txt%00"})
   void rejectsUnsafeEncodedPathsUnderFilesystemMount(String path) throws Exception {
-    assumeSecureDirectoryOperations();
     var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("public"));
     Files.writeString(publicDirectory.resolve("site.txt"), "public resource");
     Files.writeString(temporaryDirectory.resolve("secret.txt"), "outside-mount-secret");
@@ -1350,14 +1414,46 @@ class StaticResourcesTest {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/site.txt:secret",
+        "/C:/Windows/win.ini",
+        "/C%3A/Windows/win.ini",
+        "/%5c%5cserver%5cshare%5cfile",
+        "/%5c%5c.%5cNUL",
+        "/NUL",
+        "/CON",
+        "/COM1",
+        "/site.txt.",
+        "/site.txt%20",
+        "/SITE.TXT"
+      })
+  void rejectsPlatformPathSyntaxAndNoncanonicalAliasesWithoutServerErrors(String path)
+      throws Exception {
+    Files.writeString(temporaryDirectory.resolve("site.txt"), "mounted-private-target");
+
+    try (var app = new Shoostr()) {
+      app.routes().staticFiles("/assets", temporaryDirectory);
+
+      try (var server = TestServer.start(app);
+          var socket = new Socket(InetAddress.getLoopbackAddress(), app.port())) {
+        assertEquals(200, server.send(request -> request.path("/assets/site.txt")).statusCode());
+        socket.setSoTimeout(3000);
+        var request =
+            "GET /assets" + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+        socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+        var result = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+        assertTrue(
+            result.startsWith("HTTP/1.1 400 ") || result.startsWith("HTTP/1.1 404 "), result);
+        assertFalse(result.contains("mounted-private-target"));
+      }
+    }
+  }
+
   @Test
-  void returnsNotFoundForMissingFilesDirectoriesAndNonRegularResources() throws Exception {
-    assumeSecureDirectoryOperations();
+  void returnsNotFoundForMissingFilesAndDirectories() throws Exception {
     Files.createDirectory(temporaryDirectory.resolve("directory"));
-    var nonRegular = temporaryDirectory.resolve("named-pipe");
-    var process = new ProcessBuilder("mkfifo", nonRegular.toString()).start();
-    assertTrue(process.waitFor(5, TimeUnit.SECONDS));
-    assertEquals(0, process.exitValue());
 
     try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", temporaryDirectory);
@@ -1371,21 +1467,42 @@ class StaticResourcesTest {
         var directory =
             test.send(
                 request -> request.path("/assets/directory"), HttpResponse.BodyHandlers.ofString());
-        var pipe =
-            test.send(
-                request -> request.path("/assets/named-pipe").timeout(Duration.ofSeconds(2)),
-                HttpResponse.BodyHandlers.ofString());
-
         assertEquals(404, missing.statusCode());
         assertEquals(404, directory.statusCode());
-        assertEquals(404, pipe.statusCode());
+      }
+    }
+  }
+
+  @Test
+  void rejectsNamedPipesWithoutOpeningThem() throws Exception {
+    var pipe = temporaryDirectory.resolve("named-pipe");
+    Process process;
+
+    try {
+      process = new ProcessBuilder("mkfifo", pipe.toString()).start();
+    } catch (IOException failure) {
+      assumeTrue(false, "Named-pipe fixture unavailable: " + failure.getMessage());
+      return;
+    }
+
+    assertTrue(process.waitFor(5, TimeUnit.SECONDS));
+    assertEquals(0, process.exitValue());
+
+    try (var app = new Shoostr()) {
+      app.routes().staticFiles("/assets", temporaryDirectory);
+
+      try (var server = TestServer.start(app)) {
+        assertEquals(
+            404,
+            server
+                .send(request -> request.path("/assets/named-pipe").timeout(Duration.ofSeconds(2)))
+                .statusCode());
       }
     }
   }
 
   @Test
   void appliesMatchedRouteGatesToMountedFiles() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
 
     try (var app = new Shoostr()) {
@@ -1408,7 +1525,6 @@ class StaticResourcesTest {
 
   @Test
   void reportsMountedFileRequestsToTerminalObservers() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.writeString(temporaryDirectory.resolve("site.txt"), "filesystem resource");
     var outcome = new AtomicReference<RequestOutcome>();
     var completed = new CountDownLatch(1);
@@ -1438,7 +1554,6 @@ class StaticResourcesTest {
 
   @Test
   void resolvesTheCurrentFilesystemFileForEachRequest() throws Exception {
-    assumeSecureDirectoryOperations();
     var file = temporaryDirectory.resolve("site.txt");
     Files.writeString(file, "first");
 
@@ -1465,8 +1580,7 @@ class StaticResourcesTest {
   }
 
   @Test
-  void servesTheOriginalMountAfterAGateReplacesItsPathWithAnExternalSymlink() throws Exception {
-    assumeSecureDirectoryOperations();
+  void rejectsAnAliasedMountReplacedAfterRouteAdmission() throws Exception {
     var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("public"));
     var relocatedDirectory = temporaryDirectory.resolve("relocated");
     var externalDirectory = Files.createDirectory(temporaryDirectory.resolve("external"));
@@ -1477,7 +1591,7 @@ class StaticResourcesTest {
       app.beforeRouteHandler(
           (ignored14, ignored15) -> {
             Files.move(publicDirectory, relocatedDirectory);
-            Files.createSymbolicLink(publicDirectory, externalDirectory);
+            directoryLink(publicDirectory, externalDirectory);
           });
       app.routes().staticFiles("/assets", publicDirectory);
 
@@ -1487,17 +1601,15 @@ class StaticResourcesTest {
             test.send(
                 request -> request.path("/assets/site.txt"), HttpResponse.BodyHandlers.ofString());
 
-        assertEquals(200, result.statusCode());
-        assertEquals("mounted content", result.body());
+        assertEquals(404, result.statusCode());
+        assertFalse(result.body().contains("external content"));
       }
     }
   }
 
   @Test
   @Timeout(20)
-  void servesConcurrentShallowAndNestedRequestsFromTheAnchoredMountAfterItsPathIsReplaced()
-      throws Exception {
-    assumeSecureDirectoryOperations();
+  void servesConcurrentRequestsFromATrustedReplacementDirectory() throws Exception {
     var mounted = Files.createDirectories(temporaryDirectory.resolve("mounted"));
     var outside = Files.createDirectories(temporaryDirectory.resolve("outside"));
     for (var base : List.of(mounted, outside)) {
@@ -1514,7 +1626,7 @@ class StaticResourcesTest {
     try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", mounted);
       Files.move(mounted, temporaryDirectory.resolve("relocated"));
-      Files.createSymbolicLink(mounted, outside);
+      Files.move(outside, mounted);
 
       try (var test = TestServer.start(app);
           var clients = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -1539,7 +1651,7 @@ class StaticResourcesTest {
                                       .timeout(Duration.ofSeconds(3)),
                               HttpResponse.BodyHandlers.ofString());
                       assertEquals(200, response.statusCode());
-                      assertEquals("mounted:" + prefix + index, response.body());
+                      assertEquals("outside:" + prefix + index, response.body());
                     }
                     return null;
                   }));
@@ -1557,27 +1669,31 @@ class StaticResourcesTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"directory,500", "leaf,404", "missing,404"})
+  @CsvSource({"directory,404", "leaf,404", "missing,404"})
   void rejectsNestedSymlinkSubstitutionAndMissingParentsAfterRouteSelection(
       String change, int expectedStatus) throws Exception {
-    assumeSecureDirectoryOperations();
     var mounted = Files.createDirectories(temporaryDirectory.resolve("mounted/nested/deeper"));
     var outside = Files.createDirectories(temporaryDirectory.resolve("outside/deeper"));
     Files.writeString(mounted.resolve("file.txt"), "mounted content");
     Files.writeString(outside.resolve("file.txt"), "outside secret");
     var root = temporaryDirectory.resolve("mounted");
 
+    if ("leaf".equals(change)) {
+      var probe = temporaryDirectory.resolve("link-probe");
+      fileLink(probe, outside.resolve("file.txt"));
+      Files.delete(probe);
+    }
+
     try (var app = new Shoostr()) {
       app.beforeRouteHandler(
           (request, response) -> {
             if ("directory".equals(change)) {
               Files.move(root.resolve("nested"), temporaryDirectory.resolve("relocated"));
-              Files.createSymbolicLink(
-                  root.resolve("nested"), temporaryDirectory.resolve("outside"));
+              directoryLink(root.resolve("nested"), temporaryDirectory.resolve("outside"));
             } else {
               Files.delete(mounted.resolve("file.txt"));
               if ("leaf".equals(change)) {
-                Files.createSymbolicLink(mounted.resolve("file.txt"), outside.resolve("file.txt"));
+                fileLink(mounted.resolve("file.txt"), outside.resolve("file.txt"));
               } else {
                 Files.delete(mounted);
               }
@@ -1599,7 +1715,6 @@ class StaticResourcesTest {
   @Test
   @Timeout(15)
   void completesShutdownWhileConcurrentShallowAndNestedRequestsAreAdmitted() throws Exception {
-    assumeSecureDirectoryOperations();
     Files.createDirectories(temporaryDirectory.resolve("nested/deeper"));
     Files.writeString(temporaryDirectory.resolve("file.txt"), "mounted content");
     Files.writeString(temporaryDirectory.resolve("nested/deeper/file.txt"), "mounted content");
@@ -1622,7 +1737,7 @@ class StaticResourcesTest {
       app.start();
       var origin = "http://127.0.0.1:" + app.port();
       var pending =
-          List.of("/assets/file.txt", "/assets/nested/deeper/file.txt").stream()
+          Stream.of("/assets/file.txt", "/assets/nested/deeper/file.txt")
               .map(
                   path ->
                       client.sendAsync(
@@ -1657,11 +1772,10 @@ class StaticResourcesTest {
 
   @Test
   void doesNotFollowFilesystemSymlinksOutsideTheMountedDirectory() throws Exception {
-    assumeSecureDirectoryOperations();
     var publicDirectory = Files.createDirectory(temporaryDirectory.resolve("public"));
     var secret = temporaryDirectory.resolve("secret.txt");
     Files.writeString(secret, "top-secret-content");
-    Files.createSymbolicLink(publicDirectory.resolve("link.txt"), secret);
+    fileLink(publicDirectory.resolve("link.txt"), secret);
 
     try (var app = new Shoostr()) {
       app.routes().staticFiles("/assets", publicDirectory);
@@ -1740,11 +1854,33 @@ class StaticResourcesTest {
     }
   }
 
-  private void assumeSecureDirectoryOperations() throws IOException {
-    try (var stream = Files.newDirectoryStream(temporaryDirectory)) {
-      assumeTrue(
-          stream instanceof SecureDirectoryStream<?>,
-          "Filesystem static mounts require SecureDirectoryStream support");
+  private static void fileLink(Path link, Path target) throws IOException {
+    try {
+      Files.createSymbolicLink(link, target);
+    } catch (FileSystemException failure) {
+      var reason = Objects.requireNonNullElse(failure.getReason(), "");
+      if (!reason.contains("privilege")
+          && !reason.contains("not permitted")
+          && !reason.contains("not supported")) {
+        throw failure;
+      }
+
+      assumeTrue(false, "File symbolic links unavailable: " + reason);
+    }
+  }
+
+  private static void directoryLink(Path link, Path target) throws Exception {
+    if (System.getProperty("os.name").startsWith("Windows")) {
+      var process =
+          new ProcessBuilder(
+                  "cmd.exe", "/d", "/c", "mklink", "/J", link.toString(), target.toString())
+              .redirectErrorStream(true)
+              .start();
+      var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+      assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction creation timed out");
+      assertEquals(0, process.exitValue(), output);
+    } else {
+      Files.createSymbolicLink(link, target);
     }
   }
 

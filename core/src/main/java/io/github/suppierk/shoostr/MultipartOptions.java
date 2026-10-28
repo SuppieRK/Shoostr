@@ -27,8 +27,7 @@ public record MultipartOptions(
     @Nullable Path temporaryDirectory) {
   /** Validates finite multipart resource limits. */
   public MultipartOptions {
-    if (maxBytes < 1
-        || maxFileBytes < 1
+    if (maxFileBytes < 1
         || maxFileBytes > maxBytes
         || maxParts < 1
         || maxPartHeadersBytes < 1

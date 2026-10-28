@@ -264,8 +264,7 @@ class HttpExceptionHandlingTest {
       var body =
           HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(new byte[5]));
       var result =
-          client.send(
-              request(app, "/body").POST(body).build(), HttpResponse.BodyHandlers.ofString());
+          client.send(request(app).POST(body).build(), HttpResponse.BodyHandlers.ofString());
       assertEquals(413, result.statusCode());
       assertEquals("handled by application", result.body());
     }
@@ -304,8 +303,8 @@ class HttpExceptionHandlingTest {
         new HttpException(HttpStatusCodes.NETWORK_AUTHENTICATION_REQUIRED, "secret", cause) {});
   }
 
-  private static HttpRequest.Builder request(Shoostr app, String path) {
-    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
+  private static HttpRequest.Builder request(Shoostr app) {
+    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
         .timeout(Duration.ofSeconds(5));
   }
 }

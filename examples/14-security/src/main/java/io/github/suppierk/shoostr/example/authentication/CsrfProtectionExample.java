@@ -23,42 +23,43 @@ public final class CsrfProtectionExample {
         // Installation is separate from selection on the two protected writes below.
         .extensions(csrf)
         .routes(
-            routes -> {
-              routes
-                  .get(
-                      "/csrf-token",
-                      (request, response) ->
-                          // Send the session-bound token without caching it; clients echo it on
-                          // writes.
-                          response.setHeader("Cache-Control", "no-store").text(csrf.token(request)))
-                  .get(
-                      "/preferences",
-                      (request, response) ->
-                          response.text(
+            routes ->
+                routes
+                    .get(
+                        "/csrf-token",
+                        (request, response) ->
+                            // Send the session-bound token without caching it; clients echo it on
+                            // writes.
+                            response
+                                .setHeader("Cache-Control", "no-store")
+                                .text(csrf.token(request)))
+                    .get(
+                        "/preferences",
+                        (request, response) ->
+                            response.text(
+                                request
+                                    .getSession()
+                                    .map(session -> (String) session.getAttribute(THEME_ATTRIBUTE))
+                                    .orElse("unset")))
+                    .post(
+                        "/preferences",
+                        (request, response) -> {
+                          var theme =
                               request
-                                  .getSession()
-                                  .map(session -> (String) session.getAttribute(THEME_ATTRIBUTE))
-                                  .orElse("unset")))
-                  .post(
-                      "/preferences",
-                      (request, response) -> {
-                        var theme =
-                            request
-                                .formParam(THEME_ATTRIBUTE)
-                                .filter(value -> "light".equals(value) || "dark".equals(value))
-                                .orElseThrow(BadRequestException::new);
-                        request.getSession().orElseThrow().setAttribute(THEME_ATTRIBUTE, theme);
-                        response.text(theme);
-                      },
-                      extensions -> extensions.with(csrf))
-                  .post(
-                      "/session/renew",
-                      (request, response) -> {
-                        request.renewSessionId();
-                        // Return the token for the renewed session binding, not the previous ID.
-                        response.setHeader("Cache-Control", "no-store").text(csrf.token(request));
-                      },
-                      extensions -> extensions.with(csrf));
-            });
+                                  .formParam(THEME_ATTRIBUTE)
+                                  .filter(value -> "light".equals(value) || "dark".equals(value))
+                                  .orElseThrow(BadRequestException::new);
+                          request.getSession().orElseThrow().setAttribute(THEME_ATTRIBUTE, theme);
+                          response.text(theme);
+                        },
+                        extensions -> extensions.with(csrf))
+                    .post(
+                        "/session/renew",
+                        (request, response) -> {
+                          request.renewSessionId();
+                          // Return the token for the renewed session binding, not the previous ID.
+                          response.setHeader("Cache-Control", "no-store").text(csrf.token(request));
+                        },
+                        extensions -> extensions.with(csrf)));
   }
 }

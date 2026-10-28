@@ -15,10 +15,12 @@ Shoostr infers the media type from the filename and uses `application/octet-stre
 
 Directory listings, welcome files and single-page application (SPA) fallback are disabled by default.
 Enable welcome-file or fallback behavior through `StaticOptions` when the mount needs it: a welcome file belongs to the requested directory, while the fallback comes from the mount root.
-Fallback does not make unsafe traversal valid, and an external symbolic link can select the fallback without exposing its target.
+Fallback does not make unsafe traversal valid, and an external directory alias can select the fallback without exposing its target.
 
 Keep each mount limited to public assets rather than exposing a project or storage root.
-Filesystem mounts require a provider with secure directory operations and do not follow symbolic links beneath the anchored root; classpath mounts reject aliased resources.
+Filesystem mounts use Jetty resources and reject aliased paths, including symbolic links beneath the mount. Classpath mounts also reject aliased resources.
+
+Keep the publication directory and its ancestors under the control of the application or deployment owner, with operating-system permissions that exclude untrusted writers. Path checks and file opens are separate operations, so a mount does not protect against hostile concurrent filesystem changes. Replacing the mounted pathname can change later responses or produce a 404; the mount does not retain the original directory after a rename.
 Missing resources outside a configured fallback produce `404`.
 Keep untrusted executable HTML and JavaScript off the application's trusted origin; follow the [browser trust guidance](../../security/csrf/#description) to use a separate origin and host with host-only application cookies.
 
@@ -37,6 +39,7 @@ Keep source files available through transfer completion, not merely until the ha
 ## Test
 
 The test constructs both resource directories itself and adds the bundled directory to a temporary classloader.
-Its boundary checks distinguish a missing file, a rejected traversal and a symbolic link that selects the SPA shell instead of its external target.
+Its boundary checks distinguish a missing file, a rejected traversal and an external directory alias that selects the SPA shell instead of its target.
+The test uses a directory junction on Windows and a symbolic link on other systems.
 
 <Code code={test} lang="java" title="StaticResourcesExampleTest.java" />

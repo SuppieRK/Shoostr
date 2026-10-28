@@ -162,14 +162,14 @@ class WebSocketEqualityTest {
       throws ReflectiveOperationException {
     var field = WebSocketConnection.class.getDeclaredField("listener");
     field.setAccessible(true);
-    return ManagedWebSocket.class.cast(field.get(connection));
+    return (ManagedWebSocket) field.get(connection);
   }
 
   private static Session session(WebSocketConnection connection)
       throws ReflectiveOperationException {
     var field = WebSocketConnection.class.getDeclaredField("session");
     field.setAccessible(true);
-    return Session.class.cast(field.get(connection));
+    return (Session) field.get(connection);
   }
 
   private static Codec codec(String marker) {

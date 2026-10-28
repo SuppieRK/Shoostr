@@ -105,7 +105,7 @@ class RegistrationDepthTest {
     var configured = new AtomicInteger();
     var userCalls = new AtomicInteger();
     var provider =
-        new Extension<Object>() {
+        new Extension<>() {
           @Override
           public Object configure(Extensions endpoint, Object inherited) {
             configured.incrementAndGet();

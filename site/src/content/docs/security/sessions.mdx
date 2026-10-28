@@ -14,12 +14,12 @@ One application-level handler manages sessions for ordinary requests; it creates
 Sessions are part of the standard request API, so they do not require installing or selecting an extension.
 A session does not establish a principal or verify an identity; apply [authentication](../authentication/) separately when stored state belongs to an account.
 
-| Method | Result |
-| --- | --- |
-| `getSession()` | Read an existing session without creating one; absence returns an empty `Optional`. |
+| Method                 | Result                                                                                                                                                                                                                                             |
+| ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `getSession()`         | Read an existing session without creating one; absence returns an empty `Optional`.                                                                                                                                                                |
 | `getOrCreateSession()` | Return the native `Session` directly, creating it before the response commits if absent. An existing session remains accessible after commitment. Disabled session support or invalidation earlier in this request throws `IllegalStateException`. |
-| `renewSessionId()` | Change an existing session's identifier while retaining its attributes, before the response commits. |
-| `session.invalidate()` | Invalidate the native session and its stored state. |
+| `renewSessionId()`     | Change an existing session's identifier while retaining its attributes, before the response commits.                                                                                                                                               |
+| `session.invalidate()` | Invalidate the native session and its stored state.                                                                                                                                                                                                |
 
 The configuration callback receives the native `SessionHandler` after `modifyServer(...)` callbacks and before startup.
 Use it for cookie attributes, idle limits, and the cache and store that provide persistence.

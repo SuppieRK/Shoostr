@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -9,6 +10,8 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.time.Duration;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -70,19 +73,16 @@ class PublishedConsumerTest {
   void terminatesOwnedProcessesAndPreservesInterruption() throws Exception {
     try {
       assertThrows(InterruptedException.class, () -> runConsumer("pom", "interrupted", "", 0));
-      assertTrue(Thread.currentThread().isInterrupted());
-      Thread.interrupted();
+      assertTrue(Thread.interrupted(), "Consumer cleanup must restore interruption");
       assertOwnedProcessesStopped("interrupted");
     } finally {
       Thread.interrupted();
     }
   }
 
-  // Poll actual readiness under a fixed deadline; sleeping does not establish completion.
-  @SuppressWarnings("java:S2925")
   private static String runConsumer(String metadata, String scenario, String extraBuild, int exit)
       throws Exception {
-    var directory = Files.createTempDirectory(workspace, metadata + "-");
+    var directory = Files.createTempDirectory(workspace, metadata + " consumer ");
     var root = Path.of("..").toAbsolutePath().normalize();
     var repository = directory.resolve("repository");
     copyRepository(root.resolve("build/published-consumer-repository"), repository);
@@ -132,9 +132,17 @@ class PublishedConsumerTest {
         project.resolve("build.gradle"),
         evidence.resolve("build.gradle"),
         StandardCopyOption.REPLACE_EXISTING);
-    var command =
+    var command = new ArrayList<String>();
+    if (System.getProperty("os.name").startsWith("Windows")) {
+      command.addAll(List.of("cmd.exe", "/d", "/c", "gradlew.bat"));
+    } else {
+      command.add(root.resolve("gradlew").toString());
+    }
+
+    command.addAll(
         List.of(
-            root.resolve("gradlew").toString(),
+            "--project-dir",
+            project.toString(),
             "--no-daemon",
             "--no-build-cache",
             "--refresh-dependencies",
@@ -150,12 +158,13 @@ class PublishedConsumerTest {
             "dependencies",
             "--configuration",
             "runtimeClasspath",
-            "run");
+            "run"));
     Files.write(evidence.resolve("command.txt"), command);
+    Files.writeString(evidence.resolve("wrapper-working-directory.txt"), root.toString());
     var output = evidence.resolve("wrapper.log");
     var process =
         new ProcessBuilder(command)
-            .directory(project.toFile())
+            .directory(root.toFile())
             .redirectErrorStream(true)
             .redirectOutput(output.toFile())
             .start();
@@ -163,10 +172,11 @@ class PublishedConsumerTest {
     try (var ignored = (AutoCloseable) () -> stopOwnedProcesses(process)) {
       if (waitForReady) {
         var ready = project.resolve("owned-application.pid");
-        var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(60);
-        while (!Files.exists(ready) && process.isAlive() && System.nanoTime() < deadline) {
-          Thread.sleep(25);
-        }
+        await("consumer readiness; output at " + output)
+            .atMost(Duration.ofSeconds(60))
+            .pollDelay(Duration.ZERO)
+            .pollInterval(Duration.ofMillis(25))
+            .until(() -> Files.exists(ready) || !process.isAlive());
 
         assertTrue(Files.exists(ready), () -> "Consumer never became ready: " + readOutput(output));
 
@@ -222,8 +232,7 @@ class PublishedConsumerTest {
       while (owned.stream().anyMatch(ProcessHandle::isAlive) && System.nanoTime() < deadline) {
         try {
           TimeUnit.NANOSECONDS.sleep(
-              Math.min(
-                  TimeUnit.MILLISECONDS.toNanos(10), Math.max(1, deadline - System.nanoTime())));
+              Math.clamp(deadline - System.nanoTime(), 1L, TimeUnit.MILLISECONDS.toNanos(10)));
         } catch (InterruptedException ignored2) {
           interrupted = true;
         }

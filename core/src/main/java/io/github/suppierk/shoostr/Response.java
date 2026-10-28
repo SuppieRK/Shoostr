@@ -577,11 +577,11 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   }
 
   /**
-   * Stages an already-open filesystem descriptor using only descriptor-relative metadata.
+   * Stages an already-open filesystem channel with its captured length and modification time.
    *
    * @param channel selected descriptor retained until terminal transfer
    * @param length selected representation length
-   * @param lastModified descriptor-relative modification time
+   * @param lastModified modification time sampled when selecting the resource
    * @param contentType response media type
    * @return this response
    * @throws IOException if output cannot be staged

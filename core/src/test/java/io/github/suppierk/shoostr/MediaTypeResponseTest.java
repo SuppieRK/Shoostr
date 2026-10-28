@@ -75,13 +75,11 @@ class MediaTypeResponseTest {
                     .status(202)
                     .setHeader("Vary", "Origin")
                     .body(MediaType.APPLICATION_JSON, "\"kept\"".getBytes(StandardCharsets.UTF_8));
-                assertThrows(
-                    NullPointerException.class, () -> response.negotiate((MediaType) null));
+                assertThrows(NullPointerException.class, () -> response.negotiate(null));
                 assertThrows(
                     NullPointerException.class,
                     () ->
-                        response.negotiate(
-                            MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN, (MediaType) null));
+                        response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN, null));
               });
 
       try (var test = TestServer.start(app)) {

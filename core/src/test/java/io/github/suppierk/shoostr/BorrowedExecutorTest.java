@@ -219,12 +219,7 @@ class BorrowedExecutorTest {
       var routes = app.routes();
       assertThrows(
           NullPointerException.class,
-          () ->
-              routes.get(
-                  "/selected",
-                  (ExecutorService) null,
-                  ENDPOINT,
-                  ignored7 -> configured.incrementAndGet()));
+          () -> routes.get("/selected", null, ENDPOINT, ignored7 -> configured.incrementAndGet()));
       assertEquals(0, configured.get());
       assertSame(app.routes(), app.routes().get("/selected", workers, ENDPOINT));
     }

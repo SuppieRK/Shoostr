@@ -1,11 +1,12 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.assertNotBeforeExpiry;
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.awaitTermination;
 import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -29,7 +30,6 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -40,6 +40,7 @@ class McpPostExpiryTest {
   @Test
   @Timeout(20)
   void aFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires() throws Exception {
+    var expiry = new AtomicReference<Instant>();
     var httpEnded = new CountDownLatch(1);
     var nativeCompleted = new CountDownLatch(1);
     var cancellations = new AtomicInteger();
@@ -47,11 +48,15 @@ class McpPostExpiryTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            request ->
-                new McpIdentity(
-                    "alice:client",
-                    McpTransportContext.EMPTY,
-                    Instant.now().plusSeconds(request.header("X-Old-Token").isPresent() ? 2 : 10)),
+            request -> {
+              var verifiedExpiry =
+                  Instant.now().plusSeconds(request.header("X-Old-Token").isPresent() ? 2 : 10);
+              if (request.header("X-Old-Token").isPresent()) {
+                expiry.set(verifiedExpiry);
+              }
+
+              return new McpIdentity("alice:client", McpTransportContext.EMPTY, verifiedExpiry);
+            },
             (ignored, ignored2) -> {});
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
     var mcp =
@@ -123,8 +128,11 @@ class McpPostExpiryTest {
               HttpResponse.BodyHandlers.ofInputStream());
       var mapper = McpJsonDefaults.getMapper();
 
-      try (var reader =
-          new BufferedReader(new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+      var body = response.body();
+      // Close native input first: a blocked readLine holds the BufferedReader's monitor.
+
+      try (var reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8));
+          body) {
         assertEquals(200, response.statusCode());
         String line;
         do {
@@ -147,17 +155,11 @@ class McpPostExpiryTest {
                     // A token deadline cannot replace already committed200 with a401.
                   }
 
-                  return null;
+                  return Instant.now();
                 });
-        await("pending native work keeps its HTTP stream open before expiry")
-            .pollDelay(Duration.ZERO)
-            .pollInterval(Duration.ofMillis(10))
-            .during(Duration.ofMillis(100))
-            .atMost(Duration.ofMillis(1100))
-            .failFast("the pending HTTP stream ended prematurely", ended::isDone)
-            .until(() -> !ended.isDone());
-        ended.get(5, TimeUnit.SECONDS);
-        assertTrue(httpEnded.await(5, TimeUnit.SECONDS));
+        var verifiedExpiry = expiry.get();
+        awaitTermination(verifiedExpiry, () -> ended.isDone() && httpEnded.getCount() == 0);
+        assertNotBeforeExpiry(verifiedExpiry, ended.get());
         assertEquals(0, cancellations.get());
         assertFalse(
             Objects.requireNonNull(nativeSession.get()).hasOpenStream(),
@@ -176,7 +178,9 @@ class McpPostExpiryTest {
                         .header("MCP-Protocol-Version", "2025-11-25")
                         .body(replyBody));
         assertEquals(202, reply.statusCode());
-        assertTrue(nativeCompleted.await(5, TimeUnit.SECONDS));
+        await("fresh reply completes the outstanding native request")
+            .atMost(Duration.ofSeconds(5))
+            .until(() -> nativeCompleted.getCount() == 0);
         assertEquals(0, cancellations.get());
       }
     }

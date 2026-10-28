@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.TrustManagerFactory;
 import org.junit.jupiter.api.BeforeAll;
@@ -127,15 +128,13 @@ class LoginLogoutExampleTest {
       var alice = first.get(10, TimeUnit.SECONDS);
       var bob = second.get(10, TimeUnit.SECONDS);
       assertEquals(
-          List.of(200, 409),
-          List.of(alice.statusCode(), bob.statusCode()).stream().sorted().toList());
+          List.of(200, 409), Stream.of(alice.statusCode(), bob.statusCode()).sorted().toList());
       var winner = alice.statusCode() == 200 ? alice : bob;
       var loser = alice.statusCode() == 409 ? alice : bob;
       var account = alice.statusCode() == 200 ? "alice" : "bob";
       assertEquals(1, winner.headers().allValues("Set-Cookie").size());
       assertTrue(loser.headers().allValues("Set-Cookie").isEmpty());
-      assertNotEquals(
-          cookie(anonymous, "__Host-SHOOSTR-AUTH"), cookie(winner, "__Host-SHOOSTR-AUTH"));
+      assertNotEquals(cookie(anonymous), cookie(winner));
       assertNotEquals(anonymous.body(), winner.body());
       assertEquals(account + ":light", account(test, cookies(winner)).body());
       assertEquals(401, account(test, cookies(anonymous)).statusCode());
@@ -164,8 +163,7 @@ class LoginLogoutExampleTest {
               anonymous.body(),
               "username=reader&password=local-only");
       assertEquals(200, login.statusCode());
-      assertNotEquals(
-          cookie(anonymous, "__Host-SHOOSTR-AUTH"), cookie(login, "__Host-SHOOSTR-AUTH"));
+      assertNotEquals(cookie(anonymous), cookie(login));
       assertNotEquals(anonymous.body(), login.body());
       assertEquals(1, login.headers().allValues("Set-Cookie").size());
       assertEquals("no-store", login.headers().firstValue("Cache-Control").orElseThrow());
@@ -377,7 +375,7 @@ class LoginLogoutExampleTest {
           401,
           post(test, "/account/theme", cookies(login), login.body(), "theme=dark").statusCode());
       var fresh = bootstrap(test);
-      assertNotEquals(cookie(login, "__Host-SHOOSTR-AUTH"), cookie(fresh, "__Host-SHOOSTR-AUTH"));
+      assertNotEquals(cookie(login), cookie(fresh));
       var relogin =
           post(test, "/login", cookies(fresh), fresh.body(), "username=reader&password=local-only");
       assertEquals(200, relogin.statusCode());
@@ -447,9 +445,9 @@ class LoginLogoutExampleTest {
         .collect(Collectors.joining("; "));
   }
 
-  private static String cookie(HttpResponse<?> response, String name) {
+  private static String cookie(HttpResponse<?> response) {
     return response.headers().allValues("Set-Cookie").stream()
-        .filter(value -> value.startsWith(name + "="))
+        .filter(value -> value.startsWith("__Host-SHOOSTR-AUTH="))
         .map(value -> value.split(";", 2)[0])
         .findFirst()
         .orElseThrow();

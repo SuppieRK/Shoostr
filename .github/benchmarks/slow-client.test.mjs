@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
@@ -94,6 +95,7 @@ for (const [field, value, message] of [
 const start = Date.parse('2026-10-19T00:00:00Z');
 const phase = { start_ms: start + 1000, load_end_ms: start + 62000,
   recovery_end_ms: start + 92000 };
+/** @type {number[]} */
 const points = Array.from({ length: 100 }, (_, index) => start + index * 1000);
 
 test('requires the full load and recovery phases with complete probe coverage', () => {

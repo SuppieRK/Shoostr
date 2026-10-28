@@ -24,11 +24,11 @@ The default source policy requires the target origin, using `Referer` only when 
 For cross-origin scripts, configure additional exact origins through `Csrf.builder().trustedOrigins(...)` and a separate [CORS policy](../cors/).
 The builder accepts required-first varargs or a set, and `build()` validates the origin policy before it can be installed.
 
-| Operation | Token behavior |
-| --- | --- |
-| `csrf.token(request)` | Create a session if needed and return its stable, unpredictable token. |
+| Operation                  | Token behavior                                                                                                                                      |
+| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `csrf.token(request)`      | Create a session if needed and return its stable, unpredictable token.                                                                              |
 | `request.renewSessionId()` | Retain native attributes but immediately make the old token invalid; the next `token(request)` call generates a fresh value for the new identifier. |
-| `session.invalidate()` | Remove the session and its expected token; obtain a new session and proof in a later request. |
+| `session.invalidate()`     | Remove the session and its expected token; obtain a new session and proof in a later request.                                                       |
 
 A token can be reused while its issuing session identifier remains valid; it is not a one-use operation nonce.
 Renewal or invalidation ends that binding. Persistence and consistency across multiple application instances depend on the configured native session store.

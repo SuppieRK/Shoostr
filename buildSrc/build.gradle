@@ -9,6 +9,11 @@ group = 'io.github.suppierk'
 repositories { mavenCentral() }
 java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 dependencies {
+	constraints {
+		add('implementation', 'com.google.guava:guava:33.7.2-jre') {
+			because 'Fix CVE-2026-102554 in Checkstyle and its exported build classpath.'
+		}
+	}
 	implementation 'com.puppycrawl.tools:checkstyle:14.3.0'
 	compileOnly 'org.jspecify:jspecify:1.0.1'
 }

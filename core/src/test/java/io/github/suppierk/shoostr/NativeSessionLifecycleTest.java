@@ -289,7 +289,7 @@ class NativeSessionLifecycleTest {
           @Override
           public void handle(Request request, Response response) {
             authenticated.incrementAndGet();
-            if (!request.header("Authorization").filter("Bearer secret"::equals).isPresent()) {
+            if (request.header("Authorization").filter("Bearer secret"::equals).isEmpty()) {
               throw new UnauthorizedException();
             }
 

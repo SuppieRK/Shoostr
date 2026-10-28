@@ -666,8 +666,7 @@ class LifecycleHooksTest {
                   () -> new ByteArrayInputStream(new byte[5]))
               : HttpRequest.BodyPublishers.ofByteArray(new byte[5]);
       var result =
-          client.send(
-              request("/limit").POST(publisher).build(), HttpResponse.BodyHandlers.ofString());
+          client.send(request().POST(publisher).build(), HttpResponse.BodyHandlers.ofString());
       assertEquals(413, result.statusCode());
       assertEquals(chunked, gate.get());
       assertFalse(entered.get());
@@ -1245,8 +1244,8 @@ class LifecycleHooksTest {
     throw new IOException("Header limit exceeded");
   }
 
-  private HttpRequest.Builder request(String path) {
-    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
+  private HttpRequest.Builder request() {
+    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/limit"))
         .timeout(Duration.ofSeconds(3));
   }
 }

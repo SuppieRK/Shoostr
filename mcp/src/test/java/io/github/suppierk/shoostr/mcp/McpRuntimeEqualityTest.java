@@ -95,7 +95,7 @@ class McpRuntimeEqualityTest {
           var secondServer = TestServer.start(secondApp)) {
         var servers = List.of(firstServer, secondServer);
         var providers = List.of(field(first, "provider"), field(second, "provider"));
-        var sessions = new ArrayList<Object>();
+        var sessions = new ArrayList<>();
         var identifiers = new ArrayList<String>();
         for (int index = 0; index < servers.size(); index++) {
           var initialized = post(servers.get(index), INITIALIZE, null);
@@ -109,8 +109,8 @@ class McpRuntimeEqualityTest {
           hashes.put(session, session.hashCode());
           hashes.put(providers.get(index), providers.get(index).hashCode());
         }
-        var firstDeadlines = ScheduledThreadPoolExecutor.class.cast(field(first, "deadlines"));
-        var secondDeadlines = ScheduledThreadPoolExecutor.class.cast(field(second, "deadlines"));
+        var firstDeadlines = (ScheduledThreadPoolExecutor) field(first, "deadlines");
+        var secondDeadlines = (ScheduledThreadPoolExecutor) field(second, "deadlines");
         var lifetimes =
             List.of(
                 new McpRequestLifetime(firstDeadlines, "Bearer"),
@@ -157,12 +157,12 @@ class McpRuntimeEqualityTest {
                       (ScheduledFuture<?>) field(providers.get(1), "idleExpiry"))
                   .withPrefabValues(
                       McpStreamableServerSession.class,
-                      McpStreamableServerSession.class.cast(field(sessions.get(0), "sdk")),
-                      McpStreamableServerSession.class.cast(field(sessions.get(1), "sdk")))
+                      (McpStreamableServerSession) field(sessions.get(0), "sdk"),
+                      (McpStreamableServerSession) field(sessions.get(1), "sdk"))
                   .withPrefabValues(
                       Disposable.Composite.class,
-                      Disposable.Composite.class.cast(field(sessions.get(0), "dispatches")),
-                      Disposable.Composite.class.cast(field(sessions.get(1), "dispatches")))
+                      (Disposable.Composite) field(sessions.get(0), "dispatches"),
+                      (Disposable.Composite) field(sessions.get(1), "dispatches"))
                   .withPrefabValues(MonoSink.class, acknowledgments.get(0), acknowledgments.get(1))
                   .withPrefabValues(Sinks.Empty.class, Sinks.empty(), Sinks.empty())
                   .withPrefabValues(Mono.class, Mono.empty(), Mono.never())

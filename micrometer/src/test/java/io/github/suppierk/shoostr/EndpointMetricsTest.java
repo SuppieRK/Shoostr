@@ -68,15 +68,15 @@ class EndpointMetricsTest {
     return switch (type) {
       case "platform" -> Executors.newFixedThreadPool(1, factory);
       case "virtual" -> Executors.newThreadPerTaskExecutor(factory);
-      case "fork-join" -> forkJoin(1, owned);
-      case "wrapped-fork-join" -> Executors.unconfigurableExecutorService(forkJoin(1, owned));
+      case "fork-join" -> forkJoin(owned);
+      case "wrapped-fork-join" -> Executors.unconfigurableExecutorService(forkJoin(owned));
       default -> throw new IllegalArgumentException(type);
     };
   }
 
-  private static ForkJoinPool forkJoin(int parallelism, Set<Thread> owned) {
+  private static ForkJoinPool forkJoin(Set<Thread> owned) {
     return new ForkJoinPool(
-        parallelism,
+        1,
         pool -> {
           var worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
           owned.add(worker);

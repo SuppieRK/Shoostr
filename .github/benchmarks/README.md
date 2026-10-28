@@ -378,34 +378,34 @@ check known byte and text values for the configured shapes.
 `RoutePatternBenchmark` measures the current production `RadixRoutes`, including the parameter extraction used by `Request.pathParam`. It builds the flattened patterns of nested resource groups once in trial setup. Each group registers eight method/path endpoints in this order:
 
 | Method | Suffix beneath `/api/resources/{group-number}/orders` |
-|---|---|
-| GET | `/latest` |
-| GET | `/{id}` |
-| POST | `/{orderId}` |
-| GET | `/fixed/details` |
-| GET | `/{id}/events` |
-| GET | `/{id}/items/{itemId}` |
-| GET | `/shadowed` |
-| POST | `/latest` |
+| ------ | ----------------------------------------------------- |
+| GET    | `/latest`                                             |
+| GET    | `/{id}`                                               |
+| POST   | `/{orderId}`                                          |
+| GET    | `/fixed/details`                                      |
+| GET    | `/{id}/events`                                        |
+| GET    | `/{id}/items/{itemId}`                                |
+| GET    | `/shadowed`                                           |
+| POST   | `/latest`                                             |
 
 `groups=1,100,1000` therefore means 8, 800, or 8,000 endpoints. Every measured workload uses this same table, including the overlapping registrations; the table is not tailored to contain only the queried route type. Inputs are a deterministic shuffled corpus of 16,384 requests spread approximately uniformly over groups.
 
-| Workload | Operation |
-|---|---|
-| `literal` | Match `/latest`, without reading parameters |
-| `oneParameter` | Match a varying order identifier and read `id` |
-| `twoParameters` | Match an order/item path and read both values |
-| `encodedParameter` | Match a percent-encoded UTF-8 value and decode `id` |
-| `precedence` | Match literal `/shadowed` despite an earlier parameter route |
-| `fallback` | Match `/fixed/events` despite the nonmatching `/fixed/details` branch |
-| `notFound` | Fail path lookup, then collect the empty allowed-method set |
-| `wrongMethod` | Request DELETE on `/latest`, then collect GET and POST from overlapping matches |
-| `catchAllNoRead`, `catchAllRead` | Match a terminal named tail without/with reading `tail` |
-| `catchAllFallback` | Fall through a partial literal branch to the catch-all |
-| `catchAllWrongMethod`, `catchAllMiss` | Collect methods after a catch-all method mismatch, or miss an empty tail |
-| `regexNoRead`, `regexRead` | Match a digit-constrained segment without/with reading `numericId` |
-| `regexFallback` | Fall through a nonmatching constraint to a plain parameter route |
-| `regexWrongMethod`, `regexMiss` | Collect methods after a constrained method mismatch, or miss an empty segment |
+| Workload                              | Operation                                                                       |
+| ------------------------------------- | ------------------------------------------------------------------------------- |
+| `literal`                             | Match `/latest`, without reading parameters                                     |
+| `oneParameter`                        | Match a varying order identifier and read `id`                                  |
+| `twoParameters`                       | Match an order/item path and read both values                                   |
+| `encodedParameter`                    | Match a percent-encoded UTF-8 value and decode `id`                             |
+| `precedence`                          | Match literal `/shadowed` despite an earlier parameter route                    |
+| `fallback`                            | Match `/fixed/events` despite the nonmatching `/fixed/details` branch           |
+| `notFound`                            | Fail path lookup, then collect the empty allowed-method set                     |
+| `wrongMethod`                         | Request DELETE on `/latest`, then collect GET and POST from overlapping matches |
+| `catchAllNoRead`, `catchAllRead`      | Match a terminal named tail without/with reading `tail`                         |
+| `catchAllFallback`                    | Fall through a partial literal branch to the catch-all                          |
+| `catchAllWrongMethod`, `catchAllMiss` | Collect methods after a catch-all method mismatch, or miss an empty tail        |
+| `regexNoRead`, `regexRead`            | Match a digit-constrained segment without/with reading `numericId`              |
+| `regexFallback`                       | Fall through a nonmatching constraint to a plain parameter route                |
+| `regexWrongMethod`, `regexMiss`       | Collect methods after a constrained method mismatch, or miss an empty segment   |
 
 Catch-all and regex workloads add their respective GET/POST routes to each group's base eight endpoints; the ordinary workloads retain exactly the historical eight-route table. A regex workload uses a single ASCII digit class, not arbitrary backtracking patterns. Each operation consumes the selected endpoint and requested values, or the allowed-method set, through JMH. This measures routing and parameter access. It excludes HTTP parsing, wire-token-to-enum lookup, request/response wrappers, handler execution, and formatting the `Allow` header. The failure benchmarks retain the returned sets; escape analysis in a complete HTTP handler may differ. `input=reused` uses existing path strings; `input=fresh` additionally constructs a string inside the timed operation, and its cost/allocations must be reported explicitly.
 
@@ -448,12 +448,12 @@ Defaults are three JVM forks, five one-second warmup iterations and five one-sec
 
 The four benchmark methods measure map/radix lookup with either reused or freshly constructed strings. Override parameters using JMH's own CLI:
 
-| Parameter | Default | Other supported values |
-|---|---|---|
-| `routeCount` | `5,50,500,5000` | Positive counts supported by the fixture |
-| `shape` | `shared` | `divergent`, `prefix` |
-| `outcome` | `hit` | `earlyMiss`, `lateMiss`, `wrongMethod`, `mixed` |
-| `distribution` | `uniform` | `hot` |
+| Parameter      | Default         | Other supported values                          |
+| -------------- | --------------- | ----------------------------------------------- |
+| `routeCount`   | `5,50,500,5000` | Positive counts supported by the fixture        |
+| `shape`        | `shared`        | `divergent`, `prefix`                           |
+| `outcome`      | `hit`           | `earlyMiss`, `lateMiss`, `wrongMethod`, `mixed` |
+| `distribution` | `uniform`       | `hot`                                           |
 
 For example, measure misses and method failures separately:
 

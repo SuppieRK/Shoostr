@@ -40,7 +40,9 @@ Each recipe has a compiled factory and a live HTTP test:
 - Ranges and validators: [example](src/main/java/io/github/suppierk/shoostr/example/resources/FileCachingExample.java) and [test](src/test/java/io/github/suppierk/shoostr/example/resources/FileCachingExampleTest.java).
 
 Run `./gradlew :resources-example:test` from the repository root with Java 21.
-Filesystem mount tests require secure directory operations and symbolic-link support.
+Filesystem mounts use Jetty resources without requiring secure directory streams.
+Keep the publication directory and its ancestors controlled by the deployment owner.
+The external-directory test uses a Windows junction or a symbolic link on other systems.
 The tests create their own files and classpath resources in temporary directories.
 
 The image includes immutable `/app/report.csv`. Set `EXAMPLE_REPORT` to a readable regular

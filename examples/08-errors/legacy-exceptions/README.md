@@ -43,17 +43,17 @@ exception class or registration helper. All responses are plain text.
 
 ## Choose where to handle the exception
 
-| Request | Mechanism | Status and body |
-| --- | --- | --- |
-| `GET /builtin/bad-request` | Throw an HTTP exception; use the default response | 400, `Bad Request` |
-| `GET /number?value=42` | Successful parsing inside the handler | 200, `42` |
-| `GET /number?value=abc` | Catch a recoverable `NumberFormatException` inside the handler | 400, `Integer required` |
-| `GET /app-failure` | Exception handler registered with `app.exception(IllegalStateException.class, ...)` | 500, `Application failure` |
-| `GET /route-failure` | Exception handler registered on `routes` | 400, `Route input error` |
-| `GET /group/input` | Exception handler registered on `/group` replaces the inherited handler for the same class | 400, `Group input error` |
-| `GET /inherited/input` | Route group uses the exception handler inherited from `routes` | 400, `Route input error` |
-| `GET /unknown` | `app.status(404, ...)` for a router-generated status | 404, `Route not found` |
-| `GET /builtin/not-found` | Matched handler throws `NotFoundException`, not a routing miss | 404, `Not Found` |
+| Request                    | Mechanism                                                                                  | Status and body            |
+| -------------------------- | ------------------------------------------------------------------------------------------ | -------------------------- |
+| `GET /builtin/bad-request` | Throw an HTTP exception; use the default response                                          | 400, `Bad Request`         |
+| `GET /number?value=42`     | Successful parsing inside the handler                                                      | 200, `42`                  |
+| `GET /number?value=abc`    | Catch a recoverable `NumberFormatException` inside the handler                             | 400, `Integer required`    |
+| `GET /app-failure`         | Exception handler registered with `app.exception(IllegalStateException.class, ...)`        | 500, `Application failure` |
+| `GET /route-failure`       | Exception handler registered on `routes`                                                   | 400, `Route input error`   |
+| `GET /group/input`         | Exception handler registered on `/group` replaces the inherited handler for the same class | 400, `Group input error`   |
+| `GET /inherited/input`     | Route group uses the exception handler inherited from `routes`                             | 400, `Route input error`   |
+| `GET /unknown`             | `app.status(404, ...)` for a router-generated status                                       | 404, `Route not found`     |
+| `GET /builtin/not-found`   | Matched handler throws `NotFoundException`, not a routing miss                             | 404, `Not Found`           |
 
 Try these against the running app:
 

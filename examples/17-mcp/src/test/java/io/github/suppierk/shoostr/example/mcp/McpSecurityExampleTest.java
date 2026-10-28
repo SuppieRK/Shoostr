@@ -1,6 +1,8 @@
 package io.github.suppierk.shoostr.example.mcp;
 
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -266,12 +268,14 @@ class McpSecurityExampleTest {
                   session,
                   "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}")
               .statusCode());
-      var deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
-      var replacement = message(test, "reader-token", "", INITIALIZE);
-      while (replacement.statusCode() == 429 && System.nanoTime() < deadline) {
-        Thread.sleep(25);
-        replacement = message(test, "reader-token", "", INITIALIZE);
-      }
+      var replacement =
+          await("native MCP cleanup releases the session reservation")
+              .atMost(Duration.ofSeconds(5))
+              .pollDelay(Duration.ZERO)
+              .pollInterval(Duration.ofMillis(25))
+              .until(
+                  () -> message(test, "reader-token", "", INITIALIZE),
+                  response -> response.statusCode() != 429);
       assertEquals(200, replacement.statusCode());
     }
   }
@@ -295,15 +299,47 @@ class McpSecurityExampleTest {
               HttpResponse.BodyHandlers.ofInputStream());
       assertEquals(200, listening.statusCode());
 
+      var ping = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}";
+
       try (var input = listening.body()) {
+        var ended = readers.submit(input::readAllBytes);
+        // Observe credential expiry instead of assuming that wall time and elapsed time agree.
+        await("the short-lived credential expires while its session remains usable")
+            .pollDelay(Duration.ZERO)
+            .pollInterval(Duration.ofMillis(200))
+            .atMost(Duration.ofSeconds(12))
+            .until(
+                () -> {
+                  assertEquals(200, message(test, "reader-token", session, ping).statusCode());
+                  var endedBeforeProbe = ended.isDone();
+                  var probe =
+                      test.send(
+                          request ->
+                              request
+                                  .path("/mcp")
+                                  .header("Authorization", "Bearer short-token")
+                                  .header("MCP-Protocol-Version", "2025-11-25")
+                                  .header("Accept", "text/event-stream"));
+                  // A valid token reaches the missing-session check; an expired one receives 401.
+                  assertTrue(probe.statusCode() == 400 || probe.statusCode() == 401);
+                  if (probe.statusCode() == 400) {
+                    assertFalse(
+                        endedBeforeProbe, "The stream must remain open before token expiry");
+                  }
+
+                  return probe.statusCode() == 401;
+                });
+        await("the original stream terminates after its token expires")
+            .atMost(Duration.ofSeconds(2))
+            .until(ended::isDone);
+
         try {
-          readers.submit(input::readAllBytes).get(8, TimeUnit.SECONDS);
+          ended.get();
         } catch (ExecutionException failure) {
           assertInstanceOf(IOException.class, failure.getCause());
         }
       }
 
-      var ping = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}";
       assertEquals(401, message(test, "short-token", session, ping).statusCode());
       assertEquals(200, message(test, "reader-token", session, ping).statusCode());
     }

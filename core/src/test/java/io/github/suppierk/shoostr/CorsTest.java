@@ -220,7 +220,7 @@ class CorsTest {
       var admission =
           new AuthenticationExtension() {
             @Override
-            public void handle(Request request, Response response) throws Exception {
+            public void handle(Request request, Response response) {
 
               authentications.incrementAndGet();
               throw new AuthenticationRequiredException("Bearer");
@@ -1104,16 +1104,18 @@ class CorsTest {
       var configuration = retained.get();
       assertThrows(IllegalStateException.class, () -> configuration.policy(policy));
 
-      try (var test = TestServer.start(app)) {
-        var afterStart = new Cors(policy);
+      try (var test = TestServer.start(app);
+          var afterStart = new Cors(policy)) {
         assertThrows(IllegalStateException.class, () -> app.extensions(afterStart));
       }
     }
 
     var closed = new Shoostr();
     closed.close();
-    var afterClose = new Cors(policy);
-    assertThrows(IllegalStateException.class, () -> closed.extensions(afterClose));
+
+    try (var afterClose = new Cors(policy)) {
+      assertThrows(IllegalStateException.class, () -> closed.extensions(afterClose));
+    }
   }
 
   @ParameterizedTest

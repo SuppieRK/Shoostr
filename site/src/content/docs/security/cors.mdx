@@ -19,14 +19,14 @@ This lets a child narrow permissions without carrying forward an origin or heade
 The replacement keeps the same extension owner and leaves parent and sibling settings unchanged; excluding an inherited owner does not allow selecting a different instance.
 Repeated selection is deduplicated, and repeated `policy(...)` calls use the last complete policy.
 
-| Setting | Standalone default and constraints |
-| --- | --- |
-| Origins | None. Use exact serialized origins, including the scheme and nondefault port, without a path or trailing slash. |
-| Methods | GET and HEAD. An explicit empty set permits none; `allMethods()` permits any valid method token. |
-| Allowed request headers | None beyond the browser's safelisted request headers. |
-| Exposed response headers | None beyond the browser's safelisted response headers. |
-| Credentials | `false`. Credentialed policies require explicit origins and explicit exposed headers. |
-| Maximum age | Five seconds. Use `0` to disable preflight caching. |
+| Setting                  | Standalone default and constraints                                                                              |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| Origins                  | None. Use exact serialized origins, including the scheme and nondefault port, without a path or trailing slash. |
+| Methods                  | GET and HEAD. An explicit empty set permits none; `allMethods()` permits any valid method token.                |
+| Allowed request headers  | None beyond the browser's safelisted request headers.                                                           |
+| Exposed response headers | None beyond the browser's safelisted response headers.                                                          |
+| Credentials              | `false`. Credentialed policies require explicit origins and explicit exposed headers.                           |
+| Maximum age              | Five seconds. Use `0` to disable preflight caching.                                                             |
 
 An origin or header wildcard absorbs the other values in that collection.
 For method and request-header wildcards, Shoostr answers preflight with the validated requested names.
@@ -38,9 +38,9 @@ Each call replaces that builder setting, and `build()` validates a complete poli
 
 Keep configured headers available to application code through their typed accessors:
 
-| Accessor | Configured headers |
-| --- | --- |
-| `policy.allowedHeaders()` | Request headers permitted during preflight. |
+| Accessor                  | Configured headers                                    |
+| ------------------------- | ----------------------------------------------------- |
+| `policy.allowedHeaders()` | Request headers permitted during preflight.           |
 | `policy.exposedHeaders()` | Additional response headers browser scripts may read. |
 
 Both return immutable sets of `HttpHeaders`; `cors.policy()` returns the owner's base policy.
@@ -51,12 +51,12 @@ Shoostr selects the registered target using the requested method before authenti
 It skips target conditions, local hooks and the target action; application header-admission hooks still run.
 Separately registered endpoints retain their own policy, and missing targets receive no policy from a matching group's path.
 
-| Preflight result | Status |
-| --- | --- |
-| Registered target's selected policy permits sharing | `204` |
-| Selected policy denies sharing, or the registered target has no CORS | `403` |
-| Malformed CORS fields | `400` |
-| No target for the requested path or method | Normal `404` or `405` |
+| Preflight result                                                     | Status                |
+| -------------------------------------------------------------------- | --------------------- |
+| Registered target's selected policy permits sharing                  | `204`                 |
+| Selected policy denies sharing, or the registered target has no CORS | `403`                 |
+| Malformed CORS fields                                                | `400`                 |
+| No target for the requested path or method                           | Normal `404` or `405` |
 
 Actual cross-origin requests are checked independently, including after a cached preflight.
 Denied permissions receive `403` before the action, while malformed CORS input receives `400`.

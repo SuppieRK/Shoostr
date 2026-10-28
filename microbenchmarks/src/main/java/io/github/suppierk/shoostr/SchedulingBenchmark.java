@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -58,7 +59,7 @@ public class SchedulingBenchmark {
   private @Nullable ExecutorService virtualThreads;
   private QueuedThreadPool nativePool;
   private CountDownLatch finished;
-  private volatile Throwable failure;
+  private volatile @Nullable Throwable failure;
   private AdaptiveExecutionStrategy strategy;
   Exchange[] exchanges;
 
@@ -79,9 +80,7 @@ public class SchedulingBenchmark {
   @Benchmark
   public int responses() throws InterruptedException, TimeoutException {
     finished = new CountDownLatch(batchSize);
-    for (var exchange : exchanges) {
-      pending.add(exchange);
-    }
+    Collections.addAll(pending, exchanges);
 
     if (!finished.await(10, TimeUnit.SECONDS)) {
       throw new TimeoutException("Scheduling fixture did not complete its batch");
@@ -141,7 +140,7 @@ public class SchedulingBenchmark {
    *
    * @return the next exchange, or null when shutdown interrupts the readiness wait
    */
-  private Runnable produce() {
+  private @Nullable Runnable produce() {
     try {
       var exchange = pending.take();
       exchange.producedVirtually = Thread.currentThread().isVirtual();

@@ -1,5 +1,7 @@
+import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import process from 'node:process';
 import { gunzipSync } from 'node:zlib';
 import { pathToFileURL } from 'node:url';
 
@@ -188,9 +190,8 @@ export function verifyCycle(directory, clients) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const [directory, count, ...extra] = process.argv.slice(2);
-    if (!directory || !['32', '128'].includes(count) || extra.length) {
-      throw new Error('Supply a cycle artifact directory and 32/128 clients');
-    }
+    assert(directory && ['32', '128'].includes(count) && extra.length === 0,
+      'Supply a cycle artifact directory and 32/128 clients');
     console.log(JSON.stringify(verifyCycle(directory, Number(count))));
   } catch (error) {
     console.error(error.message);

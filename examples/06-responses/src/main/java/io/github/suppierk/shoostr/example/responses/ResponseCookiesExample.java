@@ -29,35 +29,34 @@ public final class ResponseCookiesExample {
         Cookie.secure("__Host-theme", "dark").withHttpOnly(true).withSameSite(Cookie.SameSite.NONE);
     return new Shoostr()
         .routes(
-            routes -> {
-              routes
-                  .post(
-                      THEME_PATH,
-                      (ignored, response) ->
-                          response.cookie(theme).status(HttpStatusCodes.NO_CONTENT.value()))
-                  .get(
-                      THEME_PATH,
-                      (request, response) ->
-                          response.text(request.cookie(THEME_COOKIE).orElse("light")))
-                  .delete(
-                      THEME_PATH,
-                      (ignored2, response) ->
-                          response.removeCookie(theme).status(HttpStatusCodes.NO_CONTENT.value()))
-                  // A browser will not attach the path-scoped preference to this endpoint.
-                  .get(
-                      "/outside",
-                      (request, response) ->
-                          response.text(request.cookie(THEME_COOKIE).orElse("light")))
-                  .post(
-                      "/secure-preference",
-                      (ignored3, response) ->
-                          response.cookie(secureTheme).status(HttpStatusCodes.NO_CONTENT.value()))
-                  .delete(
-                      "/secure-preference",
-                      (ignored4, response) ->
-                          response
-                              .removeCookie(secureTheme)
-                              .status(HttpStatusCodes.NO_CONTENT.value()));
-            });
+            routes ->
+                routes
+                    .post(
+                        THEME_PATH,
+                        (ignored, response) ->
+                            response.cookie(theme).status(HttpStatusCodes.NO_CONTENT.value()))
+                    .get(
+                        THEME_PATH,
+                        (request, response) ->
+                            response.text(request.cookie(THEME_COOKIE).orElse("light")))
+                    .delete(
+                        THEME_PATH,
+                        (ignored2, response) ->
+                            response.removeCookie(theme).status(HttpStatusCodes.NO_CONTENT.value()))
+                    // A browser will not attach the path-scoped preference to this endpoint.
+                    .get(
+                        "/outside",
+                        (request, response) ->
+                            response.text(request.cookie(THEME_COOKIE).orElse("light")))
+                    .post(
+                        "/secure-preference",
+                        (ignored3, response) ->
+                            response.cookie(secureTheme).status(HttpStatusCodes.NO_CONTENT.value()))
+                    .delete(
+                        "/secure-preference",
+                        (ignored4, response) ->
+                            response
+                                .removeCookie(secureTheme)
+                                .status(HttpStatusCodes.NO_CONTENT.value())));
   }
 }

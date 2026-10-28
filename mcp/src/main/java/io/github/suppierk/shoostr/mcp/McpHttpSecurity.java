@@ -114,8 +114,7 @@ public record McpHttpSecurity(
   static String origin(String value) {
     var uri = URI.create(Objects.requireNonNull(value));
     var scheme = uri.getScheme();
-    if (scheme == null
-        || !(HTTPS.equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
+    if (!(HTTPS.equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
         || uri.getHost() == null
         || uri.getRawAuthority().endsWith(":")
         || uri.getRawUserInfo() != null

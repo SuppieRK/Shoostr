@@ -1,6 +1,7 @@
 package io.github.suppierk.shoostr.mcp;
 
-import static org.awaitility.Awaitility.await;
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.assertNotBeforeExpiry;
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.awaitTermination;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.suppierk.shoostr.Shoostr;
@@ -10,11 +11,10 @@ import io.modelcontextprotocol.server.McpServer;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -71,16 +71,19 @@ class McpExpiryTest {
   @Test
   @Timeout(15)
   void endsAnIdleListeningStreamAtItsAuthenticatedTokenExpiry() throws Exception {
+    var expiry = new AtomicReference<Instant>();
     var security =
         new McpHttpSecurity(
             Set.of(),
-            request ->
-                new McpIdentity(
-                    "alice:client",
-                    McpTransportContext.EMPTY,
-                    request.header("X-Expiring-Identity").isPresent()
-                        ? Instant.now().plusSeconds(1)
-                        : null),
+            request -> {
+              if (request.header("X-Expiring-Identity").isEmpty()) {
+                return new McpIdentity("alice:client", McpTransportContext.EMPTY, null);
+              }
+
+              var verifiedExpiry = Instant.now().plusSeconds(1);
+              expiry.set(verifiedExpiry);
+              return new McpIdentity("alice:client", McpTransportContext.EMPTY, verifiedExpiry);
+            },
             (ignored4, ignored5) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
@@ -126,16 +129,11 @@ class McpExpiryTest {
                     // A committed stream may end by transport failure instead of clean EOF.
                   }
 
-                  return null;
+                  return Instant.now();
                 });
-        await("the listening stream stays open before its authenticated expiry")
-            .pollDelay(Duration.ZERO)
-            .pollInterval(Duration.ofMillis(10))
-            .during(Duration.ofMillis(100))
-            .atMost(Duration.ofMillis(1100))
-            .failFast("the listening stream ended before expiry", ended::isDone)
-            .until(() -> !ended.isDone());
-        ended.get(4, TimeUnit.SECONDS);
+        var verifiedExpiry = expiry.get();
+        awaitTermination(verifiedExpiry, ended::isDone);
+        assertNotBeforeExpiry(verifiedExpiry, ended.get());
       }
     }
   }

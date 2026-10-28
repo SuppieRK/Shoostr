@@ -51,31 +51,29 @@ public final class RouteAuthenticationExample {
         // Installation leaves /public open; the /private group explicitly selects authentication.
         .authentication(authentication)
         .routes(
-            routes -> {
-              routes
-                  .get("/public", (ignored, response) -> response.text("public"))
-                  .path(
-                      "/private",
-                      group -> {
-                        group
-                            .get(
-                                "/me",
-                                (request, response) ->
-                                    response.text(request.principal().orElseThrow().getName()))
-                            .get(
-                                "/admin",
-                                (request, response) -> {
-                                  // Authentication establishes identity; this handler adds an
-                                  // authorization rule.
-                                  if (!"admin"
-                                      .equals(request.principal().orElseThrow().getName())) {
-                                    throw new ForbiddenException();
-                                  }
+            routes ->
+                routes
+                    .get("/public", (ignored, response) -> response.text("public"))
+                    .path(
+                        "/private",
+                        group ->
+                            group
+                                .get(
+                                    "/me",
+                                    (request, response) ->
+                                        response.text(request.principal().orElseThrow().getName()))
+                                .get(
+                                    "/admin",
+                                    (request, response) -> {
+                                      // Authentication establishes identity; this handler adds an
+                                      // authorization rule.
+                                      if (!"admin"
+                                          .equals(request.principal().orElseThrow().getName())) {
+                                        throw new ForbiddenException();
+                                      }
 
-                                  response.text("admin operation allowed");
-                                });
-                      },
-                      extensions -> extensions.with(authentication));
-            });
+                                      response.text("admin operation allowed");
+                                    }),
+                        extensions -> extensions.with(authentication)));
   }
 }

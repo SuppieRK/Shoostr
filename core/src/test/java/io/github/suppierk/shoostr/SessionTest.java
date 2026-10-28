@@ -477,8 +477,8 @@ class SessionTest {
     String cookie;
     String token;
 
-    try (var app = new Shoostr()) {
-      var csrf = new Csrf();
+    try (var app = new Shoostr();
+        var csrf = new Csrf()) {
       app.sessions(handler -> fileStore(handler, directory));
       app.routes().get("/form", (request, response) -> response.text(csrf.token(request)));
 

@@ -152,15 +152,13 @@ public class RoutePatternBenchmark {
             case "twoParameters" -> "/order-" + query + "/items/item-" + query;
             case "encodedParameter" -> "/caf%C3%A9%20" + query;
             case "precedence" -> "/shadowed";
-            case "fallback" -> "/fixed/events";
+            case "fallback", "regexFallback" -> "/fixed/events";
             case "notFound" -> "/order-" + query + "/missing";
             case "catchAllNoRead", "catchAllRead", "catchAllWrongMethod" ->
                 "/archive/order-" + query + "/receipt";
             case "catchAllFallback" -> "/fixed/other/" + query;
-            case "catchAllMiss" -> "/";
+            case "catchAllMiss", "regexMiss" -> "/";
             case "regexNoRead", "regexRead", "regexWrongMethod" -> "/" + query;
-            case "regexFallback" -> "/fixed/events";
-            case "regexMiss" -> "/";
             default -> throw new IllegalArgumentException("Unknown workload: " + workload);
           };
       paths[i] = prefix + suffix;

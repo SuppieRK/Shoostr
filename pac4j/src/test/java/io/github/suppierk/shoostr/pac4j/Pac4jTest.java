@@ -72,9 +72,7 @@ class Pac4jTest {
                 assertTrue(request.getSession().isEmpty());
                 response.text(request.principal().orElseThrow().getName());
               },
-              e -> {
-                e.with(auth);
-              });
+              e -> e.with(auth));
 
       try (var test =
           TestServer.start(
@@ -119,9 +117,7 @@ class Pac4jTest {
                   response.text(identity + ":created");
                 }
               },
-              e -> {
-                e.with(auth);
-              });
+              e -> e.with(auth));
 
       try (var test =
           TestServer.start(

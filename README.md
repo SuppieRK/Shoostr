@@ -23,7 +23,7 @@ Shoostr adds only the serving contracts required to make that composition work. 
 bridge those contracts to existing libraries; they do not recreate the libraries' features or
 introduce parallel configuration models. The examples show explicit library composition.
 
-[Consumer documentation — Starlight source](site/) · [Contribute](CONTRIBUTING.md) · [Apache License 2.0](LICENSE)
+[Consumer documentation — Starlight source](site) · [Contribute](CONTRIBUTING.md) · [Apache License 2.0](LICENSE)
 
 The site is not published yet. The first guide is available in the
 [site sources](site/src/content/docs/start/first-request.mdx).

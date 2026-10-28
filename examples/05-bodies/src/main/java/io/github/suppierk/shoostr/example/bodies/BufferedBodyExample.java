@@ -20,31 +20,30 @@ public final class BufferedBodyExample {
     var options = new Options(64, 4096, 512, 4, MultipartOptions.defaults());
     return new Shoostr(options)
         .routes(
-            routes -> {
-              routes
-                  .post("/text", (request, response) -> response.text(request.bodyText()))
-                  // Decode Latin-1 input explicitly; text(...) still encodes the reply as UTF-8.
-                  .post(
-                      "/latin1",
-                      (request, response) ->
-                          response.text(request.bodyText(StandardCharsets.ISO_8859_1)))
-                  .post(
-                      "/bytes",
-                      (request, response) ->
-                          response.body(MediaType.APPLICATION_OCTET_STREAM, request.bodyBytes()))
-                  .post(
-                      "/form",
-                      (request, response) -> {
-                        // Buffered text and form decoding reuse the body without consuming it
-                        // twice.
-                        var raw = request.bodyText();
-                        response.text(
-                            String.join(
-                                "\n",
-                                "form=" + request.formParam("tag").orElse("(missing)"),
-                                "query=" + request.queryParam("tag").orElse("(missing)"),
-                                "raw=" + raw));
-                      });
-            });
+            routes ->
+                routes
+                    .post("/text", (request, response) -> response.text(request.bodyText()))
+                    // Decode Latin-1 input explicitly; text(...) still encodes the reply as UTF-8.
+                    .post(
+                        "/latin1",
+                        (request, response) ->
+                            response.text(request.bodyText(StandardCharsets.ISO_8859_1)))
+                    .post(
+                        "/bytes",
+                        (request, response) ->
+                            response.body(MediaType.APPLICATION_OCTET_STREAM, request.bodyBytes()))
+                    .post(
+                        "/form",
+                        (request, response) -> {
+                          // Buffered text and form decoding reuse the body without consuming it
+                          // twice.
+                          var raw = request.bodyText();
+                          response.text(
+                              String.join(
+                                  "\n",
+                                  "form=" + request.formParam("tag").orElse("(missing)"),
+                                  "query=" + request.queryParam("tag").orElse("(missing)"),
+                                  "raw=" + raw));
+                        }));
   }
 }

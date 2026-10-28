@@ -405,7 +405,7 @@ class RequestParametersTest {
       app.start();
       var result =
           client.send(
-              request("/form")
+              request()
                   .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
                   .POST(
                       HttpRequest.BodyPublishers.ofInputStream(
@@ -541,7 +541,7 @@ class RequestParametersTest {
                 : HttpRequest.BodyPublishers.ofString(body);
         var result =
             client.send(
-                request("/form")
+                request()
                     .header("Content-Type", MediaType.APPLICATION_FORM_URLENCODED.value())
                     .POST(publisher)
                     .build(),
@@ -701,8 +701,8 @@ class RequestParametersTest {
     assertEquals(1, calls.get());
   }
 
-  private HttpRequest.Builder request(String path) {
-    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + path))
+  private HttpRequest.Builder request() {
+    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/form"))
         .timeout(Duration.ofSeconds(3));
   }
 }

@@ -1,7 +1,9 @@
 package io.github.suppierk.shoostr.mcp;
 
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.assertNotBeforeExpiry;
+import static io.github.suppierk.shoostr.mcp.McpExpiryAssertions.awaitTermination;
+import static org.awaitility.Awaitility.await;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -10,13 +12,14 @@ import io.modelcontextprotocol.server.McpServer;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -32,20 +35,23 @@ class McpFinalFlushExpiryTest {
             : Executors.newSingleThreadExecutor(
                 Thread.ofPlatform().name("mcp-final-flush").factory());
     var finalFlush = new CountDownLatch(1);
-    var interrupted = new CountDownLatch(1);
+    var interrupted = new AtomicReference<Instant>();
+    var expiry = new AtomicReference<Instant>();
     var completed = new CountDownLatch(1);
     var hold = new CountDownLatch(1);
     var mcp =
         Mcp.sync(
             new McpHttpSecurity(
                 Set.of(),
-                request ->
-                    new McpIdentity(
-                        "public",
-                        McpTransportContext.EMPTY,
-                        request.header("X-Expiring").isPresent()
-                            ? Instant.now().plusSeconds(2)
-                            : null),
+                request -> {
+                  if (request.header("X-Expiring").isEmpty()) {
+                    return new McpIdentity("public", McpTransportContext.EMPTY, null);
+                  }
+
+                  var verifiedExpiry = Instant.now().plusSeconds(2);
+                  expiry.set(verifiedExpiry);
+                  return new McpIdentity("public", McpTransportContext.EMPTY, verifiedExpiry);
+                },
                 (ignored, ignored2) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
@@ -62,11 +68,10 @@ class McpFinalFlushExpiryTest {
             finalFlush.countDown();
 
             try {
-              if (!hold.await(5, TimeUnit.SECONDS)) {
-                throw new IOException("The verified deadline did not interrupt the final flush");
-              }
+              // Only the lifetime's interrupt or unconditional test cleanup may release this hold.
+              hold.await();
             } catch (InterruptedException failure) {
-              interrupted.countDown();
+              interrupted.set(Instant.now());
               throw failure;
             }
           }
@@ -124,14 +129,17 @@ class McpFinalFlushExpiryTest {
                       // Expiry aborts an already committed stream rather than replacing its status.
                     }
 
-                    return null;
+                    return Instant.now();
                   });
-          assertTrue(
-              finalFlush.await(1, TimeUnit.SECONDS), "Hold only the post-handler final flush");
-          assertTrue(
-              interrupted.await(4, TimeUnit.SECONDS), "Expiry must interrupt final ownership");
-          assertTrue(completed.await(2, TimeUnit.SECONDS), "The exchange must terminate as failed");
-          ended.get(2, TimeUnit.SECONDS);
+          await("framework final flush is held")
+              .atMost(Duration.ofSeconds(1))
+              .until(() -> finalFlush.getCount() == 0);
+          var verifiedExpiry = expiry.get();
+          awaitTermination(
+              verifiedExpiry,
+              () -> interrupted.get() != null && completed.getCount() == 0 && ended.isDone());
+          assertNotBeforeExpiry(verifiedExpiry, interrupted.get());
+          assertNotBeforeExpiry(verifiedExpiry, ended.get());
         }
       } finally {
         hold.countDown();

@@ -369,7 +369,7 @@ class TypedWebSocketTest {
           assertInstanceOf(InterruptedException.class, failure);
         }
 
-        assertEquals(Boolean.valueOf(closed), interrupted.get(3, TimeUnit.SECONDS));
+        assertEquals(closed, interrupted.get(3, TimeUnit.SECONDS));
         assertEquals(0, writes.get());
       } finally {
         socket.abort();
@@ -507,7 +507,7 @@ class TypedWebSocketTest {
           socket.sendBinary(ByteBuffer.wrap(new byte[] {1}), true).join();
         }
 
-        assertTrue(observed.get(3, TimeUnit.SECONDS) instanceof NullPointerException);
+        assertInstanceOf(NullPointerException.class, observed.get(3, TimeUnit.SECONDS));
         assertEquals(1011, messages.closed.get(3, TimeUnit.SECONDS));
         assertTrue(messages.binary.isEmpty());
       } finally {

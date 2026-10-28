@@ -78,30 +78,29 @@ public final class McpInteractionsExample {
     return new Shoostr()
         .extensions(mcp)
         .routes(
-            routes -> {
-              routes
-                  .path("/mcp", mcp::routes)
-                  .post(
-                      "/status",
-                      (request, response) -> {
-                        var value = request.bodyText().strip();
-                        if (value.isEmpty()
-                            || value.length() > 80
-                            || value.contains("\r")
-                            || value.contains("\n")) {
-                          throw new BadRequestException(
-                              "Status must be nonblank single-line text with length at most 80");
-                        }
+            routes ->
+                routes
+                    .path("/mcp", mcp::routes)
+                    .post(
+                        "/status",
+                        (request, response) -> {
+                          var value = request.bodyText().strip();
+                          if (value.isEmpty()
+                              || value.length() > 80
+                              || value.contains("\r")
+                              || value.contains("\n")) {
+                            throw new BadRequestException(
+                                "Status must be nonblank single-line text with length at most 80");
+                          }
 
-                        status.set(value);
-                        // Notify subscribers after the change; they re-read the resource for its
-                        // content.
-                        mcp.server()
-                            .notifyResourcesUpdated(
-                                new McpSchema.ResourcesUpdatedNotification("status://current"));
-                        response.status(204);
-                      });
-            });
+                          status.set(value);
+                          // Notify subscribers after the change; they re-read the resource for its
+                          // content.
+                          mcp.server()
+                              .notifyResourcesUpdated(
+                                  new McpSchema.ResourcesUpdatedNotification("status://current"));
+                          response.status(204);
+                        }));
   }
 
   /**

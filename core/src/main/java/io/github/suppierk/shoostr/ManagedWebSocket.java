@@ -29,7 +29,7 @@ public final class ManagedWebSocket implements Session.Listener {
   private final @Nullable Principal principal;
   private @Nullable Session session;
   private @Nullable WebSocketConnection connection;
-  private @Nullable FutureTask<Void> task;
+  private @Nullable FutureTask<@Nullable Void> task;
   private @Nullable Thread worker;
   private @Nullable Object message;
   private boolean demanded;
@@ -195,14 +195,16 @@ public final class ManagedWebSocket implements Session.Listener {
 
   /** Schedules actual work once; idle connections retain state without occupying a worker. */
   private void schedule() {
-    FutureTask<Void> pending;
+    FutureTask<@Nullable Void> pending;
     synchronized (events) {
       if (task != null || dispatchClosed || terminalNotified || !hasWork()) {
         return;
       }
 
-      var reference = new AtomicReference<FutureTask<Void>>();
-      pending = new FutureTask<>(() -> run(Objects.requireNonNull(reference.get())), null);
+      var reference = new AtomicReference<@Nullable FutureTask<@Nullable Void>>();
+      pending =
+          new FutureTask<>(
+              () -> run(Objects.<FutureTask<@Nullable Void>>requireNonNull(reference.get())), null);
       reference.set(pending);
       task = pending;
     }
@@ -243,7 +245,7 @@ public final class ManagedWebSocket implements Session.Listener {
    * @param pending task whose ownership must still match this connection
    */
   @SuppressWarnings({"java:S1181", "java:S2139"})
-  private void run(FutureTask<Void> pending) {
+  private void run(FutureTask<@Nullable Void> pending) {
     synchronized (events) {
       if (!pending.equals(task) || dispatchClosed) {
         return;
@@ -266,7 +268,7 @@ public final class ManagedWebSocket implements Session.Listener {
    *
    * @param pending task whose worker ownership must be released
    */
-  private void deliverAndFinish(FutureTask<Void> pending) {
+  private void deliverAndFinish(FutureTask<@Nullable Void> pending) {
     boolean completed = false;
 
     try {
@@ -337,7 +339,7 @@ public final class ManagedWebSocket implements Session.Listener {
    *
    * @param pending task completing its actual application work
    */
-  private void finish(FutureTask<Void> pending) {
+  private void finish(FutureTask<@Nullable Void> pending) {
     boolean notify;
     synchronized (events) {
       notify = closing && closeReady && !dispatchClosed && !terminalNotified;

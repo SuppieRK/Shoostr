@@ -52,14 +52,13 @@ public final class Pac4jAuthenticationExample {
             routes ->
                 routes.path(
                     "/accounts",
-                    group -> {
-                      group
-                          .get(
-                              "/me",
-                              (request, response) ->
-                                  response.text(request.principal().orElseThrow().getName()))
-                          .get("/admin", (ignored3, response) -> response.text("permitted"));
-                    },
+                    group ->
+                        group
+                            .get(
+                                "/me",
+                                (request, response) ->
+                                    response.text(request.principal().orElseThrow().getName()))
+                            .get("/admin", (ignored3, response) -> response.text("permitted")),
                     // Select authentication for both account endpoints, not for every route.
                     extensions -> extensions.with(authentication)));
   }

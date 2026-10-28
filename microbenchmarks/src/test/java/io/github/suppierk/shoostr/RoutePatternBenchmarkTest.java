@@ -47,10 +47,9 @@ class RoutePatternBenchmarkTest {
               case "literal" -> "/latest";
               case "precedence" -> "/shadowed";
               case "twoParameters" -> "/{id}/items/{itemId}";
-              case "fallback" -> "/{id}/events";
+              case "fallback", "regexFallback" -> "/{id}/events";
               case "catchAllNoRead", "catchAllRead", "catchAllFallback" -> "/{*tail}";
               case "regexNoRead", "regexRead" -> "/{numericId:[0-9]+}";
-              case "regexFallback" -> "/{id}/events";
               default -> "/{id}";
             };
         assertEquals(
