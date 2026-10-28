@@ -208,6 +208,20 @@ sonar {
 		property 'sonar.gradle.skipCompile', 'true'
 		property 'sonar.qualitygate.wait', 'true'
 		property 'sonar.exclusions', '.github/benchmarks/**,.github/ci/*.test.mjs'
+		// Standalone launchers run in the required Docker matrix, outside the JaCoCo JVM.
+		// Keep all source rules and factory/framework coverage checks enabled.
+		property 'sonar.coverage.exclusions', [
+			'examples/02-application/src/main/java/io/github/suppierk/shoostr/example/application/ExampleApplication.java',
+			'examples/03-routing/src/main/java/io/github/suppierk/shoostr/example/routing/ExampleApplication.java',
+			'examples/04-request/src/main/java/io/github/suppierk/shoostr/example/request/ExampleApplication.java',
+			'examples/05-bodies/src/main/java/io/github/suppierk/shoostr/example/bodies/ExampleApplication.java',
+			'examples/06-responses/src/main/java/io/github/suppierk/shoostr/example/responses/ExampleApplication.java',
+			'examples/07-json/src/main/java/io/github/suppierk/shoostr/example/json/ExampleApplication.java',
+			'examples/08-errors/src/main/java/io/github/suppierk/shoostr/example/errors/ExampleApplication.java',
+			'examples/09-resources/src/main/java/io/github/suppierk/shoostr/example/resources/ExampleApplication.java',
+			'examples/12-lifecycle/src/main/java/io/github/suppierk/shoostr/example/lifecycle/ExampleApplication.java',
+			'examples/13-extensions/src/main/java/io/github/suppierk/shoostr/example/extensions/ExampleApplication.java',
+		].join(',')
 		property 'sonar.issue.ignore.multicriteria',
 				'exampleResourceOwnership,nonFunctionalExtensionFixture,asynchronousSessionReclamation'
 		// Example factories transfer resource ownership to callers; retain every other rule.

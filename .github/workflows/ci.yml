@@ -74,40 +74,6 @@ jobs:
       - name: Verify MCP interoperability with the official suite
         run: ./gradlew :mcp-example:conformanceTest --console=plain
 
-      - name: Build focused example container images with Jib
-        run: >-
-          ./gradlew :hello-example:jibDockerBuild :requests-example:jibDockerBuild
-          :sse-example:jibDockerBuild :websocket-example:jibDockerBuild
-          :exceptions-example:jibDockerBuild :json-errors-example:jibDockerBuild
-          :authentication-example:jibDockerBuild
-          :static-streaming-example:jibDockerBuild :openapi-example:jibDockerBuild
-          :mcp-example:jibDockerBuild --console=plain
-
-      - name: Verify real observability examples
-        run: >-
-          ./gradlew :micrometer-example:dockerTest :opentelemetry-example:dockerTest
-          --console=plain
-
-      - name: Verify public MCP tools, resources and prompts through Inspector
-        working-directory: examples/17-mcp
-        run: |
-          compose=(docker compose -p shoostr-mcp-inspector-ci -f compose.yaml)
-          trap '"${compose[@]}" down --timeout 20' EXIT
-          "${compose[@]}" up -d --wait --wait-timeout 90
-          node --test inspector-test.mjs
-
-      - name: Preserve real-backend example results
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: example-backend-results
-          path: |
-            examples/15-observability/micrometer/build/docker/
-            examples/15-observability/micrometer/build/test-results/dockerTest/
-            examples/15-observability/opentelemetry/build/docker/
-            examples/15-observability/opentelemetry/build/test-results/dockerTest/
-          if-no-files-found: warn
-
       - name: Preserve MCP compatibility reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -157,9 +123,177 @@ jobs:
           path: '**/build/test-results/**/TEST-*.xml'
           if-no-files-found: warn
 
+  example-inventory:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.inventory.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - id: inventory
+        run: |
+          matrix=$(node .github/ci/example-containers.test.mjs --matrix)
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  examples:
+    needs: example-inventory
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.example-inventory.outputs.matrix) }}
+    env:
+      EXPECTED_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      EXAMPLE: ${{ matrix.project }}
+      EXAMPLE_DIRECTORY: ${{ matrix.directory }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify the proposed revision
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        if: matrix.project == 'micrometer-example' || matrix.project == 'opentelemetry-example'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+        if: matrix.project == 'micrometer-example' || matrix.project == 'opentelemetry-example'
+        with:
+          cache-provider: basic
+      - name: Install Inspector browser checks
+        if: matrix.project == 'mcp-example'
+        working-directory: examples/17-mcp
+        run: |
+          npm ci --ignore-scripts
+          node node_modules/playwright/cli.js install --with-deps firefox
+      - name: Build and verify both container paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          compose=(docker compose -p shoostr-example-ci -f "$EXAMPLE_DIRECTORY/compose.yaml")
+          mkdir -p build/reports/example-containers
+          cleanup() {
+            local result=0 containers='' container=''
+            containers=$("${compose[@]}" ps -a -q) || result=1
+            if [[ -n "$containers" ]]; then
+              "${compose[@]}" stop --timeout 20 || result=1
+              container=$("${compose[@]}" ps -a -q app) || result=1
+              if [[ -n "$container" ]]; then
+                case "$(docker inspect "$container" --format '{{.State.ExitCode}}')" in
+                  0|143) ;;
+                  *) echo 'App did not stop gracefully' >&2; result=1 ;;
+                esac
+              fi
+              if [[ "$EXAMPLE" == mcp-example ]]; then
+                "${compose[@]}" logs --no-color app > "build/reports/example-containers/$mode-compose.log" 2>&1 || result=1
+              else
+                "${compose[@]}" logs --no-color > "build/reports/example-containers/$mode-compose.log" 2>&1 || result=1
+              fi
+            fi
+            "${compose[@]}" down --timeout 20 --volumes || result=1
+            docker rm -f shoostr-invalid-report shoostr-report-override 2>/dev/null || true
+            docker volume rm shoostr-report-fixture 2>/dev/null || true
+            return "$result"
+          }
+          mode=distribution
+          trap cleanup EXIT
+          if [[ "$EXAMPLE" != micrometer-example && "$EXAMPLE" != opentelemetry-example ]]; then
+            "${compose[@]}" pull --ignore-buildable
+          fi
+          for mode in distribution jib; do
+            if [[ "$mode" == distribution ]]; then
+              "${compose[@]}" build app
+            else
+              docker buildx build -f "$EXAMPLE_DIRECTORY/Dockerfile" --target jib \
+                --output type=local,dest=build/jib .
+              docker load --input build/jib/jib-image.tar
+            fi
+            expected=$(docker image inspect "shoostr/$EXAMPLE:local" --format '{{.Id}}')
+            printf '%s %s\n' "$mode" "$expected" >> build/reports/example-containers/images.txt
+            if [[ "$EXAMPLE" == resources-example ]]; then
+              docker volume create shoostr-report-fixture
+              docker run --rm --user 0:0 --entrypoint /bin/sh \
+                --mount type=volume,source=shoostr-report-fixture,target=/fixtures \
+                "shoostr/$EXAMPLE:local" -c \
+                'printf "name\nKatherine\n" > /fixtures/override.csv; cp /fixtures/override.csv /fixtures/unreadable.csv; chmod 644 /fixtures/override.csv; chmod 000 /fixtures/unreadable.csv'
+              for report in '' /missing-report.csv /fixtures /fixtures/unreadable.csv; do
+                set +e
+                timeout 20s docker run --rm --name shoostr-invalid-report \
+                  --mount type=volume,source=shoostr-report-fixture,target=/fixtures,readonly \
+                  -e EXAMPLE_REPORT="$report" "shoostr/$EXAMPLE:local"
+                result=$?
+                set -e
+                test "$result" = 1
+              done
+              docker run -d --name shoostr-report-override --read-only --tmpfs /tmp --memory 256m \
+                --mount type=volume,source=shoostr-report-fixture,target=/fixtures,readonly \
+                -p 127.0.0.1:18081:8080 -e EXAMPLE_REPORT=/fixtures/override.csv "shoostr/$EXAMPLE:local"
+              BASE_URL=http://127.0.0.1:18081 REPORT_CONTENT=$'name\nKatherine\n' \
+                node --test .github/ci/example-containers.test.mjs
+              docker stop --timeout 20 shoostr-report-override
+              docker rm shoostr-report-override
+            fi
+            if [[ "$EXAMPLE" == micrometer-example || "$EXAMPLE" == opentelemetry-example ]]; then
+              if [[ "$mode" == distribution ]]; then
+                while IFS= read -r image; do
+                  if [[ "$image" != "shoostr/$EXAMPLE:local" ]]; then
+                    if docker image inspect "$image" >/dev/null 2>&1; then
+                      docker image rm "$image"
+                    fi
+                    if docker image inspect "$image" >/dev/null 2>&1; then
+                      echo 'Backend image must be absent before the standalone test' >&2
+                      exit 1
+                    fi
+                  fi
+                done < <("${compose[@]}" config --images)
+              fi
+              ./gradlew ":$EXAMPLE:dockerTest" -x ":$EXAMPLE:jibDockerBuild" --console=plain
+              cp -r "$EXAMPLE_DIRECTORY/build/docker" "build/reports/example-containers/$mode-backend"
+              cp -r "$EXAMPLE_DIRECTORY/build/test-results/dockerTest" "build/reports/example-containers/$mode-junit"
+            fi
+            "${compose[@]}" up --no-build --pull never --force-recreate -d
+            app=$("${compose[@]}" ps -q app)
+            test "$(docker inspect "$app" --format '{{.Image}}')" = "$expected"
+            test "$(docker inspect "$app" --format '{{.Config.User}}')" = '1000:1000'
+            test "$(docker inspect "$app" --format '{{.HostConfig.ReadonlyRootfs}}')" = true
+            node --test .github/ci/example-containers.test.mjs
+            if [[ "$EXAMPLE" == mcp-example ]]; then
+              (cd examples/17-mcp && node --test inspector-test.mjs)
+            fi
+            cleanup
+          done
+      - name: Verify retained diagnostics
+        shell: bash
+        run: |
+          for mode in distribution jib; do
+            log="build/reports/example-containers/$mode-compose.log"
+            test -s "$log"
+            if [[ "$EXAMPLE" == mcp-example ]]; then
+              if grep -Eq '^inspector-[0-9]+[[:space:]]*\|' "$log"; then
+                echo 'Inspector startup logs must not be retained' >&2
+                exit 1
+              fi
+            fi
+          done
+      - name: Preserve container evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: containers-${{ matrix.project }}
+          path: |
+            build/reports/example-containers/
+            examples/15-observability/*/build/docker/
+            examples/15-observability/*/build/test-results/dockerTest/
+          if-no-files-found: warn
+
   build:
     if: ${{ always() }}
-    needs: validation
+    needs: [validation, examples]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -168,5 +302,6 @@ jobs:
       - name: Require successful validation of the proposed revision
         env:
           VALIDATION_RESULT: ${{ needs.validation.result }}
+          EXAMPLES_RESULT: ${{ needs.examples.result }}
           EXPECTED_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/ci/gate.mjs

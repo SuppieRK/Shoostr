@@ -1,0 +1,34 @@
+# Only Gradle inputs enter the example build context.
+**
+!gradlew
+!gradle.properties
+!settings.gradle
+!build.gradle
+!gradle/**
+!buildSrc/**
+!config/**
+!core/**
+!http/**
+!test/**
+!pac4j/**
+!micrometer/**
+!opentelemetry/**
+!openapi/**
+!mcp/**
+!microbenchmarks/**
+!examples/**
+!.github/benchmarks/**
+**/build
+**/.gradle
+**/node_modules
+**/.sonar
+!buildSrc/src/main/java/io/github/suppierk/build
+!buildSrc/src/main/java/io/github/suppierk/build/**
+# Retired Git-ignored documentation can remain in a local checkout.
+core/HTTP_CONTRACT.md
+core/MUTATION_TESTING.md
+http/README.md
+mcp/README.md
+microbenchmarks/README.md
+openapi/README.md
+examples/README.md

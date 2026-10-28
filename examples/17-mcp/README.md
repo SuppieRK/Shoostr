@@ -1,5 +1,38 @@
 # 17 — MCP
 
+## Run with Docker
+
+Use Docker Engine with Compose v2 or later and Buildx. Run from the repository root;
+Java and Gradle are provided by the build image. Start one example at a time:
+
+```sh
+docker compose -f examples/17-mcp/compose.yaml up --build -d
+```
+
+Startup is asynchronous. Check diagnostics with `docker compose -f examples/17-mcp/compose.yaml logs -f app`.
+Open `http://127.0.0.1:8080/health`. Expect healthy; Inspector setup is below.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
+are for trusted local development. Direct Java runs use the default wildcard listener.
+
+To build with Jib inside Docker instead, stop the stack and export/load its image:
+
+```sh
+docker compose -f examples/17-mcp/compose.yaml down --timeout 20
+docker buildx build -f examples/17-mcp/Dockerfile --target jib --output type=local,dest=build/mcp-example-jib .
+docker load --input build/mcp-example-jib/jib-image.tar
+docker compose -f examples/17-mcp/compose.yaml pull --ignore-buildable
+docker compose -f examples/17-mcp/compose.yaml up --no-build --pull never --force-recreate -d
+```
+
+Both paths use the same local image tag. Stop and remove the stack with
+`docker compose -f examples/17-mcp/compose.yaml down --timeout 20 --volumes`.
+Use `docker compose -f examples/17-mcp/compose.yaml logs` for diagnostics.
+Optional `./gradlew` commands below require a local Java 21 installation;
+container validation is described in [CONTRIBUTING](../../CONTRIBUTING.md#example-container-validation).
+
+## Recipe and direct-run notes
+
 Maintainer interoperability fixture. Consumer recipes cover [MCP catalogs](../../site/src/content/docs/mcp/server.mdx), [security](../../site/src/content/docs/mcp/security.mdx) and [client interactions](../../site/src/content/docs/mcp/interactions.mdx).
 
 `McpServerExample` supplies the consumer recipe's synchronous and asynchronous
@@ -226,7 +259,7 @@ the older 2.0.1 completed-correlation retention limitation no longer applies.
 Session limits and idle expiry still do not impose a heap or pending-work budget
 on a continuously active session. The SDK does not implement a
 `notifications/cancelled` handler, so closing an HTTP stream does not cancel detached
-session-owned work. See the [current MCP contracts](../../mcp/README.md) for ownership
+session-owned work. See the [current MCP contracts](../../site/src/content/docs/mcp/server.mdx) for ownership
 and transport limits. Shoostr does not fork the SDK or manipulate its private state.
 
 No external-provider OAuth example or end-to-end fixture is maintained. The official

@@ -53,7 +53,6 @@ out/
 /AGENTS.md
 /.agents/
 /docs/*
-!/docs/maintainers/
 /.scratch/
 /skills-lock.json
 CONTEXT.md
@@ -64,3 +63,12 @@ CONTEXT.md
 /site/dist/
 /site/.astro/
 __pycache__/
+
+### Retired local documentation ###
+/core/HTTP_CONTRACT.md
+/core/MUTATION_TESTING.md
+/http/README.md
+/mcp/README.md
+/microbenchmarks/README.md
+/openapi/README.md
+/examples/README.md

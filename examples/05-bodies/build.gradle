@@ -1,5 +1,12 @@
+plugins { id 'application' }
+
 dependencies {
 	implementation project(':core')
 	testImplementation project(':test')
 	testImplementation 'org.awaitility:awaitility:4.3.0'
 }
+
+application {
+	mainClass = 'io.github.suppierk.shoostr.example.bodies.ExampleApplication'
+}
+apply from: rootProject.file('config/gradle/example-container.gradle')

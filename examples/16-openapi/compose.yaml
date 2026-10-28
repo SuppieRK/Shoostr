@@ -1,5 +1,9 @@
 services:
   app:
+    build:
+      context: ../..
+      dockerfile: examples/16-openapi/Dockerfile
+      target: runtime
     image: shoostr/openapi-example:local
     ports:
       - "127.0.0.1:${APP_PORT:-8080}:8080"

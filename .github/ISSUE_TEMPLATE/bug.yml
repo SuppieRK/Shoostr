@@ -1,0 +1,31 @@
+name: Bug report
+description: Report reproducible serving behavior that differs from the contract.
+body:
+  - type: markdown
+    attributes:
+      value: "For vulnerabilities, use [private reporting](https://github.com/SuppieRK/Shoostr/security/advisories/new). Remove secrets from all examples and logs."
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected and actual behavior
+      description: Explain the observable failure and the behavior you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: Provide a minimal example, request, and steps to reproduce.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include the Shoostr commit or version, OS, Java version for direct runs, or Docker and Compose versions for containers.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized logs and evidence
