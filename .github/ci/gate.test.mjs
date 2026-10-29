@@ -45,6 +45,14 @@ for (const { name, payload, env = {} } of origins) {
     }
   });
 
+  test(`${name} rejects failed, cancelled, skipped, missing and unexpected documentation results`, () => {
+    for (const documentation of ['failure', 'cancelled', 'skipped', '', 'unknown']) {
+      const result = runGate({ ...env, DOCUMENTATION_RESULT: documentation }, payload);
+      assert.equal(result.status, 1, documentation);
+      assert.match(result.stderr, /Documentation validation did not succeed/);
+    }
+  });
+
   test(`${name} rejects missing, malformed and mismatched expected revisions`, () => {
     for (const expected of ['', 'not-a-revision', 'b'.repeat(40)]) {
       const result = runGate({ ...env, EXPECTED_REVISION: expected }, payload);
@@ -91,6 +99,7 @@ function runGate(overrides = {}, payload = event()) {
         GITHUB_SHA: revision,
         VALIDATION_RESULT: 'success',
         EXAMPLES_RESULT: 'success',
+        DOCUMENTATION_RESULT: 'success',
         EXPECTED_REVISION: revision,
         ...overrides,
       },

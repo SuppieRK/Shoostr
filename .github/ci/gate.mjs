@@ -8,6 +8,9 @@ try {
   if (process.env.EXAMPLES_RESULT !== 'success') {
     throw new Error('Example container validation did not succeed');
   }
+  if (process.env.DOCUMENTATION_RESULT !== 'success') {
+    throw new Error('Documentation validation did not succeed');
+  }
   const expected = process.env.EXPECTED_REVISION;
   const proposed = process.env.GITHUB_EVENT_NAME === 'pull_request'
     ? event.pull_request?.head?.sha : process.env.GITHUB_SHA;
