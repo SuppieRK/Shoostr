@@ -123,6 +123,45 @@ jobs:
           path: '**/build/test-results/**/TEST-*.xml'
           if-no-files-found: warn
 
+  documentation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SITE_URL: https://suppierk.github.io
+      BASE_PATH: /Shoostr/
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: site/package-lock.json
+      - name: Install documentation and browser tooling
+        working-directory: site
+        run: |
+          npm ci --ignore-scripts
+          npx --no-install playwright install --with-deps firefox
+      - name: Build the published site
+        run: npm --prefix site run build
+      - name: Verify the production site
+        run: npm --prefix site run test:publication
+      - name: Preserve browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: documentation-browser-results
+          path: site/test-results/
+          if-no-files-found: ignore
+      - name: Prepare the Pages artifact
+        if: >-
+          github.repository == 'SuppieRK/Shoostr' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/dist
+
   example-inventory:
     runs-on: ubuntu-latest
     outputs:
@@ -293,7 +332,7 @@ jobs:
 
   build:
     if: ${{ always() }}
-    needs: [validation, examples]
+    needs: [validation, examples, documentation]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -303,5 +342,42 @@ jobs:
         env:
           VALIDATION_RESULT: ${{ needs.validation.result }}
           EXAMPLES_RESULT: ${{ needs.examples.result }}
+          DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
           EXPECTED_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
         run: node .github/ci/gate.mjs
+
+  publish-documentation:
+    if: >-
+      github.repository == 'SuppieRK/Shoostr' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: [build, documentation]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    concurrency:
+      group: github-pages
+      queue: max
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Skip superseded main revisions
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          current=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+          if [[ "$current" == "$GITHUB_SHA" ]]; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Skipping documentation publication: main has advanced.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Publish to GitHub Pages
+        id: deployment
+        if: steps.current.outputs.publish == 'true'
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

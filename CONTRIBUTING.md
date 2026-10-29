@@ -67,8 +67,46 @@ SITE_URL=https://example.invalid BASE_PATH=/Shoostr/ npm --prefix site run previ
 
 Open `/Shoostr/` on the printed local origin. Check navigation, assets, copy buttons, and search results in both themes.
 The example origin is not a published site. Set the real origin and repository path before publication.
-The output in `site/dist/` is a static GitHub Pages artifact. Publishing requires separate authorization and repository configuration.
-There is no deployment workflow in this foundation.
+The output in `site/dist/` is the static GitHub Pages artifact. Keep the complete repository
+checkout when building: topic pages import their example and test classes from `examples/`.
+
+Install Firefox and run the production browser checks after building, using the same
+`SITE_URL` and `BASE_PATH` values for the build and checks:
+
+```sh
+npm --prefix site exec -- playwright install firefox
+SITE_URL=https://suppierk.github.io BASE_PATH=/Shoostr/ npm --prefix site run build
+SITE_URL=https://suppierk.github.io BASE_PATH=/Shoostr/ npm --prefix site run test:publication
+```
+
+Playwright starts and stops its own preview on port 4322. Stop any other server on that
+port before running the checks. The checks cover generated links and assets, the first-request
+journey, both themes, mobile navigation, code-copy controls, production search and the 404 page.
+
+### Publish the site
+
+Consumer documentation is hosted at <https://suppierk.github.io/Shoostr/>. The
+[CI workflow](.github/workflows/ci.yml) builds and checks it in the `documentation` job
+on pull requests and main-branch runs, using `SITE_URL=https://suppierk.github.io` and
+`BASE_PATH=/Shoostr/`. Changes to example classes also update the rendered documentation,
+so the job runs for every change.
+
+After a merge to `main`, publication waits for the complete CI gate: Java validation,
+example containers, documentation checks and the applicable Sonar quality gate with zero open
+issues. The deployment job publishes that run's `site/dist/` artifact. Deployments are
+serialized, and a run skips publication if `main` has advanced. Pull requests and non-main
+manual runs cannot publish. To retry publication, rerun CI for the current `main` revision or
+dispatch the CI workflow on `main`; its validation requirements remain the same.
+
+In [Pages settings](https://github.com/SuppieRK/Shoostr/settings/pages), select **GitHub Actions**
+as the publishing source. Keep the `github-pages` environment restricted to the `main` branch
+in [environment settings](https://github.com/SuppieRK/Shoostr/settings/environments).
+Only the deployment job receives Pages-write and identity-token permissions.
+
+For a failed publication, inspect the `documentation`, `build` and `publish-documentation`
+jobs in [Actions](https://github.com/SuppieRK/Shoostr/actions/workflows/ci.yml).
+Failed browser checks retain traces in the `documentation-browser-results` artifact.
+After the first deployment, verify the landing page, a nested topic and search on the public URL.
 
 Build the library and verify examples separately:
 
