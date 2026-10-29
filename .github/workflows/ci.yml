@@ -312,11 +312,9 @@ jobs:
           for mode in distribution jib; do
             log="build/reports/example-containers/$mode-compose.log"
             test -s "$log"
-            if [[ "$EXAMPLE" == mcp-example ]]; then
-              if grep -Eq '^inspector-[0-9]+[[:space:]]*\|' "$log"; then
-                echo 'Inspector startup logs must not be retained' >&2
-                exit 1
-              fi
+            if [[ "$EXAMPLE" == mcp-example ]] && grep -Eq '^inspector-[0-9]+[[:space:]]*\|' "$log"; then
+              echo 'Inspector startup logs must not be retained' >&2
+              exit 1
             fi
           done
       - name: Preserve container evidence
