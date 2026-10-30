@@ -3,7 +3,7 @@ title: Choose your libraries
 description: Choose the Shoostr libraries for your HTTP application and tests.
 ---
 
-Shoostr is an experimental Java 21 HTTP framework with explicit route registration and optional integrations; its public interfaces can change.
+Shoostr is a Java 21 HTTP framework with explicit route registration and optional integrations; its public interfaces can change.
 
 Start with `shoostr-core` for your application and `shoostr-test` for its HTTP tests.
 

@@ -2,7 +2,7 @@
 
 Build HTTP applications with ordinary Java and explicit configuration.
 
-Shoostr is an experimental HTTP serving library for Java 21, built on Jetty. Register routes with Java calls
+Shoostr is an HTTP serving library for Java 21, built on Jetty. Register routes with Java calls
 and add integrations when you need them. Platform threads are the default; virtual threads are
 opt-in. Application code does not need framework annotations.
 
@@ -10,7 +10,7 @@ opt-in. Application code does not need framework annotations.
 - Optional authentication, Micrometer metrics, OpenTelemetry tracing, OpenAPI, and MCP integrations.
 - Runnable examples with live HTTP tests.
 
-The public interfaces can change while the project is experimental.
+The public interfaces can change.
 
 ## Scope
 
