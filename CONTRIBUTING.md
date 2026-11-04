@@ -34,6 +34,57 @@ The aggregate `build` job runs even when validation fails or is skipped. Main's 
 requires `build` from GitHub Actions and an up-to-date branch; the existing administrator
 bypass is retained.
 
+# Publish library artifacts
+
+Use a GitHub Release to record a manually selected batch of one or more libraries.
+Each artifact has its own version; a batch does not require releasing every library.
+
+The build currently uses a shared snapshot version and local publication for core/HTTP
+consumer tests. Before the first Central publication, configure independent artifact
+versions, deliberate dependency versions, complete publication metadata, signing and
+Central credentials. Update the [installation reference](site/src/content/docs/start/libraries.md)
+for independent versions. Creating a GitHub Release currently does not upload Java artifacts.
+
+Use `YYYY.MM.D.PATCH`, for example `2026.11.4.0`. Start the counter at `0` for each
+artifact and release date; increment it for further publications of that artifact on
+the same date. Maintain only the latest release of each artifact initially. Describe
+deliberate breaking changes and migration steps in its release notes.
+
+1. **Select the libraries.** Compare each library with its own last successful
+   publication; a library without one is a first publication. Review production
+   sources, resources, published dependency metadata and relevant shared build inputs. List only the libraries selected for this batch.
+   Each internal dependency declared in published metadata must already be published
+   or be explicitly included in the batch; the first MCP publication also needs core
+   and HTTP.
+2. **Prepare the final revision.** Assign selected artifact versions and change
+   internal dependency versions only deliberately. Commit tracked release-input
+   changes through the contribution workflow. Require successful [CI checks](#ci-and-external-contributions)
+   for that exact final revision before tagging or staging it.
+3. **Draft the GitHub Release.** Choose one tag identifying that verified revision.
+   Record each selected `groupId:artifactId:version`, its internal dependency versions,
+   changes and migration notes in the description. Use a draft while publication is pending.
+4. **Stage and check the batch.** Use the configured publisher to stage exactly the
+   selected artifacts, including sources, Javadocs, POMs, Gradle Module Metadata and
+   required signatures. Check both metadata formats and test consumers against the
+   declared published dependencies, or staged dependencies selected in this batch.
+   Keep workspace dependency substitution out of these consumption checks.
+5. **Publish to Central.** Upload the checked batch and record its deployment ID.
+   If the publisher leaves it `VALIDATED`, publish that deployment through the Portal
+   or publisher. Require `PUBLISHED`, then verify every selected coordinate resolves
+   from the public repository in fresh Maven and Gradle consumers.
+6. **Publish the GitHub draft.** Finalize the release after all selected artifacts are
+   available. Retain the source revision, artifact/version list and deployment ID in
+   the release record. A repository-wide release date does not replace a library's
+   individual publication history.
+
+After a failure or timeout, inspect the existing deployment and published coordinates
+before uploading again. Published versions are immutable; correcting a published
+artifact requires a new version.
+
+References: [GitHub release management](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository),
+[Central requirements](https://central.sonatype.org/publish/requirements/), and
+[Central deployment states](https://central.sonatype.org/publish/publish-portal-api/).
+
 # Documentation
 
 The Starlight site in `site/` is for library consumers.
@@ -184,21 +235,21 @@ Repeat hosting checks for `/` and the repository base path. Keep private researc
 This project uses a profile based on Simplified Technical English.
 It does not claim formal ASD-STE100 compliance or enforce its complete dictionary.
 
-| Rule                       | Requirement                                                                                                                                               |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| W01 — Reader task          | Use task-focused titles. State the result before background.                                                                                              |
-| W02 — Direct steps         | Use active voice and imperative verbs. Give each instruction one main action.                                                                             |
-| W03 — Natural flow         | Use concise, connected prose with varied sentence lengths. Keep related ideas together rather than splitting paragraphs into abrupt statements.           |
-| W04 — Stable terms         | Use one term for one concept. Preserve exact identifiers, commands, protocol fields, and errors.                                                          |
-| W05 — Complete recipe      | Show the task and its test as complete classes. State additional library requirements, essential constraints, and ownership. Do not repeat initial setup. |
-| W06 — Essential limits     | State ownership, lifetime, security, and protocol limits where the reader acts.                                                                           |
-| W07 — Evidence             | Display compiled source files. Link primary references for deeper concepts. Label uncertainty and historical evidence.                                    |
-| W08 — Audience             | Keep consumer tasks in Starlight and maintainer procedures on GitHub. Keep READMEs short.                                                                 |
-| W09 — Clean examples       | Keep Sonar-specific suppressions, rule IDs, and analyzer comments out of example source. Explain resource ownership in ordinary terms.                    |
-| W10 — Java fluency         | Explain task-specific choices and non-obvious contracts, not assertions, standard Java syntax, or automatic resource closure.                             |
-| W11 — In-code explanations | Comment meaningful choices, scope, ordering, ownership, and failure paths where the reader encounters them. Keep already-clear code concise.              |
-| W12 — Fluent registration  | Chain adjacent registrations on the same route scope, preserving call order and child boundaries. Keep setup and unrelated operations separate.           |
-| W13 — Application setup    | Show application construction and fluent configuration directly, without setup catch blocks, cleanup scaffolding, or route-only substitutes.              |
+| Rule                       | Requirement                                                                                                                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| W01 — Reader task          | Use task-focused titles. State the result before background.                                                                                                                                            |
+| W02 — Direct steps         | Use active voice and imperative verbs. Give each instruction one main action.                                                                                                                           |
+| W03 — Natural flow         | Use concise, connected prose with varied sentence lengths. Keep related ideas together rather than splitting paragraphs into abrupt statements.                                                         |
+| W04 — Stable terms         | Use one term for one concept. Preserve exact identifiers, commands, protocol fields, and errors.                                                                                                        |
+| W05 — Complete recipe      | Show the task and its test as complete classes. State additional library requirements, essential constraints, and ownership. Do not repeat initial setup.                                               |
+| W06 — Essential limits     | State ownership, lifetime, security, and protocol limits where the reader acts.                                                                                                                         |
+| W07 — Evidence             | Display compiled source files. Link primary references for deeper concepts. Label uncertainty and historical evidence.                                                                                  |
+| W08 — Audience             | Keep consumer tasks in Starlight and maintainer procedures on GitHub. Keep READMEs short.                                                                                                               |
+| W09 — Clean examples       | Keep Sonar-specific suppressions, rule IDs, and analyzer comments out of example source. Explain resource ownership in ordinary terms.                                                                  |
+| W10 — Java fluency         | Explain task-specific choices and non-obvious contracts, not assertions, standard Java syntax, or automatic resource closure.                                                                           |
+| W11 — In-code explanations | Comment meaningful choices, scope, ordering, ownership, and failure paths where the reader encounters them. Keep already-clear code concise.                                                            |
+| W12 — Fluent registration  | Chain adjacent registrations on the same route scope, preserving call order and child boundaries. Keep setup and unrelated operations separate.                                                         |
+| W13 — Application setup    | Show application construction and fluent configuration directly, without setup catch blocks, cleanup scaffolding, or route-only substitutes.                                                            |
 | W14 — Concept order        | Explain framework-specific concepts before relying on them in claims or examples. Introduce an example's purpose and needed concepts before its code; a forward link does not replace that explanation. |
 
 Review prose in context instead of treating sentence length or automated word counts as proof of clarity.
