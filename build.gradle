@@ -25,6 +25,7 @@ plugins {
 	id 'org.sonarqube' version '7.5.0.8588'
 	id 'info.solidsoft.pitest' version '1.19.0' apply false
 	id 'com.google.cloud.tools.jib' version '3.5.4' apply false
+	id 'com.vanniktech.maven.publish.base' version '0.37.0' apply false
 }
 
 allprojects {
@@ -166,6 +167,8 @@ def frameworkModules = [
 	'mcp'
 ]
 def frameworkProjects = frameworkModules.collect { project(":${it}") }
+ext.publicationLibraries = frameworkModules
+apply from: 'config/gradle/publication.gradle'
 def exampleProjects = subprojects.findAll {
 	it.projectDir.toPath().startsWith(file('examples').toPath())
 }
@@ -274,8 +277,19 @@ configure([
 	project(':openapi'),
 	project(':mcp')
 ]) {
-	apply plugin: 'maven-publish'
+	apply plugin: 'com.vanniktech.maven.publish.base'
 	base { archivesName = "shoostr-${project.name}" }
+	java {
+		withSourcesJar()
+		withJavadocJar()
+	}
+	mavenPublishing {
+		coordinates(project.group.toString(), "shoostr-${project.name}", null)
+		publishToMavenCentral(true, com.vanniktech.maven.publish.DeploymentValidation.PUBLISHED)
+	}
+	if (providers.gradleProperty('centralRelease').getOrElse('false') == 'true') {
+		mavenPublishing.signAllPublications()
+	}
 
 	publishing {
 		publications {
@@ -284,13 +298,34 @@ configure([
 				artifactId = "shoostr-${project.name}"
 				pom {
 					name = "Shoostr ${project.name}"
+					description = "Shoostr ${project.name} library for explicit Java HTTP applications"
 					url = 'https://github.com/SuppieRK/Shoostr'
+					licenses {
+						license {
+							name = 'The Apache License, Version 2.0'
+							url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
+						}
+					}
+					developers {
+						developer {
+							id = 'SuppieRK'
+							name = 'SuppieRK'
+							url = 'https://github.com/SuppieRK'
+						}
+					}
 					scm {
 						url = 'https://github.com/SuppieRK/Shoostr'
 						connection = 'scm:git:https://github.com/SuppieRK/Shoostr.git'
+						developerConnection = 'scm:git:ssh://git@github.com/SuppieRK/Shoostr.git'
 					}
 				}
 			}
+		}
+	}
+	publishing.repositories {
+		maven {
+			name = 'releaseVerification'
+			url = rootProject.layout.buildDirectory.dir('release-verification-repository')
 		}
 	}
 }
@@ -319,5 +354,11 @@ project(':core') {
 				':core:publishMavenJavaPublicationToConsumerVerificationRepository'
 		inputs.dir(consumerRepository)
 		outputs.dir(layout.buildDirectory.dir('reports/published-consumer'))
+		doFirst {
+			systemProperty 'shoostr.core.version', project.version.toString()
+			systemProperty 'shoostr.http.version', project(':http').version.toString()
+			systemProperty 'shoostr.core.jar', tasks.named('jar').get().archiveFile.get().asFile.absolutePath
+			systemProperty 'shoostr.http.jar', project(':http').tasks.named('jar').get().archiveFile.get().asFile.absolutePath
+		}
 	}
 }

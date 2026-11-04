@@ -32,7 +32,7 @@ repositories {
     mavenCentral()
 }
 dependencies {
-    implementation 'io.github.suppierk:shoostr-core:0.1.0-SNAPSHOT'
+    implementation "io.github.suppierk:shoostr-core:${providers.gradleProperty('coreVersion').get()}"
 }
 application { mainClass = 'io.github.suppierk.consumer.Main' }
 
@@ -79,8 +79,10 @@ tasks.register('verifyDistribution') {
                     && it.id.componentIdentifier.module == "shoostr-${name}" }
             def expected = file(providers.gradleProperty("expected${name.capitalize()}").get())
             def repository = file(uri(providers.gradleProperty('verificationRepository').get()))
-            def published = fileTree(new File(repository, "io/github/suppierk/shoostr-${name}")) {
-                include '**/*.jar'
+            def published = fileTree(new File(repository,
+                    "io/github/suppierk/shoostr-${name}/${providers.gradleProperty("${name}Version").get()}")) {
+                include '*.jar'
+                exclude '*-sources.jar', '*-javadoc.jar'
             }.files
             new File(evidence, "shoostr-${name}.tsv").text =
                     ([expected, artifact.file] + published).collect { "${it}\t${hash(it)}" }.join('\n') + '\n'

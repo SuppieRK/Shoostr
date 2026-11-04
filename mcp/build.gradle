@@ -2,8 +2,10 @@ plugins {
 	id 'java-library'
 }
 
+version = '0.1.0-SNAPSHOT'
+
 dependencies {
-	api project(':core')
+	api shoostrDependency('core', '0.1.0-SNAPSHOT')
 	api platform('io.modelcontextprotocol.sdk:mcp-bom:2.1.0')
 	api 'io.modelcontextprotocol.sdk:mcp-core'
 	api('io.projectreactor:reactor-core:3.8.8') {
