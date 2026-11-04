@@ -1,6 +1,9 @@
 ---
 title: Require authentication for routes and groups
 description: Select an installed authenticator for routes or groups, publish a verified principal, and distinguish a 401 challenge from an authenticated 403 denial.
+next:
+  label: Authenticate with pac4j
+  link: ../pac4j/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,8 +12,15 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 ## Description
 
-`AuthenticationExtension` is an abstract base class that specializes the [extension model](../../extensions/route-metadata/#description) for authenticating requests.
-It implements `Extension<AuthenticationExtension>` and `Handler`, retaining the extension lifecycle while adding a dedicated authentication step.
+Authentication verifies credentials and establishes a request's identity. Authorization then decides whether that identity may perform an operation. In Shoostr, a principal is the identity value attached to a request after your authenticator has verified it.
+
+An installed provider is an object that contributes reusable application behavior. The provider interface is `Extension<C>`, where `C` names its route-settings type. `AuthenticationExtension` is the base for a provider that also acts as the request's authentication handler. Route callbacks receive an `Extensions` configuration object; selecting the installed authenticator there protects that route or group.
+
+The authenticator callback receives the incoming `Request` and outgoing `Response`, just as an endpoint handler does.
+
+This task distinguishes missing or invalid credentials from an authenticated permission denial. The example's credential lookup is a test fixture, rather than a production identity system.
+
+Implement the authenticator with `AuthenticationExtension`, which combines `Extension<AuthenticationExtension>` provider behavior with a `Handler`. The provider participates in application lifetime and supplies a dedicated authentication step before endpoint work.
 
 Implement `handle(request, response)` to validate credentials and establish the request's identity.
 Shoostr supplies the final `configure(...)` implementation; selecting the instance with `extensions.with(authentication)` requires authentication in that scope.
@@ -41,7 +51,13 @@ For browser login backed by a native session, see [Log in and log out with sessi
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests distinguish missing or invalid credentials from an authenticated permission denial, verify inherited protection on both private routes, and confirm that an unselected route remains public.
 They also check duplicate credentials and the Bearer scheme's case and spacing rules through real HTTP requests.
 
 <Code code={test} lang="java" title="RouteAuthenticationExampleTest.java" />
+
+## Continue
+
+Next, [Authenticate with pac4j](../pac4j/) to connect a configured credential client.

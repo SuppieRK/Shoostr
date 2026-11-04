@@ -1,6 +1,9 @@
 ---
 title: Send files as downloads
 description: Download a file attachment with a UTF-8 filename, send a file inline, and register matching HEAD handlers without buffering the file in memory.
+next:
+  label: Handle conditional file requests
+  link: ../caching/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/09-resources/src/test/java/io/github/s
 
 ## Description
 
-Use `response.file(...)` to send an application-selected file, or `attachment(...)` to add a download filename through `Content-Disposition`.
-Supply the media type explicitly; these methods do not choose it from the filename or encode the file's contents.
-Attachment names have both an ASCII fallback and a UTF-8 extended form, while control characters and path separators are rejected.
+A file response transfers a file selected by application code. An attachment adds a suggested download filename through HTTP metadata; it does not change or encode the file's contents.
+
+This task builds a file-serving `Handler`, the Java callback that receives the request and response, and registers it as an endpoint. The application selects both the file and its media type before transfer begins.
+
+Choose `response.file(...)` for a selected file, adding `attachment(...)` when the client should receive a download filename in `Content-Disposition`. Supply the media type; these methods neither infer it from the filename nor encode the contents. An attachment name has an ASCII fallback and a UTF-8 extended form. Control characters and path separators are rejected.
 
 Select the path in application code rather than passing an unchecked request parameter to the filesystem.
 File output supports readable regular files on the default filesystem and is separate from finite bodies and streaming: do not combine those output modes on one response.
@@ -31,8 +36,14 @@ The same file responses support [ranges and conditional requests](../caching/).
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The download test saves the HTTP response to a separate file with Java's `BodyHandlers.ofFile(...)` and verifies its contents after the server closes.
 The remaining checks distinguish inline output from an attachment, verify the two filename forms and exercise both explicit HEAD routes.
 The report remains available after the application closes because the application does not own its storage.
 
 <Code code={test} lang="java" title="DownloadExampleTest.java" />
+
+## Continue
+
+Next, [Handle conditional file requests](../caching/) to support validators and a selected byte range.

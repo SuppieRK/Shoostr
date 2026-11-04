@@ -1,6 +1,9 @@
 ---
 title: Set or delete a response cookie
 description: Set cookies with an explicit response scope, then delete them with the same name, path and domain.
+next:
+  label: Keep session state
+  link: ../../security/sessions/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/06-responses/src/test/java/io/github/s
 
 ## Description
 
-Set cookies with `response.cookie(...)`, which sends a `Set-Cookie` field for the selected scope.
-Read them from later requests through the [request cookie accessors](../../request/headers-cookies/).
-Cookie values must already be encoded for cookie syntax; Shoostr does not URL-encode or decode application data.
+A response cookie asks a client to store a value and return it on later matching requests. Shoostr's `Cookie` model describes the value, scope and attributes sent in Set-Cookie fields. It is not an HTTP session or a verified identity.
+
+This task sets and updates cookies, then inspects the response fields. `HttpStatusCodes` supplies named numeric statuses; cookie scope and encoding remain explicit application decisions.
+
+Send a `Set-Cookie` field with `response.cookie(...)` and the intended scope. A later request returns matching cookies through the [request accessors](../../request/headers-cookies/). Encode application values for cookie syntax before setting them; Shoostr does not URL-encode or decode cookie data.
 
 Delete a cookie with its original name, path and domain, because the incoming `Cookie` field does not disclose that scope.
 Keeping the original `Cookie` value lets `removeCookie(cookie)` preserve both scope and security attributes while sending an empty value, zero `Max-Age` and an expiry in the past.
@@ -33,7 +38,13 @@ Start with `Cookie.secure(...)` before selecting `SameSite.NONE`, since each imm
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests use the client's cookie store for the ordinary preference roundtrip and inspect the emitted fields for scope, expiry and security attributes.
 Those header checks do not verify browser enforcement of `Secure`, `HttpOnly` or `SameSite`.
 
 <Code code={test} lang="java" title="ResponseCookiesExampleTest.java" />
+
+## Continue
+
+Next, [Keep session state](../../security/sessions/) to manage server-side state independently of a cookie value.

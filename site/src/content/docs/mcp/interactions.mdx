@@ -1,6 +1,9 @@
 ---
 title: Request MCP client input and enable resource subscriptions
 description: Use MCP sampling and form elicitation, send client-scoped logging and progress, and enable resource subscriptions with live updates and session cleanup.
+next:
+  label: Review resource shutdown
+  link: ../../lifecycle/shutdown/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,13 @@ import test from '../../../../../examples/17-mcp/src/test/java/io/github/suppier
 
 ## Description
 
-Use native MCP callbacks to request input from the connected client and notify subscribers when a resource changes.
-Check the client's declared capabilities before requesting [form elicitation](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation) or [sampling](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling): the client controls its user interface, model access and approval policy.
-Sampling requests a generated message from that client; Shoostr does not supply a model provider.
+An MCP server can ask a connected client for input or notify it about a changed resource. Elicitation asks the client to collect structured input; sampling asks it to generate a message. Resource subscriptions let the client request change notifications.
+
+Use the optional `shoostr-mcp` library for this integration.
+
+The installed `Mcp` provider connects these native SDK callbacks to the application's HTTP endpoint. `McpHttpSecurity` supplies admission policy, and `McpIdentity` represents the admitted caller without retaining a live HTTP request. This task checks client capabilities before invoking an optional interaction.
+
+Implement the native MCP callbacks for requesting client input and notifying resource subscribers. Before [form elicitation](https://modelcontextprotocol.io/specification/2025-11-25/client/elicitation) or [sampling](https://modelcontextprotocol.io/specification/2025-11-25/client/sampling), inspect the client's advertised capabilities. Its own policy controls approval, user interaction and model access. Sampling asks that client for a generated message; it does not make Shoostr a model provider.
 
 This public demonstration shares only a nonsecret service status.
 Both the MCP endpoint and the HTTP status-update handler are unauthenticated, so protect both before introducing private operations or user-specific data; the [MCP security recipe](../security/) covers verified identity and session ownership.
@@ -26,7 +33,7 @@ The server's two-minute timeout bounds its wait for each client reply; the clien
 MCP logging and progress notifications go to the initiating client, not every session.
 Progress uses the caller's supplied `progressToken`, with updates for starting, accepting the audience and completing the summary; a call without that token produces no progress notifications.
 
-The HTTP handler strips surrounding whitespace and accepts one nonblank status line with a maximum length of 80 UTF-16 code units.
+The HTTP update handler uses `BadRequestException` to reject invalid submitted status text with `400`. It strips surrounding whitespace and accepts one nonblank status line with a maximum length of 80 UTF-16 code units.
 After updating the shared value, it uses borrowed `mcp.server()` management access to notify subscribers of `status://current`.
 The resource supports subscriptions, not resource-list changes, and an update notification signals a change rather than carrying a durable history; a later read can see a newer value if updates overlap.
 Shoostr owns native server cleanup, so do not close that borrowed server independently.
@@ -43,8 +50,14 @@ Roots do not enforce a filesystem sandbox, and accepting URL elicitation records
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The real SDK clients supply deterministic form and sampling replies, verify client-scoped notifications, and receive resource changes after HTTP updates.
 The tests also cover missing capabilities, decline and cancel, invalid replies, unsubscribe and resubscribe, explicit session deletion and server-driven stream closure while its HTTP client remains open.
 No external model provider is contacted.
 
 <Code code={test} lang="java" title="McpInteractionsExampleTest.java" />
+
+## Continue
+
+Next, [Review resource shutdown](../../lifecycle/shutdown/) to coordinate application and native SDK lifetimes.

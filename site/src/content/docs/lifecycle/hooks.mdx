@@ -1,6 +1,9 @@
 ---
 title: Run request lifecycle hooks and observe completion
-description: Add application and local request hooks, inspect composed route facts, and retain terminal RequestOutcome summaries for successful, failed and unmatched requests.
+description: Add application and local request hooks, inspect registered route facts, and retain completion summaries for successful, failed and unmatched requests.
+next:
+  label: Select endpoint execution
+  link: ../executors/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,13 @@ import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/s
 
 ## Description
 
-Register application hooks on `Shoostr` before startup, and use the [`Extensions`](../../extensions/route-metadata/#description) object supplied to a route or group configuration callback and register local hooks through `extensions.lifecycle()`.
-This built-in collector configures request handling for that scope; it does not configure other installed extensions.
-Excluding an extension with `extensions.without(instance)` removes only that provider's scoped contributions, so direct local hooks and application-wide installation hooks remain in effect.
+A request hook is a callback at a named point in HTTP processing, such as after route matching or before the handler. Application hooks apply across the application; local hooks apply to a selected route or group.
+
+Local configuration is supplied through `Extensions`, a built-in scope-configuration object. Its `lifecycle()` collector registers those callbacks without requiring an installed provider. A terminal observer instead receives `RequestOutcome`, a detached summary after application finalization and transport termination.
+
+This task follows one request through its phases and then examines what remains available at completion. Callback timing determines whether you may read or change a live request or response.
+
+Register application hooks on `Shoostr` before startup. For a route or group, register local hooks through the scope configuration's `lifecycle()` collector. These callbacks configure that scope's request handling directly.
 Each method registers a callback for the corresponding request phase:
 
 | Method                                         | When it runs                                                                                                                          |
@@ -57,6 +64,12 @@ Requests to `/jobs/{id}` return the job ID, while `/jobs/failure` throws so the 
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests check the complete success sequence, the composed route template, omission of successful-return hooks after a failure, and application-only observation of an unmatched request.
 
 <Code code={test} lang="java" title="RequestHooksExampleTest.java" />
+
+## Continue
+
+Next, [Select endpoint execution](../executors/) to follow request context across a worker handoff.

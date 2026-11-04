@@ -1,6 +1,9 @@
 ---
 title: Process a request body incrementally
 description: Calculate an upload checksum without buffering the whole request body.
+next:
+  label: Stream a finite response
+  link: ../../streaming/output/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/05-bodies/src/test/java/io/github/supp
 
 ## Description
 
-Calculate an upload checksum with `input()` as bytes arrive, without building a whole-body byte array.
-Repeated calls return the same stream at its current position; they do not restart the body.
-Once streamed input is selected, buffered reads and multipart parsing are unavailable for that request.
+Streamed input lets a handler consume a request body incrementally instead of first collecting the whole body in memory. The input stream belongs to the active request and advances as it is read.
+
+This task computes a checksum from arriving bytes and returns the result. Choose this approach when processing can happen chunk by chunk; use a buffered body when the handler needs one complete text or byte value.
+
+Read `input()` as bytes arrive and update the checksum incrementally. Calling `input()` again returns the same stream at its current position. It does not rewind the body. Choosing streamed input excludes buffered reads and multipart parsing for that request.
 
 The stream belongs to the active handler and is closed during framework finalization, so finish reading within that lifetime rather than handing it to detached work.
 The configured request-byte limit applies as bytes are consumed, including skipped bytes.
@@ -31,7 +36,13 @@ See [buffered bodies](../buffered/) for the body-mode comparison and [server opt
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests check known checksums, empty and multi-buffer input, exact-limit success, and overflow with both fixed-length and chunked requests.
 Additional HTTP handlers verify stream position and rejected attempts to switch body modes.
 
 <Code code={test} lang="java" title="StreamingInputExampleTest.java" />
+
+## Continue
+
+Next, [Stream a finite response](../../streaming/output/) to write output incrementally as well.

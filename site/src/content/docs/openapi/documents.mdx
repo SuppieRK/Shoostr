@@ -1,6 +1,9 @@
 ---
 title: Describe HTTP operations with OpenAPI
 description: Generate an OpenAPI document from selected routes and explicit schemas, describe request and response bodies, and keep independent documents frozen before serving traffic.
+next:
+  label: Serve an OpenAPI UI
+  link: ../ui/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,15 @@ import test from '../../../../../examples/16-openapi/src/test/java/io/github/sup
 
 ## Description
 
-Use `shoostr-openapi` to describe operations with explicit Swagger OpenAPI models, then install the `OpenApi` instance and select it through each route or group's extension callback.
-Register `docs.handler()` separately on the URL that serves the generated JSON; installing a document neither exposes that URL nor scans application classes, annotations or codecs.
-Group selections supply independent operation defaults, while a route can override its summary, identifier, parameters, representations and responses.
+An OpenAPI document describes an HTTP API's operations, parameters and representations. It is a description for readers and tools; it does not implement the API or enforce its validation and access rules.
+
+This example uses `shoostr-openapi` and Jackson 2's `jackson-databind` library for its JSON request and response handling.
+
+Shoostr's `OpenApi` provider collects explicit operation descriptions from registered routes. Register that provider with the application, then use the route's `Extensions` configuration object to select it and supply operation settings. Mounting the generated document is a separate route.
+
+This task describes an item API, serves its document, and keeps another document independent. `MediaType` names representations, while the handler uses `BadRequestException` for invalid input independently of the schema.
+
+Build explicit Swagger OpenAPI models, register the `OpenApi` instance from `shoostr-openapi`, and select it in the relevant route or group configuration. A group supplies independent operation defaults; an endpoint can replace its summary, identifier, parameters, representations and responses. Serve the generated JSON by separately registering `docs.handler()`. Installation does not expose a URL or infer a document by scanning classes, annotations or codecs.
 
 Schemas describe the API rather than validate requests, choose a codec or enforce authentication.
 Keep those responsibilities in the actual handlers and security configuration, even when an operation declares required fields or a security scheme.
@@ -41,7 +50,13 @@ Protect specification URLs explicitly when they describe private operations; the
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests inspect the generated schemas and operations, invoke the described POST, reject invalid input, and verify document isolation.
 A separate public-API fixture checks detached schema models, frozen configuration, repeated specification bytes and conditional metadata without synthetic handler execution.
 
 <Code code={test} lang="java" title="OpenApiDocumentExampleTest.java" />
+
+## Continue
+
+Next, [Serve an OpenAPI UI](../ui/) to let readers explore the generated document in a browser.

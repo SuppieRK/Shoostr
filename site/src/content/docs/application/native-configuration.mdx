@@ -1,6 +1,9 @@
 ---
 title: Configure the Jetty listener and server
 description: Configure the listener, HTTP parsing, native thread pool, and shutdown through Jetty hooks with clear startup ordering and resource ownership.
+next:
+  label: Set request and response limits
+  link: ../server-options/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,8 +12,11 @@ import test from '../../../../../examples/02-application/src/test/java/io/github
 
 ## Description
 
-Use Shoostr's native hooks to configure Jetty's own objects before startup.
-The table identifies the hook for each setting and links to Jetty's configuration reference.
+A Shoostr application uses Jetty to accept connections and process HTTP traffic. Native configuration callbacks let you change Jetty's own server objects before the listener starts. This task changes listener, parser and thread-pool settings without replacing the application routes.
+
+A callback receives the native object while the application is being configured. It is setup work, rather than a handler that runs for each request. Use the documented Jetty APIs for the object supplied to each callback.
+
+Configure the native objects through Shoostr's setup callbacks before startup. Match the setting to the callback in the table, then use the linked Jetty reference for that object's options.
 
 | Setting                                           | Native hook and reference                                                                                                                                                                                                                                                                                           |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -54,3 +60,7 @@ The test uses a real HTTP client so it exercises the configured listener directl
 It checks callback timing, listener and pool settings, ordinary requests, a `431` response for oversized headers, and rejection of configuration after startup or closure.
 
 <Code code={test} lang="java" title="NativeConfigurationExampleTest.java" />
+
+## Continue
+
+Next, [Set request and response limits](../server-options/) to configure Shoostr buffering separately from the transport.

@@ -27,26 +27,28 @@ export default defineConfig({
     starlight({
       title: 'Shoostr',
       description: 'Build HTTP applications with explicit Java configuration.',
+      defaultLocale: 'root',
+      locales: { root: { label: 'English', lang: 'en' } },
       favicon: '/favicon.svg',
       customCss: ['./src/styles/brand.css'],
       expressiveCode: { themes: ['github-dark', 'github-light'] },
-      components: { Head: './src/components/SearchHead.astro' },
+      components: {
+        Head: './src/components/SearchHead.astro',
+        Hero: './src/components/HomepageHero.astro',
+        LanguageSelect: './src/components/LanguageSelect.astro',
+      },
       sidebar: [
         { label: 'Overview', slug: '' },
         {
           label: 'Start here',
-          items: [{ slug: 'start/libraries' }, { slug: 'start/first-request' }],
-        },
-        {
-          label: 'Configure an application',
           collapsed: false,
           items: [
-            { slug: 'application/server-options' },
-            { slug: 'application/native-configuration' },
+            { slug: 'start/first-request' },
+            { slug: 'start/libraries' },
           ],
         },
         {
-          label: 'Routing',
+          label: 'Routes',
           collapsed: false,
           items: [
             { slug: 'routing/methods' },
@@ -56,12 +58,7 @@ export default defineConfig({
           ],
         },
         {
-          label: 'Extensions',
-          collapsed: false,
-          items: [{ slug: 'extensions/route-metadata' }],
-        },
-        {
-          label: 'Request metadata and state',
+          label: 'Request data',
           collapsed: false,
           items: [
             { slug: 'request/parameters' },
@@ -71,18 +68,8 @@ export default defineConfig({
           ],
         },
         {
-          label: 'Bodies, forms and uploads',
-          collapsed: false,
-          items: [
-            { slug: 'bodies/buffered' },
-            { slug: 'bodies/streaming-input' },
-            { slug: 'bodies/multipart' },
-            { slug: 'bodies/persist-upload' },
-          ],
-        },
-        {
           label: 'Responses',
-          collapsed: false,
+          collapsed: true,
           items: [
             { slug: 'responses/bodies' },
             { slug: 'responses/headers' },
@@ -91,9 +78,22 @@ export default defineConfig({
           ],
         },
         {
-          label: 'Serialization',
+          label: 'Bodies and uploads',
+          collapsed: true,
+          items: [
+            { slug: 'bodies/buffered' },
+            { slug: 'bodies/streaming-input' },
+            { slug: 'bodies/multipart' },
+            { slug: 'bodies/persist-upload' },
+          ],
+        },
+        {
+          label: 'JSON and representations',
           collapsed: false,
-          items: [{ slug: 'json/codec' }, { slug: 'json/negotiation' }],
+          items: [
+            { slug: 'json/codec' },
+            { slug: 'json/negotiation' },
+          ],
         },
         {
           label: 'Error handling',
@@ -106,7 +106,7 @@ export default defineConfig({
         },
         {
           label: 'Files and resources',
-          collapsed: false,
+          collapsed: true,
           items: [
             { slug: 'resources/static' },
             { slug: 'resources/downloads' },
@@ -114,8 +114,17 @@ export default defineConfig({
           ],
         },
         {
+          label: 'Request lifecycle',
+          collapsed: true,
+          items: [
+            { slug: 'lifecycle/hooks' },
+            { slug: 'lifecycle/shutdown' },
+            { slug: 'lifecycle/executors' },
+          ],
+        },
+        {
           label: 'Streaming',
-          collapsed: false,
+          collapsed: true,
           items: [
             { slug: 'streaming/output' },
             { slug: 'streaming/sse' },
@@ -124,7 +133,7 @@ export default defineConfig({
         },
         {
           label: 'WebSockets',
-          collapsed: false,
+          collapsed: true,
           items: [
             { slug: 'websockets/managed' },
             { slug: 'websockets/objects' },
@@ -132,17 +141,8 @@ export default defineConfig({
           ],
         },
         {
-          label: 'Lifecycle',
-          collapsed: false,
-          items: [
-            { slug: 'lifecycle/shutdown' },
-            { slug: 'lifecycle/hooks' },
-            { slug: 'lifecycle/executors' },
-          ],
-        },
-        {
           label: 'Security',
-          collapsed: false,
+          collapsed: true,
           items: [
             { slug: 'security/authentication' },
             { slug: 'security/pac4j' },
@@ -155,7 +155,7 @@ export default defineConfig({
         },
         {
           label: 'Observability',
-          collapsed: false,
+          collapsed: true,
           items: [
             { slug: 'observability/metrics' },
             { slug: 'observability/tracing' },
@@ -163,7 +163,7 @@ export default defineConfig({
         },
         {
           label: 'OpenAPI',
-          collapsed: false,
+          collapsed: true,
           items: [
             { slug: 'openapi/documents' },
             { slug: 'openapi/ui' },
@@ -171,11 +171,26 @@ export default defineConfig({
         },
         {
           label: 'MCP',
-          collapsed: false,
+          collapsed: true,
           items: [
             { slug: 'mcp/server' },
             { slug: 'mcp/security' },
             { slug: 'mcp/interactions' },
+          ],
+        },
+        {
+          label: 'Application configuration',
+          collapsed: true,
+          items: [
+            { slug: 'application/server-options' },
+            { slug: 'application/native-configuration' },
+          ],
+        },
+        {
+          label: 'Create an extension',
+          collapsed: true,
+          items: [
+            { slug: 'extensions/route-metadata' },
           ],
         },
       ],

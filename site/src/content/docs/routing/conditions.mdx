@@ -1,6 +1,9 @@
 ---
 title: Control availability with conditional routes
 description: Make routes conditional on a live flag or request predicate without changing their registration.
+next:
+  label: Follow request lifecycle hooks
+  link: ../../lifecycle/hooks/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,8 +12,11 @@ import test from '../../../../../examples/03-routing/src/test/java/io/github/sup
 
 ## Description
 
-Use `when(...)` to control whether a registered route is available for each request.
-The `BooleanSupplier` overload reads a live application flag, while the `Predicate<Request>` overload evaluates the request; nested conditions run from outer to inner and stop at the first false result.
+A conditional route is registered at startup but considered available only when its condition accepts a request. The condition selects availability; it does not verify credentials or grant permission.
+
+This task uses both an application flag and a request predicate. Nested conditions form part of the route's match, so their order determines whether a later condition is evaluated.
+
+Register availability with `when(...)`. A `BooleanSupplier` reads an application flag; a `Predicate<Request>` evaluates the current request. Nested conditions run from the outer scope inward and stop when one returns false.
 
 Conditions run after route selection and admission, so a false result ends selection with `404` and `Cache-Control: no-store` rather than trying another matching route.
 Registration and method discovery remain unchanged: an unavailable route can still contribute methods to a generated `405` response's `Allow` header.
@@ -25,7 +31,13 @@ The catch-all handles other preview paths, but is not retried when the selected 
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The malformed query makes inner evaluation observable: it receives `404` with the flag disabled, but `400` when the request condition attempts to decode it.
 This checks short-circuiting, not an exemption from transport validation.
 
 <Code code={test} lang="java" title="ConditionalRoutesExampleTest.java" />
+
+## Continue
+
+Next, [Follow request lifecycle hooks](../../lifecycle/hooks/) to observe the phases around a matched handler.

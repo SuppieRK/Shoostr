@@ -1,6 +1,9 @@
 ---
 title: Handle WebSocket messages
 description: Handle complete WebSocket text and binary messages with sequential callbacks, per-connection state, Origin admission, and safe failure and close handling.
+next:
+  label: Handle typed WebSocket objects
+  link: ../objects/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,12 +12,13 @@ import test from '../../../../../examples/11-websockets/src/test/java/io/github/
 
 ## Description
 
-Register `routes.websocket(...)` with managed callbacks to receive complete text messages as `String` values and binary messages as owned `byte[]` values.
-Each connection runs its callbacks sequentially using the [application's execution mode](../../lifecycle/executors/), while different connections can run concurrently.
-An idle connection keeps its state without occupying a thread.
-Successive callbacks can use different threads; keep connection state explicitly rather than in a thread-local value.
-The configuration callback runs once when you register the route, so captured mutable state must be safe to share; the example keeps a separate message counter for each connection in a concurrent map.
-For codec-backed messages, use [WebSocket objects](../objects/).
+A WebSocket starts with an HTTP upgrade and then carries messages over a connection. Managed callbacks let application code handle complete messages without controlling native frame demand. `WebSocketConnection` is the handle used to send messages or close that accepted connection.
+
+`ForbiddenException` rejects a disallowed handshake with `403` while it is still an HTTP exchange.
+
+This task keeps per-connection state and responds to text and binary messages. The route's setup callback registers behavior before startup; connection callbacks run later as connections exchange messages. A rejected handshake can still return an HTTP error before the upgrade.
+
+Register `routes.websocket(...)` to receive complete text as `String` and binary messages as owned `byte[]` values. Callbacks for one connection run sequentially under the [application execution mode](../../lifecycle/executors/); different connections can run concurrently. Idle state occupies no thread, and later callbacks may use a different one. Keep state per connection rather than in thread-local storage. Route configuration runs once at registration, so shared captures must be safe concurrently. This application uses a concurrent map of per-connection counters. For conversion through a codec, continue with [object messages](../objects/).
 
 Use `beforeUpgrade(...)` to reject a handshake through ordinary HTTP exception handling before the connection opens.
 This route requires exactly one `Origin` header matching `https://app.example`, rejecting missing or ambiguous values rather than treating them as trusted.
@@ -48,7 +52,13 @@ For native demand, subprotocol selection, or message limits, use a [native WebSo
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests exchange fragmented messages through the JDK WebSocket client, check independent counters and continued handling after invalid input, and verify handshake denial and close frames.
 The failure fixture registers an extra route that throws, proving that private exception text does not reach the peer; these checks do not establish browser cookie delivery or Origin enforcement by a browser.
 
 <Code code={test} lang="java" title="ManagedWebSocketExampleTest.java" />
+
+## Continue
+
+Next, [Handle typed WebSocket objects](../objects/) to decode message payloads through a codec.

@@ -1,6 +1,9 @@
 ---
 title: Configure native WebSocket message limits and demand
 description: Select an offered WebSocket subprotocol, control native listener demand, copy borrowed binary buffers, and enforce incoming message limits.
+next:
+  label: Observe request completion
+  link: ../../lifecycle/hooks/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/11-websockets/src/test/java/io/github/
 
 ## Description
 
-Use the native `routes.websocket(...)` overload when you need Jetty's `Session.Listener` API for explicit demand, subprotocol selection, or connection-specific limits.
-The factory runs during HTTP admission and creates a fresh listener for each accepted connection; copy any required path or identity values there rather than retaining the handshake request or upgrade response.
-For ordinary complete-message handling with sequential application callbacks, use [managed callbacks](../managed/) instead.
+Native WebSocket handling exposes Jetty's listener and explicit message-demand APIs. Demand controls when the transport may deliver further events; it is a transport interaction rather than an application's work queue.
+
+This task creates a fresh listener for each accepted HTTP upgrade and copies any required admission data before live request access ends. `HttpHeaders` supplies protocol names. `BadRequestException` rejects invalid upgrades with `400`, and `ForbiddenException` rejects forbidden upgrades with `403`, before connection handling starts.
+
+Choose the native `routes.websocket(...)` overload for Jetty `Session.Listener`, explicit demand, subprotocol selection or connection limits. Its factory runs during HTTP admission and creates a listener for each accepted connection. Copy the needed path or identity there; do not retain the live handshake request or upgrade response. Use [managed callbacks](../managed/) for ordinary complete messages with sequential application callbacks.
 
 Native callbacks retain [Jetty's execution contract](https://jetty.org/docs/jetty/12.1/programming-guide/client/websocket.html), so follow its callback and demand rules when sending asynchronously.
 A `Session.Listener` must demand the next event explicitly, and a binary receive callback controls the lifetime of its borrowed buffer.
@@ -38,7 +43,13 @@ The routing key remains GET for both transports, but a selected HTTP/2 request r
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The JDK WebSocket client verifies Origin rejection, offered-subprotocol selection, repeated demand, fragmented binary transfer, incoming limits, and normal closure.
 These exchanges use HTTP/1.1; they do not prove HTTP/2 WebSocket negotiation.
 
 <Code code={test} lang="java" title="NativeWebSocketExampleTest.java" />
+
+## Continue
+
+Next, [Observe request completion](../../lifecycle/hooks/) to understand the HTTP upgrade outcome boundary.
