@@ -1,6 +1,9 @@
 ---
 title: Allow cross-origin requests with CORS
 description: Allow one browser origin to share credentialed responses, handle preflight methods and headers, expose selected response headers, and keep authentication independent.
+next:
+  label: Configure trusted proxies
+  link: ../proxies/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,13 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 ## Description
 
-Build a `CorsPolicy` with the exact origins, methods and request headers that browser clients may use, then install `new Cors(policy)` and select it with `extensions.with(cors)`.
-Use `app.configureExtensionsDefaults(...)` before registering routes to apply a default to all registered endpoints; a route or group can exclude it with `extensions.without(cors)`.
-Selection on a group applies to endpoints registered within that group, including static files and SSE, rather than every URL with the same prefix.
+Cross-Origin Resource Sharing (CORS) tells a browser which cross-origin requests and response data a service permits. It is a browser access policy, not authentication or protection against a non-browser client.
+
+`CorsPolicy` describes allowed origins, methods and headers. `Cors` is the provider registered with the application; the route's `Extensions` configuration selects that installed provider and its policy. `HttpMethods` and `HttpHeaders` supply named protocol values.
+
+This task admits selected browser interactions and checks rejected origins and preflight requests.
+
+Describe allowed browser origins, methods and request headers in `CorsPolicy`, register `new Cors(policy)`, and select that instance with `extensions.with(cors)`. Select application defaults before registering routes with `app.configureExtensionsDefaults(...)`; exclude deliberately unprotected scopes with `without(cors)`. Group selection covers registered descendants, including their static files and SSE, rather than every URL that shares a prefix.
 
 A child inherits the complete policy until `extensions.with(cors).policy(replacement)` replaces it.
 Define each replacement as an independent policy: its omitted fields use its own defaults, and its collections do not combine with inherited collections.
@@ -80,8 +87,16 @@ The `/health` endpoint excludes CORS while retaining ordinary HTTP access. An en
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
+The separate authentication fixture uses `AuthenticationExtension`, a request authenticator. Its callback receives the incoming `Request` and outgoing `Response`, and throws `AuthenticationRequiredException` to return a `401` challenge. This distinguishes an admitted preflight from permission to perform the operation.
+
 The tests verify preflight fields, complete policy replacement, rejected origins and request headers, and the absence of inherited grants on missing targets.
 They also check the health exclusion, application defaults on a separately registered endpoint, and authentication on actual requests after an admitted preflight.
 These HTTP checks establish the server's status and headers, not browser cookie delivery or browser enforcement of CORS.
 
 <Code code={test} lang="java" title="CorsExampleTest.java" />
+
+## Continue
+
+Next, [Configure trusted proxies](../proxies/) to separate browser policy from trusted forwarding assertions.

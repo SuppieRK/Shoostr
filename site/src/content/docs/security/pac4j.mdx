@@ -1,6 +1,9 @@
 ---
 title: Authenticate with a pac4j direct client
 description: Validate HTTP Basic credentials with a pac4j direct client, select the Shoostr adapter on a route group, and authorize a verified profile without creating sessions.
+next:
+  label: Use native HTTP sessions
+  link: ../sessions/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,7 +12,11 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 ## Description
 
-Use Shoostr's `pac4j` adapter with a configured pac4j `DirectClient` when credentials arrive with each request rather than through a browser redirect and callback flow.
+pac4j is a security library whose clients validate credentials and produce profiles. A direct client reads credentials from the current request, rather than redirecting a browser through a login callback flow.
+
+Shoostr's `Pac4j` adapter is the authenticator registered with the application. The built-in `Extensions` configuration supplied to a route or group selects that same installed instance. This task configures the native client and authorizer before protecting the selected endpoints.
+
+Choose the pac4j adapter with a configured `DirectClient` for credentials carried by each request. A browser redirect-and-callback login flow needs a different integration approach.
 
 :::note[Libraries required]
 - `io.github.suppierk:shoostr-pac4j` — Shoostr's pac4j adapter.
@@ -37,7 +44,13 @@ When a trusted proxy terminates TLS, pac4j's security context uses `request.isEf
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests exercise real credential extraction, validation, profile publication, and role authorization through HTTP, including missing, rejected, and duplicate credentials.
 A session-enabled fixture verifies that authenticated requests still leave session state absent.
 
 <Code code={test} lang="java" title="Pac4jAuthenticationExampleTest.java" />
+
+## Continue
+
+Next, [Use native HTTP sessions](../sessions/) to keep application state across browser requests.

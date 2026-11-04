@@ -1,6 +1,9 @@
 ---
 title: Redirect a request
 description: Return a redirect, choose whether a following request preserves POST, and control the handler's remaining work.
+next:
+  label: Inspect request metadata
+  link: ../../request/metadata/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/06-responses/src/test/java/io/github/s
 
 ## Description
 
-Use `redirect(location)` for a `302` response, or pass a navigation status when the next request needs different behavior.
-After a POST, `303 See Other` points the client to a retrieval request such as GET; `307 Temporary Redirect` preserves the method when the client follows it.
-A `302` does not guarantee that a client will preserve POST, as explained by the [redirect status semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4).
+A redirect returns a destination and a status telling a client how to make its next request. Choosing the status matters when the original request changes state, because clients can preserve or change its method when following the redirect.
+
+This task compares those outcomes rather than treating every navigation as the same operation. `HttpStatusCodes` provides the named status constants used by the application.
+
+Call `redirect(location)` for `302`, or choose a navigation status explicitly. After a POST, `303 See Other` points toward a retrieval such as GET. `307 Temporary Redirect` preserves the method when followed, whereas `302` does not guarantee POST preservation. Use the [HTTP redirect semantics](https://www.rfc-editor.org/rfc/rfc9110.html#section-15.4) to choose the intended behavior.
 
 Choose destinations in application code rather than passing an untrusted query parameter directly to `redirect(...)`.
 The method accepts relative references and non-HTTP schemes, so a syntactically valid destination is not necessarily one your application should allow.
@@ -31,8 +36,14 @@ It does not commit the response or end the handler: return from the handler when
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests first inspect redirect status and `Location` with automatic following disabled, then use controlled local destinations to verify the GET after `303` and the preserved POST method and body after `307`.
 A larger POST checks that `307` preserves a body that spans multiple input buffers.
 An additional handler checks that code after `redirect(...)` still runs.
 
 <Code code={test} lang="java" title="RedirectExampleTest.java" />
+
+## Continue
+
+Next, [Inspect request metadata](../../request/metadata/) to distinguish the concrete URL from its selected route.

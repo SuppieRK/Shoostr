@@ -1,6 +1,9 @@
 ---
 title: Inspect the client address and request metadata
 description: Distinguish raw URLs and logical authority from the direct connection, effective client address, and assigned identity.
+next:
+  label: Resolve forwarded metadata
+  link: ../../security/proxies/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/04-request/src/test/java/io/github/sup
 
 ## Description
 
-Use `method()` and `protocol()` for the HTTP method and version, `path()` for the canonical routing path, and `routePattern()` for the selected template before captured values are substituted.
-For URL inspection, `url()` excludes the query and fragment, `fullUrl()` preserves the raw query, and `queryString()` returns that query without `?`.
-Keep those raw URL accessors separate from decoded parameters: the canonical `path()` can differ from the encoded URL spelling, as `/inspect/caf%C3%A9` does in the test.
+Request metadata describes the exchange being handled: its method, protocol, URL and selected route. The selected route template is different from the concrete URL when it contains captured values.
+
+This task inspects those values inside a handler. Keep raw URL text separate from decoded parameters, and distinguish metadata about the physical connection from assertions supplied by a proxy.
+
+Inspect the selected exchange with `method()`, `protocol()`, `path()` and `routePattern()`. The last value is the registered template before captured identifiers are substituted. For URL text, `url()` omits the query and fragment, `fullUrl()` keeps the raw query, and `queryString()` returns it without `?`. These are different from decoded parameters: the routing `path()` can differ from the encoded URL spelling, as the test demonstrates with `/inspect/caf%C3%A9`.
 
 The request authority, server name, and server port describe the logical destination, which can differ from `localAddress()` and `remoteAddress()` on the actual connection.
 Neither the request authority nor an effective URL establishes a trusted application origin.
@@ -31,8 +36,14 @@ Likewise, `principal()` only reads an identity explicitly assigned by [authentic
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests compare raw URL spelling with decoded captures, verify ignored forwarding and identity-like headers, and distinguish a requested authority from the listener address.
 They select HTTP/1.1 explicitly when asserting that protocol name.
 Copy needed values or [snapshots](../state/) before the request's handler lifetime ends.
 
 <Code code={test} lang="java" title="MetadataExampleTest.java" />
+
+## Continue
+
+Next, [Resolve forwarded metadata](../../security/proxies/) to trust client assertions only from selected proxies.

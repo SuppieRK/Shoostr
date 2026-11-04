@@ -1,6 +1,9 @@
 ---
 title: Handle WebSocket objects
 description: Decode complete binary WebSocket messages with onObject and send codec-backed object replies while keeping ordinary text and binary operations available.
+next:
+  label: Configure native WebSocket demand
+  link: ../native/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/11-websockets/src/test/java/io/github/
 
 ## Description
 
-Configure a [codec](../../json/codec/) and register the endpoint through the returned typed view to receive `TypedWebSocket` configuration.
-`onObject(Class<T>, handler)` passes each decoded value to the callback, whose `TypedWebSocketConnection` provides `sendObject(value)` for the reply.
-Both operations use the configured codec, while ordinary text and byte-array sends bypass it.
+Typed WebSocket handling decodes complete messages into Java values and encodes values for replies. A `Codec` supplies those conversions; it does not choose the connection's application protocol or validate arbitrary schemas.
+
+Configuring the codec returns typed route registration. Its `TypedWebSocket` callbacks receive decoded objects, and `TypedWebSocketConnection` supplies object replies. This task builds on the message lifetime and ownership model of managed WebSockets.
+
+Register through the typed view returned by a configured [codec](../../json/codec/). `TypedWebSocket` supplies `onObject(Class<T>, handler)` for decoded values, and its `TypedWebSocketConnection` supplies `sendObject(value)` for replies. Both use the same codec; ordinary text and byte-array sends bypass it.
 
 :::note[Object messages are binary]
 Object operations use complete binary WebSocket messages, not text messages, even when the codec produces JSON.
@@ -34,6 +39,12 @@ The separate text callback replies to `hello` with `text: hello`, without callin
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The JDK client sends the counter across two fragments and checks the complete binary reply before exchanging an independent text message.
 
 <Code code={test} lang="java" title="TypedWebSocketExampleTest.java" />
+
+## Continue
+
+Next, [Configure native WebSocket demand](../native/) to take control of Jetty listener delivery when needed.

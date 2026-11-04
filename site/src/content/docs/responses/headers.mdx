@@ -1,6 +1,9 @@
 ---
 title: Set and inspect response headers
 description: Replace or append response header fields, read their values, and keep immutable snapshots before further changes.
+next:
+  label: Redirect a request
+  link: ../redirects/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,8 +12,11 @@ import test from '../../../../../examples/06-responses/src/test/java/io/github/s
 
 ## Description
 
-Use `setHeader(name, value)` to replace a field, `addHeader(...)` to append another occurrence, and `removeHeader(name)` to remove all occurrences.
-Header names are case-insensitive, so those operations apply to the same field regardless of spelling.
+Response headers describe the representation or give the client additional protocol metadata. A header can have one value or repeated occurrences, so replacing a field and appending a value are different operations.
+
+This task changes those fields before output is committed. `HttpHeaders` provides named header constants; the response methods also accept names supplied as strings.
+
+Replace a response field with `setHeader(name, value)`, append an occurrence with `addHeader(...)`, or delete its occurrences with `removeHeader(name)`. Field names are case-insensitive, so a different spelling still addresses the same header.
 
 Read the first value with `header(name)`, all values with `headers(name)`, or a complete snapshot with `headerMap()`.
 The first-value getter returns null when the field is absent; the collection accessors return immutable snapshots that do not change with later response mutations.
@@ -32,6 +38,12 @@ For the distinction between repeated fields and their combined interpretation, s
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests verify replacement and removal, separate repeated fields, case-insensitive inspection, stable immutable snapshots, and rejection of framing changes.
 
 <Code code={test} lang="java" title="ResponseHeadersExampleTest.java" />
+
+## Continue
+
+Next, [Redirect a request](../redirects/) to choose a destination and navigation status.

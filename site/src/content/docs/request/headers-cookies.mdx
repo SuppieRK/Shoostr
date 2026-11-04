@@ -1,6 +1,9 @@
 ---
 title: Read request cookie and header values
 description: Read individual and repeated request headers or cookies while preserving their different naming and decoding rules.
+next:
+  label: Set response cookies
+  link: ../../responses/cookies/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/04-request/src/test/java/io/github/sup
 
 ## Description
 
-Read request cookies through `cookie(...)`, `cookies(...)` and `cookieMap()`, and request headers through `header(...)`, `headers(...)` and `headerMap()`.
-Use the singular accessor for the first value, the plural accessor for repeated values, and the map when you need the full collection.
-Header names are case-insensitive, including map lookup, while cookie names are case-sensitive: `theme` and `Theme` are different cookies.
+Headers carry metadata about an HTTP request. Cookies are client-supplied values carried in its Cookie header, commonly used to return state established by a previous response. Neither value is trusted identity by itself.
+
+The handler's `Request` provides accessors for one value, repeated values or the full collection. This task reads both forms and makes their naming and repetition rules visible in the response.
+
+Choose `cookie(...)` or `header(...)` for a first value, `cookies(...)` or `headers(...)` for repeated values, and `cookieMap()` or `headerMap()` for the full collection. Header lookup is case-insensitive, including map access. Cookie names remain case-sensitive, so `theme` and `Theme` are distinct.
 
 Repeated header fields retain their order without splitting comma-separated content.
 Cookie values are not URL-decoded, so `a+b%2F` remains unchanged.
@@ -30,6 +35,12 @@ Retain a [snapshot](../state/) rather than the live request when values are need
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests distinguish repeated field lines from comma-separated text, compare header and cookie name handling, and verify that returned collections cannot be changed.
 
 <Code code={test} lang="java" title="HeadersCookiesExampleTest.java" />
+
+## Continue
+
+Next, [Set response cookies](../../responses/cookies/) to send state that a client can return later.

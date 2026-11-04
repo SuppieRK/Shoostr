@@ -1,6 +1,9 @@
 ---
 title: Set request and response limits
 description: Set buffered request, staged response, streaming buffer, parameter, and multipart limits with immutable Options.
+next:
+  label: Process streamed input
+  link: ../../bodies/streaming-input/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/02-application/src/test/java/io/github
 
 ## Description
 
-Use `Options` to set the limits that Shoostr enforces when it reads requests and prepares responses.
-The application below echoes POST bodies at `/echo`, rejecting buffered bodies above 1,024 bytes with `413`.
-Configure the listener, HTTP parsing, and native thread pool through the [Jetty configuration hooks](../native-configuration/).
+Request and response limits bound the data Shoostr buffers for one exchange. `Options` holds those application settings; `MultipartOptions` supplies the related limits for multipart fields and files. Configure them before the application accepts requests.
+
+This task uses an echo endpoint to make the buffered-body limit observable: accepted bytes become the response, while an oversized body receives an HTTP error. Jetty listener and parser settings remain a separate configuration layer.
+
+Set Shoostr's request and response bounds through `Options`. In this application, `/echo` returns accepted POST input and rejects a buffered body larger than 1,024 bytes with `413`. Configure listener binding, HTTP parsing and native pool settings through the separate [Jetty callbacks](../native-configuration/).
 
 | Option                                       | Default                                                | Copy method                                             |
 | -------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
@@ -39,6 +44,12 @@ The factory returns an unstarted application so its caller can finish configurat
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests check an ordinary echo and the 1,024/1,025-byte request boundary through real HTTP requests.
 
 <Code code={test} lang="java" title="ServerOptionsExampleTest.java" />
+
+## Continue
+
+Next, [Process streamed input](../../bodies/streaming-input/) to consume a body without buffering it as one value.

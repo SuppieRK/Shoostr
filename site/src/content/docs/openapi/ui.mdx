@@ -1,6 +1,9 @@
 ---
 title: Serve a protected local OpenAPI UI
 description: Serve Swagger UI with local assets, protect the page and OpenAPI specification together, and authorize API calls without forwarding browser cookies or cached credentials.
+next:
+  label: Review authentication policy
+  link: ../../security/authentication/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/16-openapi/src/test/java/io/github/sup
 
 ## Description
 
-Use `OpenApi.uiHandler()` from `shoostr-openapi` to serve the documentation page and its bundled assets from your application, without a CDN or external specification validator.
-Register the specification, the page path ending in `/`, and a catch-all asset route explicitly; installing the document does not register those routes.
-The handler serves only its four prepared resources and returns 404 for other asset paths.
+An OpenAPI UI is a browser page for exploring a generated API document. The page, its assets and the document are separate HTTP resources, so each needs its own route and access policy.
+
+The `OpenApi` provider supplies the document and a prepared UI handler. A provider is a registered integration object; a route's `Extensions` configuration selects its scoped settings. The protected example also uses `Pac4j`, Shoostr's adapter for a configured pac4j authenticator. It verifies credentials before those private resources are returned. `MediaType` describes the representation sent by an HTTP response.
+
+Register `OpenApi.uiHandler()` from `shoostr-openapi` to serve its prepared page and assets locally. Add the specification URL, page path ending in `/`, and catch-all asset route explicitly; installing the document adds none of them. The handler serves only four prepared resources and returns `404` for other asset paths. It needs no CDN or external specification validator.
 
 Protect all three registrations when the API description is private, rather than protecting only the HTML page.
 This example uses `shoostr-pac4j` with `pac4j-http` to apply the same Basic authentication policy to the page, assets and specification.
@@ -30,7 +35,15 @@ For schemas and operation metadata, see [Describe HTTP operations with OpenAPI](
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
+`Options` holds Shoostr's buffering limits. The bundle-size assertion compares the streamed asset with the default finite-response limit; serving the asset does not require raising that limit.
+
 The tests check authentication on every resource and the actual API, inspect the published UI settings, and retrieve the bundled assets, including the large JavaScript bundle.
 They verify the HTTP responses and bootstrap configuration, not execution of Swagger UI in a browser.
 
 <Code code={test} lang="java" title="OpenApiUiExampleTest.java" />
+
+## Continue
+
+Next, [Review authentication policy](../../security/authentication/) to protect private specifications and assets.

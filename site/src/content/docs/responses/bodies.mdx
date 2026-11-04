@@ -1,6 +1,12 @@
 ---
 title: Send text, bytes or a HEAD response
 description: Set a response status, encode text with a selected charset or send existing bytes, and return empty or HEAD responses.
+next:
+  label: Read request bodies
+  link: ../../bodies/buffered/
+prev:
+  label: Read request parameters
+  link: ../../request/parameters/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +15,11 @@ import test from '../../../../../examples/06-responses/src/test/java/io/github/s
 
 ## Description
 
-Use `text(value)` for UTF-8 plain text, or `text(value, charset)` when the response needs another encoding; Shoostr encodes the text and sets matching charset metadata.
-When you already have encoded bytes, use `body(...)` with a matching `MediaType`, which labels those bytes without converting them.
-`MediaType.of(...)` accepts a bare type/subtype and normalizes case. Parameters, ranges, wildcards and surrounding whitespace are rejected; add charset metadata with `withCharset(...)`. This changes the label only, so the application must supply bytes in the declared encoding. Use a String content type when arbitrary parameters are required.
+An HTTP response combines a status, headers and a body. Text helpers encode a Java string; a byte-body helper sends bytes that your application already encoded. `MediaType` describes those bytes, including any declared charset.
+
+This task chooses those representations explicitly. `HttpStatusCodes` and `HttpMethods` name protocol values; `Options` holds the application's buffering limits and `MultipartOptions` configures its separate multipart limits. Response commitment is the point after which sent status, headers or body bytes cannot be replaced.
+
+Use `text(value)` for a UTF-8 response or `text(value, charset)` to select another encoding; Shoostr supplies matching charset metadata. For already encoded bytes, call `body(...)` with the correct `MediaType`. `MediaType.of(...)` normalizes a bare type/subtype and rejects parameters, ranges, wildcards and surrounding whitespace. `withCharset(...)` changes only the label, so your bytes must already use that encoding. Use a String content type for arbitrary parameters.
 
 Text encoding follows `String.getBytes(Charset)`: malformed or unmappable input uses replacement bytes rather than strict validation.
 For object output, use an [explicit JSON codec](../../json/codec/).
@@ -37,6 +45,12 @@ For incremental output while the handler runs, use [response streaming](../../st
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests check exact bytes and media metadata, the finite byte limit, bodyless status handling, and HEAD responses that retain representation headers without sending content.
 
 <Code code={test} lang="java" title="ResponseBodyExampleTest.java" />
+
+## Continue
+
+Next, [Read request bodies](../../bodies/buffered/) to accept a bounded text or byte payload.

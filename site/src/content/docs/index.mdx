@@ -1,41 +1,45 @@
 ---
-title: Java, without the ceremony.
-description: Shoostr is an experimental Java 21 HTTP framework with explicit routes and optional integrations.
+title: Java web framework for HTTP APIs
+description: Build HTTP APIs with Shoostr, a Java 21 web framework on Jetty. Explore fluent routes, typed body handling, streaming and complete examples with HTTP tests.
 template: splash
 hero:
-  title: Java, without<br />the ceremony.
-  tagline: Build HTTP applications with explicit routes, ordinary Java, and the integrations you choose.
+  title: A Java web framework for HTTP APIs.
+  tagline: Define routes and handle requests through a fluent Java API. Build on Jetty and configure HTTP behavior in application code.
   actions:
-    - text: Documentation
-      link: start/libraries/
+    - text: Build your first endpoint
+      link: start/first-request/
       icon: right-arrow
       variant: primary
 pagefind: false
 ---
 
-<div class="landing-content not-content">
-  <p class="eyebrow">JAVA 21 · EXPLICIT ROUTES · NATIVE JETTY</p>
-  <div class="landing-grid">
-    <section class="landing-intro" aria-labelledby="start-small">
-      <p class="section-number" aria-hidden="true">01 / START SMALL</p>
-      <h2 id="start-small">One request.<br />A working application.</h2>
-      <p>Add an endpoint to your application. Verify it with an HTTP test.</p>
-      <p>Start with library selection. Then use a full application class and its full test class, with all imports.</p>
-    </section>
-    <section class="terminal" aria-label="Request and response">
-      <div class="terminal-bar"><span class="terminal-dot" aria-hidden="true"></span>HTTP / localhost:8080</div>
-      <div class="terminal-body">
-        <span class="terminal-label">REQUEST</span>
-        <pre><code>GET /hello</code></pre>
-        <span class="terminal-label">RESPONSE BODY</span>
-        <pre class="terminal-result"><code>Hello, Shoostr!</code></pre>
-      </div>
-    </section>
-  </div>
-  <dl class="principles">
-    <div><dt>Explicit routes</dt><dd>Register handlers with Java calls. Keep application behavior visible.</dd></div>
-    <div><dt>Choose your integrations</dt><dd>Add metrics, tracing, authentication, OpenAPI, or MCP when you need them.</dd></div>
-    <div><dt>Working examples</dt><dd>Use the code in your project. Verify the behavior with its test.</dd></div>
-  </dl>
-  <p class="project-status">Shoostr is experimental. Its public interfaces can change.</p>
+<div className="landing-content not-content">
+  <section className="landing-section" aria-labelledby="why-shoostr">
+    <h2 id="why-shoostr">Why Shoostr?</h2>
+    <dl className="landing-benefits">
+      <div><dt>Define behavior through Java calls</dt><dd>Register handlers with a fluent API and keep request handling in application code. Follow the <a href="routing/methods/">method-routing example</a> from registration to HTTP response.</dd></div>
+      <div><dt>Work with Java values</dt><dd>Use your serialization code to convert request bodies into Java values and objects into responses. The <a href="json/codec/">JSON guide</a> follows a user payload from decoding to an HTTP response.</dd></div>
+      <div><dt>Keep related endpoint policy together</dt><dd>A route group shares a path prefix and behavior across related endpoints. Use groups to organize an API area, then give it an <a href="errors/exceptions/">error response policy</a>.</dd></div>
+      <div><dt>Configure the Jetty foundation</dt><dd>When transport requirements change, use callbacks that configure Jetty's own server objects. Set listener and HTTP options through the <a href="application/native-configuration/">native configuration callbacks</a>.</dd></div>
+    </dl>
+  </section>
+  <section className="landing-section" aria-labelledby="choose-task">
+    <h2 id="choose-task">Choose your next task.</h2>
+    <div className="landing-tasks">
+      <div><h3>Build an HTTP API</h3><p><a href="request/parameters/">Read parameters</a>, <a href="responses/bodies/">write a response</a>, or <a href="bodies/buffered/">accept a request body</a>. Follow the input through its handler to the response and its test.</p></div>
+      <div><h3>Send events and messages</h3><p>Use a streamed HTTP response to <a href="streaming/sse/">send server-sent events</a>, or an upgraded connection to <a href="websockets/managed/">exchange WebSocket messages</a>. Choose the interaction that fits your client.</p></div>
+      <div><h3>Add an integration</h3><p>Optional integrations connect a service to an existing library or protocol. Start with <a href="security/pac4j/">pac4j authentication</a>, <a href="observability/metrics/">Micrometer metrics</a>, <a href="openapi/documents/">OpenAPI descriptions</a>, or <a href="mcp/server/">MCP tools and resources</a>; follow the integration's registration and ownership model.</p></div>
+    </div>
+  </section>
+  <section className="landing-section" aria-labelledby="verify-behavior">
+    <h2 id="verify-behavior">Follow the explanation into an HTTP test.</h2>
+    <p>The task guides pair a complete application with its HTTP test, so you can inspect the same route definition and its response checks. The <a href="start/first-request/">first-request guide</a> follows that path from a text response to assertions over HTTP.</p>
+    <p>For performance evaluation, inspect the <a href="https://github.com/SuppieRK/Shoostr/blob/main/.github/benchmarks/README.md">measurement methods</a>, including their latency and memory limits.</p>
+  </section>
+  <section className="landing-section" aria-labelledby="application-fit">
+    <h2 id="application-fit">Understand the application boundary.</h2>
+    <p>Shoostr requires Java 21 and uses Jetty for HTTP serving. It handles routes, request and response data, streaming and the phases from request processing to completion. Your application chooses its application libraries and policies, adding integrations where needed.</p>
+    <p>Shoostr is licensed under Apache 2.0. Public interfaces can change; review the relevant guides and <a href="lifecycle/shutdown/">resource-lifetime responsibilities</a> for your application.</p>
+    <p><a className="landing-next" href="start/first-request/">Build your first endpoint →</a></p>
+  </section>
 </div>

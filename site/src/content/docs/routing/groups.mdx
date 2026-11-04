@@ -1,6 +1,12 @@
 ---
 title: Group and reuse routes
 description: Reuse route definitions under different prefixes and apply inherited configuration to a group.
+next:
+  label: Read and write JSON
+  link: ../../json/codec/
+prev:
+  label: Read request body text and bytes
+  link: ../../bodies/buffered/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,14 +15,16 @@ import test from '../../../../../examples/03-routing/src/test/java/io/github/sup
 
 ## Description
 
-Use `path(...)` to give related routes a common prefix, or pass the same registration method to several groups when their endpoint definitions are shared.
-Nested prefixes remain relative to their parent even when they begin with `/`, so `/api` followed by `/v1` produces `/api/v1`.
+A route group gives related endpoints a shared path prefix and inherited behavior. A `Routes` value is a registration view for that scope, so the same registration method can be reused under different prefixes.
+
+The configuration callback receives `Extensions`, Shoostr's built-in scope-configuration object. Its `lifecycle()` collector registers local request hooks. A before-handler hook runs after matching and any required authentication, before the endpoint handler; the example uses it to add a header. Child routes inherit that behavior.
+
+This configuration object is separate from an installed `Extension<C>` provider, which is an optional integration with its own settings or lifecycle. Its type parameter `C` describes the settings the provider exposes. The grouping example creates no provider: it only configures the group's built-in request hooks.
+
+Create a common prefix with `path(...)`, then pass a registration method when several groups share endpoint definitions. Prefixes are relative to their parent even if they start with `/`: combining `/api` and `/v1` registers `/api/v1`.
 
 An empty prefix creates a pathless group: its configuration applies to its routes without adding a URL segment.
 Within a group, `get(handler)` registers the group's own endpoint, while `get("/", handler)` registers the distinct trailing-slash endpoint.
-
-The group configuration callback receives an [`Extensions`](../../extensions/route-metadata/#description) object for adding local behavior.
-The example uses it to register inherited response-header hooks without installing an extension.
 
 ## Example
 
@@ -33,6 +41,12 @@ Route scopes share application-wide registration state, so do not close an indiv
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests verify reuse across both prefixes, distinguish group endpoints from trailing-slash endpoints, and check inherited headers without leaking child configuration into siblings.
 
 <Code code={test} lang="java" title="RouteGroupsExampleTest.java" />
+
+## Continue
+
+Next, [Read and write JSON](../../json/codec/) to connect typed body conversion to your handlers.

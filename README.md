@@ -1,26 +1,35 @@
 # Shoostr
 
-Build HTTP applications with ordinary Java and explicit configuration.
+A Java web framework for HTTP APIs.
 
-Shoostr is an experimental HTTP serving library for Java 21, built on Jetty. Register routes with Java calls
-and add integrations when you need them. Platform threads are the default; virtual threads are
-opt-in. Application code does not need framework annotations.
+Define routes and handle requests through a fluent Java API. Build on Jetty and configure
+HTTP behavior in application code. Shoostr requires Java 21.
 
-- HTTP routing, multipart uploads, static files, streaming, SSE, and WebSockets.
-- Optional authentication, Micrometer metrics, OpenTelemetry tracing, OpenAPI, and MCP integrations.
-- Runnable examples with live HTTP tests.
+- Typed handlers and scoped integration configuration keep API behavior in your code.
+- Serve HTTP, multipart uploads, static files, streaming responses, SSE, and WebSockets.
+- Performance work measures latency, allocation, and retained memory.
 
-The public interfaces can change while the project is experimental.
+Start with the [complete Java example and its HTTP test](https://suppierk.github.io/Shoostr/start/first-request/).
+Application code does not need framework annotations. Platform threads are the default;
+virtual threads are opt-in.
+
+Your application chooses focused libraries and connects them through ordinary Java calls.
+Authentication, metrics, tracing, OpenAPI, and MCP integrations are optional. The
+[stream admission example](https://suppierk.github.io/Shoostr/lifecycle/executors/#compose-stream-admission)
+shows how an application uses Resilience4j's admission API and defines its HTTP failure
+response. Your team owns configuration, security updates, and compatibility checks for
+the libraries it selects.
+
+The public interfaces can change.
 
 ## Scope
 
-Shoostr focuses on HTTP serving: routing, protocol handling, request and response ownership,
-and transport lifecycle. Behavior that an existing external library can provide through
-composition is outside Shoostr's feature scope. Applications select and configure libraries
-such as Resilience4j for bulkheads, retries, circuit breakers and other application policies.
+Shoostr's feature scope is HTTP serving: routing, protocol handling, request and response
+ownership, and transport lifecycle. Behavior that an existing external library can provide
+through composition is outside that scope.
 
-Shoostr adds only the serving contracts required to make that composition work. Integrations
-bridge those contracts to existing libraries; they do not recreate the libraries' features or
-introduce parallel configuration models. The examples show explicit library composition.
+Shoostr adds serving contracts where composition requires them. Integrations connect those
+contracts to existing libraries without recreating their features or introducing parallel
+configuration models.
 
 [Documentation](https://suppierk.github.io/Shoostr/) · [Contribute](CONTRIBUTING.md) · [Apache License 2.0](LICENSE)

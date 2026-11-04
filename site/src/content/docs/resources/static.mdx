@@ -1,6 +1,9 @@
 ---
 title: Serve static files and classpath resources
 description: Serve static files and classpath resources with filename media types, automatic HEAD responses, welcome files and an optional SPA fallback.
+next:
+  label: Require an authenticated caller
+  link: ../../security/authentication/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/09-resources/src/test/java/io/github/s
 
 ## Description
 
-Use `staticFiles(...)` to mount a public filesystem directory, or `classpathResources(...)` for assets already on the application's classpath.
-Both mounts serve existing resources through `GET` and `HEAD`; explicit routes take precedence, even when registered after the mount.
-Shoostr infers the media type from the filename and uses `application/octet-stream` when the extension is unknown.
+A static mount maps a URL prefix to existing files instead of an endpoint handler for each file. Its source can be a public filesystem directory or resources packaged on the application's classpath.
+
+`StaticOptions` configures a mount's resource-serving behavior. This task chooses the source and prefix before registering the mount, then checks how it interacts with explicit routes and resource metadata.
+
+Mount a public directory with `staticFiles(...)`, or packaged assets with `classpathResources(...)`. Existing resources are served through `GET` and `HEAD`. Explicit routes win over a mount even when registered later. The filename determines the media type, with `application/octet-stream` for an unknown extension.
 
 Directory listings, welcome files and single-page application (SPA) fallback are disabled by default.
 Enable welcome-file or fallback behavior through `StaticOptions` when the mount needs it: a welcome file belongs to the requested directory, while the fallback comes from the mount root.
@@ -38,8 +43,14 @@ Keep source files available through transfer completion, not merely until the ha
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The test constructs both resource directories itself and adds the bundled directory to a temporary classloader.
 Its boundary checks distinguish a missing file, a rejected traversal and an external directory alias that selects the SPA shell instead of its target.
 The test uses a directory junction on Windows and a symbolic link on other systems.
 
 <Code code={test} lang="java" title="StaticResourcesExampleTest.java" />
+
+## Continue
+
+Next, [Require an authenticated caller](../../security/authentication/) to protect resources whose contents are private.
