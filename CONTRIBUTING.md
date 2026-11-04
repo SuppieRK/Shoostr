@@ -36,52 +36,58 @@ bypass is retained.
 
 # Publish library artifacts
 
-Use a GitHub Release to record a manually selected batch of one or more libraries.
-Each artifact has its own version; a batch does not require releasing every library.
+Publication is intended to be automated through a Gradle publishing plugin, triggered
+when a maintainer publishes a GitHub Release. The maintainer selects the libraries and
+versions and approves the release; the workflow validates, signs, publishes and verifies
+the selected batch. A batch can contain one or more independently versioned libraries.
 
-The build currently uses a shared snapshot version and local publication for core/HTTP
-consumer tests. Before the first Central publication, configure independent artifact
-versions, deliberate dependency versions, complete publication metadata, signing and
-Central credentials. Update the [installation reference](site/src/content/docs/start/libraries.md)
-for independent versions. Creating a GitHub Release currently does not upload Java artifacts.
+The recommended Central publishing plugin is
+[`com.vanniktech.maven.publish`](https://vanniktech.github.io/gradle-maven-publish-plugin/central/).
+The workflow should invoke its selected project tasks in one Gradle invocation for
+the batch. Artifact selection and version allocation are release configuration; the
+publishing plugin handles publication of the approved selection.
+
+This is the intended process. The Central plugin and release workflow are not yet
+configured: the build currently uses shared snapshot versions and local core/HTTP
+consumer verification. Before the first publication, configure independent versions,
+batch inputs, deliberate dependency versions, complete metadata, signing and Central
+credentials. Update the [installation reference](site/src/content/docs/start/libraries.md)
+for independent versions. Creating a GitHub Release alone currently uploads no Java artifacts.
 
 Use `YYYY.MM.D.PATCH`, for example `2026.11.4.0`. Start the counter at `0` for each
 artifact and release date; increment it for further publications of that artifact on
 the same date. Maintain only the latest release of each artifact initially. Describe
 deliberate breaking changes and migration steps in its release notes.
 
-1. **Select the libraries.** Compare each library with its own last successful
-   publication; a library without one is a first publication. Review production
-   sources, resources, published dependency metadata and relevant shared build inputs. List only the libraries selected for this batch.
-   Each internal dependency declared in published metadata must already be published
-   or be explicitly included in the batch; the first MCP publication also needs core
-   and HTTP.
-2. **Prepare the final revision.** Assign selected artifact versions and change
-   internal dependency versions only deliberately. Commit tracked release-input
-   changes through the contribution workflow. Require successful [CI checks](#ci-and-external-contributions)
-   for that exact final revision before tagging or staging it.
-3. **Draft the GitHub Release.** Choose one tag identifying that verified revision.
-   Record each selected `groupId:artifactId:version`, its internal dependency versions,
-   changes and migration notes in the description. Use a draft while publication is pending.
-4. **Stage and check the batch.** Use the configured publisher to stage exactly the
-   selected artifacts, including sources, Javadocs, POMs, Gradle Module Metadata and
-   required signatures. Check both metadata formats and test consumers against the
-   declared published dependencies, or staged dependencies selected in this batch.
-   Keep workspace dependency substitution out of these consumption checks.
-5. **Publish to Central.** Upload the checked batch and record its deployment ID.
-   If the publisher leaves it `VALIDATED`, publish that deployment through the Portal
-   or publisher. Require `PUBLISHED`, then verify every selected coordinate resolves
-   from the public repository in fresh Maven and Gradle consumers.
-6. **Publish the GitHub draft.** Finalize the release after all selected artifacts are
-   available. Retain the source revision, artifact/version list and deployment ID in
-   the release record. A repository-wide release date does not replace a library's
-   individual publication history.
+1. **Maintainer: select the batch.** Compare each library with its own last successful
+   publication, or identify it as a first publication. Review production inputs,
+   published dependencies and relevant shared build changes. Include each unpublished
+   internal dependency explicitly; the first MCP publication also needs core and HTTP.
+2. **Maintainer: prepare the final revision.** Record selected artifact versions and
+   dependency requests in the release configuration. Change internal dependency versions
+   only deliberately. Commit tracked release inputs through the contribution workflow
+   and require successful [CI checks](#ci-and-external-contributions) for that final revision.
+3. **Maintainer: publish the GitHub Release.** Prepare a draft with a tag for the verified
+   revision. List each selected `groupId:artifactId:version`, its internal dependencies,
+   changes and migration notes. Publish the release to start the automated workflow.
+4. **Workflow: validate the batch.** Check the tagged revision and its CI result. Build
+   selected libraries against their declared published dependencies, using staged
+   dependencies for deliberate upgrades in this batch. Check POMs and Gradle Module
+   Metadata and run isolated Maven and Gradle consumer tests without workspace substitution.
+5. **Publishing plugin: publish the batch.** Stage the approved artifacts with sources,
+   Javadocs, metadata and signatures, then upload and automatically publish them after
+   Central validation. Configure the plugin to wait for `PUBLISHED`; a deployment
+   stopping at `VALIDATED` is not a completed publication. Retain its deployment ID.
+6. **Workflow: verify and report.** Verify every selected coordinate resolves from the
+   public repository in fresh consumers. Record the source revision, artifact/version
+   list, deployment ID and result in the workflow output and GitHub release notes.
+   Report a failure or incomplete publication when verification does not finish.
 
-After a failure or timeout, inspect the existing deployment and published coordinates
-before uploading again. Published versions are immutable; correcting a published
-artifact requires a new version.
+After a failure or timeout, reconcile the existing deployment and published coordinates
+before another upload. Manual Portal actions are for recovery, rather than the normal
+publication path. Published versions are immutable; a correction requires a new version.
 
-References: [GitHub release management](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository),
+References: [GitHub release events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release),
 [Central requirements](https://central.sonatype.org/publish/requirements/), and
 [Central deployment states](https://central.sonatype.org/publish/publish-portal-api/).
 
