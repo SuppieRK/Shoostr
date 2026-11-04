@@ -1,10 +1,10 @@
 package io.github.suppierk.shoostr.openapi;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import java.util.Set;
+import tools.jackson.databind.JsonNode;
 
 /** Structural checks on generated documents, not handler output, application models or prose. */
 final class OpenApiValidation {
@@ -109,8 +109,8 @@ final class OpenApiValidation {
     for (var property : node.properties()) {
       var name = property.getKey();
       var value = property.getValue();
-      if (!dictionary && "$ref".equals(name) && value.isTextual()) {
-        requireReference(value.asText(), root);
+      if (!dictionary && "$ref".equals(name) && value.isString()) {
+        requireReference(value.asString(), root);
       } else if (dictionary || (!DATA.contains(name) && !name.startsWith("x-"))) {
         references(value, root, !dictionary && DICTIONARIES.contains(name));
       }

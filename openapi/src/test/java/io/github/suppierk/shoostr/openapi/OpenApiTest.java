@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr.openapi;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -19,10 +20,43 @@ import io.swagger.v3.oas.models.parameters.RequestBody;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.StreamWriteConstraints;
+import tools.jackson.core.json.JsonFactory;
+import tools.jackson.databind.ObjectMapper;
 
 class OpenApiTest {
+  @Test
+  void wrapsJacksonSerializationFailureAndClosesTheApplicationBeforeListening() throws Exception {
+    var mapper = Json31.mapper();
+    var closed = new AtomicInteger();
+
+    try (var app = new Shoostr()) {
+      var docs = new OpenApi("API", "1");
+      app.extensions(docs).afterClose(closed::incrementAndGet);
+      app.routes().get("/openapi.json", docs.handler());
+      Json31.mapper(
+          new ObjectMapper(
+              JsonFactory.builder()
+                  .streamWriteConstraints(
+                      StreamWriteConstraints.builder().maxNestingDepth(1).build())
+                  .build()));
+      var failure = assertThrows(IllegalStateException.class, app::start);
+      assertEquals("Cannot serialize OpenAPI document", failure.getMessage());
+      assertInstanceOf(JacksonException.class, failure.getCause());
+      assertEquals(1, closed.get());
+      assertThrows(IllegalStateException.class, app::port);
+      assertThrows(IllegalStateException.class, app::start);
+    } finally {
+      Json31.mapper(mapper);
+    }
+
+    assertEquals(1, closed.get());
+  }
+
   @Test
   void keepsDocumentationIndependentWhenOneHandlerIsRegisteredAtTwoPaths() throws Exception {
     var docs = new OpenApi("API", "1");
@@ -48,11 +82,12 @@ class OpenApiTest {
             Json31.mapper()
                 .readTree(test.send(request -> request.path("/openapi.json")).body())
                 .path("paths");
-        assertEquals("First operation", paths.path("/first").path("get").path("summary").asText());
         assertEquals(
-            "Second operation", paths.path("/second").path("get").path("summary").asText());
-        assertEquals("first", paths.path("/first").path("get").path("operationId").asText());
-        assertEquals("second", paths.path("/second").path("get").path("operationId").asText());
+            "First operation", paths.path("/first").path("get").path("summary").asString());
+        assertEquals(
+            "Second operation", paths.path("/second").path("get").path("summary").asString());
+        assertEquals("first", paths.path("/first").path("get").path("operationId").asString());
+        assertEquals("second", paths.path("/second").path("get").path("operationId").asString());
       }
     }
   }
@@ -110,7 +145,7 @@ class OpenApiTest {
                 .path("Node");
         assertEquals(
             "#/components/schemas/Node",
-            schema.path("properties").path("next").path("$ref").asText());
+            schema.path("properties").path("next").path("$ref").asString());
       }
     }
   }
@@ -134,7 +169,7 @@ class OpenApiTest {
                 .path("schemas")
                 .path("Example")
                 .path("example");
-        assertEquals("#/components/schemas/Missing", example.path("$ref").asText());
+        assertEquals("#/components/schemas/Missing", example.path("$ref").asString());
       }
     }
   }
@@ -177,9 +212,9 @@ class OpenApiTest {
         var document =
             Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
         var operation = document.path("paths").path("/users").path("post");
-        assertEquals("createUser", operation.path("operationId").asText());
-        assertEquals("query", operation.path("parameters").path(0).path("in").asText());
-        assertEquals("header", operation.path("parameters").path(1).path("in").asText());
+        assertEquals("createUser", operation.path("operationId").asString());
+        assertEquals("query", operation.path("parameters").path(0).path("in").asString());
+        assertEquals("header", operation.path("parameters").path(1).path("in").asString());
         assertEquals(
             "object",
             operation
@@ -188,10 +223,10 @@ class OpenApiTest {
                 .path("application/json")
                 .path("schema")
                 .path("type")
-                .asText());
-        assertEquals("Example service", document.path("info").path("description").asText());
+                .asString());
+        assertEquals("Example service", document.path("info").path("description").asString());
         assertEquals(
-            "https://api.example.test", document.path("servers").path(0).path("url").asText());
+            "https://api.example.test", document.path("servers").path(0).path("url").asString());
       }
     }
   }
@@ -231,7 +266,7 @@ class OpenApiTest {
                 .path("securitySchemes")
                 .path("basic")
                 .path("scheme")
-                .asText());
+                .asString());
         assertEquals(200, test.send(request -> request.path("/api/documented")).statusCode());
       }
     }
@@ -283,10 +318,10 @@ class OpenApiTest {
                 .readTree(test.send(request -> request.path("/openapi.json")).body())
                 .path("paths");
         var parameter = paths.path("/users/{id}").path("get").path("parameters").path(0);
-        assertEquals("id", parameter.path("name").asText());
-        assertEquals("path", parameter.path("in").asText());
+        assertEquals("id", parameter.path("name").asString());
+        assertEquals("path", parameter.path("in").asString());
         assertTrue(parameter.path("required").asBoolean());
-        assertEquals("^(?:[0-9]{1,32})$", parameter.path("schema").path("pattern").asText());
+        assertEquals("^(?:[0-9]{1,32})$", parameter.path("schema").path("pattern").asString());
         assertEquals(1, paths.size());
       }
     }
@@ -322,11 +357,11 @@ class OpenApiTest {
                 .path("schema")
                 .path("allOf");
         assertEquals(2, intersection.size());
-        assertEquals("string", intersection.path(0).path("type").asText());
-        assertEquals("^1", intersection.path(0).path("pattern").asText());
+        assertEquals("string", intersection.path(0).path("type").asString());
+        assertEquals("^1", intersection.path(0).path("pattern").asString());
         assertEquals(2, intersection.path(0).path("minLength").asInt());
-        assertEquals("string", intersection.path(1).path("type").asText());
-        assertEquals("^(?:[0-9]+)$", intersection.path(1).path("pattern").asText());
+        assertEquals("string", intersection.path(1).path("type").asString());
+        assertEquals("^(?:[0-9]+)$", intersection.path(1).path("pattern").asString());
         assertEquals("^1", schema.getPattern());
         assertEquals(2, schema.getMinLength());
         assertNull(schema.getAllOf());
@@ -368,7 +403,7 @@ class OpenApiTest {
                 .path("application/json")
                 .path("schema")
                 .path("$ref")
-                .asText());
+                .asString());
         assertEquals(
             2,
             document
@@ -427,17 +462,18 @@ class OpenApiTest {
                 .path("paths");
         var first = paths.path("/api/first").path("get");
         var second = paths.path("/api/second").path("get");
-        assertEquals("First", first.path("summary").asText());
-        assertEquals("Shared description", first.path("description").asText());
-        assertEquals("group", first.path("tags").path(0).asText());
-        assertEquals("first", first.path("tags").path(1).asText());
+        assertEquals("First", first.path("summary").asString());
+        assertEquals("Shared description", first.path("description").asString());
+        assertEquals("group", first.path("tags").path(0).asString());
+        assertEquals("first", first.path("tags").path(1).asString());
         assertEquals(
-            "Child response", first.path("responses").path("200").path("description").asText());
-        assertEquals("Not found", first.path("responses").path("404").path("description").asText());
-        assertEquals("Group", second.path("summary").asText());
+            "Child response", first.path("responses").path("200").path("description").asString());
+        assertEquals(
+            "Not found", first.path("responses").path("404").path("description").asString());
+        assertEquals("Group", second.path("summary").asString());
         assertEquals(1, second.path("tags").size());
         assertEquals(
-            "Group response", second.path("responses").path("200").path("description").asText());
+            "Group response", second.path("responses").path("200").path("description").asString());
         assertFalse(paths.has("/api/hidden"));
       }
     }
@@ -467,11 +503,11 @@ class OpenApiTest {
         var result = test.send(request -> request.path("/openapi.json"));
         assertEquals(200, result.statusCode());
         var document = Json31.mapper().readTree(result.body());
-        assertEquals("3.1.1", document.path("openapi").asText());
-        assertEquals("Users API", document.path("info").path("title").asText());
+        assertEquals("3.1.1", document.path("openapi").asString());
+        assertEquals("Users API", document.path("info").path("title").asString());
         assertEquals(
             "List users",
-            document.path("paths").path("/api/users").path("get").path("summary").asText());
+            document.path("paths").path("/api/users").path("get").path("summary").asString());
         assertEquals(1, document.path("paths").size());
         assertFalse(document.path("paths").path("/api/users").path("get").has("responses"));
       }

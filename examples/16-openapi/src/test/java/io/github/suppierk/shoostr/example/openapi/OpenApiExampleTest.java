@@ -46,7 +46,38 @@ class OpenApiExampleTest {
                       .header("Content-Type", "application/json")
                       .body("{\"name\":\"Alice\"}".getBytes(StandardCharsets.UTF_8)));
       assertEquals(201, created.statusCode());
-      assertEquals("Alice", Json31.mapper().readTree(created.body()).path("name").asText());
+      assertEquals("Alice", Json31.mapper().readTree(created.body()).path("name").asString());
+    }
+  }
+
+  @Test
+  void rejectsMalformedAuthenticatedUserPayloadsWithBadRequest() throws Exception {
+    var authorization =
+        "Basic "
+            + Base64.getEncoder()
+                .encodeToString("demo:local-only".getBytes(StandardCharsets.UTF_8));
+
+    try (var test = TestServer.start(OpenApiExample.application())) {
+      for (var payload :
+          List.of(
+              "{",
+              "{}",
+              "{\"name\":42}",
+              "{\"name\":\" \"}",
+              "",
+              "null",
+              "{\"name\":\"Alice\"} {}")) {
+        var response =
+            test.send(
+                request ->
+                    request
+                        .path("/users")
+                        .method("POST")
+                        .header("Authorization", authorization)
+                        .header("Content-Type", "application/json")
+                        .body(payload.getBytes(StandardCharsets.UTF_8)));
+        assertEquals(400, response.statusCode(), payload);
+      }
     }
   }
 

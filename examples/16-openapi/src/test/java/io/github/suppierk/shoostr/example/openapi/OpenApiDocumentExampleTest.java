@@ -28,12 +28,12 @@ class OpenApiDocumentExampleTest {
       var response = test.send(request -> request.path("/openapi.json"));
       assertEquals(200, response.statusCode());
       var document = Json31.mapper().readTree(response.body());
-      assertEquals("3.1.1", document.path("openapi").asText());
-      assertEquals("Items API", document.path("info").path("title").asText());
+      assertEquals("3.1.1", document.path("openapi").asString());
+      assertEquals("Items API", document.path("info").path("title").asString());
       var operation = document.path("paths").path("/api/items/{id}").path("get");
-      assertEquals("findItem", operation.path("operationId").asText());
-      assertEquals("Find an item", operation.path("summary").asText());
-      assertEquals("id", operation.path("parameters").get(0).path("name").asText());
+      assertEquals("findItem", operation.path("operationId").asString());
+      assertEquals("Find an item", operation.path("summary").asString());
+      assertEquals("id", operation.path("parameters").get(0).path("name").asString());
       assertTrue(operation.path("parameters").get(0).path("required").asBoolean());
       assertEquals(
           "#/components/schemas/Item",
@@ -44,7 +44,7 @@ class OpenApiDocumentExampleTest {
               .path("application/json")
               .path("schema")
               .path("$ref")
-              .asText());
+              .asString());
       assertEquals(
           "string",
           document
@@ -54,10 +54,10 @@ class OpenApiDocumentExampleTest {
               .path("properties")
               .path("name")
               .path("type")
-              .asText());
+              .asString());
       var item = test.send(request -> request.path("/api/items/42"));
       assertEquals(200, item.statusCode());
-      assertEquals("Item 42", Json31.mapper().readTree(item.body()).path("name").asText());
+      assertEquals("Item 42", Json31.mapper().readTree(item.body()).path("name").asString());
     }
   }
 
@@ -74,7 +74,7 @@ class OpenApiDocumentExampleTest {
                       .body("{\"name\":\"Notebook\"}".getBytes(StandardCharsets.UTF_8)),
               HttpResponse.BodyHandlers.ofString());
       assertEquals(201, response.statusCode());
-      assertEquals("Notebook", Json31.mapper().readTree(response.body()).path("name").asText());
+      assertEquals("Notebook", Json31.mapper().readTree(response.body()).path("name").asString());
       var document =
           Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
       var operation = document.path("paths").path("/api/items").path("post");
@@ -87,8 +87,9 @@ class OpenApiDocumentExampleTest {
               .path("application/json")
               .path("schema")
               .path("$ref")
-              .asText());
-      assertEquals("Created", operation.path("responses").path("201").path("description").asText());
+              .asString());
+      assertEquals(
+          "Created", operation.path("responses").path("201").path("description").asString());
     }
   }
 
@@ -125,7 +126,7 @@ class OpenApiDocumentExampleTest {
       var internal = Json31.mapper().readTree(response.body());
       var external =
           Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
-      assertEquals("Operations API", internal.path("info").path("title").asText());
+      assertEquals("Operations API", internal.path("info").path("title").asString());
       assertTrue(internal.path("paths").has("/operations/status"));
       assertFalse(internal.path("paths").has("/api/items/{id}"));
       assertFalse(external.path("paths").has("/operations/status"));
@@ -168,7 +169,7 @@ class OpenApiDocumentExampleTest {
         assertTrue(document.path("paths").has("/preview"));
         assertEquals(
             "object",
-            document.path("components").path("schemas").path("Snapshot").path("type").asText());
+            document.path("components").path("schemas").path("Snapshot").path("type").asString());
         assertEquals(0, checks.get());
         assertEquals(0, invocations.get());
         var configuration = retained.get();

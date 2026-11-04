@@ -77,9 +77,8 @@ final class OpenApiUi implements Handler {
    *
    * @param css packaged stylesheet
    * @param bundle packaged browser bundle
-   * @throws IOException if configuration cannot be serialized
    */
-  void prepare(byte[] css, byte[] bundle) throws IOException {
+  void prepare(byte[] css, byte[] bundle) {
     var config =
         Json31.mapper()
             .createObjectNode()
