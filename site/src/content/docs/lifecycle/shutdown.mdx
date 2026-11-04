@@ -1,6 +1,9 @@
 ---
 title: Start an application and shut it down safely
 description: Start the listener, signal waiting handlers before graceful shutdown, and release application resources after framework cleanup, including startup failures.
+next:
+  label: Configure native Jetty settings
+  link: ../../application/native-configuration/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,7 +12,11 @@ import test from '../../../../../examples/12-lifecycle/src/test/java/io/github/s
 
 ## Description
 
-Configure the application and register shutdown callbacks before startup, keeping its owner responsible for closing it.
+A Shoostr application owns a listener and the resources it has accepted for cleanup. Shutdown first gives active work a chance to finish, then releases owned resources. An application owner must close the application even when it was configured but never started.
+
+This task registers shutdown callbacks and demonstrates caller-managed lifetime. Borrowed application components keep their original owner; registering them for use does not transfer their cleanup automatically.
+
+Register shutdown callbacks while configuring the application, before it starts. Keep the configured instance with an owner that will close it, regardless of whether startup eventually occurs.
 
 | Method        | When it runs                                                                                                                                               |
 | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -43,7 +50,15 @@ The signal releases waiting requests while their resources remain available, and
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
+The startup-failure fixture installs an `Extension<Void>`: a provider with application lifecycle callbacks and no route settings. Its `beforeStart()` callback deliberately fails so the test can check cleanup after startup fails.
+
 The live request test closes the application while a handler is waiting, then verifies its response and final cleanup.
 The other tests cover normal traffic, repeated closure, callback order before startup, cleanup after startup failure, and final resource disposal when a signalling callback throws `Error`.
 
 <Code code={test} lang="java" title="ShutdownExampleTest.java" />
+
+## Continue
+
+Next, [Configure native Jetty settings](../../application/native-configuration/) to adjust the listener and transport before startup.

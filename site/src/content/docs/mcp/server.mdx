@@ -1,6 +1,9 @@
 ---
 title: Expose MCP tools, resources and prompts
 description: Mount a native MCP SDK server over Streamable HTTP, configure synchronous or asynchronous callbacks, and expose tools, resources and prompts through explicit capabilities.
+next:
+  label: Protect MCP sessions
+  link: ../security/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -11,9 +14,13 @@ import composedTest from '../../../../../examples/17-mcp/src/test/java/io/github
 
 ## Description
 
-Use `shoostr-mcp` to mount a native MCP Java SDK server on a Streamable HTTP endpoint.
-Configure capabilities and callbacks through the SDK factory passed to `Mcp.sync()` or `Mcp.async()`, install the resulting extension, then mount it explicitly with `routes.path("/mcp", mcp::routes)`.
-Installation alone adds neither an endpoint nor authentication.
+The Model Context Protocol (MCP) lets a client discover tools, read resources and obtain prompts from a server. Shoostr's optional MCP integration connects a native Java SDK server to a Streamable HTTP endpoint in your application.
+
+`Mcp` is the installed provider that owns this server and transport. Register the provider with the application, then mount its routes at a path. `McpHttpSecurity` configures transport admission and identity policy; `McpIdentity` is a detached identity value for an admitted caller.
+
+This task exposes a deliberately public catalog. Installing a provider, mounting an endpoint and authenticating a caller are separate choices, explained before the complete application below.
+
+Use `shoostr-mcp` to connect the native MCP Java SDK server to Streamable HTTP. Supply capabilities and callbacks through the SDK factory given to `Mcp.sync()` or `Mcp.async()`. Register the resulting provider with Shoostr and mount it with `routes.path("/mcp", mcp::routes)`. Registration alone adds no endpoint or authentication.
 
 The SDK distinguishes [tools](https://modelcontextprotocol.io/specification/2025-11-25/server/tools) that perform named operations, [resources](https://modelcontextprotocol.io/specification/2025-11-25/server/resources) that supply URI-addressed context, and [prompts](https://modelcontextprotocol.io/specification/2025-11-25/server/prompts) that supply reusable messages.
 Resource URIs are not HTTP routes, and retrieving a prompt does not invoke a language model.
@@ -43,6 +50,8 @@ SSE replay and Last-Event-ID recovery are not implemented, so a successful conne
 <Code code={application} lang="java" title="McpServerExample.java" />
 
 ## Test
+
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
 
 The native SDK client discovers and calls the tool, reads the resource through MCP, and retrieves the prompt message.
 A separate test invokes all three features through the asynchronous server factory and closes each client session explicitly.
@@ -100,3 +109,7 @@ continue to work. A separate check verifies execution on the selected scheduler
 and its availability after application shutdown.
 
 <Code code={composedTest} lang="java" title="McpOperationsExampleTest.java" />
+
+## Continue
+
+Next, [Protect MCP sessions](../security/) to bind protocol state to verified identity.

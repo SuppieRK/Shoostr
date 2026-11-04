@@ -1,0 +1,20 @@
+---
+import DefaultLanguageSelect from '@astrojs/starlight/components/LanguageSelect.astro';
+import Select from '@astrojs/starlight/components/Select.astro';
+import config from 'virtual:starlight/user-config';
+---
+
+{
+  config.isMultilingual ? (
+    <DefaultLanguageSelect />
+  ) : (
+    <Select
+      icon="translate"
+      label={Astro.locals.t('languageSelect.accessibleLabel')}
+      options={[
+        { label: config.defaultLocale.label, value: Astro.url.pathname, selected: true },
+      ]}
+      width="7em"
+    />
+  )
+}

@@ -1,6 +1,12 @@
 ---
 title: Match paths and capture parameters
 description: Match literal paths, constrained parameters, and catch-all tails with predictable precedence.
+next:
+  label: Read request parameters
+  link: ../../request/parameters/
+prev:
+  label: Register HTTP methods
+  link: ../methods/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,8 +15,11 @@ import test from '../../../../../examples/03-routing/src/test/java/io/github/sup
 
 ## Description
 
-Use named parameters to capture path segments, adding a constraint when only a restricted set of characters should match.
-Shoostr selects the most specific complete match for the requested method in this order:
+A path pattern describes which request paths an endpoint accepts. Literal segments name fixed text; named parameters capture values for the handler; constraints restrict which captured values match. A catch-all accepts the remaining path.
+
+Compare how each pattern affects endpoint selection. Matching chooses the endpoint; the request's path-parameter accessors then expose the values captured by that selected route.
+
+Capture a path segment with a named parameter and constrain its characters when the endpoint accepts only a restricted form. For the requested method, the router chooses the most specific complete match in this order:
 
 | Pattern              | Match                          |
 | -------------------- | ------------------------------ |
@@ -39,6 +48,12 @@ See [request parameters](../../request/parameters/) for accessor forms and the d
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests distinguish specificity from registration order, then check complete-match fallback, decoded captures, strict paths, and registration failures.
 
 <Code code={test} lang="java" title="PathPatternsExampleTest.java" />
+
+## Continue
+
+Next, [Read request parameters](../../request/parameters/) to use the values supplied by a matching request.

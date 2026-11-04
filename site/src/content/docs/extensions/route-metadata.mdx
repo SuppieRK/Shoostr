@@ -1,6 +1,9 @@
 ---
 title: Create an extension
 description: Add reusable request behavior, typed route settings and lifecycle callbacks with an extension, illustrated by a route-description catalog.
+next:
+  label: Use an existing metrics integration
+  link: ../../observability/metrics/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,15 +12,16 @@ import test from '../../../../../examples/13-extensions/src/test/java/io/github/
 
 ## Description
 
-An extension adds reusable behavior to an application, such as collecting route descriptions or tracing requests.
-It can provide its own settings for routes and groups, register request hooks, and manage resources throughout the application lifecycle.
+An installed provider adds reusable behavior or configuration to a Shoostr application. The provider implements `Extension<C>`, where `C` is the type of settings it exposes to a route or group. This is the provider model used when you create an integration of your own.
+
+It is distinct from `Extensions`, the built-in configuration object supplied to a route or group callback. That object selects installed providers and also exposes local request hooks through `lifecycle()`. A request hook is a callback at a named processing phase; local hooks do not require a custom provider.
+
+This task builds a route catalog: the provider collects descriptions during registration and publishes a fixed snapshot before serving requests. `ApplicationCallbacks` is the collector used by a provider to register application-wide behavior during installation.
 
 Use an extension when that behavior needs its own configuration or lifecycle.
 For a few request callbacks, register [request hooks](../../lifecycle/hooks/) directly.
 
-`Extension<C>` defines reusable behavior and its typed settings.
-Route and group configuration callbacks receive an `Extensions` object, which selects installed extensions and exposes `extensions.lifecycle()` for local request hooks and status renderers.
-You can register those local callbacks without implementing or installing an extension.
+### Install one provider instance
 
 Implement `Extension<C>`, create one extension instance, and pass it to `app.extensions(instance)` before registering routes.
 Reuse that same instance in every `extensions.with(instance)` call.
@@ -31,6 +35,8 @@ A route or group inherits those defaults and can use `extensions.without(instanc
 A deeper `with(instance)` includes it again with the retained settings; repeated selection does not duplicate its contributions.
 Exclusion does not undo installation callbacks or release resources owned by the application.
 
+### Follow the provider lifetime
+
 Each extension method has a specific role:
 
 | Method                               | Purpose and timing                                                                                                                                                                                                             |
@@ -41,6 +47,8 @@ Each extension method has a specific role:
 | <code>before<wbr />Start()</code>    | Finalize collected route facts and prepare owned resources after route metadata arrives, before the listener accepts traffic.                                                                                                  |
 | <code>before<wbr />Stop()</code>     | Promptly signal owned work to finish before native graceful shutdown, including cleanup after incomplete installation or startup. Final disposal belongs in `close()`.                                                         |
 | `close()`                            | Release owned resources after a successful ownership claim, including when installation or startup fails. Do not close borrowed dependencies.                                                                                  |
+
+### Configure inherited settings
 
 Implement `configure(...)` to contribute behavior for selected routes and groups and, when needed, expose their settings.
 Its return type `C` defines those settings: the catalog returns a `Description`, and `extensions.with(catalog).summary(...)` changes that scope's description.
@@ -53,6 +61,8 @@ Authentication, CSRF and [CORS](../../security/cors/) retain their selected owne
 CORS provides local policy settings: `extensions.with(cors).policy(replacement)` replaces the complete inherited policy without changing its owner or a sibling's settings.
 [Sessions](../../security/sessions/) use application-level native Jetty configuration and ordinary request methods rather than scoped extension selection.
 Register contributions on the supplied scope; select collaborating extensions separately in the user's route or group callback, not through nested `with(...)` calls inside the provider.
+
+### Register callbacks and route metadata
 
 Inside `install(...)`, `ApplicationCallbacks` registers behavior across the application, including routes that do not select the extension.
 Inside `configure(...)`, use `endpoint.lifecycle()` for request behavior on selected routes and groups.
@@ -93,7 +103,13 @@ For extensions that own long-lived work, `beforeStop()` is the prompt signalling
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests verify defaults, composed metadata and inherited overrides, preserve installation hooks on an excluded endpoint, and reject a second owner without disrupting the first application's catalog.
 They also check cleanup after application closure, confirm availability is evaluated only for matching requests, and preserve the compiled snapshot when retained settings later change.
 
 <Code code={test} lang="java" title="RouteCatalogExampleTest.java" />
+
+## Continue
+
+Next, [Use an existing metrics integration](../../observability/metrics/) to compare a provider implementation with consumer configuration.

@@ -1,6 +1,9 @@
 ---
 title: Share request-local state
 description: Share attributes during handling and retain snapshots without retaining the live request.
+next:
+  label: Keep state across requests
+  link: ../../security/sessions/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/04-request/src/test/java/io/github/sup
 
 ## Description
 
-Use request attributes to share application values between a request hook and its handler without global state.
-Keys are case-sensitive, setting a value replaces that binding, and setting `null` removes it.
-Each request has its own bindings, so an attribute is not a session or a way to communicate with later requests.
+A request attribute is an application value attached to one live request. It lets an earlier callback prepare information for the endpoint handler without putting that value in global or session state.
+
+A request hook is a callback registered at a named processing phase. This task uses a hook to attach a value and reads it in the handler. The attribute remains limited to that exchange.
+
+Attach values with request attributes so a hook can hand information to its endpoint. Keys are case-sensitive. Reassigning a key replaces its value, and assigning `null` removes it. Bindings belong to one request; they do not provide session state or communication with a later exchange.
 
 Request access is confined to the active handler thread and lifetime.
 Do not retain the live `Request` or pass it to another thread; capture needed values and snapshots while handling the request instead.
@@ -28,7 +33,13 @@ The handler reads an individual attribute for the response header, then passes a
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests verify per-request isolation, replacement and removal, immutable snapshot bindings, and shared mutable values.
 They also check rejected access from another thread and confirm that a captured header snapshot remains usable after the response.
 
 <Code code={test} lang="java" title="RequestStateExampleTest.java" />
+
+## Continue
+
+Next, [Keep state across requests](../../security/sessions/) to use an HTTP session when one exchange is not enough.

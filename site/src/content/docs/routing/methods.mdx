@@ -1,6 +1,12 @@
 ---
 title: Register HTTP methods
 description: Register method-specific handlers, handle HEAD and OPTIONS, and distinguish 404 from 405.
+next:
+  label: Match paths and capture parameters
+  link: ../patterns/
+prev:
+  label: Handle your first HTTP request
+  link: ../../start/first-request/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,8 +15,11 @@ import test from '../../../../../examples/03-routing/src/test/java/io/github/sup
 
 ## Description
 
-Register a separate handler for each HTTP method that a path supports.
-The example uses the seven convenience methods at `/notes` and the generic `route(...)` API for `PROPFIND` at `/properties`.
+A route associates an HTTP method and path with a handler. The handler is the Java callback that reads the request and prepares its response. The same path can bind different handlers for different methods.
+
+This task registers those bindings before startup and checks both successful matches and router-generated failures. `HttpMethods` names method tokens when the generic registration API is needed.
+
+Bind each supported method to its own handler. This application registers the seven convenience methods at `/notes`, then uses `route(...)` with an explicit method token for `PROPFIND` at `/properties`.
 
 An unknown path receives `404`, while a matching path without the requested method receives `405` with an `Allow` header.
 That header includes registered methods from every matching path pattern, not just the most specific one; see [path matching](../patterns/) for overlapping routes.
@@ -31,6 +40,12 @@ The generic registration uses a recognized `HttpMethods` value; string overloads
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests distinguish explicit HEAD and OPTIONS handlers from generated `405` responses, checking `Allow` membership without depending on header ordering.
 
 <Code code={test} lang="java" title="MethodsExampleTest.java" />
+
+## Continue
+
+Next, [Match paths and capture parameters](../patterns/) to accept values in the URL.

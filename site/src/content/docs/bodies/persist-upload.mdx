@@ -1,6 +1,9 @@
 ---
 title: Keep an uploaded file
 description: Save an uploaded file under a generated name and retain it after request cleanup.
+next:
+  label: Send a file download
+  link: ../../resources/downloads/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,10 +12,11 @@ import test from '../../../../../examples/05-bodies/src/test/java/io/github/supp
 
 ## Description
 
-To save an uploaded file beyond the request, call `persistTo(Path)` while its handler is active.
-This transfers the content to application ownership: Shoostr no longer removes the saved file during request cleanup.
-Your application decides how long to keep it and when to delete it.
-The `Upload` object itself remains request-scoped, so retain the destination path rather than the upload or its content stream.
+An `Upload` represents a file part while its request is being handled. To use the file after that request finishes, persist its content to an application-selected path. The saved path then belongs to your application, while the upload wrapper remains request-scoped.
+
+This task accepts a multipart file, saves it, and returns information about the saved content. `Options` and `MultipartOptions` configure input limits before the handler runs. The handler uses `BadRequestException` when the required file is absent.
+
+While the handler is active, call the upload's `persistTo(Path)` with the destination you selected. Shoostr then leaves the saved content for your application to retain or delete. Keep that path after the request finishes; the `Upload` wrapper and its content streams still belong to the request and must not be retained.
 
 Choose a directory controlled by your application and generate destination names there.
 Do not resolve a client-supplied filename against that directory; it is untrusted metadata and can contain path traversal text.
@@ -32,8 +36,14 @@ Persistence works for both in-memory and spilled uploads; it does not promise an
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests verify that both small and spilled uploads remain readable after the application closes.
 They also check generated names, missing uploads, early directory validation, and preservation of existing files when a submitted filename contains traversal text.
 Awaitility is an additional test library used to wait until cleanup leaves only the expected application-owned files.
 
 <Code code={test} lang="java" title="PersistUploadExampleTest.java" />
+
+## Continue
+
+Next, [Send a file download](../../resources/downloads/) to return an application-selected saved file.

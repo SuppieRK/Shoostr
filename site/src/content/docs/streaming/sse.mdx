@@ -1,6 +1,9 @@
 ---
 title: Send server-sent events
 description: Send server-sent events as text, with names, IDs, retry hints and heartbeats, then resume SSE from Last-Event-ID using an application-owned feed.
+next:
+  label: Send object events
+  link: ../sse-objects/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,10 +12,13 @@ import test from '../../../../../examples/10-streaming/sse/src/test/java/io/gith
 
 ## Description
 
-Register a GET event endpoint with `routes.sse(...)`, then call `startEventStream()` after validating any input needed before commitment.
-Use `send(String)` for a data-only event, or `SseEvent` to add an event name, ID and client retry hint; multiline data becomes separate data fields within the same frame.
-Payloads are UTF-8 text, not automatically encoded JSON.
-For codec-backed payloads, use [object events](../sse-objects/).
+Server-sent events (SSE) keep an HTTP response open to send text events to a client. An event stream is the response writer for those frames. `SseEvent` describes event data and optional names, IDs and retry hints.
+
+The handler reads the reconnect cursor from its incoming `Request`; `BadRequestException` rejects an invalid cursor with `400` before the stream starts.
+
+This task first sends frames, then demonstrates how an application can resume its own feed from a supplied cursor. Reconnection is a client behavior; replay requires application-held history and a cursor policy. Validate an unacceptable cursor before starting and committing the event stream.
+
+Register the GET event route with `routes.sse(...)`. Validate input before committing it with `startEventStream()`. Use `send(String)` for data alone or `SseEvent` for names, IDs and retry hints; multiline data is split into frame fields. Payloads are UTF-8 text rather than automatic JSON. Use [object events](../sse-objects/) when a codec should encode the payload.
 
 Comments and heartbeats do not dispatch data events, and each call sends its frame immediately.
 They are explicit writes rather than an automatic timer: the handler must remain active for further output, and returning finishes this finite stream.
@@ -39,6 +45,12 @@ Once a stream is committed, a transport failure aborts it rather than allowing a
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests check complete wire frames and replay from a supplied cursor, then distinguish a rejected cursor from a completed feed that must not start another event stream.
 
 <Code code={test} lang="java" title="SseFeedExampleTest.java" />
+
+## Continue
+
+Next, [Send object events](../sse-objects/) to apply a codec to event payloads.

@@ -1,6 +1,9 @@
 ---
 title: Trust proxy headers and resolve forwarded metadata
 description: Select trusted physical proxy peers and one forwarding header family to read the effective client address, URL, and security state without changing transport TLS.
+next:
+  label: Inspect resolved request metadata
+  link: ../../request/metadata/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 ## Description
 
-Configure `trustedProxies(...)` with the addresses of proxies you control and one `ForwardedHeaders` family before startup.
-Shoostr checks the physical peer before interpreting forwarding metadata, ignoring those assertions when the peer is untrusted.
-`RFC7239` selects the standardized [Forwarded field](https://www.rfc-editor.org/rfc/rfc7239.html), while `X_FORWARDED` selects the legacy X-Forwarded fields; assertions from the other family are not merged into the result.
+A reverse proxy can forward the original client address and request scheme to the application. Those headers are assertions from the proxy, not facts that an arbitrary caller may supply authoritatively.
+
+This task configures which physical peers are trusted and which header format they may assert. `ForwardedHeaders` selects that format before startup; handlers then read resolved metadata through the normal request API.
+
+Before startup, select controlled proxy addresses with `trustedProxies(...)` and choose one `ForwardedHeaders` family. Shoostr checks the physical peer first and ignores forwarding assertions from an untrusted peer. `RFC7239` reads the standardized [Forwarded field](https://www.rfc-editor.org/rfc/rfc7239.html); `X_FORWARDED` reads the legacy fields. It does not merge assertions from the other family.
 
 The trust walk proceeds from the rightmost entry through known proxies and stops at the first untrusted node rather than accepting an arbitrary leftmost address.
 Your edge proxy must remove untrusted forwarding input or append truthful entries, because trusting its address does not make client-supplied assertions true.
@@ -30,7 +35,13 @@ This distinction matters when a trusted proxy receives HTTPS but forwards to Sho
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests cover both header families, conflicting unselected assertions, trusted-hop selection, ignored untrusted input, malformed selected metadata, and a stable peer snapshot.
 Their HTTP exchanges distinguish a trusted HTTPS assertion from the plain underlying connection without claiming that forwarded headers establish TLS.
 
 <Code code={test} lang="java" title="TrustedProxyExampleTest.java" />
+
+## Continue
+
+Next, [Inspect resolved request metadata](../../request/metadata/) to see the values made available to the handler.

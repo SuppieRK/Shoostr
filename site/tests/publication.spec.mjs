@@ -36,7 +36,32 @@ test('published pages keep their links and assets inside the hosting path', asyn
   }
 });
 
-for (const width of [1440, 390]) {
+/** @param {import('@playwright/test').Page} page */
+async function checkEnglishSelectorAndLayout(page) {
+  const selector = page.getByRole('combobox', { name: 'Select language', exact: true });
+  await expect(selector).toBeVisible();
+  await expect(selector.locator('option')).toHaveText(['English']);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await selector.focus();
+  await expect(selector).toBeFocused();
+  const currentURL = page.url();
+  await selector.selectOption({ label: 'English' });
+  await expect(page).toHaveURL(currentURL);
+
+  const layout = await page.evaluate(() => {
+    const title = document.querySelector('.title-wrapper');
+    const header = document.querySelector('header.header');
+    const heading = document.querySelector('main h1');
+    return {
+      overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+      clippedTitle: title.scrollWidth > title.clientWidth + 1,
+      coveredHeading: heading.getBoundingClientRect().top < header.getBoundingClientRect().bottom,
+    };
+  });
+  expect(layout).toEqual({ overflow: false, clippedTitle: false, coveredHeading: false });
+}
+
+for (const width of [1440, 390, 320]) {
   for (const theme of ['light', 'dark']) {
     test(`readers can find and copy a recipe at ${width}px in ${theme} mode`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
@@ -49,17 +74,19 @@ for (const width of [1440, 390]) {
       await page.goto('./');
       // Starlight initializes search on idle; finish initialization before leaving each page.
       await expect(page.locator('site-search .pagefind-ui__search-input')).toBeAttached();
-      await page.getByRole('link', { name: 'Documentation', exact: true }).click();
-      await expect(page).toHaveURL(new RegExp(`${basePath}start/libraries/$`));
-      await expect(page.locator('site-search .pagefind-ui__search-input')).toBeAttached();
-      await page.locator('main').getByRole('link', { name: 'Handle your first HTTP request', exact: true }).click();
+      await page.locator('starlight-theme-select select:visible').first().selectOption(theme);
+      await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+      await page.evaluate(() => history.replaceState(null, '', '?review=language#first-route'));
+      await checkEnglishSelectorAndLayout(page);
+      await page.getByRole('link', { name: 'Build your first endpoint', exact: true }).first().click();
       await expect(page).toHaveURL(new RegExp(`${basePath}start/first-request/$`));
       await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
         'href', new URL('start/first-request/', published).href);
 
-      if (width === 390) await page.locator('button.sl-menu-button').click();
+      if (width < 800) await page.locator('button.sl-menu-button').click();
       await page.locator('starlight-theme-select select:visible').first().selectOption(theme);
-      if (width === 390) await page.locator('button.sl-menu-button').click();
+      await checkEnglishSelectorAndLayout(page);
+      if (width < 800) await page.locator('button.sl-menu-button').click();
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
 
       const content = page.locator('main');
@@ -71,6 +98,14 @@ for (const width of [1440, 390]) {
       await copy.click();
       await expect(page.locator('.expressive-code .feedback').first()).toHaveText('Copied!');
 
+      await expect(page.locator('site-search .pagefind-ui__search-input')).toBeAttached();
+      await page.locator('main').getByRole('link', { name: /register HTTP methods/i }).first().click();
+      await expect(page).toHaveURL(new RegExp(`${basePath}routing/methods/$`));
+      await expect(page.locator('site-search .pagefind-ui__search-input')).toBeAttached();
+      await page.locator('main').getByRole('link', { name: /match paths and capture parameters/i }).first().click();
+      await expect(page).toHaveURL(new RegExp(`${basePath}routing/patterns/$`));
+
+      await expect(page.locator('site-search .pagefind-ui__search-input')).toBeAttached();
       await page.locator('site-search button').first().click();
       await page.locator('site-search dialog input').first().fill('application/problem+json');
       const result = page.locator('.pagefind-ui__result-link').first();
