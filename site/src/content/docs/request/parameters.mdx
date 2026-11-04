@@ -1,6 +1,12 @@
 ---
 title: Read request parameters
 description: Read path captures, query values, and URL-encoded form fields without merging their sources.
+next:
+  label: Write response bodies
+  link: ../../responses/bodies/
+prev:
+  label: Match paths and capture parameters
+  link: ../../routing/patterns/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +15,11 @@ import test from '../../../../../examples/04-request/src/test/java/io/github/sup
 
 ## Description
 
-Read selected-route captures with `pathParam(...)` or `pathParamMap()`, and keep query values separate from form fields.
-For query and form input, the singular accessor returns the first value, the plural accessor preserves repeated values in arrival order, and `queryParamMap()` and `formParamMap()` expose all decoded names and values.
-Names are case-sensitive; a submitted empty value is present, while an absent name returns an empty `Optional` or collection.
+A route can capture values from its path, while a client can send additional values in the query string or a form body. These are separate input sources, even when they contain the same name.
+
+This task reads each source through the handler's `Request` and returns the observed values. Decide whether the application needs a first value or all repeated values before choosing an accessor; presence and an empty submitted value are different states.
+
+Use `pathParam(...)` or `pathParamMap()` for values captured by the selected route. Read query values and form fields separately. Their singular accessors return a first value, plural accessors retain arrival order, and `queryParamMap()` and `formParamMap()` expose all decoded entries. Names are case-sensitive. A supplied empty value is present; an absent name produces an empty `Optional` or collection.
 
 Query and URL-encoded form decoding use UTF-8 and convert `+` to a space, whereas path captures preserve a literal `+`.
 Decoding happens once: a query value of `%2520` becomes `%20`, not a space; the default transport rejects that double-encoded spelling in a path.
@@ -31,7 +39,13 @@ The transport can reject invalid requests before these accessors run.
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests cover decoded names and values, repeated and empty input, query/form separation, and rejected representations.
 The returned maps and lists are immutable snapshots; see [request-local state](../state/) for their lifetime and how they differ from attribute snapshots.
 
 <Code code={test} lang="java" title="ParametersExampleTest.java" />
+
+## Continue
+
+Next, [Write response bodies](../../responses/bodies/) to choose what the handler returns.

@@ -1,6 +1,12 @@
 ---
 title: Handle thrown application and route group exceptions
 description: Register application and route group exception handlers, select the most specific mapping, and recover safely before response commitment.
+next:
+  label: Return Problem Details
+  link: ../problem-details/
+prev:
+  label: Read and write JSON
+  link: ../../json/codec/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +15,11 @@ import test from '../../../../../examples/08-errors/src/test/java/io/github/supp
 
 ## Description
 
-Throw an `HttpException` subtype, such as `BadRequestException`, to select its HTTP error status, or register an exception renderer when the application needs a different response.
-The `HttpClientException` and `HttpServerException` families carry `4xx` and `5xx` statuses; other unhandled exceptions produce `500`.
-Default error output uses a safe status reason phrase rather than the exception's diagnostic message, subject to [HEAD and finite response limits](../../responses/bodies/).
+An exception renderer turns a handler failure into an HTTP response. You can register an application default and override it for a route group. The renderer receives the same `Request` and `Response` used for the exchange, so it can choose a public status, headers and body.
+
+Recovery depends on response commitment: once headers or body output have been sent, they cannot be replaced with a new error response. This task demonstrates both policy selection and that boundary. Shoostr's HTTP exception types, including `BadRequestException`, carry a proposed error status.
+
+For a failure with a known HTTP status, throw an `HttpException` subtype such as `BadRequestException`. The `HttpClientException` and `HttpServerException` families carry `4xx` and `5xx` statuses; other unhandled exceptions produce `500`. Register a renderer when that default representation does not suit the API. Default output exposes the safe status reason rather than diagnostic exception text, subject to [HEAD and finite-response limits](../../responses/bodies/).
 
 Register a route group exception handler with `routes.exception(...)` to render failures from that scope and its descendants.
 Use `app.exception(...)` for an application-wide renderer.
@@ -39,6 +47,12 @@ For generated `404` and `405` output, use [status renderers](../statuses/); for 
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests cover scope selection, inheritance and specificity, local recovery, safe defaults, discarded private output, failed rendering, and the commitment boundary through real HTTP requests.
 
 <Code code={test} lang="java" title="ExceptionHandlingExampleTest.java" />
+
+## Continue
+
+Next, [Return Problem Details](../problem-details/) to give API errors a standard representation.

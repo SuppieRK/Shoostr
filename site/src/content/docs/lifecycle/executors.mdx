@@ -1,6 +1,9 @@
 ---
 title: Select endpoint executors and compose stream admission
 description: Select endpoint execution, carry observation context, and compose stream admission with a caller-owned Resilience4j bulkhead.
+next:
+  label: Close the application
+  link: ../shutdown/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -11,9 +14,11 @@ import bulkheadTest from '../../../../../examples/12-lifecycle/src/test/java/io/
 
 ## Description
 
-Ordinary handlers run through Jetty's native platform-thread pool by default.
-Call `app.virtualThreads()` before startup to opt into virtual execution for those handlers and managed WebSocket callbacks; Jetty keeps its platform pool for transport work.
-Native [pool configuration](../../application/native-configuration/) remains authoritative, and the convenience method does not override native callbacks based on the order of fluent calls.
+An executor chooses where application work runs. Shoostr normally invokes ordinary handlers through Jetty's platform-thread pool, and it can use virtual threads or an endpoint-specific executor instead. The request and response remain live objects with one active application owner, even when that work moves to another thread.
+
+An observation tracks a request across that handoff. `RequestObservation` manages context attachment and cleanup around invocation; `RequestOutcome` is the detached summary supplied at terminal completion. This task first chooses execution and follows that context, then separately demonstrates admission for a long-lived stream.
+
+Select virtual execution with `app.virtualThreads()` before startup when that mode suits ordinary handlers and managed WebSocket callbacks. Jetty retains its platform pool for transport work. Native [pool configuration](../../application/native-configuration/) remains authoritative: fluent call order does not make this convenience selection override native callbacks.
 
 Choose the mode after measuring your request mix and downstream limits.
 Virtual threads can help when concurrent tasks wait on resources that have spare capacity, but they do not remove CPU, database connection, or service capacity limits; see [Webtide's workload analysis](https://webtide.com/if-virtual-threads-are-the-solution-what-is-the-problem/).
@@ -41,6 +46,8 @@ Application closure does not shut down this pool or interrupt a running borrowed
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests exercise default platform execution, explicit virtual opt-in, a named platform worker with an existing context value, pool reuse after application closure, and rejection by a stopped executor.
 Terminal outcomes verify the rejection is an application failure, while a subsequent task on the same worker checks that its previous context was restored.
 
@@ -60,8 +67,9 @@ the stream bulkhead. Select `maxConcurrentCalls` for the deployment and set
 `maxWaitDuration(Duration.ZERO)` for immediate rejection. The example maps a full
 bulkhead to HTTP 503 before starting SSE; this mapping is application policy.
 
-Admission uses the existing route lifecycle. The observation retains only a detached
-acquisition flag. Its terminal `complete(...)` releases the permit after both
+The group callback receives `Extensions`, Shoostr's built-in scope-configuration
+object. Its `lifecycle().observe(...)` collector attaches the observation that manages
+admission. The observation retains only a detached acquisition flag. Its terminal `complete(...)` releases the permit after both
 application cleanup and transport termination, including the framework's final write.
 Observation `close()` and handler return happen earlier and cannot release this
 HTTP-lifetime permit. A rejected request acquired no permit and releases none.
@@ -82,3 +90,7 @@ and reuse capacity. Additional checks cover terminal output, failure and shutdow
 These deadlines are test bounds, not a production service-level guarantee.
 
 <Code code={bulkheadTest} lang="java" title="StreamBulkheadExampleTest.java" />
+
+## Continue
+
+Next, [Close the application](../shutdown/) to coordinate draining with resource ownership.

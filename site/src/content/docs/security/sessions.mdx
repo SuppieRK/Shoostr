@@ -1,6 +1,9 @@
 ---
 title: Keep session state and renew session identifiers
 description: Configure session cookies and a Jetty file store, create or inspect a session, renew the session identifier, and invalidate state without retaining the live request.
+next:
+  label: Protect cookie-backed writes
+  link: ../csrf/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,10 +12,13 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 ## Description
 
-Enable native session management with `app.sessions()`, or pass a callback to `app.sessions(handler -> ...)` to configure Jetty's session handler.
-One application-level handler manages sessions for ordinary requests; it creates a session only when application code requests one.
-Sessions are part of the standard request API, so they do not require installing or selecting an extension.
-A session does not establish a principal or verify an identity; apply [authentication](../authentication/) separately when stored state belongs to an account.
+An HTTP session stores application state across requests under a session identifier. It differs from a request attribute, which lasts for one exchange, and from an authenticated principal, which represents an identity established by your policy.
+
+Shoostr exposes Jetty's native session handling through the application and request APIs. This task enables that handling, creates state only when needed, and follows identifier renewal and invalidation. Session storage does not authenticate an account by itself.
+
+The example uses `NotFoundException` to return `404` when no session state exists for the requested operation.
+
+Turn on native session handling with `app.sessions()`, or configure Jetty's handler through `app.sessions(handler -> ...)`. One application-level handler serves ordinary requests and creates a session only when application code asks for one. Access uses the standard request API, without selecting an installed provider. A session neither establishes a principal nor validates credentials; apply [authentication](../authentication/) when its state belongs to an account.
 
 | Method                 | Result                                                                                                                                                                                                                                             |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -49,7 +55,13 @@ Separate server-side state does not isolate mutually untrusted browser applicati
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests verify cookie policy, per-session state, identifier renewal, invalidation, and restoration through a second application using the same temporary store.
 They explicitly send the cookie over loopback HTTP to test server behavior; this does not establish browser delivery of a Secure cookie, which requires HTTPS.
 
 <Code code={test} lang="java" title="SessionExampleTest.java" />
+
+## Continue
+
+Next, [Protect cookie-backed writes](../csrf/) to require proof associated with the browser session.

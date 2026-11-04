@@ -199,6 +199,7 @@ It does not claim formal ASD-STE100 compliance or enforce its complete dictionar
 | W11 — In-code explanations | Comment meaningful choices, scope, ordering, ownership, and failure paths where the reader encounters them. Keep already-clear code concise.              |
 | W12 — Fluent registration  | Chain adjacent registrations on the same route scope, preserving call order and child boundaries. Keep setup and unrelated operations separate.           |
 | W13 — Application setup    | Show application construction and fluent configuration directly, without setup catch blocks, cleanup scaffolding, or route-only substitutes.              |
+| W14 — Concept order        | Explain framework-specific concepts before relying on them in claims or examples. Introduce an example's purpose and needed concepts before its code; a forward link does not replace that explanation. |
 
 Review prose in context instead of treating sentence length or automated word counts as proof of clarity.
 Use short sentences where they help, such as a clear warning, without making every paragraph read like a checklist.

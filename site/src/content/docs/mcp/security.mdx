@@ -1,6 +1,9 @@
 ---
 title: Protect MCP identity, permissions and sessions
 description: Authenticate MCP requests, bind sessions to verified user and client identities, enforce current scopes and exact Origin admission, and bound session capacity, idle lifetime and token expiry.
+next:
+  label: Request MCP client input
+  link: ../interactions/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,17 @@ import test from '../../../../../examples/17-mcp/src/test/java/io/github/suppier
 
 ## Description
 
-Bind MCP sessions to verified credentials, and check the current credentials on every POST, GET and DELETE.
-`McpHttpSecurity` from `shoostr-mcp` supplies exact Origin admission, detached identity and a pre-dispatch message policy; select a managed authenticator on the mounted group so the identity extractor receives an authenticated principal.
-Neither an allowed Origin nor a session identifier authenticates a caller.
+A protected MCP endpoint must establish who is calling before accepting session work. A session identifier names protocol state; it is not a credential. Authentication verifies credentials, while authorization decides which operations that verified caller may perform.
+
+Use the optional `shoostr-mcp` library for this integration.
+
+Here an `AuthenticationExtension` is the request authenticator registered with Shoostr. The mounted `Mcp` provider supplies the SDK server and transport. `McpHttpSecurity` connects admission to a detached `McpIdentity`, and `McpSessionLimits` bounds protocol-session allocation.
+
+The authenticator receives the incoming `Request` and outgoing `Response`. It throws `AuthenticationRequiredException` to request credentials with a `401` challenge when the supplied token is missing or invalid.
+
+This task connects those roles before handling messages. It builds on the basic transport model, but defines the identity and session policy needed by its own example.
+
+Check credentials on every POST, GET and DELETE, and bind the resulting MCP session to that verified identity. `McpHttpSecurity` supplies exact Origin admission, detached identity and a policy before message dispatch. The group callback receives `Extensions`, the built-in scope-configuration object. Select the managed authenticator there with `with(authentication)` so identity extraction receives its authenticated principal. An allowed Origin or a session ID does not authenticate a caller.
 
 This self-contained example uses fixed, development-only Bearer credentials with expiry stored in a local registry.
 It does not implement an OAuth provider, cryptographic token verification or external discovery.
@@ -40,9 +51,15 @@ Session limits govern native session allocation. Compose [application work limit
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The SDK client invokes a tool using detached verified claims, while the HTTP checks cover credentials, Origin admission, current scopes, credential refresh and user/client isolation.
 The quota checks begin at capacity and use Awaitility (`org.awaitility:awaitility`) to verify recovery after deletion or bounded idle cleanup.
 The credential-expiry check uses fresh credentials to keep the session active while the original stream expires, proving that fresh credentials do not extend that stream's deadline.
 A separate idle-expiry check leaves its session quiet and waits for the stream to close.
 
 <Code code={test} lang="java" title="McpSecurityExampleTest.java" />
+
+## Continue
+
+Next, [Request MCP client input](../interactions/) to use negotiated client capabilities.

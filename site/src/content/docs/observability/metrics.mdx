@@ -1,6 +1,9 @@
 ---
 title: Measure HTTP requests with Micrometer
 description: Observe selected routes with Micrometer, record terminal count and duration under route templates, track active requests, and keep the meter registry owned by the application.
+next:
+  label: Trace request operations
+  link: ../tracing/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/15-observability/micrometer/src/test/j
 
 ## Description
 
-Use `shoostr-micrometer` with a caller-owned `MeterRegistry` to measure request lifecycles through Micrometer.
-Install `MicrometerMetrics`, then select it with `extensions.lifecycle().observe(metrics)` on the routes or groups you want to measure.
-This adapter is an observation function, not a typed route configurator, so it does not use `extensions.with(metrics)`.
+Request metrics summarize activity across many exchanges. Micrometer stores those measurements in a `MeterRegistry`, which remains owned and configured by your application. Shoostr's `MicrometerMetrics` adapter connects request processing to that registry. It is an installed provider, an integration object registered with the application, and it also creates per-request observations.
+
+An observation follows one request until it terminates. The built-in `Extensions` scope-configuration object exposes `lifecycle().observe(...)` to attach observations to a route or group. This task measures a selected API group while leaving a health endpoint outside that selection.
+
+Supply an application-owned `MeterRegistry` to `MicrometerMetrics` from `shoostr-micrometer` and register the adapter. Select observation on the intended routes or groups with `extensions.lifecycle().observe(metrics)`. The metrics adapter creates observations rather than typed route settings, so select it through `observe(...)`, not `extensions.with(metrics)`.
 
 The `http.server.requests` timer records completed count and duration with `method`, `route`, `status` and `error` tags.
 It uses composed route templates instead of raw identifier paths, normalizes unknown methods to `OTHER`, and distinguishes `transport`, `application`, `server` and `none` error categories without recording exception text.
@@ -31,8 +36,16 @@ Keep metric tags free of user identifiers or credentials, and retain the registr
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
+`afterRequest(...)` registers a terminal callback receiving `RequestOutcome`, a detached completion summary. The test collects those summaries to wait for request termination before checking its meters.
+
 The tests use Micrometer's `SimpleMeterRegistry` to check template-based counts, selective observation, active-request transitions and a bounded application-failure label.
 They also record a new application metric after Shoostr closes to verify registry ownership.
 These are in-process instrumentation checks, not proof of ingestion by a monitoring backend.
 
 <Code code={test} lang="java" title="RequestMetricsExampleTest.java" />
+
+## Continue
+
+Next, [Trace request operations](../tracing/) to follow related work across service boundaries.

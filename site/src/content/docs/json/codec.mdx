@@ -1,6 +1,12 @@
 ---
 title: Read and write JSON
 description: Read JSON requests and write JSON responses with typed conversion helpers backed by an application-provided codec.
+next:
+  label: Handle application failures
+  link: ../../errors/exceptions/
+prev:
+  label: Group and reuse routes
+  link: ../../routing/groups/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,7 +15,13 @@ import test from '../../../../../examples/07-json/src/test/java/io/github/suppie
 
 ## Description
 
-A `Codec` connects Shoostr's typed conversion helpers to your serialization and deserialization code: `read(...)` converts bytes to Java objects, while `write(...)` converts Java objects to bytes for HTTP bodies, WebSocket messages, or SSE events.
+Typed body handling converts HTTP bytes into Java values and Java values back into response bytes. A `Codec` is the conversion contract: your implementation supplies the reader and writer, using the serialization library you choose.
+
+Registering that codec gives you a typed view of route registration. Its handlers receive typed request and response helpers, while ordinary text and byte operations remain available. `MediaType` labels the outgoing representation; decoding failures in this example become `BadRequestException` responses.
+
+This task uses JSON to exchange a validated user value. The codec handles conversion; the application still decides media policy and validation.
+
+Implement `read(...)` to convert bytes to Java objects and `write(...)` to convert Java objects to bytes for HTTP bodies, WebSocket messages or SSE events.
 Shoostr delegates these conversions without choosing a serialization library or data format; JSON is one possible codec implementation, not a framework requirement.
 
 Register the codec with `app.codec(codec)` and register handlers through the returned typed view, as the example does with `.routes(...)`.
@@ -49,6 +61,12 @@ Use [content negotiation](../negotiation/) when a response must match the client
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests cover Unicode and escaping, malformed and invalid input, JSON error output, ordinary text, and the absence of automatic media enforcement.
 
 <Code code={test} lang="java" title="JsonCodecExampleTest.java" />
+
+## Continue
+
+Next, [Handle application failures](../../errors/exceptions/) to choose a shared error response policy.

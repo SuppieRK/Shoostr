@@ -1,6 +1,9 @@
 ---
 title: Handle file ranges and conditional requests
 description: Serve one file byte range, validate If-None-Match requests, and use a strong If-Range revision without confusing HTTP validators with an application cache.
+next:
+  label: Serve static resources
+  link: ../static/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,9 +12,11 @@ import test from '../../../../../examples/09-resources/src/test/java/io/github/s
 
 ## Description
 
-Send a file through `response.file(...)` to let Shoostr evaluate conditional headers and select a single byte range.
-The response supplies representation metadata, including validators; a client can use them to avoid downloading an unchanged file or to resume the same revision.
-These are HTTP transfer rules, not an application cache or a guarantee that a client will store the response.
+Conditional file responses let a client ask whether its copy is still current. A byte-range request instead asks for one portion of a representation. Both depend on metadata identifying the file revision being transferred.
+
+This task serves an application-selected file through `Response.file(...)` and exercises those HTTP decisions. It does not add an application cache or decide whether a client stores the result.
+
+Serve the file through `response.file(...)` to let Shoostr apply conditional request headers and choose a single byte range. The response supplies validators and other representation metadata. A client can use them to avoid transferring an unchanged revision or resume that revision. This implements HTTP transfer behavior rather than an application cache or a promise of client storage.
 
 Preconditions run before range selection.
 `If-Match` takes precedence over `If-Unmodified-Since`, and `If-None-Match` takes precedence over `If-Modified-Since`.
@@ -43,7 +48,13 @@ It is not a replacement for an authorization check before selecting a private fi
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests use a ten-byte file so the selected intervals and full-response fallback have exact expected values.
 They also check validator precedence and confirm that failed preconditions are resolved before a range can produce a partial response.
 
 <Code code={test} lang="java" title="FileCachingExampleTest.java" />
+
+## Continue
+
+Next, [Serve static resources](../static/) to mount a directory or classpath resource collection.

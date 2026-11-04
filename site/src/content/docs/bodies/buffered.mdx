@@ -1,6 +1,12 @@
 ---
 title: Read request body text and bytes
 description: Read request text with a selected charset or exact body bytes, with cached reads and explicit input limits.
+next:
+  label: Group and reuse routes
+  link: ../../routing/groups/
+prev:
+  label: Send text, bytes or a HEAD response
+  link: ../../responses/bodies/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,11 +15,11 @@ import test from '../../../../../examples/05-bodies/src/test/java/io/github/supp
 
 ## Description
 
-Read request body bytes with `bodyBytes()`, or use `bodyText()` for UTF-8 text.
-Buffered reads cache the input, and each byte-array result is an independent copy.
-`bodyText()` uses UTF-8 by default, while `bodyText(Charset)` lets you select another encoding without changing the cached bytes or byte limit.
-Neither method infers its charset from `Content-Type`; malformed input uses the selected charset's replacement text rather than the strict UTF-8 rejection used for URL-encoded forms.
-To decode a Java model from buffered input, use an [explicit JSON codec](../../json/codec/).
+A request body is the data sent after the HTTP headers. A buffered read collects that data before the handler uses it, which suits a bounded text or byte payload. The `Request` passed to the handler supplies those reads; the handler's `Response` supplies the reply.
+
+This task reads the same input as bytes and text. `Options` sets the buffered-byte limit, and `MultipartOptions` configures multipart limits separately. A `MediaType` describes the representation sent back to the client.
+
+Call `bodyBytes()` for bytes or `bodyText()` for UTF-8 text. Shoostr caches buffered input and returns an independent copy for each byte-array result. To decode with another charset, use `bodyText(Charset)`; this leaves the cached bytes and byte limit unchanged. The methods do not select a charset from `Content-Type`. Malformed text uses the selected charset's replacement behavior, whereas URL-encoded forms require strict UTF-8. For a Java model, continue with a [JSON codec](../../json/codec/).
 
 Choose one body mode for each request:
 
@@ -39,6 +45,12 @@ Byte overflow produces `413`; pair overflow produces `400`, counting repeated na
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests check binary preservation, default and explicit charset selection, defensive copies, compatible form reads, and exact limit boundaries.
 
 <Code code={test} lang="java" title="BufferedBodyExampleTest.java" />
+
+## Continue
+
+Next, [Group and reuse routes](../../routing/groups/) to share a prefix and local behavior across endpoints.

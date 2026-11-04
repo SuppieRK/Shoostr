@@ -1,6 +1,9 @@
 ---
 title: Protect cookie-backed writes with CSRF
 description: Protect browser writes with a session-bound token, verify the source origin, and reject old proofs after native session renewal or invalidation.
+next:
+  label: Coordinate login and logout
+  link: ../login-logout/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,10 +12,13 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 ## Description
 
-Enable [native sessions](../sessions/), install a `Csrf` instance, and select it on browser routes with `extensions.with(csrf)`.
-For application defaults, make that selection in `app.configureExtensionsDefaults(...)` before registering routes; use `extensions.without(csrf)` only where that protection is deliberately unnecessary.
-The selected owner is inherited and deduplicated. A child cannot replace it with a different instance, including after exclusion.
-A protected endpoint without application sessions prevents startup rather than silently enabling sessions.
+Cross-Site Request Forgery (CSRF) protection checks that a browser's state-changing request carries proof associated with its session. This is relevant when the browser sends authentication cookies automatically; the session cookie alone is not that proof.
+
+A native HTTP session stores state across requests. The installed `Csrf` provider adds the proof check to selected routes, using the built-in `Extensions` scope-configuration object to choose that provider. This task establishes the session dependency before protecting cookie-backed writes.
+
+The example uses `BadRequestException` for application input that must receive `400`; the CSRF provider separately decides whether the proof permits a write.
+
+Enable [native sessions](../sessions/), register one `Csrf` provider and select it with `extensions.with(csrf)` on the relevant browser routes. Application defaults must be selected before routes are registered. Use `without(csrf)` only for deliberate exclusions. Inheritance deduplicates the selected owner; even after exclusion, a child cannot replace it with a different instance. Startup fails for a protected endpoint without sessions instead of silently enabling session management.
 
 Deliver `csrf.token(request)` in a response body or page, then submit that value through exactly one `X-CSRF-Token` header or `_csrf` form field on unsafe requests.
 The expected random token stays in the native session, bound to its current identifier; Shoostr does not issue a separate CSRF cookie.
@@ -56,7 +62,13 @@ Keep mutations on unsafe methods because CSRF verification permits GET, HEAD, OP
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests exercise both proof channels and reject invalid session, proof and origin combinations before a write.
 They also verify that renewal rejects the old proof.
 
 <Code code={test} lang="java" title="CsrfProtectionExampleTest.java" />
+
+## Continue
+
+Next, [Coordinate login and logout](../login-logout/) to combine credential verification, session state and write protection.

@@ -1,6 +1,9 @@
 ---
 title: Read multipart fields and files
 description: Read multipart form fields and repeated file uploads with explicit limits and temporary storage.
+next:
+  label: Keep an uploaded file
+  link: ../persist-upload/
 ---
 
 import { Code } from '@astrojs/starlight/components';
@@ -9,10 +12,11 @@ import test from '../../../../../examples/05-bodies/src/test/java/io/github/supp
 
 ## Description
 
-Use `formParam()` for a multipart text field and `file()` for the first upload with a given name.
-For repeated files, `files(name)` returns every upload with that name; `files()` groups uploads by field name.
-An empty submitted filename still identifies a file part, while a request without a multipart body returns empty file results.
-For query parameters and URL-encoded forms, see [request parameters](../../request/parameters/).
+A multipart request carries separately named parts, usually form fields and uploaded files. Shoostr exposes text fields through form accessors and file parts as `Upload` values. Each upload belongs to the current request until its content is explicitly persisted.
+
+This task inspects submitted fields and files inside the handler. `MultipartOptions` configures parsing limits as part of the application's `Options`; it does not decide where your application keeps accepted files.
+
+Read a text field with `formParam()` and its first named upload with `file()`. Choose `files(name)` for every upload under one name, or `files()` for the complete grouped collection. A submitted empty filename still represents a file part. When the request is not multipart, file accessors return empty results. Query and URL-encoded input use the separate [parameter accessors](../../request/parameters/).
 
 Multipart parsing reads and validates the complete body before exposing fields or uploads.
 It cannot be combined with [buffered or streamed input](../buffered/).
@@ -42,8 +46,14 @@ A file part larger than 128 bytes spills to that directory; the threshold select
 
 ## Test
 
+`TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
+
 The tests send real multipart bodies, including binary bytes and repeated file fields, then check the configured limits and body-mode conflicts.
 Awaitility is an additional test library used to wait for exchange cleanup without assuming that receiving the response ends the exchange.
 The spill test inspects temporary files during the handler and waits for their removal afterward.
 
 <Code code={test} lang="java" title="MultipartExampleTest.java" />
+
+## Continue
+
+Next, [Keep an uploaded file](../persist-upload/) to transfer accepted file content to application ownership.

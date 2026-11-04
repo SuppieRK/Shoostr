@@ -1,0 +1,21 @@
+---
+import DefaultHero from '@astrojs/starlight/components/Hero.astro';
+import { Code } from '@astrojs/starlight/components';
+import application from '../../../examples/01-hello/src/main/java/io/github/suppierk/shoostr/example/hello/HelloExample.java?raw';
+
+const routeExample = (() => {
+  const method = String(application).match(/^ {2}public static Shoostr application\(\) \{\r?\n[\s\S]*?^ {2}}/m);
+  if (!method) throw new Error('HelloExample.application() was not found for the landing-page excerpt.');
+  return method[0].split(/\r?\n/)
+    .filter(line => !line.trimStart().startsWith('//'))
+    .map(line => line.slice(2))
+    .join('\n');
+})();
+---
+
+<div class="landing-hero">
+  <DefaultHero />
+  <section class="landing-code" id="first-route" aria-label="HelloExample route registration">
+    <Code code={routeExample} lang="java" title="HelloExample.java (registration excerpt)" meta="wrap" />
+  </section>
+</div>
