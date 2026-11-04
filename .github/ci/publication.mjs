@@ -36,32 +36,41 @@ export function artifactPath(project, extension = 'pom') {
 }
 
 export async function selectProjects(projects, exists) {
-  const selected = [];
-  for (const project of projects) {
+  const candidates = projects.filter(project => {
     coordinate(project);
-    if (project.version.endsWith('-SNAPSHOT')) continue;
+    if (project.version.endsWith('-SNAPSHOT')) return false;
     stableVersion(project.version);
-    if (!await exists(project)) selected.push(project);
-  }
+    return true;
+  });
+  const available = new Map(await Promise.all(candidates.map(async project =>
+    [coordinate(project), await exists(project)])));
+  const selected = candidates.filter(project => !available.get(coordinate(project)));
+  const dependencies = new Map(selected.flatMap(project => Object.entries(project.dependencies).map(([name, version]) => {
+    stableVersion(version);
+    const dependency = projects.find(item => item.name === name);
+    assert(dependency, `Unknown internal dependency: ${name}`);
+    const pinned = { ...dependency, version };
+    return [coordinate(pinned), pinned];
+  })));
+  await Promise.all([...dependencies].filter(([id]) => !available.has(id)).map(async ([id, project]) => {
+    available.set(id, await exists(project));
+  }));
   const ordered = [];
   const visiting = new Set();
-  async function visit(project) {
+  function visit(project) {
     if (ordered.includes(project)) return;
     assert(!visiting.has(project), 'Cyclic publication dependencies');
     visiting.add(project);
     for (const [name, version] of Object.entries(project.dependencies)) {
-      stableVersion(version);
-      const dependency = projects.find(item => item.name === name);
-      assert(dependency, `Unknown internal dependency: ${name}`);
       const staged = selected.find(item => item.name === name && item.version === version);
-      if (staged) await visit(staged);
-      else assert(await exists({ ...dependency, version }),
+      if (staged) visit(staged);
+      else assert(available.get(`io.github.suppierk:shoostr-${name}:${version}`),
         `${coordinate(project)} requires unpublished shoostr-${name}:${version}`);
     }
     visiting.delete(project);
     ordered.push(project);
   }
-  for (const project of selected) await visit(project);
+  for (const project of selected) visit(project);
   return ordered;
 }
 
@@ -119,25 +128,25 @@ async function main(command) {
 }
 
 export async function verifyPublications(projects, exists = publicExists, consumers = verifyConsumers, request = github, pause = delay) {
-    for (const project of projects) {
-      let available = false;
-      for (let attempt = 0; attempt < 60 && !available; attempt++) {
-        available = await exists(project);
-        if (!available) await pause(10_000);
-      }
-      assert(available, `Not public: ${coordinate(project)}`);
-    }
-    consumers(projects, false);
-    const id = readFileSync(join(evidence, 'deployment-id.txt'), 'utf8').trim();
-    const report = `\n\n### Maven Central publication\n\nSource: \`${process.env.GITHUB_SHA}\`\n\n`
-      + projects.map(project => `- \`${coordinate(project)}\``).join('\n')
-      + `\n\nDeployment: \`${id}\`. Public Maven and Gradle consumer verification passed.\n`;
-    if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, report);
-    const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-    const release = await request(`releases/${event.release.id}`);
-    await request(`releases/${event.release.id}`, {
-      method: 'PATCH', body: JSON.stringify({ body: (release.body ?? '') + report }),
-    });
+  await Promise.all(projects.map(project => waitForPublic(project)));
+  consumers(projects, false);
+  const id = readFileSync(join(evidence, 'deployment-id.txt'), 'utf8').trim();
+  const report = `\n\n### Maven Central publication\n\nSource: \`${process.env.GITHUB_SHA}\`\n\n`
+    + projects.map(project => `- \`${coordinate(project)}\``).join('\n')
+    + `\n\nDeployment: \`${id}\`. Public Maven and Gradle consumer verification passed.\n`;
+  if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, report);
+  const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+  const release = await request(`releases/${event.release.id}`);
+  await request(`releases/${event.release.id}`, {
+    method: 'PATCH', body: JSON.stringify({ body: (release.body ?? '') + report }),
+  });
+
+  async function waitForPublic(project, attempt = 0) {
+    if (await exists(project)) return;
+    assert(attempt < 59, `Not public: ${coordinate(project)}`);
+    await pause(10_000);
+    return waitForPublic(project, attempt + 1);
+  }
 }
 
 export async function verifySource(execute = run, request = github) {
@@ -172,7 +181,9 @@ export async function publish(projects, request = jsonRequest, exists = publicEx
     const token = Buffer.from(`${process.env.ORG_GRADLE_PROJECT_mavenCentralUsername}:${process.env.ORG_GRADLE_PROJECT_mavenCentralPassword}`).toString('base64');
     return request(new URL(path, portal), { headers: { Authorization: `Bearer ${token}` } });
   }, projects);
-  for (const project of projects) assert(!await exists(project), `Already published: ${coordinate(project)}`);
+  await Promise.all(projects.map(async project => {
+    assert(!await exists(project), `Already published: ${coordinate(project)}`);
+  }));
   const args = [...binaryArguments(projects), '-PcentralRelease=true', '-PSONATYPE_CLOSE_TIMEOUT_SECONDS=3600',
     ...projects.map(project => `:${project.name}:publishAndReleaseToMavenCentral`), '--console=plain'];
   await executePublisher(args);
@@ -223,12 +234,16 @@ export function verifyConsumers(projects, staged, execute = run, executeGradle =
 function verifyGradleConsumer(directory, project, metadata, local, executeGradle) {
   writeFileSync(join(directory, 'settings.gradle'), "rootProject.name = 'publication-consumer'\n");
   const dependencies = { [project.name]: project.version, ...project.dependencies };
+  const sources = metadata === 'pom' ? 'mavenPom(); ignoreGradleMetadataRedirection()' : 'gradleMetadata()';
+  const localRepository = local
+    ? `maven { url = uri('${local}'); content { includeGroup 'io.github.suppierk' }; metadataSources { ${sources} } }`
+    : '';
   writeFileSync(join(directory, 'build.gradle'), `
 plugins { id 'application' }
 java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 repositories {
-  ${local ? `maven { url = uri('${local}'); content { includeGroup 'io.github.suppierk' }; metadataSources { ${metadata === 'pom' ? 'mavenPom(); ignoreGradleMetadataRedirection()' : 'gradleMetadata()'} } }` : ''}
-  maven { url = uri('${central}'); content { includeGroup 'io.github.suppierk' }; metadataSources { ${metadata === 'pom' ? 'mavenPom(); ignoreGradleMetadataRedirection()' : 'gradleMetadata()'} } }
+  ${localRepository}
+  maven { url = uri('${central}'); content { includeGroup 'io.github.suppierk' }; metadataSources { ${sources} } }
   mavenCentral { content { excludeGroup 'io.github.suppierk' } }
 }
 dependencies { implementation '${coordinate(project)}' }
@@ -356,5 +371,10 @@ function run(command, args) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
-  main(process.argv[2]).catch(error => { console.error(error.message); process.exitCode = 1; });
+  try {
+    await main(process.argv[2]);
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
+  }
 }
