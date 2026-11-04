@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jspecify.annotations.Nullable;
+import tools.jackson.core.JacksonException;
 
 /**
  * Optional generated OpenAPI 3.1.1 document. Select this installed instance beside endpoint
@@ -261,7 +262,7 @@ public final class OpenApi implements Extension<OpenApiOperation> {
       }
 
       document.set(bytes);
-    } catch (IOException failure) {
+    } catch (IOException | JacksonException failure) {
       throw new IllegalStateException("Cannot serialize OpenAPI document", failure);
     }
   }

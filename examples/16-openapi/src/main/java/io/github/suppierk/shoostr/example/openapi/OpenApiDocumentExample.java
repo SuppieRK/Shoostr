@@ -1,9 +1,5 @@
 package io.github.suppierk.shoostr.example.openapi;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
@@ -13,6 +9,10 @@ import io.swagger.v3.oas.models.media.JsonSchema;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.DeserializationFeature;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 /** Describes selected operations with explicit schemas and registration metadata. */
 public final class OpenApiDocumentExample {
@@ -36,7 +36,8 @@ public final class OpenApiDocumentExample {
     schema.addProperty("name", new JsonSchema().types(Set.of("string")));
     schema.setRequired(List.of("name"));
     var item = docs.schema("Item", schema);
-    var mapper = Json31.mapper().copy().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+    var mapper =
+        Json31.mapper().rebuild().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
     return new Shoostr()
         .extensions(docs, internal)
         .routes(
@@ -111,17 +112,17 @@ public final class OpenApiDocumentExample {
 
     try {
       input = mapper.readTree(body);
-    } catch (JsonProcessingException failure) {
+    } catch (JacksonException failure) {
       throw new BadRequestException("Malformed item JSON", failure);
     }
 
     if (input == null
         || !input.isObject()
-        || !input.path("name").isTextual()
-        || input.path("name").asText().isBlank()) {
+        || !input.path("name").isString()
+        || input.path("name").asString().isBlank()) {
       throw new BadRequestException("A nonblank item name is required");
     }
 
-    return input.path("name").asText();
+    return input.path("name").asString();
   }
 }

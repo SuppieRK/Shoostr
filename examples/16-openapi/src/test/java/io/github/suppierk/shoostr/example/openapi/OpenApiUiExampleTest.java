@@ -115,7 +115,7 @@ class OpenApiUiExampleTest {
               .path("securitySchemes")
               .path("basic")
               .path("scheme")
-              .asText());
+              .asString());
       assertTrue(
           document.path("paths").path("/me").path("get").path("security").get(0).has("basic"));
       assertFalse(document.path("paths").has("/docs/"));

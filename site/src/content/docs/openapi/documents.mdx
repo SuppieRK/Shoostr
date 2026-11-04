@@ -14,7 +14,7 @@ import test from '../../../../../examples/16-openapi/src/test/java/io/github/sup
 
 An OpenAPI document describes an HTTP API's operations, parameters and representations. It is a description for readers and tools; it does not implement the API or enforce its validation and access rules.
 
-This example uses `shoostr-openapi` and Jackson 2's `jackson-databind` library for its JSON request and response handling.
+This example uses `shoostr-openapi` and Jackson 3's `jackson-databind` library for its JSON request and response handling.
 
 Shoostr's `OpenApi` provider collects explicit operation descriptions from registered routes. Register that provider with the application, then use the route's `Extensions` configuration object to select it and supply operation settings. Mounting the generated document is a separate route.
 

@@ -54,7 +54,8 @@ Both return immutable sets of `HttpHeaders`; `cors.policy()` returns the owner's
 Keep a replacement policy in a variable when its header names are also needed elsewhere.
 
 An admitted OPTIONS preflight receives `204`, the configured cache lifetime and the required `Vary` fields without an OPTIONS handler.
-Shoostr selects the registered target using the requested method before authentication, CSRF and native session processing, following [Spring Security's early-processing guidance](https://docs.spring.io/spring-security/reference/servlet/integrations/cors.html).
+Shoostr selects the registered target using the requested method before authentication, CSRF and native session processing.
+Preflight requests exclude credentials, as defined in the [Fetch standard](https://fetch.spec.whatwg.org/#cors-protocol-and-credentials).
 It skips target conditions, local hooks and the target action; application header-admission hooks still run.
 Separately registered endpoints retain their own policy, and missing targets receive no policy from a matching group's path.
 
