@@ -45,13 +45,6 @@ jobs:
             examples/17-mcp/package-lock.json
             site/package-lock.json
 
-      - name: Install MCP conformance tooling
-        working-directory: examples/17-mcp
-        run: npm ci --ignore-scripts
-
-      - name: Build and test
-        run: ./gradlew clean build --console=plain
-
       - name: Verify the CI gate with coverage
         run: |
           mkdir -p build/reports/ci
@@ -60,33 +53,17 @@ jobs:
             --test-reporter=lcov --test-reporter-destination=build/reports/ci/lcov.info \
             .github/ci/*.test.mjs
 
-      - name: Preserve published core consumer evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: published-core-consumer-results
-          path: |
-            core/build/reports/published-consumer/
-            build/published-consumer-repository/
-          if-no-files-found: warn
-
-      - name: Verify MCP interoperability with the official suite
-        run: ./gradlew :mcp-example:conformanceTest --console=plain
-
-      - name: Preserve MCP compatibility reports
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: mcp-conformance-results
-          path: |
-            examples/17-mcp/build/conformance/
-            examples/17-mcp/build/test-results/conformanceTest/
-          if-no-files-found: warn
-
       - name: Verify benchmark resources and evidence
         env:
           BENCHMARK_TEST_CGROUP: '1'
         run: node --test .github/benchmarks/*.test.mjs
+
+      - name: Install MCP conformance tooling
+        working-directory: examples/17-mcp
+        run: npm ci --ignore-scripts
+
+      - name: Build and verify
+        run: ./gradlew build :mcp-example:conformanceTest --console=plain
 
       - name: Require Sonar quality gate and zero issues
         if: >-
@@ -96,30 +73,31 @@ jobs:
           github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]'))
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ -z "$SONAR_TOKEN" ]]; then
-            echo '::error::Sonar analysis requires SONAR_TOKEN'
-            exit 1
-          fi
+          test -n "$SONAR_TOKEN"
           npm --prefix site ci --ignore-scripts
           test -s build/reports/ci/lcov.info
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF_NAME" != "main" ]]; then
-            ./gradlew sonar -Dsonar.branch.name="$GITHUB_REF_NAME" \
-              -Dsonar.scm.revision="$EXPECTED_REVISION" \
-              --console=plain --info
-          else
-            ./gradlew sonar -Dsonar.scm.revision="$EXPECTED_REVISION" \
-              --console=plain --info
+          sonar_args=(-Dsonar.scm.revision="$EXPECTED_REVISION")
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF_NAME" != main ]]; then
+            sonar_args+=(-Dsonar.branch.name="$GITHUB_REF_NAME")
           fi
+          ./gradlew sonar "${sonar_args[@]}" --console=plain
           node .github/ci/sonar-gate.mjs
 
-      - name: Preserve failed test results
-        if: failure()
+      - name: Preserve validation results
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: junit-test-results
-          path: '**/build/test-results/**/TEST-*.xml'
+          name: validation-results
+          path: |
+            **/build/test-results/**/TEST-*.xml
+            **/build/reports/tests/
+            build/reports/ci/
+            core/build/reports/published-consumer/
+            build/published-consumer-repository/
+            examples/17-mcp/build/conformance/
+            build/sonar/report-task.txt
+          include-hidden-files: true
           if-no-files-found: warn
 
   documentation:
@@ -275,8 +253,6 @@ jobs:
             fi
             if [[ "$mode" == distribution && ( "$EXAMPLE" == micrometer-example || "$EXAMPLE" == opentelemetry-example ) ]]; then
               ./gradlew ":$EXAMPLE:dockerTest" -x ":$EXAMPLE:jibDockerBuild" --console=plain
-              cp -r "$EXAMPLE_DIRECTORY/build/docker" "build/reports/example-containers/$mode-backend"
-              cp -r "$EXAMPLE_DIRECTORY/build/test-results/dockerTest" "build/reports/example-containers/$mode-junit"
             fi
             "${compose[@]}" up --no-build --pull never --force-recreate -d
             app=$("${compose[@]}" ps -q app)

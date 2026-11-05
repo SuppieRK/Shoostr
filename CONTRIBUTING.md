@@ -32,6 +32,9 @@ API error or nonzero issue count fails validation and the required `build` check
 Fork and Dependabot pull requests run validation without Sonar; repository secrets remain
 restricted to trusted analysis.
 
+The `validation-results` artifact contains JUnit reports, published-consumer and MCP
+conformance evidence, CI-script coverage and scanner task metadata, including after failure.
+
 The aggregate `build` job runs even when another required job fails or is skipped. Main's ruleset
 requires `build` from GitHub Actions and an up-to-date branch; the existing administrator
 bypass is retained.
