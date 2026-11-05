@@ -19,9 +19,11 @@ transitive buildscript dependencies when investigating build-tool findings.
 
 ## CI and external contributions
 
-The required `build` check verifies successful validation and example-container checks for the proposed revision for
-internal, fork and Dependabot pull requests. Failed, cancelled or skipped validation
-cannot pass this check, and the validated revision must match the triggering event.
+The required `build` check requires Java validation, documentation and successful example
+selection. Pull requests run container checks for changed example folders; shared library,
+build or CI tooling changes select all examples. An empty selection explicitly skips
+containers. Failed selection or an unexpected skipped job fails the gate. Pushes to `main`
+and manual runs check every example. All example Java tests run in the ordinary build.
 External contributions do not need a replacement pull request on a maintainer branch.
 
 Trusted pull requests and CI runs in `SuppieRK/Shoostr` must pass the Sonar quality gate
@@ -30,7 +32,7 @@ API error or nonzero issue count fails validation and the required `build` check
 Fork and Dependabot pull requests run validation without Sonar; repository secrets remain
 restricted to trusted analysis.
 
-The aggregate `build` job runs even when validation fails or is skipped. Main's ruleset
+The aggregate `build` job runs even when another required job fails or is skipped. Main's ruleset
 requires `build` from GitHub Actions and an up-to-date branch; the existing administrator
 bypass is retained.
 
@@ -38,8 +40,8 @@ bypass is retained.
 
 Publish a GitHub Release to start automated Maven Central publication. The workflow uses
 [`com.vanniktech.maven.publish.base`](https://vanniktech.github.io/gradle-maven-publish-plugin/central/)
-to sign and publish the selected libraries in one deployment, then verifies public Maven
-and Gradle consumers. Each artifact has its own version; a batch can contain different versions.
+to sign and publish the selected libraries in one deployment and wait for `PUBLISHED`.
+Each artifact has its own version; a batch can contain different versions.
 
 Select a library by setting a new stable `version` in its existing `build.gradle`.
 The workflow selects stable coordinates that are not already on Central. Leave deferred
@@ -82,28 +84,24 @@ remain placeholders until the first publication is verified.
 3. Draft a GitHub Release with one tag for that verified revision. The tag identifies
    the source batch; it does not need to encode every artifact version. List selected
    coordinates, dependency changes and any breaking changes or migration instructions.
-4. Publish the release. The workflow checks the source/tag identity, stages selected
-   libraries, and verifies isolated consumers before invoking the publishing plugin.
-   It checks existing Central deployments and waits for `PUBLISHED` after upload.
-5. Check the workflow result. Success requires public consumer verification; the workflow
-   appends the source revision, coordinates and deployment ID to the release notes.
-   Recovery evidence is retained in its `central-publication-<run-id>` artifact.
+4. Publish the release. The workflow checks the source and stages selected libraries in
+   dependency order. Each compiles against its pinned dependency binaries before the
+   plugin signs and publishes the batch.
+5. Check the workflow result and its `central-publication-<run-id>` artifact. The plugin
+   logs the deployment ID and waits for `PUBLISHED`. Verify the selected coordinates resolve
+   from Central before updating installation examples. Public consumer checks and release
+   notes are maintainer tasks.
 
-Publication runs are serialized. Do not rerun a publication workflow or recreate a release
-as an upload retry. After failure or timeout, inspect `publisher.log`, the recorded deployment
-ID and the Portal before another upload. Active or unknown namespace deployments block new
-uploads. Manual Portal actions are for recovery; a lost response can require manual
-reconciliation even when a repository lookup returns 404. The plugin does not provide an
-exactly-once guarantee or an automatic resume command. After confirming that no upload
-remains unresolved, publish a new GitHub Release for a verified revision to start a fresh
-attempt. If the batch is already public, verify its consumers and record that outcome on
-the existing release instead. Published versions are immutable;
-a correction requires a new version. A published GitHub Release alone does not prove that
-Central publication succeeded.
+Publication runs are serialized. Do not rerun a failed publication workflow as an upload
+retry. Inspect the plugin logs and deployment in the Central Portal first: a lost response
+can leave an upload active even when repository lookups still return 404. After reconciling
+the deployment, use a new GitHub Release for a verified revision if another upload is needed.
+If artifacts are already public, verify them and record the result on the existing release.
+Published versions are immutable; corrections require new versions. A GitHub Release alone
+does not prove Central publication succeeded.
 
-References: [GitHub release events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release),
-[Central requirements](https://central.sonatype.org/publish/requirements/), and
-[Central deployment API](https://central.sonatype.com/api-doc#/publishing/listDeployments).
+References: [GitHub release events](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#release)
+and [Central requirements](https://central.sonatype.org/publish/requirements/).
 
 # Documentation
 
@@ -371,7 +369,7 @@ bundle third-party notices under `META-INF/licenses/swagger-ui-5.34.0/`.
 
 ## Example container validation
 
-The ten standalone `ExampleApplication.java` launchers execute in the required Docker matrix,
+The standalone `ExampleApplication.java` launchers execute in the selected Docker matrix,
 outside the JUnit JVM measured by JaCoCo. Their exact paths are excluded only from Sonar coverage
 attribution. All source-analysis rules and the zero-open-issues check still apply to them;
 factory and framework coverage remain subject to the existing quality gate. The Dockerfile and
@@ -391,11 +389,18 @@ bounded public HTTP/protocol checks. An empty or unknown selection fails. These 
 complement ordinary JUnit tests; they do not replace the observability backend tests,
 MCP Inspector checks or official MCP conformance suite.
 
-CI builds and launches all 22 examples twice: the distribution image and the Jib image.
-It verifies the running image identity, nonroot/read-only configuration and documented
-behavior, tears down between modes, and preserves failure logs. Metrics, traces and MCP
-Inspector are checked against their real backends in both modes. The required `build`
-check waits for this matrix as well as Java validation and trusted Sonar analysis.
+Pushes to `main` and manual CI runs build all 22 examples through both distribution and
+Jib images. Pull requests select examples from changed files. Changes under an example
+folder select that example; shared library, build and CI changes select the full matrix.
+Unrelated site, root documentation and benchmark changes skip containers. Nested example
+folders can also select their parent example.
+
+Each selected example is checked through both image paths for image identity, nonroot/read-only
+configuration, public behavior and graceful exit. Resource launchers also check external-file
+configuration failures. The metrics and tracing backend suites run once per example; MCP
+Inspector runs with both images. App logs and backend test diagnostics are retained.
+The required `build` check waits for the selected matrix, Java validation, documentation
+and applicable Sonar checks.
 
 References: [Jib image tarballs](https://github.com/GoogleContainerTools/jib/tree/master/jib-gradle-plugin#build-an-image-tarball),
 [Docker multi-stage builds](https://docs.docker.com/build/building/multi-stage/),
