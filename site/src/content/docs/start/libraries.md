@@ -26,9 +26,9 @@ Although the first-request test uses JUnit Jupiter, `TestServer` does not requir
 
 ## Dependency examples
 
-The declarations below use the project's current coordinates, but remain tentative: they do not establish that these artifacts are published.
-Shoostr libraries are versioned independently. Replace `SHOOSTR_CORE_VERSION` and
-`SHOOSTR_TEST_VERSION` with available, compatible versions; their numbers can differ.
+The examples below use the [2026.11.5.0 release](https://github.com/SuppieRK/Shoostr/releases/tag/2026.11.5.0).
+Both libraries are available from Maven Central.
+Shoostr libraries are versioned independently; their versions can differ.
 Check the release notes for the core version used by test support.
 Keep JUnit Jupiter and logging configured in your existing project.
 
@@ -38,8 +38,8 @@ Add these declarations to your existing `pom.xml`, keeping `shoostr-test` in tes
 
 ```xml
 <properties>
-    <shoostr.core.version>SHOOSTR_CORE_VERSION</shoostr.core.version>
-    <shoostr.test.version>SHOOSTR_TEST_VERSION</shoostr.test.version>
+    <shoostr.core.version>2026.11.5.0</shoostr.core.version>
+    <shoostr.test.version>2026.11.5.0</shoostr.test.version>
 </properties>
 
 <dependencies>
@@ -62,8 +62,8 @@ Add these declarations to your existing `pom.xml`, keeping `shoostr-test` in tes
 Add these declarations to your existing `build.gradle`, keeping `shoostr-test` in `testImplementation`.
 
 ```groovy
-def shoostrCoreVersion = 'SHOOSTR_CORE_VERSION'
-def shoostrTestVersion = 'SHOOSTR_TEST_VERSION'
+def shoostrCoreVersion = '2026.11.5.0'
+def shoostrTestVersion = '2026.11.5.0'
 
 dependencies {
     implementation "io.github.suppierk:shoostr-core:${shoostrCoreVersion}"
