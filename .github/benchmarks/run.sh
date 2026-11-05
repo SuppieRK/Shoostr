@@ -71,6 +71,10 @@ cleanup() {
   server_pid=''
   if [[ -n "$server_cgroup" && -d "$server_cgroup" ]]; then
     capture_server_cgroup > "$run_dir/server-cgroup-after.txt"
+    if ! verify_server_cgroup_limits || [[ ! $(< "$server_cgroup/memory.peak") =~ ^[0-9]+$ ]]; then
+      echo INVALID_RESOURCE_EVIDENCE > "$run_dir/outcome.txt"
+      failed=1
+    fi
     if awk '$1 == "oom_kill" && $2 > 0 {found=1} END {exit !found}' "$server_cgroup/memory.events"; then
       echo MEMORY_LIMIT_EXCEEDED > "$run_dir/outcome.txt"
       failed=1
@@ -102,7 +106,7 @@ jq -n --arg workload "$workload" --arg mode "$mode" --argjson fixture "$configur
   df -h "$destination"
 } > "$destination/host.txt"
 sha256sum "$tools/k6" "$tools"/lib/*.jar "$support"/*.js "$support/workloads.json" \
-  "$support/run.sh" "$support/resources.sh" "$support/report.mjs" "$support/go.mod" "$support/go.sum" \
+  "$support/run.sh" "$support/resources.sh" "$support/check-results.jq" "$support/go.mod" "$support/go.sum" \
   > "$destination/sha256.txt"
 printf 'SERVER_CPUS=%s\nCLIENT_CPUS=%s\n' "$server_cpus" "$client_cpus" > "$destination/affinity.txt"
 
@@ -138,7 +142,8 @@ load() {
       monitor_pid=$!
       printf 'SERVER_PID=%s\nCLIENT_PID=%s\n' "$server_pid" "$client_pid" > "$run_dir/monitor-pids.txt"
     else
-      echo 'Generator monitoring unavailable' > "$run_dir/monitor-status.txt"
+      echo 'Cannot monitor load generator' >&2
+      return 1
     fi
   fi
   wait "$client_group" || status=$?
@@ -183,6 +188,8 @@ for repeat in 1 2 3; do
   verify_server_cgroup "$server_pid"
   capture_server_cgroup > "$run_dir/server-cgroup-before.txt"
   taskset -pc "$server_pid" > "$run_dir/server-affinity.txt"
+  [[ $(grep '^Cpus_allowed_list:' "/proc/$server_pid/status") \
+    == $(taskset -c "$server_cpus" grep '^Cpus_allowed_list:' /proc/self/status) ]]
   for command in VM.version VM.command_line VM.flags VM.info; do
     "$JAVA_HOME/bin/jcmd" "$server_pid" "$command" > "$run_dir/$command.txt"
     cat "$run_dir/$command.txt"
@@ -232,8 +239,17 @@ for repeat in 1 2 3; do
     "$JAVA_HOME/bin/jfr" view --width 120 "$view" "$run_dir/server.jfr" > "$run_dir/$view.txt"
   done
   gzip -t "$run_dir/measured-metrics.json.gz"
+  jq -e --slurpfile configuration "$destination/configuration.json" \
+    -f "$support/check-results.jq" "$run_dir/measured-summary.json" > /dev/null
   [[ -s "$run_dir/report.html" && -s "$run_dir/measured-summary.json" ]]
   cleanup
+  for file in server.jfr jfr-summary.txt measured-summary.json measured-metrics.json.gz report.html \
+    process-monitor.txt monitor-pids.txt server-resource.txt measured-client-resource.txt \
+    allocation-by-site.txt allocation-by-class.txt hot-methods.txt gc-pauses.txt gc-cpu-time.txt \
+    VM.version.txt VM.command_line.txt VM.flags.txt VM.flags-all.txt VM.info.txt \
+    server-limits.txt server-affinity.txt client-affinity.txt server-cgroup-before.txt server-cgroup-after.txt; do
+    [[ -s "$run_dir/$file" ]] || { echo "Missing benchmark evidence: $file" >&2; exit 1; }
+  done
   echo '::endgroup::'
 done
 exit "$failed"

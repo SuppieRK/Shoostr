@@ -27,7 +27,9 @@ Although the first-request test uses JUnit Jupiter, `TestServer` does not requir
 ## Dependency examples
 
 The declarations below use the project's current coordinates, but remain tentative: they do not establish that these artifacts are published.
-Replace `SHOOSTR_VERSION` with an available version, keeping both libraries on the same version.
+Shoostr libraries are versioned independently. Replace `SHOOSTR_CORE_VERSION` and
+`SHOOSTR_TEST_VERSION` with available, compatible versions; their numbers can differ.
+Check the release notes for the core version used by test support.
 Keep JUnit Jupiter and logging configured in your existing project.
 
 ### Maven
@@ -36,19 +38,20 @@ Add these declarations to your existing `pom.xml`, keeping `shoostr-test` in tes
 
 ```xml
 <properties>
-    <shoostr.version>SHOOSTR_VERSION</shoostr.version>
+    <shoostr.core.version>SHOOSTR_CORE_VERSION</shoostr.core.version>
+    <shoostr.test.version>SHOOSTR_TEST_VERSION</shoostr.test.version>
 </properties>
 
 <dependencies>
     <dependency>
         <groupId>io.github.suppierk</groupId>
         <artifactId>shoostr-core</artifactId>
-        <version>${shoostr.version}</version>
+        <version>${shoostr.core.version}</version>
     </dependency>
     <dependency>
         <groupId>io.github.suppierk</groupId>
         <artifactId>shoostr-test</artifactId>
-        <version>${shoostr.version}</version>
+        <version>${shoostr.test.version}</version>
         <scope>test</scope>
     </dependency>
 </dependencies>
@@ -59,11 +62,12 @@ Add these declarations to your existing `pom.xml`, keeping `shoostr-test` in tes
 Add these declarations to your existing `build.gradle`, keeping `shoostr-test` in `testImplementation`.
 
 ```groovy
-def shoostrVersion = 'SHOOSTR_VERSION'
+def shoostrCoreVersion = 'SHOOSTR_CORE_VERSION'
+def shoostrTestVersion = 'SHOOSTR_TEST_VERSION'
 
 dependencies {
-    implementation "io.github.suppierk:shoostr-core:${shoostrVersion}"
-    testImplementation "io.github.suppierk:shoostr-test:${shoostrVersion}"
+    implementation "io.github.suppierk:shoostr-core:${shoostrCoreVersion}"
+    testImplementation "io.github.suppierk:shoostr-test:${shoostrTestVersion}"
 }
 ```
 

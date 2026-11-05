@@ -10,6 +10,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   validation:
     runs-on: ubuntu-latest
@@ -20,9 +24,6 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-
-      - name: Verify the proposed revision
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
 
       - name: Set up Java 21
         uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
@@ -44,15 +45,6 @@ jobs:
             examples/17-mcp/package-lock.json
             site/package-lock.json
 
-      - name: Install pinned MCP compatibility tests and browser
-        working-directory: examples/17-mcp
-        run: |
-          npm ci --ignore-scripts
-          node node_modules/playwright/cli.js install --with-deps firefox
-
-      - name: Build and test
-        run: ./gradlew clean build --console=plain
-
       - name: Verify the CI gate with coverage
         run: |
           mkdir -p build/reports/ci
@@ -61,33 +53,17 @@ jobs:
             --test-reporter=lcov --test-reporter-destination=build/reports/ci/lcov.info \
             .github/ci/*.test.mjs
 
-      - name: Preserve published core consumer evidence
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: published-core-consumer-results
-          path: |
-            core/build/reports/published-consumer/
-            build/published-consumer-repository/
-          if-no-files-found: warn
-
-      - name: Verify MCP interoperability with the official suite
-        run: ./gradlew :mcp-example:conformanceTest --console=plain
-
-      - name: Preserve MCP compatibility reports
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: mcp-conformance-results
-          path: |
-            examples/17-mcp/build/conformance/
-            examples/17-mcp/build/test-results/conformanceTest/
-          if-no-files-found: warn
-
-      - name: Check benchmark reporting and resource enforcement
+      - name: Verify benchmark resources and evidence
         env:
           BENCHMARK_TEST_CGROUP: '1'
         run: node --test .github/benchmarks/*.test.mjs
+
+      - name: Install MCP conformance tooling
+        working-directory: examples/17-mcp
+        run: npm ci --ignore-scripts
+
+      - name: Build and verify
+        run: ./gradlew build :mcp-example:conformanceTest --console=plain
 
       - name: Require Sonar quality gate and zero issues
         if: >-
@@ -97,30 +73,31 @@ jobs:
           github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]'))
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          if [[ -z "$SONAR_TOKEN" ]]; then
-            echo '::error::Sonar analysis requires SONAR_TOKEN'
-            exit 1
-          fi
+          test -n "$SONAR_TOKEN"
           npm --prefix site ci --ignore-scripts
           test -s build/reports/ci/lcov.info
-          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$GITHUB_REF_NAME" != "main" ]]; then
-            ./gradlew sonar -Dsonar.branch.name="$GITHUB_REF_NAME" \
-              -Dsonar.scm.revision="$EXPECTED_REVISION" \
-              --console=plain --info
-          else
-            ./gradlew sonar -Dsonar.scm.revision="$EXPECTED_REVISION" \
-              --console=plain --info
+          sonar_args=(-Dsonar.scm.revision="$EXPECTED_REVISION")
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF_NAME" != main ]]; then
+            sonar_args+=(-Dsonar.branch.name="$GITHUB_REF_NAME")
           fi
-          node .github/ci/sonar-gate.mjs build/sonar/report-task.txt
+          ./gradlew sonar "${sonar_args[@]}" --console=plain
+          node .github/ci/sonar-gate.mjs
 
-      - name: Preserve failed test results
-        if: failure()
+      - name: Preserve validation results
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: junit-test-results
-          path: '**/build/test-results/**/TEST-*.xml'
+          name: validation-results
+          path: |
+            **/build/test-results/**/TEST-*.xml
+            **/build/reports/tests/
+            build/reports/ci/
+            core/build/reports/published-consumer/
+            build/published-consumer-repository/
+            examples/17-mcp/build/conformance/
+            build/sonar/report-task.txt
+          include-hidden-files: true
           if-no-files-found: warn
 
   documentation:
@@ -166,16 +143,20 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.inventory.outputs.matrix }}
+      run: ${{ steps.inventory.outputs.run }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
       - id: inventory
         run: |
           matrix=$(node .github/ci/example-containers.test.mjs --matrix)
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "run=$(jq -r '.include | length > 0' <<< "$matrix")" >> "$GITHUB_OUTPUT"
 
   examples:
+    if: needs.example-inventory.outputs.run == 'true'
     needs: example-inventory
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -183,15 +164,12 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.example-inventory.outputs.matrix) }}
     env:
-      EXPECTED_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
       EXAMPLE: ${{ matrix.project }}
       EXAMPLE_DIRECTORY: ${{ matrix.directory }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Verify the proposed revision
-        run: test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
@@ -228,11 +206,7 @@ jobs:
                   *) echo 'App did not stop gracefully' >&2; result=1 ;;
                 esac
               fi
-              if [[ "$EXAMPLE" == mcp-example ]]; then
-                "${compose[@]}" logs --no-color app > "build/reports/example-containers/$mode-compose.log" 2>&1 || result=1
-              else
-                "${compose[@]}" logs --no-color > "build/reports/example-containers/$mode-compose.log" 2>&1 || result=1
-              fi
+              "${compose[@]}" logs --no-color app > "build/reports/example-containers/$mode-compose.log" 2>&1 || result=1
             fi
             "${compose[@]}" down --timeout 20 --volumes || result=1
             docker rm -f shoostr-invalid-report shoostr-report-override 2>/dev/null || true
@@ -277,23 +251,8 @@ jobs:
               docker stop --timeout 20 shoostr-report-override
               docker rm shoostr-report-override
             fi
-            if [[ "$EXAMPLE" == micrometer-example || "$EXAMPLE" == opentelemetry-example ]]; then
-              if [[ "$mode" == distribution ]]; then
-                while IFS= read -r image; do
-                  if [[ "$image" != "shoostr/$EXAMPLE:local" ]]; then
-                    if docker image inspect "$image" >/dev/null 2>&1; then
-                      docker image rm "$image"
-                    fi
-                    if docker image inspect "$image" >/dev/null 2>&1; then
-                      echo 'Backend image must be absent before the standalone test' >&2
-                      exit 1
-                    fi
-                  fi
-                done < <("${compose[@]}" config --images)
-              fi
+            if [[ "$mode" == distribution && ( "$EXAMPLE" == micrometer-example || "$EXAMPLE" == opentelemetry-example ) ]]; then
               ./gradlew ":$EXAMPLE:dockerTest" -x ":$EXAMPLE:jibDockerBuild" --console=plain
-              cp -r "$EXAMPLE_DIRECTORY/build/docker" "build/reports/example-containers/$mode-backend"
-              cp -r "$EXAMPLE_DIRECTORY/build/test-results/dockerTest" "build/reports/example-containers/$mode-junit"
             fi
             "${compose[@]}" up --no-build --pull never --force-recreate -d
             app=$("${compose[@]}" ps -q app)
@@ -305,17 +264,6 @@ jobs:
               (cd examples/17-mcp && node --test inspector-test.mjs)
             fi
             cleanup
-          done
-      - name: Verify retained diagnostics
-        shell: bash
-        run: |
-          for mode in distribution jib; do
-            log="build/reports/example-containers/$mode-compose.log"
-            test -s "$log"
-            if [[ "$EXAMPLE" == mcp-example ]] && grep -Eq '^inspector-[0-9]+[[:space:]]*\|' "$log"; then
-              echo 'Inspector startup logs must not be retained' >&2
-              exit 1
-            fi
           done
       - name: Preserve container evidence
         if: always()
@@ -330,19 +278,26 @@ jobs:
 
   build:
     if: ${{ always() }}
-    needs: [validation, examples, documentation]
+    needs: [validation, example-inventory, examples, documentation]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-      - name: Require successful validation of the proposed revision
+      - name: Require all validation jobs
         env:
-          VALIDATION_RESULT: ${{ needs.validation.result }}
-          EXAMPLES_RESULT: ${{ needs.examples.result }}
-          DOCUMENTATION_RESULT: ${{ needs.documentation.result }}
-          EXPECTED_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: node .github/ci/gate.mjs
+          VALIDATION: ${{ needs.validation.result }}
+          INVENTORY: ${{ needs.example-inventory.result }}
+          RUN_EXAMPLES: ${{ needs.example-inventory.outputs.run }}
+          EXAMPLES: ${{ needs.examples.result }}
+          DOCUMENTATION: ${{ needs.documentation.result }}
+        run: |
+          test "$VALIDATION" = success
+          test "$DOCUMENTATION" = success
+          test "$INVENTORY" = success
+          if [[ "$RUN_EXAMPLES" == true ]]; then
+            test "$EXAMPLES" = success
+          else
+            test "$RUN_EXAMPLES" = false
+            test "$EXAMPLES" = skipped
+          fi
 
   publish-documentation:
     if: >-

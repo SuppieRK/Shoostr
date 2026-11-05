@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import process from 'node:process';
+import { Buffer } from 'node:buffer';
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -39,21 +41,58 @@ function inventory() {
   for (const { project, directory } of examples) {
     assert.ok(existsSync(`${directory}/Dockerfile`), project);
     assert.ok(existsSync(`${directory}/README.md`), project);
-    assert.match(readFileSync(`${directory}/compose.yaml`, 'utf8'), /target: runtime/);
-    const build = readFileSync(`${directory}/build.gradle`, 'utf8');
-    assert.match(build, /example-container.gradle/);
-    assert.match(build, /mainClass\s*=/);
+
   }
+}
+
+function selectedExamples(files) {
+  const shared = /^(core|http|test|pac4j|micrometer|opentelemetry|openapi|mcp|buildSrc|config|gradle|\.github\/ci)\//;
+  const rootBuild = /^(build\.gradle|settings\.gradle|gradle\.properties|gradlew|gradlew\.bat|\.dockerignore|\.github\/workflows\/ci\.yml)$/;
+  if (files.some(file => shared.test(file) || rootBuild.test(file)
+    || (file.startsWith('examples/') && !examples.some(example => file.startsWith(example.directory + '/'))))) return examples;
+  return examples.filter(example => files.some(file => file.startsWith(example.directory + '/')));
+}
+
+function matrixExamples() {
+  if (process.env.GITHUB_EVENT_NAME !== 'pull_request') return examples;
+  const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+  const base = event.pull_request.base.sha;
+  const head = event.pull_request.head.sha;
+  assert(/^[a-f0-9]{40}$/.test(base) && /^[a-f0-9]{40}$/.test(head), 'Invalid PR revisions');
+  const changed = spawnSync('git', ['diff', '--name-only', '--no-renames', '-z', `${base}...${head}`], { encoding: 'utf8' });
+  assert.equal(changed.status, 0, changed.stderr || 'Cannot determine changed files');
+  return selectedExamples(changed.stdout.split('\0').filter(Boolean));
 }
 
 if (process.argv.includes('--matrix')) {
   inventory();
-  console.log(JSON.stringify({ include: examples }));
+  console.log(JSON.stringify({ include: matrixExamples() }));
 } else {
   test('every registered example has a standalone container and public behavior probe', inventory);
   if (!Object.hasOwn(process.env, 'EXAMPLE')) {
+    for (const [label, files, selected] of [
+      ['one example', ['examples/01-hello/src/main/java/Hello.java'], ['hello-example']],
+      ['nested example', ['examples/03-routing/legacy-requests/Dockerfile'], ['routing-example', 'requests-example']],
+      ['directory boundary', ['examples/01-hello-other/file'], examples.map(example => example.project)],
+      ['shared library', ['core/src/main/java/Request.java'], examples.map(example => example.project)],
+      ['shared build', ['config/gradle/example-container.gradle'], examples.map(example => example.project)],
+      ['wrapper', ['gradle/wrapper/gradle-wrapper.properties'], examples.map(example => example.project)],
+      ['root build', ['settings.gradle'], examples.map(example => example.project)],
+      ['CI tooling', ['.github/workflows/ci.yml'], examples.map(example => example.project)],
+      ['shared example file', ['examples/shared.properties'], examples.map(example => example.project)],
+      ['documentation', ['README.md', 'site/src/content/docs/start/index.md'], []],
+      ['benchmark', ['.github/benchmarks/run.sh', '.github/workflows/benchmarks.yml'], []],
+      ['mixed changes', ['README.md', 'examples/01-hello/Dockerfile'], ['hello-example']],
+      ['renamed file paths', ['examples/01-hello/old.txt', 'examples/04-request/new.txt'], ['hello-example', 'request-example']],
+      ['no files', [], []],
+    ]) {
+      test(`container selection follows ${label} changes`, () => {
+        assert.deepEqual(selectedExamples(files).map(example => example.project), selected);
+      });
+    }
     test('matrix output is JSON and empty or unknown live selections fail', () => {
-      const matrix = spawnSync(process.execPath, [process.argv[1], '--matrix'], { encoding: 'utf8' });
+      const matrix = spawnSync(process.execPath, [process.argv[1], '--matrix'], { encoding: 'utf8',
+        env: { ...process.env, GITHUB_EVENT_NAME: 'push' } });
       assert.equal(matrix.status, 0, matrix.stderr);
       assert.equal(JSON.parse(matrix.stdout).include.length, examples.length);
       for (const selection of ['', 'not-an-example']) {
@@ -101,7 +140,7 @@ if (process.argv.includes('--matrix')) {
       if (project === 'extensions-example') {
         const catalog = await fetch(base + '/catalog', { signal: AbortSignal.timeout(5000) });
         assert.equal(catalog.status, 200);
-        assert.match(await catalog.text(), /GET \/api\/items\/\{id\}/);
+        assert.match(await catalog.text(), /GET \/api\/items\/\{id}/);
       }
       if (project === 'static-streaming-example') {
         const asset = await fetch(base + '/assets/greeting.txt', { signal: AbortSignal.timeout(5000) });

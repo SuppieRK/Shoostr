@@ -12,8 +12,10 @@ configurations {
 	}
 }
 
+version = '2026.11.5.0'
+
 dependencies {
-	api project(':core')
+	api shoostrDependency('core', '2026.11.5.0')
 	api platform('tools.jackson:jackson-bom:3.2.3')
 	api 'io.swagger.core.v3:swagger-core:3.0.0'
 	// Explicit patched dependencies also protect consumers using only the published Maven POM.

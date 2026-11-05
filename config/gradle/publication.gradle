@@ -1,0 +1,49 @@
+import groovy.json.JsonOutput
+
+// Reuse the existing publication owners rather than maintaining a release manifest.
+def libraries = rootProject.publicationLibraries
+def selected = providers.gradleProperty('publicationModules').getOrElse('').split(',').findAll {
+	it
+}
+if (selected.any {
+			!(it in libraries)
+		} || selected.size() != selected.toSet().size()) {
+	throw new GradleException('publicationModules must name distinct Shoostr libraries')
+}
+def binaryDependencies = providers.gradleProperty('publicationBinaries').getOrElse('false') == 'true'
+
+configure(libraries.collect { project(":${it}") }) { library ->
+	ext.publicationDependencies = [:]
+	ext.shoostrDependency = { String target, String pinnedVersion ->
+		if (!(target in libraries) || pinnedVersion.isBlank()) {
+			throw new GradleException('Shoostr dependency requires a known library and explicit version')
+		}
+		library.publicationDependencies[target] = pinnedVersion
+		if (binaryDependencies && library.name in selected) {
+			return "io.github.suppierk:shoostr-${target}:${pinnedVersion}"
+		}
+		return project(":${target}")
+	}
+	if (binaryDependencies && library.name in selected) {
+		repositories {
+			maven {
+				url = rootProject.layout.buildDirectory.dir('release-verification-repository')
+				content { includeGroup 'io.github.suppierk' }
+			}
+		}
+	}
+}
+
+tasks.register('publicationProjects') {
+	group = 'publishing'
+	description = 'Writes coordinates and declared internal dependency versions from library builds.'
+	doLast {
+		def output = layout.buildDirectory.file('publication/projects.json').get().asFile
+		output.parentFile.mkdirs()
+		output.text = JsonOutput.prettyPrint(JsonOutput.toJson(libraries.collect { name ->
+			def library = project(":${name}")
+			[name: name, group: library.group.toString(), artifact: "shoostr-${name}",
+				version: library.version.toString(), dependencies: library.publicationDependencies]
+		})) + '\n'
+	}
+}

@@ -94,7 +94,7 @@ class PublishedConsumerTest {
       }
     }
 
-    var coreJar = root.resolve("core/build/libs/shoostr-core-0.1.0-SNAPSHOT.jar");
+    var coreJar = Path.of(System.getProperty("shoostr.core.jar"));
     if ("stale-core".equals(scenario)) {
       coreJar = directory.resolve("stale-core.jar");
       Files.writeString(coreJar, "not the current producer bytes");
@@ -154,7 +154,9 @@ class PublishedConsumerTest {
             "-PverificationRepository=" + repository.toUri(),
             "-PevidenceDirectory=" + evidence,
             "-PexpectedCore=" + coreJar,
-            "-PexpectedHttp=" + root.resolve("http/build/libs/shoostr-http-0.1.0-SNAPSHOT.jar"),
+            "-PexpectedHttp=" + System.getProperty("shoostr.http.jar"),
+            "-PcoreVersion=" + System.getProperty("shoostr.core.version"),
+            "-PhttpVersion=" + System.getProperty("shoostr.http.version"),
             "dependencies",
             "--configuration",
             "runtimeClasspath",

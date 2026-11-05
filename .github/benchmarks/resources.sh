@@ -47,10 +47,15 @@ create_server_cgroup() {
 
 verify_server_cgroup() {
   local pid=$1
-  [[ $(< "/proc/$pid/cgroup") == "0::${server_cgroup#/sys/fs/cgroup}" \
-    && $(< "$server_cgroup/memory.max") == "$jvm_memory_bytes" \
-    && $(< "$server_cgroup/memory.swap.max") == 0 ]] \
+  verify_server_cgroup_limits || return
+  [[ $(< "/proc/$pid/cgroup") == "0::${server_cgroup#/sys/fs/cgroup}" ]] \
     || { echo 'JVM is not in the requested memory-limited cgroup' >&2; return 2; }
+}
+
+verify_server_cgroup_limits() {
+  [[ $(< "$server_cgroup/memory.max") == "$jvm_memory_bytes" \
+    && $(< "$server_cgroup/memory.swap.max") == 0 ]] \
+    || { echo 'JVM memory/swap limits changed' >&2; return 2; }
 }
 
 capture_server_cgroup() {

@@ -25,16 +25,15 @@ on:
         type: number
         default: 1024
 
-permissions: {}
+permissions:
+  contents: read
 
 env:
   JAVA_VERSION: '21.0.13'
 
 jobs:
   tracing:
-    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'tracing'
-    permissions:
-      contents: read
+    if: inputs.mode == 'tracing'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -47,7 +46,6 @@ jobs:
           path: candidate
       - name: Validate settings
         run: |
-          echo "RESULT_DIR=$RUNNER_TEMP/tracing-jmh" >> "$GITHUB_ENV"
           [[ "$BASELINE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$RETENTION_DAYS" =~ ^([1-9]|1[0-4])$ ]]
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -55,11 +53,13 @@ jobs:
           persist-credentials: false
           path: baseline
           ref: ${{ inputs.baseline_sha }}
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+      - &java
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
-      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - &gradle
+        uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
         with:
           cache-provider: basic
       - name: Build candidate fixture
@@ -69,9 +69,7 @@ jobs:
         working-directory: baseline
         run: ./gradlew :core:jar :opentelemetry:jar --no-daemon --console=plain
       - name: Run paired SDK tracing JMH and separate JFR
-        id: measure
-        continue-on-error: true
-        run: bash candidate/.github/benchmarks/tracing.sh "$GITHUB_WORKSPACE/candidate" "$GITHUB_WORKSPACE/baseline" "$RESULT_DIR" "$BASELINE_SHA"
+        run: bash candidate/.github/benchmarks/tracing.sh "$GITHUB_WORKSPACE/candidate" "$GITHUB_WORKSPACE/baseline" "$RUNNER_TEMP/tracing-jmh" "$BASELINE_SHA"
       - name: Upload native measurements and profiles
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -80,24 +78,16 @@ jobs:
           path: ${{ runner.temp }}/tracing-jmh/
           retention-days: ${{ inputs.retention_days }}
           if-no-files-found: error
-      - name: Publish measurement status
-        if: always()
-        env:
-          MEASUREMENT_OUTCOME: ${{ steps.measure.outcome }}
-        run: |
-          echo "Tracing JMH measurement step: **$MEASUREMENT_OUTCOME**. Native outputs are in the tracing-jmh artifact." >> "$GITHUB_STEP_SUMMARY"
-          [[ "$MEASUREMENT_OUTCOME" == success ]]
 
   prepare:
-    if: github.event_name == 'workflow_dispatch' && inputs.mode != 'tracing'
-    permissions:
-      contents: read
+    if: inputs.mode != 'tracing'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     outputs:
       matrix: ${{ steps.settings.outputs.matrix }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - &checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Validate settings
@@ -117,13 +107,8 @@ jobs:
           configure_resources
           matrix=$(jq -c --arg mode "$MODE" '{workload:[to_entries[] | select($mode == "steady" or .value.kind == "http") | .key]}' .github/benchmarks/workloads.json)
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
-        with:
-          cache-provider: basic
+      - *java
+      - *gradle
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.8'
@@ -165,10 +150,7 @@ jobs:
           if-no-files-found: error
 
   benchmark:
-    if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'steady' || inputs.mode == 'overload')
-    permissions:
-      contents: read
-      actions: read
+    if: (inputs.mode == 'steady' || inputs.mode == 'overload')
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -180,90 +162,33 @@ jobs:
     env:
       WORKLOAD: ${{ matrix.workload }}
       MODE: ${{ inputs.mode }}
-      RETENTION_DAYS: ${{ inputs.retention_days }}
       JVM_CPUS: ${{ inputs.jvm_cpus }}
       JVM_MEMORY_MIB: ${{ inputs.jvm_memory_mib }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-      - name: Set result paths
-        run: |
-          echo "RESULT_DIR=$RUNNER_TEMP/benchmark-results" >> "$GITHUB_ENV"
-          echo "TOOL_DIR=$RUNNER_TEMP/benchmark-tools" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - *checkout
+      - *java
+      - &tools
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: benchmark-tools
-          path: ${{ env.TOOL_DIR }}
+          path: ${{ runner.temp }}/benchmark-tools
       - name: Run three profiled trials
-        id: measure
-        continue-on-error: true
         run: |
-          chmod +x "$TOOL_DIR/k6"
-          (cd "$TOOL_DIR" && sha256sum -c checksums.txt)
-          bash .github/benchmarks/run.sh "$WORKLOAD" "$MODE" "$RESULT_DIR" "$TOOL_DIR"
+          chmod +x "$RUNNER_TEMP/benchmark-tools/k6"
+          (cd "$RUNNER_TEMP/benchmark-tools" && sha256sum -c checksums.txt)
+          bash .github/benchmarks/run.sh "$WORKLOAD" "$MODE" "$RUNNER_TEMP/benchmark-results" "$RUNNER_TEMP/benchmark-tools"
       - name: Upload complete native outputs
-        id: data
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: benchmark-data-${{ matrix.workload }}
-          path: ${{ env.RESULT_DIR }}/
+          path: ${{ runner.temp }}/benchmark-results/
           retention-days: ${{ inputs.retention_days }}
           if-no-files-found: error
           compression-level: 6
-      - name: Publish workload summary
-        id: report
-        if: always()
-        env:
-          ARTIFACT_URL: ${{ steps.data.outputs.artifact-url }}
-          ARTIFACT_ID: ${{ steps.data.outputs.artifact-id }}
-          MEASUREMENT_OUTCOME: ${{ steps.measure.outcome }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if [[ -n "$ARTIFACT_ID" ]]; then
-            ARTIFACT_BYTES=''
-            for ((attempt=0; attempt<3; attempt++)); do
-              if ARTIFACT_BYTES=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$ARTIFACT_ID" --jq .size_in_bytes); then
-                break
-              fi
-              sleep 2
-            done
-            if [[ -z "$ARTIFACT_BYTES" ]]; then
-              echo '::warning::Artifact size metadata unavailable; uploaded artifact and measurement evidence are retained.'
-            fi
-            export ARTIFACT_BYTES
-          fi
-          node .github/benchmarks/report.mjs workload "$RESULT_DIR" "$WORKLOAD" "$MODE" >> "$GITHUB_STEP_SUMMARY"
-      - name: Upload small summary
-        id: summary
-        if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: benchmark-summary-${{ matrix.workload }}
-          path: |
-            ${{ env.RESULT_DIR }}/workload-summary.json
-            ${{ env.RESULT_DIR }}/summary.md
-          retention-days: ${{ inputs.retention_days }}
-          if-no-files-found: error
-      - name: Preserve failure status
-        if: always()
-        env:
-          MEASURE: ${{ steps.measure.outcome }}
-          DATA: ${{ steps.data.outcome }}
-          REPORT: ${{ steps.report.outcome }}
-          SUMMARY: ${{ steps.summary.outcome }}
-        run: |
-          [[ "$MEASURE" == success && "$DATA" == success && "$REPORT" == success && "$SUMMARY" == success ]]
 
   slow-client:
-    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'slow-client'
-    permissions:
-      contents: read
+    if: inputs.mode == 'slow-client'
     needs: prepare
     runs-on: ubuntu-24.04
     timeout-minutes: 25
@@ -271,35 +196,20 @@ jobs:
       JVM_CPUS: ${{ inputs.jvm_cpus }}
       JVM_MEMORY_MIB: ${{ inputs.jvm_memory_mib }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
-        with:
-          distribution: temurin
-          java-version: ${{ env.JAVA_VERSION }}
-      - name: Set result paths
-        run: |
-          echo "RESULT_DIR=$RUNNER_TEMP/slow-client-results" >> "$GITHUB_ENV"
-          echo "TOOL_DIR=$RUNNER_TEMP/benchmark-tools" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: benchmark-tools
-          path: ${{ env.TOOL_DIR }}
+      - *checkout
+      - *java
+      - *tools
       - name: Install native slow-body tool
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y slowhttptest
           dpkg-query -W slowhttptest
       - name: Run finite resource-safety diagnostic
-        id: measure
-        continue-on-error: true
         run: |
-          chmod +x "$TOOL_DIR/k6"
-          (cd "$TOOL_DIR" && sha256sum -c checksums.txt)
-          bash .github/benchmarks/slow-client.sh "$RESULT_DIR" "$TOOL_DIR"
+          chmod +x "$RUNNER_TEMP/benchmark-tools/k6"
+          (cd "$RUNNER_TEMP/benchmark-tools" && sha256sum -c checksums.txt)
+          bash .github/benchmarks/slow-client.sh "$RUNNER_TEMP/slow-client-results" "$RUNNER_TEMP/benchmark-tools"
       - name: Upload native diagnostic evidence
-        id: data
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -307,37 +217,3 @@ jobs:
           path: ${{ runner.temp }}/slow-client-results/
           retention-days: ${{ inputs.retention_days }}
           if-no-files-found: error
-      - name: Preserve diagnostic and publication status
-        if: always()
-        env:
-          MEASUREMENT_OUTCOME: ${{ steps.measure.outcome }}
-          DATA_OUTCOME: ${{ steps.data.outcome }}
-          ARTIFACT_URL: ${{ steps.data.outputs.artifact-url }}
-        run: |
-          echo "Slow-client measurement: **$MEASUREMENT_OUTCOME**; artifact upload: **$DATA_OUTCOME**. [Native evidence]($ARTIFACT_URL)." >> "$GITHUB_STEP_SUMMARY"
-          echo 'One finite diagnostic, not capacity certification or a PR performance gate. Inspect recovery/resource traces before concluding there are no leaks.' >> "$GITHUB_STEP_SUMMARY"
-          [[ "$MEASUREMENT_OUTCOME" == success && "$DATA_OUTCOME" == success ]]
-
-  report:
-    if: always() && github.event_name == 'workflow_dispatch' && (inputs.mode == 'steady' || inputs.mode == 'overload')
-    permissions:
-      contents: read
-      actions: read
-    needs: [prepare, benchmark]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Download summaries only
-        if: always()
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          pattern: benchmark-summary-*
-          path: ${{ runner.temp }}/benchmark-summaries
-      - name: Publish campaign summary
-        if: always()
-        env:
-          MODE: ${{ inputs.mode }}
-        run: node .github/benchmarks/report.mjs campaign "$RUNNER_TEMP/benchmark-summaries" "$MODE" >> "$GITHUB_STEP_SUMMARY"
