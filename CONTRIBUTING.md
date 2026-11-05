@@ -70,20 +70,8 @@ Changing core's version does not change MCP's declared dependency. The first pub
 of MCP also needs compatible core and HTTP publications. Include an unpublished dependency
 by giving it a stable version and using that version in the dependent library.
 
-Before the first release, verify ownership of the `io.github.suppierk` namespace in Central,
-generate a Portal user token, and add these repository Actions secrets:
-
-| Secret                   | Value                                                                                      |
-| ------------------------ | ------------------------------------------------------------------------------------------ |
-| `MAVEN_CENTRAL_USERNAME` | Portal token username.                                                                     |
-| `MAVEN_CENTRAL_PASSWORD` | Portal token password.                                                                     |
-| `SIGNING_KEY`            | Complete ASCII-armored OpenPGP private key; publish its public key as required by Central. |
-| `SIGNING_PASSWORD`       | Private-key passphrase, if protected.                                                      |
-
-Normal builds and unsigned local staging do not need these secrets. The repository still
-starts with snapshot versions; configure stable library and dependency versions before
-attempting its first release. Dependency examples in the [installation reference](site/src/content/docs/start/libraries.md)
-remain placeholders until artifacts are available.
+Dependency examples in the [installation reference](site/src/content/docs/start/libraries.md)
+remain placeholders until the first publication is verified.
 
 1. Compare each library with its own last successful publication. Review production
    inputs, dependency changes and shared build changes. Set selected artifact versions

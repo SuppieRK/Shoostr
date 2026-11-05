@@ -2,10 +2,10 @@ plugins {
 	id 'java-library'
 }
 
-version = '0.1.0-SNAPSHOT'
+version = '2026.11.5.0'
 
 dependencies {
-	api shoostrDependency('http', '0.1.0-SNAPSHOT')
+	api shoostrDependency('http', '2026.11.5.0')
 	api 'org.eclipse.jetty:jetty-server:12.1.14'
 	api 'org.eclipse.jetty:jetty-session:12.1.14'
 	api 'org.eclipse.jetty.http2:jetty-http2-server:12.1.14'
