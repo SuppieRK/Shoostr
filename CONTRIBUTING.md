@@ -75,8 +75,8 @@ Changing core's version does not change MCP's declared dependency. The first pub
 of MCP also needs compatible core and HTTP publications. Include an unpublished dependency
 by giving it a stable version and using that version in the dependent library.
 
-Dependency examples in the [installation reference](site/src/content/docs/start/libraries.md)
-remain placeholders until the first publication is verified.
+The [installation reference](site/src/content/docs/start/libraries.md) shows published
+core and test coordinates.
 
 1. Compare each library with its own last successful publication. Review production
    inputs, dependency changes and shared build changes. Set selected artifact versions
