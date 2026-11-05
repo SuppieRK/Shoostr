@@ -45,11 +45,9 @@ jobs:
             examples/17-mcp/package-lock.json
             site/package-lock.json
 
-      - name: Install pinned MCP compatibility tests and browser
+      - name: Install MCP conformance tooling
         working-directory: examples/17-mcp
-        run: |
-          npm ci --ignore-scripts
-          node node_modules/playwright/cli.js install --with-deps firefox
+        run: npm ci --ignore-scripts
 
       - name: Build and test
         run: ./gradlew clean build --console=plain
