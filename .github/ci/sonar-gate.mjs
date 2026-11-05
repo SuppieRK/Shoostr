@@ -20,7 +20,7 @@ export async function verify({ revision, taskId, pullRequest, branch }, request 
   assert(Number.isSafeInteger(issues.total) && issues.total === 0, 'Sonar must have zero open issues');
   await requireRevision();
   console.log(`Sonar analysis has zero open issues for ${revision}`);
-  console.log(`Sonar analysis warnings: ${task.warningCount}`);
+  console.log(`Sonar analysis warnings: ${Number(task.warningCount)}`);
 
   async function requireRevision() {
     if (pullRequest) {
@@ -51,7 +51,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
   await verify({
     revision: process.env.EXPECTED_REVISION,
-    taskId: readFileSync(process.argv[2], 'utf8').match(/^ceTaskId=(.+)$/m)?.[1],
+    taskId: readFileSync('build/sonar/report-task.txt', 'utf8').match(/^ceTaskId=(.+)$/m)?.[1],
     pullRequest: process.env.GITHUB_EVENT_NAME === 'pull_request' ? String(event.number) : undefined,
     branch: process.env.GITHUB_REF_NAME,
   });
