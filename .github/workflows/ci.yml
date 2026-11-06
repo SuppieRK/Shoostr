@@ -77,7 +77,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gradle_args=(ciBuild :mcp-example:conformanceTest --console=plain)
+          gradle_args=(ciBuild :mcp-example:conformanceTest --console=plain --parallel)
           if [[ "$TRUSTED_ANALYSIS" == true ]]; then
             test -n "$SONAR_TOKEN"
             npm --prefix site ci --ignore-scripts
