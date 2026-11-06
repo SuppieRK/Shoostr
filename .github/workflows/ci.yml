@@ -53,9 +53,13 @@ jobs:
             --test-reporter=lcov --test-reporter-destination=build/reports/ci/lcov.info \
             .github/ci/*.test.mjs
 
+      - name: Install pinned HTTP benchmark tool
+        run: bash .github/benchmarks/install-zrk.sh "$RUNNER_TEMP/benchmark-tools"
+
       - name: Verify benchmark resources and evidence
         env:
           BENCHMARK_TEST_CGROUP: '1'
+          ZRK_BINARY: ${{ runner.temp }}/benchmark-tools/zrk
         run: node --test .github/benchmarks/*.test.mjs
 
       - name: Install MCP conformance tooling

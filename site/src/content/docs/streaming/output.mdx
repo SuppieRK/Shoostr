@@ -18,6 +18,9 @@ This task writes a finite response and transfers an input source through a bound
 
 Write incrementally through `startStream(...)`, or give `response.input(...)` an input source for transfer. Both use the bounded output buffer and bypass the finite-body limit. `Options.streamBufferBytes()` limits that application buffer, not total bytes or duration. Filling the buffer or calling `flush()` waits for transport progress before reuse, providing backpressure to the handler.
 
+The default stream buffer capacity is 8 KiB (8,192 bytes). It flushes automatically when full; returning from the handler sends any remaining bytes. To change the capacity for an application, pass `Options.defaults().withStreamBufferBytes(16_384)` to `new Shoostr(...)`; see [request and response limits](../../application/server-options/). The buffer grows as needed up to that capacity.
+Call `flush()` when output must be submitted before the buffer fills. It waits for transport consumption so the buffer can be reused; it does not guarantee that the client has received the bytes. Native Jetty output-buffer settings do not change Shoostr’s stream capacity.
+
 Starting the stream commits the response, so select its status and headers first and do not mix streaming with a staged body or file transfer.
 Text writes use UTF-8 even if different charset metadata was supplied; encode other charsets yourself and write matching bytes instead.
 For replaceable, buffered output, use [finite response bodies](../../responses/bodies/), or use [file downloads](../../resources/downloads/) for a transfer staged from a path.

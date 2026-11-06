@@ -83,6 +83,21 @@ class ServerMainTest {
   }
 
   @Test
+  void servesCompleteChunkedStreamWithDefaultBuffering() throws Exception {
+    try (var server = TestServer.start(ServerMain.fixture(1, null))) {
+      var response =
+          server.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
+
+      assertEquals(200, response.statusCode());
+      assertEquals(("x".repeat(1023) + "\n").repeat(16), response.body());
+      assertEquals(
+          "application/octet-stream", response.headers().firstValue("Content-Type").orElseThrow());
+      assertEquals("chunked", response.headers().firstValue("Transfer-Encoding").orElseThrow());
+      assertTrue(response.headers().firstValue("Content-Length").isEmpty());
+    }
+  }
+
+  @Test
   void rejectsUnresolvableAndRegularFileRootsBeforePublishingAnApplication() throws Exception {
     assertThrows(
         IllegalArgumentException.class, () -> ServerMain.fixture(1, directory.resolve("missing")));

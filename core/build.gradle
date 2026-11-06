@@ -2,7 +2,7 @@ plugins {
 	id 'java-library'
 }
 
-version = '2026.11.5.0'
+version = '2026.11.6.0'
 
 dependencies {
 	api shoostrDependency('http', '2026.11.5.0')

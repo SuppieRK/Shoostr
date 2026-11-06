@@ -5,243 +5,165 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
-import { gzipSync } from 'node:zlib';
 import { spawnSync } from 'node:child_process';
-import { verifyHealth, verifyRecovery, verifyTiming, verifyMemory, verifyBodies, verifyRecoveryWindow } from './slow-client-check.mjs';
+import { verifyHealth, verifyRecovery, verifyTiming, verifyMemory, verifyBodies,
+  verifyRecoveryWindow, verifyBlocked, verifyCycle } from './slow-client-check.mjs';
 
-function health() {
-  return { metrics: {
-    health_completed: { count: 100 },
-    health_elapsed: { max: 12 },
-    checks: { value: 1, passes: 300, fails: 0 },
-    http_req_failed: { value: 0 },
-    dropped_iterations: { count: 0 },
-  } };
+function native(connections = 1, closed = false) {
+  return {zrk_version: '3.0.0', requests: 100, duration_s: closed ? 60.001 : 100.001,
+    config: {connections, launched: connections, streams: 1, duration_s: closed ? 60 : 100,
+      closed, disable_keepalive: !closed, target_rate: 1, target_rate_end: 1,
+      timeout_ms: closed ? 8000 : 1000, deadline_ms: 0, interval_s: 1,
+      deadline_abort: false, record_timeouts: true},
+    error_rate: 0,
+    errors: {connect: 0, read: 0, write: 0, timeout: 0, deadline: 0, non_2xx_3xx: 0},
+    workload: {response: {calls: 100}},
+    status_codes: {'1xx': 0, '2xx': 100, '3xx': 0, '4xx': 0, '5xx': 0},
+    latency_us: {max: 12000}, latency_histogram: 'native histogram'};
 }
 
-test('requires every scheduled health probe instead of only successful-response percentiles', () => {
-  assert.doesNotThrow(() => verifyHealth(health()));
-  const incomplete = health();
-  incomplete.metrics.health_completed.count = 99;
-  assert.throws(() => verifyHealth(incomplete), /100.*health probes/);
-});
+function intervals(count = 100) {
+  return Array.from({length: count}, (_, index) => ({t: index + 1, requests: 1, errors: 0,
+    errors_by_kind: native().errors, latency_us: {max: 12000}, latency_histogram: 'native histogram'}));
+}
 
-test('validates every probe when native scheduling adds one duration-boundary iteration', () => {
-  const summary = health();
-  summary.metrics.health_completed.count = 101;
-  summary.metrics.checks.passes = 303;
-  assert.doesNotThrow(() => verifyHealth(summary));
-  summary.metrics.checks.passes = 300;
-  assert.throws(() => verifyHealth(summary), /status\/body/);
-  summary.metrics.checks.passes = 303;
-  summary.metrics.health_elapsed.max = 1001;
-  assert.throws(() => verifyHealth(summary), /one second/);
-  summary.metrics.health_elapsed.max = 6;
-  summary.metrics.checks.fails = 1;
-  assert.throws(() => verifyHealth(summary), /status\/body/);
-  summary.metrics.checks.fails = 0;
-  summary.metrics.http_req_failed.value = 1 / 102;
-  assert.throws(() => verifyHealth(summary), /HTTP failure/);
-  summary.metrics.http_req_failed.value = 0;
-  summary.metrics.dropped_iterations.count = 1;
-  assert.throws(() => verifyHealth(summary), /dropped/);
-});
-
-for (const count of [99, 102, undefined, 100.5]) {
-  test(`rejects a missing or out-of-window native health count: ${count}`, () => {
-    const summary = health();
-    summary.metrics.health_completed.count = count;
-    assert.throws(() => verifyHealth(summary), /health probes/);
+for (const count of [99, 100, 101]) {
+  test(`accepts ${count} validated health responses within the native boundary policy`, () => {
+    const summary = native();
+    summary.requests = summary.workload.response.calls = summary.status_codes['2xx'] = count;
+    assert.equal(verifyHealth(summary), count);
   });
 }
 
-for (const [metric, field, value, message] of [
-  ['health_elapsed', 'max', 1001, /one second/],
-  ['health_elapsed', 'max', undefined, /one second/],
-  ['checks', 'value', 0.99, /status\/body/],
-  ['checks', 'passes', 299, /status\/body/],
-  ['http_req_failed', 'value', 0.01, /HTTP failure/],
-  ['dropped_iterations', 'count', 1, /dropped/],
-]) {
-  test(`rejects invalid health evidence: ${metric}.${field}=${value}`, () => {
-    const summary = health();
-    summary.metrics[metric][field] = value;
-    assert.throws(() => verifyHealth(summary), message);
+for (const count of [98, 102, undefined, 99.5]) {
+  test(`rejects health count outside the selected boundary: ${count}`, () => {
+    const summary = native();
+    summary.requests = summary.workload.response.calls = summary.status_codes['2xx'] = count;
+    assert.throws(() => verifyHealth(summary));
   });
 }
 
-function recovered() {
-  return { active_bodies: 0, active_blocked: 0, active_exchanges: 0,
-    peak_work: 32, admitted: 32, completed: 32, connections: 1 };
-}
-
-test('requires work and terminal exchanges to recover, not just an available listener', () => {
-  assert.doesNotThrow(() => verifyRecovery(recovered(), 32));
-  assert.throws(() => verifyRecovery({ ...recovered(), active_bodies: 1 }, 32), /outstanding/);
-});
-
-for (const [field, value, message] of [
-  ['connections', 2, /connection/],
-  ['admitted', 33, /completion/],
-  ['completed', undefined, /completion/],
-  ['peak_work', 31, /32 clients/],
-  ['peak_work', 64, /32 clients/],
-]) {
-  test(`rejects incomplete recovery/exposure evidence: ${field}=${value}`, () => {
-    assert.throws(() => verifyRecovery({ ...recovered(), [field]: value }, 32), message);
+for (const field of ['config', 'errors', 'workload', 'status_codes', 'latency_us', 'latency_histogram', 'duration_s']) {
+  test(`rejects missing native health ${field}`, () => {
+    const summary = native(); delete summary[field];
+    assert.throws(() => verifyHealth(summary));
   });
 }
 
-const start = Date.parse('2026-10-19T00:00:00Z');
-const phase = { start_ms: start + 1000, load_end_ms: start + 62000,
-  recovery_end_ms: start + 92000 };
-/** @type {number[]} */
-const points = Array.from({ length: 100 }, (_, index) => start + index * 1000);
-
-test('requires the full load and recovery phases with complete probe coverage', () => {
-  assert.doesNotThrow(() => verifyTiming(phase, points));
-  assert.throws(() => verifyTiming({ ...phase, load_end_ms: start + 60000 }, points), /60 seconds/);
-  assert.throws(() => verifyTiming({ ...phase, recovery_end_ms: start + 91000 }, points), /30 seconds/);
+test('rejects excessive scheduled latency, tool failures and unvalidated health responses', () => {
+  const summary = native();
+  summary.latency_us.max = 1000001;
+  assert.throws(() => verifyHealth(summary), /scheduled latency/);
+  summary.latency_us.max = 1;
+  summary.errors.timeout = 1;
+  assert.throws(() => verifyHealth(summary), /timeout/);
+  summary.errors.timeout = 0;
+  summary.workload.response.calls = 99;
+  assert.throws(() => verifyHealth(summary), /validation/);
 });
 
-test('rejects missing probe samples or an uncovered part of either phase', () => {
-  assert.throws(() => verifyTiming(phase, points.slice(1)), /probe evidence/);
-  assert.throws(() => verifyTiming(phase, points.map(value => value + 10000)), /coverage/);
-  assert.throws(() => verifyTiming(phase, points.map(value => value - 10000)), /coverage/);
+const phase = {start_ms: 1001500, load_end_ms: 1061500, recovery_end_ms: 1091500,
+  health_start_ms: 1000000, health_ready_ms: 1001100};
+
+test('observed 101-response boundary still validates every response and permits only one final counter difference', () => {
+  const summary = native();
+  summary.requests = summary.workload.response.calls = summary.status_codes['2xx'] = 101;
+  summary.duration_s = 100.003;
+  assert.equal(verifyHealth(summary), 101);
+  assert.equal(verifyTiming(phase, intervals(100), 101), 1);
+  summary.workload.response.calls = 100;
+  assert.throws(() => verifyHealth(summary), /validation/);
+  assert.throws(() => verifyTiming(phase, intervals(99), 101), /boundary/);
 });
 
-test('matches raw health evidence to the accepted native summary count without truncation', () => {
-  const boundaryPoints = [...points, start + 100000];
-  assert.doesNotThrow(() => verifyTiming(phase, boundaryPoints, 101));
-  assert.throws(() => verifyTiming(phase, points, 101), /probe evidence/);
-  assert.throws(() => verifyTiming(phase, boundaryPoints, 100), /probe evidence/);
-  assert.throws(() => verifyTiming(phase, boundaryPoints, 102), /probe evidence/);
-  assert.throws(() => verifyTiming(phase, boundaryPoints.map(value => value + 10000), 101), /coverage/);
+test('health interval coverage uses launch/readiness bounds and rejects truncation', () => {
+  assert.equal(verifyTiming(phase, intervals(), 100), 0);
+  assert.equal(verifyTiming(phase, intervals(99), 100), 1);
+  assert.throws(() => verifyTiming(phase, intervals(98), 100), /coverage/);
+  assert.throws(() => verifyTiming({...phase, recovery_end_ms: 1101500}, intervals(), 100), /coverage/);
+  assert.throws(() => verifyTiming(phase, intervals().filter(row => row.t < 20 || row.t > 25), 100), /coverage/);
+  assert.throws(() => verifyTiming(phase, intervals(), 102), /boundary/);
+  assert.throws(() => verifyTiming({...phase, health_ready_ms: phase.start_ms + 1}, intervals(), 100), /ready/);
 });
 
-test('rejects Java OOM and cgroup OOM events, not only OOM kills', () => {
-  const events = 'low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\n';
-  assert.doesNotThrow(() => verifyMemory(events, '-XX:+HeapDumpOnOutOfMemoryError'));
-  assert.throws(() => verifyMemory(events.replace('oom 0', 'oom 1'), ''), /OOM/);
-  assert.throws(() => verifyMemory(events.replace('oom_kill 0', 'oom_kill 1'), ''), /OOM/);
-  assert.throws(() => verifyMemory(events, 'java.lang.OutOfMemoryError: Java heap space'), /OOM/);
+function recovered(clients = 32) {
+  return {active_bodies: 0, active_blocked: 0, active_exchanges: 0,
+    peak_work: clients, admitted: clients, completed: clients, connections: 1};
+}
+
+test('recovery allows only the owned health connection and requires final quiescence', () => {
+  const state = recovered();
+  verifyRecovery(state, 32);
+  verifyRecovery({...state, connections: 2}, 32, true);
+  assert.throws(() => verifyRecovery({...state, connections: 2}, 32), /connection/);
+  assert.throws(() => verifyRecovery({...state, connections: 3}, 32, true), /connection/);
+  for (const changed of [{active_bodies: 1}, {active_exchanges: 1}, {completed: 31}, {peak_work: 31}]) {
+    assert.throws(() => verifyRecovery({...state, ...changed}, 32, true));
+  }
+  const sample = {...state, connections: 2, phase: 'recovery', timestamp_ms: phase.load_end_ms + 1000};
+  assert.equal(verifyRecoveryWindow([sample], phase, 32), 1000);
+  assert.throws(() => verifyRecoveryWindow([{...sample, timestamp_ms: phase.load_end_ms + 30001}], phase, 32));
+});
+
+function population(clients) {
+  return Array.from({length: 51}, (_, index) => ({phase: 'load', timestamp_ms: phase.start_ms + 5000 + index * 1000,
+    active_blocked: clients, active_bodies: 0, active_exchanges: clients, admitted: clients, completed: 0}));
+}
+
+for (const clients of [32, 128]) {
+  test(`sampled ${clients}-client exposure rejects sustained reductions, gaps and inconsistent accounting`, () => {
+    const samples = population(clients);
+    verifyBlocked(samples, phase, clients);
+    verifyBlocked(samples.map((row, index) => index === 10 ? {...row, active_blocked: 0} : row), phase, clients);
+    assert.throws(() => verifyBlocked(samples.filter((_, index) => index < 10 || index > 15), phase, clients), /exposure/);
+    assert.throws(() => verifyBlocked(samples.map((row, index) => index >= 10 && index <= 15
+      ? {...row, active_blocked: clients - 1} : row), phase, clients), /exposure/);
+    assert.throws(() => verifyBlocked(samples.map(row => ({...row, completed: 1})), phase, clients), /accounting/);
+  });
+}
+
+test('keeps native slow-body exposure and OOM evidence strict', () => {
+  const csv = ['Seconds,Closed,Pending,Connected,Service Available',
+    ...Array.from({length: 62}, (_, second) => `${second},0,0,32,32`)].join('\n');
+  verifyBodies(csv, 32);
+  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,32', '20,1,0,31,32'), 32), /exposure/);
+  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,32\n', ''), 32), /evidence/);
+  verifyMemory('oom 0\noom_kill 0\n', '');
+  assert.throws(() => verifyMemory('oom 1\noom_kill 0\n', ''), /OOM/);
+  assert.throws(() => verifyMemory('oom 0\noom_kill 1\n', ''), /OOM/);
+  assert.throws(() => verifyMemory('oom 0\noom_kill 0\n', 'java.lang.OutOfMemoryError'), /OOM/);
   assert.throws(() => verifyMemory('', ''), /evidence/);
 });
 
-test('requires achieved slow-body connections throughout the native measurement', () => {
-  const rows = Array.from({ length: 62 }, (_, second) => `${second},0,0,32,32`);
-  const csv = ['Seconds,Closed,Pending,Connected,Service Available', ...rows].join('\n');
-  assert.doesNotThrow(() => verifyBodies(csv, 32));
-  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,32', '20,1,0,31,32'), 32), /exposure/);
-  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,32', '20,0,0,32,0'), 32), /probe/);
-  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,32', '20,0,0,32,1'), 32), /probe/);
-  assert.throws(() => verifyBodies(csv.replace('20,0,0,32,32\n', ''), 32), /evidence/);
-  assert.doesNotThrow(() => verifyBodies(csv.replaceAll(',32', ',128'), 128));
-});
-
-test('requires observed connection/work recovery within thirty seconds, not only at run end', () => {
-  const sample = { ...recovered(), phase: 'recovery', timestamp_ms: phase.load_end_ms + 1000 };
-  assert.equal(verifyRecoveryWindow([sample], phase, 32), 1000);
-  assert.throws(() => verifyRecoveryWindow([{ ...sample,
-    timestamp_ms: phase.load_end_ms + 30001 }], phase, 32), /within 30 seconds/);
-  assert.throws(() => verifyRecoveryWindow([{ ...sample, connections: 2 }], phase, 32),
-    /within 30 seconds/);
-});
-
-function blockedPoints() {
-  const rows = Array.from({ length: 60 }, (_, second) => ({ type: 'Point', metric: 'vus',
-    data: { time: new Date(phase.start_ms + 500 + second * 1000).toISOString(), value: 32 } }));
-  for (let vu = 1; vu <= 32; vu++) {
-    for (let end = 5; end <= 55; end += 5) {
-      rows.push({ type: 'Point', metric: 'http_req_duration', data: {
-        time: new Date(phase.start_ms + 500 + end * 1000).toISOString(), value: 5000,
-        tags: { scenario: 'blocked', status: '200', method: 'GET' }, metadata: { vu: String(vu) },
-      } });
-    }
-  }
-  return rows;
-}
-
-test('the executable checker requires complete native artifacts', t => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-slow-client-check-'));
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
-  for (const [file, value] of Object.entries({
-    'health-summary.json': health(),
-    'recovered-state.json': recovered(),
-    'phase.json': { ...phase, kind: 'blocked' },
-    'blocked-summary.json': { metrics: { checks: { value: 1, passes: 32, fails: 0 } } },
-  })) fs.writeFileSync(path.join(dir, file), JSON.stringify(value));
-  const raw = points.map(value => JSON.stringify({ type: 'Point', metric: 'health_completed',
-    data: { time: new Date(value).toISOString(), value: 1 } })).join('\n');
-  fs.writeFileSync(path.join(dir, 'health-metrics.json.gz'), gzipSync(raw));
-  fs.writeFileSync(path.join(dir, 'memory.events'), 'oom 0\noom_kill 0\n');
-  fs.writeFileSync(path.join(dir, 'state-samples.jsonl'), JSON.stringify({ ...recovered(),
-    phase: 'recovery', timestamp_ms: phase.load_end_ms + 1000 }) + '\n');
-  for (const file of ['server.log', 'java-errors.txt']) fs.writeFileSync(path.join(dir, file), '');
-  for (const file of ['load-exit-code.txt', 'health-exit-code.txt']) {
-    fs.writeFileSync(path.join(dir, file), '0\n');
-  }
-  const run = () => spawnSync(process.execPath,
-    [fileURLToPath(new URL('./slow-client-check.mjs', import.meta.url)), dir, '32'],
-    { encoding: 'utf8', timeout: 5000 });
-  const missingBlocked = run();
-  assert.notEqual(missingBlocked.status, 0);
-  assert.match(missingBlocked.stderr, /blocked-metrics/);
-  const writeBlocked = rows => fs.writeFileSync(path.join(dir, 'blocked-metrics.json.gz'),
-    gzipSync(rows.map(row => JSON.stringify(row)).join('\n')));
-  writeBlocked(blockedPoints());
-  assert.equal(run().status, 0);
-  const boundarySummary = health();
-  boundarySummary.metrics.health_completed.count = 101;
-  boundarySummary.metrics.checks.passes = 303;
-  fs.writeFileSync(path.join(dir, 'health-summary.json'), JSON.stringify(boundarySummary));
-  const rawMismatch = run();
-  assert.notEqual(rawMismatch.status, 0);
-  assert.match(rawMismatch.stderr, /probe evidence/);
-  const boundaryPoint = { type: 'Point', metric: 'health_completed',
-    data: { time: new Date(start + 100000).toISOString(), value: 1 } };
-  const boundaryRaw = raw + '\n' + JSON.stringify(boundaryPoint);
-  fs.writeFileSync(path.join(dir, 'health-metrics.json.gz'), gzipSync(boundaryRaw));
-  const boundary = run();
-  assert.equal(boundary.status, 0, boundary.stderr);
-  assert.equal(JSON.parse(boundary.stdout).health_probes, 101);
-  fs.writeFileSync(path.join(dir, 'health-metrics.json.gz'),
-    gzipSync(raw + '\n' + JSON.stringify({ ...boundaryPoint, data: { ...boundaryPoint.data, value: 2 } })));
-  const nonUnit = run();
-  assert.notEqual(nonUnit.status, 0);
-  assert.match(nonUnit.stderr, /Invalid raw probe evidence/);
-  fs.writeFileSync(path.join(dir, 'health-summary.json'), JSON.stringify(health()));
-  fs.writeFileSync(path.join(dir, 'health-metrics.json.gz'), gzipSync(boundaryRaw));
-  const extraRaw = run();
-  assert.notEqual(extraRaw.status, 0);
-  assert.match(extraRaw.stderr, /probe evidence/);
-  fs.writeFileSync(path.join(dir, 'health-metrics.json.gz'), gzipSync(raw));
-  writeBlocked(blockedPoints().filter(row => row.metric === 'vus'
-    || Date.parse(row.data.time) < phase.start_ms + 6000));
-  const earlyOnly = run();
-  assert.notEqual(earlyOnly.status, 0);
-  assert.match(earlyOnly.stderr, /exposure/);
-  writeBlocked(blockedPoints().filter(row => row.metric !== 'http_req_duration'
-    || row.data.metadata.vu !== '1' || Date.parse(row.data.time) < phase.start_ms + 20000
-    || Date.parse(row.data.time) > phase.start_ms + 35000));
-  const midGap = run();
-  assert.notEqual(midGap.status, 0);
-  assert.match(midGap.stderr, /exposure/);
-  writeBlocked(blockedPoints().map(row => row.metric === 'vus'
-    ? { ...row, data: { ...row.data, value: 16 } } : row));
-  const reducedVus = run();
-  assert.notEqual(reducedVus.status, 0);
-  assert.match(reducedVus.stderr, /VU/);
-  writeBlocked(blockedPoints().map(row => row.metric === 'http_req_duration'
-    ? { ...row, data: { ...row.data, metadata: undefined } } : row));
-  const missingVuMetadata = run();
-  assert.notEqual(missingVuMetadata.status, 0);
-  assert.match(missingVuMetadata.stderr, /VU/);
-  writeBlocked(blockedPoints());
-  fs.unlinkSync(path.join(dir, 'health-metrics.json.gz'));
-  const missing = run();
-  assert.notEqual(missing.status, 0);
-  assert.match(missing.stderr, /ENOENT|evidence/);
+test('cycle verification rejects missing evidence, interrupted tools and incomplete native launches', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-zrk-cycle-'));
+  t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
+  const json = (name, value) => fs.writeFileSync(path.join(directory, name), JSON.stringify(value));
+  const lines = (name, rows) => fs.writeFileSync(path.join(directory, name), rows.map(JSON.stringify).join('\n'));
+  json('phase.json', {...phase, kind: 'blocked'});
+  json('health-summary.json', native());
+  json('blocked-summary.json', native(32, true));
+  json('recovered-state.json', recovered());
+  lines('health.ndjson', intervals());
+  lines('blocked.ndjson', intervals(60).map((row, index) => ({...row, requests: index < 40 ? 2 : 1})));
+  for (const name of ['health.hgrm', 'blocked.hgrm']) fs.writeFileSync(path.join(directory, name), 'native histogram');
+  lines('state-samples.jsonl', [...population(32), {...recovered(), phase: 'recovery', timestamp_ms: phase.load_end_ms + 1000}]);
+  for (const name of ['load-exit-code.txt', 'health-exit-code.txt']) fs.writeFileSync(path.join(directory, name), '0\n');
+  fs.writeFileSync(path.join(directory, 'memory.events'), 'oom 0\noom_kill 0\n');
+  for (const name of ['server.log', 'java-errors.txt']) fs.writeFileSync(path.join(directory, name), '');
+  assert.equal(verifyCycle(directory, 32).verified, true);
+  const interrupted = native(32, true); interrupted.duration_s = 20;
+  json('blocked-summary.json', interrupted);
+  assert.throws(() => verifyCycle(directory, 32), /duration/);
+  interrupted.duration_s = 60; interrupted.config.launched = 31;
+  json('blocked-summary.json', interrupted);
+  assert.throws(() => verifyCycle(directory, 32), /launch/);
+  json('blocked-summary.json', native(32, true));
+  fs.writeFileSync(path.join(directory, 'load-exit-code.txt'), '143\n');
+  assert.throws(() => verifyCycle(directory, 32), /tool failed/);
+  fs.writeFileSync(path.join(directory, 'load-exit-code.txt'), '0\n');
+  fs.unlinkSync(path.join(directory, 'health.ndjson'));
+  assert.throws(() => verifyCycle(directory, 32), /ENOENT/);
 });
 
 for (const env of [{ JVM_CPUS: '2' }, { JVM_MEMORY_MIB: '512' }]) {

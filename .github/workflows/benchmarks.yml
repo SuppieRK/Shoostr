@@ -17,7 +17,7 @@ on:
         type: number
         default: 7
       jvm_cpus:
-        description: HTTP modes JVM logical CPUs (leave at least one for k6)
+        description: HTTP modes JVM logical CPUs (leave at least one for zrk)
         type: number
         default: 1
       jvm_memory_mib:
@@ -105,43 +105,18 @@ jobs:
           fi
           source .github/benchmarks/resources.sh
           configure_resources
-          matrix=$(jq -c --arg mode "$MODE" '{workload:[to_entries[] | select($mode == "steady" or .value.kind == "http") | .key]}' .github/benchmarks/workloads.json)
+          matrix=$(jq -c --arg mode "$MODE" '{workload:[to_entries[] | select($mode == "steady" or .value.ramp) | .key]}' .github/benchmarks/workloads.json)
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
       - *java
       - *gradle
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: '1.26.8'
-          cache: false
-      - name: Build fixtures and pinned k6
-        env:
-          GOBIN: ${{ runner.temp }}/benchmark-tools
+      - name: Build fixtures and install pinned zrk
         run: |
           ./gradlew :benchmarks:installDist --no-daemon --console=plain
-          mkdir -p "$GOBIN/lib"
-          cp .github/benchmarks/build/install/benchmarks/lib/*.jar "$GOBIN/lib/"
-          (cd .github/benchmarks && go build -mod=readonly -o "$GOBIN/xk6" go.k6.io/xk6/cmd/xk6)
-          "$GOBIN/xk6" build v2.2.0 --with github.com/phymbert/xk6-sse@v0.2.0 --output "$GOBIN/k6"
-          "$GOBIN/k6" version
-          while IFS=$'\t' read -r script selected; do
-            "$GOBIN/k6" inspect -e WORKLOAD="$selected" -e ROUTE_GROUPS=1000 ".github/benchmarks/$script" > /dev/null
-          done < <(jq -r '.[] | [.script,.selected] | @tsv' .github/benchmarks/workloads.json)
-          "$GOBIN/k6" inspect -e WORKLOAD=plaintext -e ROUTE_GROUPS=1000 .github/benchmarks/overload.js > /dev/null
-          "$GOBIN/k6" inspect -e ROLE=health .github/benchmarks/slow-client.js | jq -e '
-            .noConnectionReuse == true and
-            .scenarios.health.executor == "constant-arrival-rate" and
-            .scenarios.health.exec == "probe" and
-            .scenarios.health.rate == 1 and .scenarios.health.timeUnit == "1s" and
-            .scenarios.health.duration == "1m40s" and
-            .scenarios.health.preAllocatedVUs == 4 and .scenarios.health.maxVUs == 4 and
-            .scenarios.health.gracefulStop == "1s"'
-          "$GOBIN/k6" inspect -e ROLE=blocked -e CLIENTS=128 .github/benchmarks/slow-client.js | jq -e '
-            .noConnectionReuse == false and (.noVUConnectionReuse // false) == false and
-            .scenarios.blocked.executor == "constant-vus" and
-            .scenarios.blocked.exec == "blocked" and .scenarios.blocked.vus == 128 and
-            .scenarios.blocked.duration == "1m0s" and .scenarios.blocked.gracefulStop == "0s"'
-          rm "$GOBIN/xk6"
-          (cd "$GOBIN" && sha256sum k6 lib/*.jar > checksums.txt)
+          tools="$RUNNER_TEMP/benchmark-tools"
+          bash .github/benchmarks/install-zrk.sh "$tools"
+          mkdir -p "$tools/lib"
+          cp .github/benchmarks/build/install/benchmarks/lib/*.jar "$tools/lib/"
+          (cd "$tools" && sha256sum zrk lib/*.jar > checksums.txt)
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: benchmark-tools
@@ -156,7 +131,7 @@ jobs:
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      max-parallel: 14
+      max-parallel: 10
       matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
     name: ${{ matrix.workload }}
     env:
@@ -174,7 +149,7 @@ jobs:
           path: ${{ runner.temp }}/benchmark-tools
       - name: Run three profiled trials
         run: |
-          chmod +x "$RUNNER_TEMP/benchmark-tools/k6"
+          chmod +x "$RUNNER_TEMP/benchmark-tools/zrk"
           (cd "$RUNNER_TEMP/benchmark-tools" && sha256sum -c checksums.txt)
           bash .github/benchmarks/run.sh "$WORKLOAD" "$MODE" "$RUNNER_TEMP/benchmark-results" "$RUNNER_TEMP/benchmark-tools"
       - name: Upload complete native outputs
@@ -206,7 +181,7 @@ jobs:
           dpkg-query -W slowhttptest
       - name: Run finite resource-safety diagnostic
         run: |
-          chmod +x "$RUNNER_TEMP/benchmark-tools/k6"
+          chmod +x "$RUNNER_TEMP/benchmark-tools/zrk"
           (cd "$RUNNER_TEMP/benchmark-tools" && sha256sum -c checksums.txt)
           bash .github/benchmarks/slow-client.sh "$RUNNER_TEMP/slow-client-results" "$RUNNER_TEMP/benchmark-tools"
       - name: Upload native diagnostic evidence

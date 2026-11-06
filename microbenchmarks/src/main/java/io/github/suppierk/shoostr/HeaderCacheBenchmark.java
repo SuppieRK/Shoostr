@@ -84,7 +84,7 @@ public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
       requests[index] =
           ByteBuffer.wrap(
               ("GET /stream HTTP/1.1\r\n"
-                      + "Host: localhost:18080\r\nUser-Agent: k6/2.2.0\r\n"
+                      + "Host: localhost:18080\r\nUser-Agent: fixture/1.0\r\n"
                       + "Accept: */*\r\nAccept-Encoding: gzip\r\nAuthorization: Bearer "
                       + authorization
                       + "\r\nX-Custom: "

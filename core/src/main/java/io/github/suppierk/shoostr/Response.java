@@ -2538,11 +2538,15 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       int start = 0;
       int end;
       while ((end = normalized.indexOf('\n', start)) >= 0) {
-        output.write(prefix + normalized.substring(start, end) + "\n");
+        output.write(prefix);
+        output.write(normalized.substring(start, end));
+        output.write("\n");
         start = end + 1;
       }
 
-      output.write(prefix + normalized.substring(start) + "\n");
+      output.write(prefix);
+      output.write(normalized.substring(start));
+      output.write("\n");
     }
   }
 }

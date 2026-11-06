@@ -12,18 +12,18 @@ support=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$support/resources.sh"
 configure_resources
 configuration=$(jq -ce --arg workload "$workload" '.[$workload] // error("Unknown workload")' "$support/workloads.json")
-kind=$(jq -r .kind <<< "$configuration")
-case "$mode:$kind" in
-  steady:*|overload:http) ;;
-  *) echo 'Overload requires an HTTP workload; mode must be steady or overload' >&2; exit 2 ;;
+case "$mode" in
+  steady) ;;
+  overload) [[ $(jq -r .ramp <<< "$configuration") == true ]] \
+    || { echo 'This workload does not support overload' >&2; exit 2; } ;;
+  *) echo 'Mode must be steady or overload' >&2; exit 2 ;;
 esac
 [[ ! -e "$destination" ]] || { echo 'Refusing to overwrite results' >&2; exit 2; }
 mkdir -p "$destination"
 destination=$(realpath "$destination")
 tools=$(realpath "$tools")
-read -r script selected rate vus < <(jq -r '[.script,.selected,.rate,.vus] | @tsv' <<< "$configuration")
+read -r selected rate connections < <(jq -r '[.selected,.rate,.connections] | @tsv' <<< "$configuration")
 base=http://127.0.0.1:18080
-if [[ "$kind" == ws ]]; then base=ws://127.0.0.1:18080; fi
 server_group=''
 server_pid=''
 client_group=''
@@ -95,44 +95,34 @@ jq -n --arg workload "$workload" --arg mode "$mode" --argjson fixture "$configur
   '{workload:$workload,mode:$mode,fixture:$fixture,revision:$revision,image:$image,image_os:$image_os,
     repeats:3,warmup_seconds:30,measurement_seconds:180,heap:"256 MiB",collector:"G1",
     jvm_cpus:$jvm_cpus,jvm_memory_mib:$jvm_memory_mib,
-    smoke_rates:[1000,5000,10000,50000],smoke_step_seconds:15}' \
+    ramp_start:1000,ramp_end:25000,latency:"scheduled send to complete response"}' \
   > "$destination/configuration.json"
 "$JAVA_HOME/bin/java" -version > "$destination/java.txt" 2>&1
-"$tools/k6" version > "$destination/k6.txt"
+"$tools/zrk" --version > "$destination/zrk.txt"
 {
   uname -a
   lscpu
   free -m
   df -h "$destination"
 } > "$destination/host.txt"
-sha256sum "$tools/k6" "$tools"/lib/*.jar "$support"/*.js "$support/workloads.json" \
-  "$support/run.sh" "$support/resources.sh" "$support/check-results.jq" "$support/go.mod" "$support/go.sum" \
+sha256sum "$tools/zrk" "$tools"/lib/*.jar "$support"/*.lua "$support/workloads.json" \
+  "$support/run.sh" "$support/resources.sh" "$support/check-zrk.jq" "$support/install-zrk.sh" \
   > "$destination/sha256.txt"
 printf 'SERVER_CPUS=%s\nCLIENT_CPUS=%s\n' "$server_cpus" "$client_cpus" > "$destination/affinity.txt"
 
 load() {
-  local phase=$1 length=$2 status=0 load_script=$script
-  if [[ "$mode" == overload && "$phase" == measured ]]; then
-    load_script=overload.js
-  fi
-  local dashboard=false
-  if [[ "$phase" == measured ]]; then dashboard=true; fi
+  local phase=$1 length=$2 status=0 offered=$rate
+  if [[ "$mode" == overload && "$phase" == measured ]]; then offered=1000:25000; fi
   setsid /usr/bin/time -v -o "$run_dir/$phase-client-resource.txt" \
-    env K6_WEB_DASHBOARD="$dashboard" K6_WEB_DASHBOARD_PORT=-1 K6_WEB_DASHBOARD_PERIOD=5s \
-    K6_WEB_DASHBOARD_EXPORT="$run_dir/report.html" \
-    taskset -c "$client_cpus" "$tools/k6" run --no-usage-report --no-color --quiet \
-    -e BASE_URL="$base" -e WORKLOAD="$selected" -e ROUTE_GROUPS=1000 \
-    -e MODE="$mode" -e PHASE="$phase" \
-    -e RATE="$rate" -e VUS="$vus" -e DURATION="$length" \
-    -e SMOKE_RATES="$(jq -r '.smoke_rates | join(",")' "$destination/configuration.json")" \
-    -e FAILURE_DETAILS=1 \
-    --summary-export "$run_dir/$phase-summary.json" \
-    --out "json=$run_dir/$phase-metrics.json.gz" "$support/$load_script" \
-    > "$run_dir/$phase-client.log" 2>&1 &
+    taskset -c "$client_cpus" "$tools/zrk" -t2 -c"$connections" -d"$length" -R"$offered" \
+    --timeout 5s --plain --script "$support/http.lua" \
+    --format json -o "$run_dir/$phase-summary.json" --hdr "$run_dir/$phase-latency.hgrm" \
+    --timeseries "$run_dir/$phase-timeseries.ndjson" --timeseries-histogram \
+    "$base" "$selected" 1000 > "$run_dir/$phase-client.log" 2>&1 &
   client_group=$!
   if [[ "$phase" == measured ]]; then
     for ((attempt=0; attempt<100; attempt++)); do
-      client_pid=$(pgrep -P "$client_group" -x k6 || true)
+      client_pid=$(pgrep -P "$client_group" -x zrk || true)
       if [[ -n "$client_pid" ]] || ! kill -0 "$client_group" 2>/dev/null; then break; fi
       sleep 0.1
     done
@@ -155,6 +145,14 @@ load() {
     kill "$monitor_pid" 2>/dev/null || true
     wait "$monitor_pid" 2>/dev/null || true
     monitor_pid=''
+  fi
+  if [[ "$status" == 0 ]]; then
+    local last_rate=${offered##*:} first_rate=${offered%%:*} expected_class=2xx
+    if [[ "$selected" == not-found || "$selected" == wrong-method ]]; then expected_class=4xx; fi
+    jq -e --argjson seconds "${length%s}" --argjson connections "$connections" \
+      --argjson rate "$first_rate" --argjson end_rate "$last_rate" \
+      --arg status_class "$expected_class" -f "$support/check-zrk.jq" \
+      "$run_dir/$phase-summary.json" > /dev/null || status=1
   fi
   return "$status"
 }
@@ -197,6 +195,16 @@ for repeat in 1 2 3; do
   "$JAVA_HOME/bin/jcmd" "$server_pid" VM.flags -all > "$run_dir/VM.flags-all.txt"
   cat "/proc/$server_pid/limits" > "$run_dir/server-limits.txt"
   cat "$run_dir/server-affinity.txt" "$run_dir/server-limits.txt"
+  [[ $(curl --fail --silent --show-error --max-time 5 "$base/virtual") == false ]]
+  for fixture in plaintext json-bytes echo stream route-literal route-parameter not-found wrong-method sse-burst sse-paced; do
+    "$tools/zrk" -t1 -c1 -d1s -R2 --timeout 5s --plain --script "$support/http.lua" \
+      --format json -o "$run_dir/parity-$fixture.json" "$base" "$fixture" 1000 \
+      > "$run_dir/parity-$fixture.log" 2>&1
+    status_class=2xx
+    if [[ "$fixture" == not-found || "$fixture" == wrong-method ]]; then status_class=4xx; fi
+    jq -e --argjson seconds 1 --argjson connections 1 --argjson rate 2 --argjson end_rate 2 --arg status_class "$status_class" \
+      -f "$support/check-zrk.jq" "$run_dir/parity-$fixture.json" > /dev/null
+  done
   if ! load warmup 30s; then
     echo WARMUP_FAILED > "$run_dir/outcome.txt"
     failed=1
@@ -217,8 +225,6 @@ for repeat in 1 2 3; do
   date -u +%FT%TZ > "$run_dir/measurement-end.txt"
   if [[ "$status" == 0 ]]; then
     echo PASS > "$run_dir/outcome.txt"
-  elif [[ "$mode" == overload && "$status" == 99 ]]; then
-    echo OVERLOAD > "$run_dir/outcome.txt"
   else
     echo FAILED > "$run_dir/outcome.txt"
     failed=1
@@ -238,12 +244,11 @@ for repeat in 1 2 3; do
   for view in allocation-by-site allocation-by-class hot-methods gc-pauses gc-cpu-time; do
     "$JAVA_HOME/bin/jfr" view --width 120 "$view" "$run_dir/server.jfr" > "$run_dir/$view.txt"
   done
-  gzip -t "$run_dir/measured-metrics.json.gz"
-  jq -e --slurpfile configuration "$destination/configuration.json" \
-    -f "$support/check-results.jq" "$run_dir/measured-summary.json" > /dev/null
-  [[ -s "$run_dir/report.html" && -s "$run_dir/measured-summary.json" ]]
+  jq -e -s 'length > 0 and all(.[]; (.t | type == "number") and
+    (.latency_histogram | type == "string" and length > 0))' \
+    "$run_dir/measured-timeseries.ndjson" > /dev/null
   cleanup
-  for file in server.jfr jfr-summary.txt measured-summary.json measured-metrics.json.gz report.html \
+  for file in server.jfr jfr-summary.txt measured-summary.json measured-timeseries.ndjson measured-latency.hgrm \
     process-monitor.txt monitor-pids.txt server-resource.txt measured-client-resource.txt \
     allocation-by-site.txt allocation-by-class.txt hot-methods.txt gc-pauses.txt gc-cpu-time.txt \
     VM.version.txt VM.command_line.txt VM.flags.txt VM.flags-all.txt VM.info.txt \

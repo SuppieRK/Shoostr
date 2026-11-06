@@ -72,7 +72,6 @@ public final class ServerMain {
                   var stream = res.startStream("application/octet-stream");
                   for (int index = 0; index < EVENT_COUNT; index++) {
                     stream.write(CHUNK);
-                    stream.flush();
                   }
                 });
             routes.get(
