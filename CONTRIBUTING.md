@@ -26,6 +26,13 @@ containers. Failed selection or an unexpected skipped job fails the gate. Pushes
 and manual runs check every example. All example Java tests run in the ordinary build.
 External contributions do not need a replacement pull request on a maintainer branch.
 
+The validation job runs `ciBuild` and MCP conformance. `ciBuild` retains all project
+checks and assembles libraries and benchmark projects. Example compilation remains
+necessary for Java tests and coverage; the selected container matrix owns example
+packaging. The ordinary local `build` command still assembles all projects.
+Trusted runs include Sonar in the same Gradle invocation, so analysis reuses test
+results without republishing the consumer fixture and rerunning core tests.
+
 Trusted pull requests and CI runs in `SuppieRK/Shoostr` must pass the Sonar quality gate
 and have zero open issues. A missing analysis token, scanner failure, failed quality gate,
 API error or nonzero issue count fails validation and the required `build` check.
@@ -385,6 +392,13 @@ Dockerfiles build with a pinned Java 21 JDK and run with a pinned Java 21 JRE;
 the default `runtime` target installs the Gradle application distribution. The optional
 `jib` target exports the native `jibBuildTar` output for `docker load`, without a host JDK,
 Docker socket mount or registry push. Each example README gives exact commands and credentials.
+
+The Jib stage inherits the distribution build's compiled workspace and Gradle task
+history. CI builds Jib first, then the installed-distribution image; both images run
+their behavior and shutdown checks. Observability backend tests run in the Jib pass
+before the first Compose startup. Building the standalone Jib target also runs
+`installDist`. The Gradle cache mount reuses downloads within the builder; it does
+not establish persistent caching across fresh hosted runners.
 
 Run `node --test .github/ci/example-containers.test.mjs` from the root for the inventory check.
 Set `EXAMPLE` to a registered example project and `BASE_URL` to its running listener for

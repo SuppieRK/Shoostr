@@ -19,6 +19,11 @@ jobs:
     runs-on: ubuntu-latest
     env:
       EXPECTED_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+      TRUSTED_ANALYSIS: >-
+        ${{ github.repository == 'SuppieRK/Shoostr' &&
+        (github.event_name != 'pull_request' ||
+        (github.event.pull_request.head.repo.full_name == github.repository &&
+        github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]')) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -67,26 +72,25 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Build and verify
-        run: ./gradlew build :mcp-example:conformanceTest --console=plain
-
-      - name: Require Sonar quality gate and zero issues
-        if: >-
-          github.repository == 'SuppieRK/Shoostr' &&
-          (github.event_name != 'pull_request' ||
-          (github.event.pull_request.head.repo.full_name == github.repository &&
-          github.event.pull_request.user.login != 'dependabot[bot]' && github.actor != 'dependabot[bot]'))
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN: ${{ env.TRUSTED_ANALYSIS == 'true' && secrets.SONAR_TOKEN || '' }}
+        shell: bash
         run: |
-          test -n "$SONAR_TOKEN"
-          npm --prefix site ci --ignore-scripts
-          test -s build/reports/ci/lcov.info
-          sonar_args=(-Dsonar.scm.revision="$EXPECTED_REVISION")
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF_NAME" != main ]]; then
-            sonar_args+=(-Dsonar.branch.name="$GITHUB_REF_NAME")
+          set -euo pipefail
+          gradle_args=(ciBuild :mcp-example:conformanceTest --console=plain)
+          if [[ "$TRUSTED_ANALYSIS" == true ]]; then
+            test -n "$SONAR_TOKEN"
+            npm --prefix site ci --ignore-scripts
+            test -s build/reports/ci/lcov.info
+            gradle_args+=(sonar -Dsonar.scm.revision="$EXPECTED_REVISION")
+            if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$GITHUB_REF_NAME" != main ]]; then
+              gradle_args+=(-Dsonar.branch.name="$GITHUB_REF_NAME")
+            fi
           fi
-          ./gradlew sonar "${sonar_args[@]}" --console=plain
-          node .github/ci/sonar-gate.mjs
+          ./gradlew "${gradle_args[@]}"
+          if [[ "$TRUSTED_ANALYSIS" == true ]]; then
+            node .github/ci/sonar-gate.mjs
+          fi
 
       - name: Preserve validation results
         if: always()
@@ -217,12 +221,12 @@ jobs:
             docker volume rm shoostr-report-fixture 2>/dev/null || true
             return "$result"
           }
-          mode=distribution
+          mode=jib
           trap cleanup EXIT
           if [[ "$EXAMPLE" != micrometer-example && "$EXAMPLE" != opentelemetry-example ]]; then
             "${compose[@]}" pull --ignore-buildable
           fi
-          for mode in distribution jib; do
+          for mode in jib distribution; do
             if [[ "$mode" == distribution ]]; then
               "${compose[@]}" build app
             else
@@ -255,7 +259,7 @@ jobs:
               docker stop --timeout 20 shoostr-report-override
               docker rm shoostr-report-override
             fi
-            if [[ "$mode" == distribution && ( "$EXAMPLE" == micrometer-example || "$EXAMPLE" == opentelemetry-example ) ]]; then
+            if [[ "$mode" == jib && ( "$EXAMPLE" == micrometer-example || "$EXAMPLE" == opentelemetry-example ) ]]; then
               ./gradlew ":$EXAMPLE:dockerTest" -x ":$EXAMPLE:jibDockerBuild" --console=plain
             fi
             "${compose[@]}" up --no-build --pull never --force-recreate -d
