@@ -67,7 +67,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Build and verify
-        run: ./gradlew build :mcp-example:conformanceTest --console=plain
+        run: ./gradlew ciBuild :mcp-example:conformanceTest --console=plain
 
       - name: Require Sonar quality gate and zero issues
         if: >-
@@ -217,12 +217,12 @@ jobs:
             docker volume rm shoostr-report-fixture 2>/dev/null || true
             return "$result"
           }
-          mode=distribution
+          mode=jib
           trap cleanup EXIT
           if [[ "$EXAMPLE" != micrometer-example && "$EXAMPLE" != opentelemetry-example ]]; then
             "${compose[@]}" pull --ignore-buildable
           fi
-          for mode in distribution jib; do
+          for mode in jib distribution; do
             if [[ "$mode" == distribution ]]; then
               "${compose[@]}" build app
             else
@@ -255,7 +255,7 @@ jobs:
               docker stop --timeout 20 shoostr-report-override
               docker rm shoostr-report-override
             fi
-            if [[ "$mode" == distribution && ( "$EXAMPLE" == micrometer-example || "$EXAMPLE" == opentelemetry-example ) ]]; then
+            if [[ "$mode" == jib && ( "$EXAMPLE" == micrometer-example || "$EXAMPLE" == opentelemetry-example ) ]]; then
               ./gradlew ":$EXAMPLE:dockerTest" -x ":$EXAMPLE:jibDockerBuild" --console=plain
             fi
             "${compose[@]}" up --no-build --pull never --force-recreate -d

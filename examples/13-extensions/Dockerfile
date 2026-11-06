@@ -7,7 +7,7 @@ RUN chmod +x gradlew
 FROM source AS distribution
 RUN --mount=type=cache,target=/root/.gradle ./gradlew :extensions-example:installDist --no-daemon --console=plain
 
-FROM source AS jib-build
+FROM distribution AS jib-build
 RUN --mount=type=cache,target=/root/.gradle ./gradlew :extensions-example:jibBuildTar --no-daemon --console=plain
 
 # Export with --target jib --output type=local,dest=build/extensions-example-jib.
