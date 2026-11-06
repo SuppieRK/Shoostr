@@ -8,10 +8,17 @@ campaigns.
 ## HTTP and finite SSE
 
 `steady` runs eight HTTP workloads: plaintext, pre-encoded JSON, 1 KiB echo,
-16 KiB flushed stream, literal routing, parameter routing, 404 and 405. It also runs
+16 KiB buffered stream, literal routing, parameter routing, 404 and 405. It also runs
 `sse-burst` and `sse-paced` as **finite SSE whole-response scheduled latency** measurements.
 Each workload gets a runner and three fresh JVM trials, each with a 30-second
 warmup and 180-second measurement. Up to ten workload jobs run concurrently.
+
+The stream fixture writes sixteen 1 KiB pieces through Shoostr’s default 8 KiB
+buffer, without explicit per-piece flushes. The configured buffer fills and flushes
+automatically; handler completion finishes the response. Application callers can
+change this boundary with `Options.withStreamBufferBytes(...)`, or call `flush()`
+when earlier transport submission is required. This workload replaces the historical
+fixture that explicitly flushed every 1 KiB write; its results need a new baseline.
 
 `overload` selects the eight ordinary HTTP workloads. Each measurement uses the
 continuous linear ramp `-R1000:25000` over 180 seconds. Warmup stays at 1,000 requests
