@@ -13,6 +13,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -21,6 +22,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.server.Request;
@@ -28,6 +30,62 @@ import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Test;
 
 class StreamBufferTest {
+  @Test
+  void multilineEventsAndCommentsPreserveUtf8AndFlushBoundaries() throws Exception {
+    var writes = new ArrayList<Write>();
+    var response = response(7, writes, -1);
+    var before = new AtomicInteger();
+    var after = new AtomicInteger();
+    response.flushHooks(before::incrementAndGet, after::incrementAndGet);
+    var events = response.startEventStream();
+    var payload = "😀\r\n\uD800\n𐐀\r\uDC00\n";
+
+    events.send(payload).comment(payload);
+    response.complete();
+
+    var emitted = new ByteArrayOutputStream();
+    for (var write : writes) {
+      emitted.write(write.bytes());
+    }
+
+    var expected =
+        """
+        data: 😀
+        data: ?
+        data: 𐐀
+        data: ?
+        data:\s
+
+        : 😀
+        : ?
+        : 𐐀
+        : ?
+        :\s
+
+        """;
+    assertArrayEquals(expected.getBytes(StandardCharsets.UTF_8), emitted.toByteArray());
+    assertEquals(
+        List.of(0, 7, 7, 7, 7, 7, 7, 4, 7, 7, 7, 5, 0),
+        writes.stream().map(write -> write.bytes().length).toList());
+    assertTrue(writes.getLast().last());
+    assertEquals(13, before.get());
+    assertEquals(13, after.get());
+  }
+
+  @Test
+  void failedAutomaticWriteDuringMultilineFramingRejectsLaterEventsAndComments() throws Exception {
+    var writes = new ArrayList<Write>();
+    var response = response(7, writes, 3);
+    var events = response.startEventStream();
+
+    assertThrows(IOException.class, () -> events.send("first\nsecond"));
+    assertThrows(IllegalStateException.class, () -> events.send("later"));
+    assertThrows(IllegalStateException.class, () -> events.comment("later"));
+    assertEquals(3, writes.size());
+    assertArrayEquals("data: f".getBytes(StandardCharsets.UTF_8), writes.get(1).bytes());
+    assertArrayEquals("irst\nda".getBytes(StandardCharsets.UTF_8), writes.getLast().bytes());
+  }
+
   @Test
   void emptyStreamCommitsHeadersAndCompletesWithAnEmptyFinalWrite() throws Exception {
     var writes = new ArrayList<Write>();

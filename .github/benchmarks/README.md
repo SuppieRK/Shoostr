@@ -1,175 +1,147 @@
 # Shoostr diagnostics in Actions
 
-Run **Shoostr benchmarks** manually from the Actions tab. Select the branch,
-`steady`, `overload`, `slow-client` or `tracing`, and artifact retention (1–14 days, default 7).
-For HTTP modes, set the JVM's logical CPU count (default 1) and total memory cap in MiB (default
-1024). The heap remains fixed at 256 MiB; raising the total cap does not raise it.
-CPU counts must leave at least one permitted CPU for k6. Memory must exceed the
-256 MiB heap and cannot exceed host RAM. Invalid settings fail, never clamp.
-The workflow requires its support files on the selected branch. It does not run
-benchmarks on pushes or pull requests. Campaigns use Java 21; ordinary dispatch uses
-Jetty's default platform-thread pool.
+Run **Shoostr benchmarks** manually from the Actions tab. Select the branch, mode
+and artifact retention (1–14 days, default 7). Campaigns use Java 21 and Jetty's
+default platform-thread pool. Pushes and pull requests run fixture tests, not timed
+campaigns.
 
-Steady mode runs eight HTTP workloads (plaintext, pre-encoded JSON, 1 KiB echo,
-16 KiB flushed stream, literal routing, parameter routing, 404 and 405), three SSE
-workloads (burst, paced and callback-delayed large events), and three WebSocket
-workloads (text, binary and callback-delayed large frames). Each workload has its
-own Linux runner. Its three trials use fresh JVMs, a 30-second warmup, and a
-180-second offered-load phase. Up to fourteen workload jobs run concurrently;
-GitHub may queue jobs when account capacity is unavailable.
+## HTTP and finite SSE
 
-Overload mode runs only the eight HTTP workloads. Each trial offers 1,000,
-5,000, 10,000 and 50,000 requests/second in 15-second plateaus with
-five-second drains. Threshold breaches appear as **OVERLOAD**, while startup,
-tooling, profiling and publication failures fail the workflow. Steady-mode
-correctness failures also fail the workflow. The load generator can saturate
-before the service; inspect both processes before interpreting a boundary.
-Overload warmup permits dropped iterations so saturation does not prevent the
-profiled plateaus from running. Warmup setup, response correctness and HTTP
-failure checks remain strict; steady warmup also requires zero drops. Native warmup logs and metrics retain completed counts and drops separately from measured results.
-All four plateaus run even if an earlier plateau drops iterations. There is no
-100,000-request/second step or adaptive early-stop controller.
+`steady` runs eight HTTP workloads: plaintext, pre-encoded JSON, 1 KiB echo,
+16 KiB flushed stream, literal routing, parameter routing, 404 and 405. It also runs
+`sse-burst` and `sse-paced` as **finite SSE whole-response scheduled latency** measurements.
+Each workload gets a runner and three fresh JVM trials, each with a 30-second
+warmup and 180-second measurement. Up to ten workload jobs run concurrently.
 
-Slow-WebSocket steady traffic uses one session/second: the initial hosted trial
-at ten sessions/second saturated the two-CPU k6 client and failed during warmup.
-Payload validation, callback delay, timeouts and correctness checks are unchanged.
+`overload` selects the eight ordinary HTTP workloads. Each measurement uses the
+continuous linear ramp `-R1000:25000` over 180 seconds. Warmup stays at 1,000 requests
+per second. Steady HTTP load is 1,000 requests per second; finite SSE is 50 responses
+per second. [workloads.json](workloads.json) owns connection counts and ramp eligibility.
 
-The build job prepares one fixture distribution and one pinned k6 binary with
-the SSE extension. Workload jobs reuse those binaries and a 256 MiB fixed G1
-heap. The JVM uses the requested number of permitted logical CPUs; k6 uses the
-remaining CPUs (normally three with the one-CPU default on a four-CPU runner).
-Actual affinity,
-CPU model, runner image, JVM/client versions, source revision and hashes accompany
-the recordings. This separates the campaign from the developer's machine, but
-hosted runner hardware and images can still vary.
+The [Lua validator](http.lua) checks exact status, body and content type, required
+framing/metadata, and the GET/POST `Allow` union for 405. Routing paths vary across
+1,000 groups. Startup checks validate all ten fixtures and platform-thread execution.
+Finite SSE must contain all sixteen ordered events and terminate. Its latency includes
+the complete HTTP response and the paced fixture's final sleep; it does not measure
+individual event delivery or client callbacks. WebSocket and callback-delayed SSE load
+jobs are outside this suite. Java protocol tests remain correctness coverage.
 
-Each fresh JVM prints and retains native `jcmd` version, command line, effective
-non-default flags and `VM.info` diagnostics before warmup. The complete effective
-flag list (`VM.flags -all`) and OS process limits are also retained. Native outputs record
-actual JVM/client CPU affinity and JVM-visible CPU/RAM/container limits. Affinity
-does not reserve exclusive cores. A fresh cgroup v2 group enforces the JVM's
-total memory cap, including native and cgroup-accounted cache/kernel memory;
-swap is disabled for that group. k6, diagnostic tools and artifact processing
-stay outside it. The runner must support these limits and passwordless sudo;
-failure to apply them fails the run. Before/after native cgroup limits, peak
-memory and OOM events are retained; an OOM kill fails the run.
-The group is removed after JVM shutdown, including ordinary failure cleanup.
-The 256 MiB Java heap cap alone does not cap native memory or process RSS.
-Historical campaigns retain their prior JVM-diagnostic evidence requirements and
-recorded plateau rates. Unrecorded resource limits remain unknown, not invented.
-Resource-controlled campaigns require the new requested/effective limit and cgroup
-evidence; missing or mismatched limits make their evidence incomplete.
-The new one-CPU configuration is not directly comparable to earlier two-CPU runs.
+The workflow downloads pinned zrk 3.0.0 and verifies its archive SHA-256 before
+extracting it. It records the executable and fixture JAR checksums separately.
+[Executable tests](zrk.test.mjs) exercise validators, bad archives, native reports,
+ramp configuration and interrupted output. Native tool or correctness failures fail
+the workflow. A successful collection is not a capacity or latency acceptance gate.
 
-Each workload artifact contains three separate trial directories with native k6
-HTML/JSON reports, JFR recordings and JFR CLI views. Open these outputs directly;
-the workflow does not aggregate measurements or produce campaign tables.
-HTTP timings cover complete response bodies; SSE timings cover streams;
-WebSocket timings distinguish message round-trip from complete session duration.
-Slow-client callbacks pause in user code; they do not throttle the network socket.
-Percentiles remain per trial. For overload throughput, divide each plateau's completed
-request count by its duration; native tagged rates use the whole run duration.
-Inspect native k6 `max` latency as well as `p99`, without pooling trials or plateaus.
-Use the configured scheduled total (offered rate × load duration, excluding
-warmup/drains) as the denominator when interpreting dropped iterations. A dropped
-iteration never started and is not a failed request. Each HTTP
-iteration is one request; each SSE/WebSocket iteration is one session, not an
-event or message. For partial runs the total remains the configured full-run
-schedule, not a claim that all iterations were accounted for.
+### Resources and evidence
 
-Artifacts retain complete JFR recordings, native k6 HTML dashboards, compressed
-raw time series, summary JSON, logs, process monitoring and full JFR CLI views.
-HTTP recordings enable `jdk.ExecutionSample` at a 10 ms period.
-JFR starts after warmup and spans the full measured k6 invocation, including
-client initialization/setup, drain and output finalization. Recordings can therefore
-last longer than the offered-load phase. JFR is explicitly stopped before JVM shutdown. Cancellation
-recovery is best-effort; incomplete evidence stays visibly marked. Artifacts use the
-selected retention period. Measurement and upload failures fail the workflow; available
-native outputs are uploaded after a failed measurement.
+Set the JVM's logical CPU count (default 1) and total memory cap in MiB (default
+1024). The heap stays 256 MiB with G1. The client uses the remaining permitted CPUs;
+CPU selection must leave it at least one. CPU affinity does not reserve exclusive cores.
+Memory must exceed the heap and fit host RAM. Invalid settings fail rather than clamp.
 
-All measured runs include profiling and raw-output overhead. Thirty seconds is the
-chosen warmup duration, not a guarantee of steady JIT state. These measurements
-provide diagnostics rather than an automatic latency-regression gate. Inspect
-the native data before attributing a change to Shoostr.
+A fresh cgroup v2 group limits total JVM memory, including native and cgroup-accounted
+cache/kernel memory, with swap disabled. zrk, profiling tools and artifact processing
+stay outside it. Passwordless sudo and an enforceable memory controller are required.
+The suite retains effective limits, peak memory and OOM events and removes the group
+after shutdown. An OOM kill fails the run. Heap size alone does not cap process RSS.
 
-The fixture remains the `:benchmarks` Gradle module, now located in this directory.
-Normal builds compile and check it; they do not execute timed campaigns. Targeted
-JMH diagnostics remain in the separate `microbenchmarks` module.
+Each artifact contains three trial directories. Open the native outputs directly:
+
+- `measured-summary.json`: configured and actual duration, completed responses,
+  offered/achieved rates, errors, schedule lag, latency percentiles and histogram.
+- `measured-timeseries.ndjson`: per-interval rates, errors and latency histograms.
+- `measured-latency.hgrm`: native percentile distribution.
+- Logs, warmup/parity reports, CPU/RSS monitoring and `/usr/bin/time` resource reports.
+- Complete `server.jfr`, allocation/hot-method/GC views, JVM flags, limits, affinity,
+  image/CPU/version/revision details, and hashes.
+
+JSON latency fields are microseconds; HDR text uses milliseconds. Fixed-rate latency
+starts at the scheduled send, so it includes scheduling backlog. Initial connection
+setup precedes that anchor. Lua validation runs after latency recording and adds
+client CPU cost. Response hooks retain entire bodies; check client RSS and CPU before
+attributing saturation to the server.
+
+In a ramp, top-level `achieved_rate` and `rate_ratio` describe the final native window;
+`end_window_s` identifies it. Latency percentiles cover the whole run. Use the interval
+series to compare offered and achieved load over time. Keep counts, configured duration,
+actual duration, errors and schedule lag separate. The tool can stop with unsent or
+in-flight work; it does not provide a complete count of omitted scheduled requests.
+Do not infer zero omissions from zero transport errors.
+
+The expected 404/405 responses remain native status errors even when Lua validates
+them successfully. The checker verifies the expected status class and response-hook
+count separately from connect/read/write/timeout/deadline errors. It does not rewrite
+the native error rate. Trials remain separate; do not pool their percentiles.
+
+JFR uses profile settings with execution samples every 10 ms and starts after warmup.
+It spans client startup, measurement and output finalization, then stops before JVM
+shutdown. Profiling, validation and report generation add overhead. Thirty seconds
+of warmup does not guarantee stable JIT compilation. Available artifacts upload even
+on failure; interrupted/partial output is not a successful run. Hosted hardware and
+images vary, and a changed tool, resource budget or timing boundary needs a new
+baseline. The suite does not generate combined statistics or campaign tables.
 
 ## Finite slow-client diagnostic
 
-Select `slow-client` with exactly one JVM CPU and 1024 MiB total memory. This
-manual-only path is a bounded resource-safety investigation, not deployment
-capacity certification, a weekly campaign or a new PR merge gate. It requires
-cgroup v2 and passwordless sudo; missing enforcement fails rather than silently
-substituting heap-only limits. The heap stays 256 MiB G1 and cgroup swap is disabled.
+Select `slow-client` with one JVM CPU and 1024 MiB total memory. One loopback
+`SlowClientServer` JVM stays alive across eight cycles: slow bodies and blocked
+handlers, each at 32 and 128 clients, twice. This manual investigation checks bounded
+resource recovery. It is not deployment-capacity certification or a PR merge gate.
 
-One loopback-only `SlowClientServer` JVM stays alive across all eight cycles:
-slow bodies and cooperative blocked handlers, each at 32 and 128 clients, twice.
-The fixture preserves default request-size and native idle/rate policies and
-records them through public native configuration. `slowhttptest` 1.9.0 maintains
-incomplete 65536-byte POST bodies, admitting up to the selected count per second
-and sending randomized follow-up pairs (`-x 8`) each second. Raw CSV must show
-all selected connections from seconds 5 through 59, no early closures, and a
-sample at or after second 60. Its one-second stop granularity can extend the
-nominal 60 seconds; exact wall-clock phase times remain evidence, not rounded
-claims. k6 supplies constant-VU blocked requests for 60 seconds; each handler
-waits at most five seconds on a cooperative gate so the fixture does not require
-cancellation of arbitrary application code. Blocked VUs reuse their HTTP connections
-between calls; healthy probes always establish fresh connections. Ending load
-disconnects the blocked clients, and the control route releases the gate before a
-full 30-second recovery window. This workload investigates persistent blocked
-clients, not connection churn. An earlier reconnect-per-call run failed sustained
-exposure when native TCP setup took over one second; a passing persistent-client
-run would neither resolve nor invalidate that observation. No server default or
-exposure, health or recovery criterion is changed to accommodate it.
+`slowhttptest` 1.9.0 maintains incomplete 65,536-byte POST bodies for 60 seconds.
+Its CSV must show the full population, no pending/closed connections and service
+availability from seconds 5 through 59, plus a sample at or after second 60.
+Blocked requests use zrk closed-loop connections for 60 seconds, reusing connections
+between calls. Each handler waits at most five seconds on a cooperative gate.
+Native configuration and all launched connections must match the selected population;
+completed response status/body checks and all native error counts must pass.
 
-Blocked raw metrics must also show the selected active VUs throughout the nominal
-load (after five seconds of startup), with no missing one-second gauge series
-interval beyond 1.5 seconds. Each selected VU's successful native request-duration
-intervals must span seconds 5–55, with at most one second between calls; the final
-five-second batch can be interrupted at termination. A historical peak or one
-successful batch is insufficient. These are exposure-validity bounds, not requests/
-second targets. The checker uses k6's optional native `vu` tag and
-[end-of-response duration timestamps](https://grafana.com/docs/k6/latest/using-k6/metrics/reference/),
-not synthetic server throughput estimates.
+The control route polls server state nominally once per second, using monotonic
+phase timestamps. During seconds 5–55, observation gaps and gaps between full
+blocked-population observations must not exceed 3,500 ms. Brief turnover dips are
+allowed, but sampled counters must remain valid and balanced. This is **sampled
+blocked-population exposure**; it cannot prove continuous occupancy of each client
+between observations. The diagnostic does not replace individual event or WebSocket session measurements.
 
-A separate k6 process schedules healthy requests at one per second for 100 seconds,
-covering load and recovery plus bounded tool-start/output margin. The target is
-100 probes with a one-probe native duration-boundary allowance: only complete,
-consistent 100- or 101-probe evidence is accepted, including every extra probe.
-This does not assert a universal native scheduling maximum. Every status,
-body and complete-call duration must pass; no response may exceed one second and
-no probe may be missing or dropped. Native raw timestamps must span both phases.
-The campaign stops on an observed probe/OOM failure; failed or partial runs are
-retained as FAILED, never converted into successful reduced-load measurements.
+A separate zrk process offers one health request per second for 100 seconds, with
+one connection, fresh connections per response and a one-second wire timeout.
+Lua validates status 200 and the complete `healthy` body. Maximum reported scheduled
+latency must stay within one second. This timing excludes initial connection setup
+and does not establish complete-call latency. The accepted native count is 99, 100 or 101,
+allowing one response on either side of the run boundary. A final response can finish
+after the configured deadline and before worker cancellation. All native errors must be zero and every
+completed response must pass validation.
 
-Public matched/terminal callbacks distinguish active handlers from unfinished
-exchanges. Recovery requires zero workload handlers/exchanges, balanced admitted
-and terminal counts, the exact selected peak concurrency, and only the current
-state-control connection. A qualifying recovery sample must fall within 30 seconds,
-not merely after the health process exits. Native connected endpoints include
-live control/probe connections; short overlaps are recorded rather than subtracted
-by an invented constant. A quiet recovered observation contains one current control
-connection. All cycles reuse the same listener and JVM to expose accumulation.
+Exposure starts after a positive health interval. The health process must remain
+alive through exposure and the 30-second recovery observation. Its complete native
+interval series must cover both phases, with regular timestamps and positive
+completion evidence. Launch/readiness bounds align native elapsed intervals with
+monotonic phase times; interval endpoints are not individual response timestamps.
+The final summary may include one response beyond the last interval snapshot; the
+checker records this difference explicitly.
 
-The `slow-client-data` artifact retains k6 compressed time series/summaries/logs,
-slowhttptest CSV/HTML/logs, actual tool arguments/versions/hashes and revision,
-effective CPU/cgroup/heap configuration, per-process native CPU/RSS observations,
-FD inventories, work/connection samples, baseline/load/recovered heap and JSON
-thread dumps, and bounded JFR recordings with virtual-thread lifecycle and Java
-error events. k6, slowhttptest and profiler overhead stay outside the server cgroup;
-their affinity, membership and `/usr/bin/time` reports remain identifiable. The
-runner owns its process groups, stops them on exit, and removes only its empty
-cgroup after preserving final OOM evidence. Results are never overwritten.
+Recovery requires zero workload handlers/exchanges, balanced admitted/terminal
+counts and the selected peak concurrency. Within 30 seconds, only the state-control
+connection and at most one owned health connection may remain. After the health
+process exits, exactly one control connection may remain. zrk can reconnect before
+waiting for its next scheduled probe, which accounts for that temporary connection.
+An observed health/OOM failure stops the campaign. Failed or partial evidence remains
+failed; the suite does not reduce the selected load to obtain a passing result.
 
-The executable checker validates deterministic timing, exposure, health, work,
-connection and OOM invariants. Passing it alone is **not** a leak verdict: inspect
-FDs, heap, RSS/cgroup and virtual/platform thread traces across repeats for retained
-request resources versus expected native pools/JIT/cache warmup. No byte-exact GC
-baseline is required. Classify any failure as fixture, native/configuration,
-application or Shoostr adapter before proposing a patch. No quota, scheduler,
-absolute deadline or admission feature is installed by this diagnostic.
+The artifact retains native JSON/NDJSON/HDR and logs, slowhttptest CSV/HTML, actual
+arguments, versions/hashes, process CPU/RSS and FD samples, baseline/recovered heap
+and thread dumps, cgroup limits/OOM evidence and bounded JFR recordings. State and
+resource sampling runs during load; heavy heap/thread snapshots run before and after
+it. Workload processes and profiler tools stay outside the server memory cgroup.
+Owned process groups are stopped and the empty cgroup is removed after final OOM
+checks. Results are never overwritten.
+
+[The checker](slow-client-check.mjs) and [its tests](slow-client.test.mjs) validate
+native evidence, sampled exposure, recovery and OOM invariants. Passing is not a leak
+verdict: inspect FD, heap, RSS/cgroup and thread trends across repeats. Distinguish
+retained request resources from native pools, JIT and cache warmup. Classify failures
+before proposing changes to serving behavior; this fixture installs no quota,
+admission or deadline policy.
 
 ## Paired tracing JMH
 
@@ -200,12 +172,6 @@ Unlike HTTP campaigns, tracing JMH uses a fixed 512 MiB G1 heap per fork and no 
 or total-process RAM cap. HTTP-mode CPU/RAM inputs do not apply. Runner/container limits and
 effective JVM settings are recorded explicitly; heap size is not a total-memory limit.
 
-References: [manual workflow execution](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow),
-[k6 native dashboard](https://grafana.com/docs/k6/latest/results-output/web-dashboard/),
-[k6 metric definitions](https://grafana.com/docs/k6/latest/using-k6/metrics/reference/),
-[JDK 21 diagnostic commands](https://docs.oracle.com/en/java/javase/21/docs/specs/man/jcmd.html),
-[JDK 21 JFR CLI](https://docs.oracle.com/en/java/javase/21/docs/specs/man/jfr.html).
-
 ## Local static-file selection diagnostic
 
 The [HTTP fixture](src/main/java/io/github/suppierk/shoostr/bench/ServerMain.java) accepts
@@ -217,11 +183,9 @@ The application owns the anchored mount and closes it at shutdown.
 Prepare 64 files named `file-0.bin` through `file-63.bin` in both the corpus root and
 `nested/deeper/`. Use an existing directory on a filesystem provider that supports
 secure directory operations. Each file must contain exactly 1,024 ASCII `x` bytes. Corpus creation
-is outside the workload; the fixture does not generate files. Select a positive
-`STATIC_FILES` count matching the prepared corpus. The script checks every configured
-file before timing, including its body and content type, and checks the first response's
-static metadata and headers. It also verifies the existing HTTP fixture endpoints and
-platform-thread execution.
+is outside the workload; the fixture does not generate files. Pass the positive file count as the third script argument. The script cycles through
+the corpus and validates response bodies, content type and static metadata. Run long
+enough to visit every file before interpreting a timing result.
 
 Build the fixture distribution and start its generated launcher from the repository root:
 
@@ -230,26 +194,22 @@ cmdshape ./gradlew :benchmarks:installDist
 cmdshape .github/benchmarks/build/install/benchmarks/bin/benchmarks 18080 1 /path/to/corpus
 ```
 
-In a second terminal, run the [k6 script](http.js) against that listener:
+In a second terminal, run the [Lua workload](http.lua) with zrk 3.0.0:
 
 ```sh
-cmdshape k6 run -e BASE_URL=http://127.0.0.1:18080 -e ROUTE_GROUPS=1 -e STATIC_FILES=64 -e WORKLOAD=static-shallow -e RATE=100 -e DURATION=10s -e VUS=128 --summary-export shallow.json .github/benchmarks/http.js
+cmdshape zrk -t2 -c128 -d10s -R100 --script .github/benchmarks/http.lua --format json -o shallow.json --hdr shallow.hgrm --timeseries shallow.ndjson --timeseries-histogram http://127.0.0.1:18080 static-shallow 1 64
 ```
 
-The [fixture test](src/test/java/io/github/suppierk/shoostr/bench/ServerMainTest.java)
-checks distinct shallow and nested file selection through real HTTP.
-Run the script with either `WORKLOAD=static-shallow` or
-`WORKLOAD=static-nested`, `STATIC_FILES=64`, and the normal `BASE_URL`, `RATE`,
-`DURATION`, and `VUS` inputs. The static workload names remain stable as file indices
-vary; both path families use the same mount. These optional workloads are local
-diagnostics and are not added to the Actions campaign matrix.
+The arguments after the URL select workload, route-group count and file count.
+Use `static-nested` for the nested path family. Each response must contain exactly
+1,024 ASCII `x` bytes, status 200, the octet-stream content type and expected cache,
+range and modification metadata. The [fixture test](src/test/java/io/github/suppierk/shoostr/bench/ServerMainTest.java)
+checks shallow and nested selection through real HTTP. These local diagnostics are
+outside the Actions matrix.
 
-Warm the corpus, retain native k6 JSON and logs, and compare low and increasing
-arrival rates. Record offered load, completed requests, latency percentiles, failed
-requests, dropped iterations, and both server and client CPU use. k6's scenario-tagged
-rates include setup time in their denominator; retain the scheduled duration and
-completed counts when assessing achieved load. Record JVM flags, CPU affinity,
-filesystem/provider and location, corpus size and depth, and cache assumptions.
+Warm the corpus and compare fixed rates before trying a ramp. Retain the native
+summary, histogram, intervals and logs, together with both processes' CPU/RSS,
+JVM flags, affinity, filesystem/provider, corpus size, path depth and cache assumptions.
 A warm loopback workload does not establish deployment capacity or cold-storage latency.
 
 Capture JFR separately from timing runs. Enable monitor-enter events with an explicit
@@ -338,7 +298,7 @@ includes the framework request wrapper, body cache and public defensive copy;
 the payload and response sink are prepared outside the timed operation. The
 declared length is either known or unknown, and body sizes are 0, 1 KiB, 16 KiB
 and the default 1 MiB request limit. It does not include HTTP parsing or a client.
-The companion candidate-only k6 echo workload measures the complete HTTP path.
+The companion candidate-only zrk echo workload measures the complete HTTP path.
 
 ```sh
 cmdshape ./gradlew :microbenchmarks:test :microbenchmarks:installDist
@@ -492,3 +452,9 @@ The footprint command uses JOL 0.17 to print reachable object graphs for each in
 `Shoostr` now uses the pattern-capable radix matcher to implement nested path groups and single-segment parameters with literal-first precedence. The map is retained only as a literal dictionary benchmark baseline. Earlier timings used the previous literal-only implementation and string method keys; they do not measure this routing API. No timed runs were performed as part of changing precedence. A meaningful next comparison needs equivalent parameter syntax, capture access, literal-first precedence, and failure behavior in each router.
 
 Methodology references: [JMH](https://github.com/openjdk/jmh), [constant-folding pitfalls](https://github.com/openjdk/jmh/blob/1.37/jmh-samples/src/main/java/org/openjdk/jmh/samples/JMHSample_10_ConstantFold.java), [per-invocation setup pitfalls](https://github.com/openjdk/jmh/blob/1.37/jmh-samples/src/main/java/org/openjdk/jmh/samples/JMHSample_38_PerInvokeSetup.java), [GC profiler interpretation](https://github.com/openjdk/jmh/blob/1.37/jmh-samples/src/main/java/org/openjdk/jmh/samples/JMHSample_35_Profilers.java), [JOL](https://github.com/openjdk/jol).
+
+References: [manual workflow execution](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow),
+[zrk scripting and CLI](https://github.com/zoxy-io/zrk/blob/v3.0.0/README.md),
+[zrk native output](https://github.com/zoxy-io/zrk/blob/v3.0.0/docs/output.md),
+[JDK 21 diagnostic commands](https://docs.oracle.com/en/java/javase/21/docs/specs/man/jcmd.html),
+[JDK 21 JFR CLI](https://docs.oracle.com/en/java/javase/21/docs/specs/man/jfr.html).

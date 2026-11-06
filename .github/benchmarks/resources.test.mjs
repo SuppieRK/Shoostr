@@ -39,7 +39,7 @@ test('packaged JVM probe starts successfully in source-file mode', t => {
   assert.equal(result.trim(), 'READY');
 });
 
-test('CPU selection honors permitted ranges and gives all remaining CPUs to k6', () => {
+test('CPU selection honors permitted ranges and gives all remaining CPUs to zrk', () => {
   assert.equal(shell('select_cpus 2-3,7,9-10 2; printf "%s;%s" "$server_cpus" "$client_cpus"'), '2,3;7,9,10');
 });
 
@@ -70,37 +70,11 @@ test('memory budgets larger than host RAM are rejected instead of silently clamp
   assert.throws(() => shell('configure_resources', {JVM_MEMORY_MIB: String(mib + 1)}), /exceeds host RAM/);
 });
 
-test('overload options schedule exactly the four approved plateaus even when thresholds breach', () => {
-  const source = fs.readFileSync(new URL('./overload.js', import.meta.url), 'utf8');
-  const code = source.slice(source.indexOf('function smokeOptions()'));
-  const options = new Function('__ENV', 'baseline', `${code}; return smokeOptions();`)({}, {});
-  assert.deepEqual(Object.values(options.scenarios).map(scenario => scenario.rate), [1000, 5000, 10000, 50000]);
-  assert.deepEqual(Object.values(options.scenarios).map(scenario => scenario.startTime), ['0s', '20s', '40s', '60s']);
-  assert.ok(Object.values(options.scenarios).every(scenario => scenario.duration === '15s' && scenario.gracefulStop === '5s'));
-  assert.ok(Object.values(options.thresholds).flat().every(threshold => typeof threshold === 'string'));
-});
-
-function httpOptions(env) {
-  const source = fs.readFileSync(new URL('./http.js', import.meta.url), 'utf8');
-  const code = source.slice(source.indexOf('export const options ='), source.indexOf('export default function'))
-    .replace('export const options =', 'return');
-  return new Function('__ENV', code)(env);
-}
-
-test('overload warmup records drops without blocking the profiled measurement', () => {
-  assert.deepEqual(httpOptions({MODE: 'overload', PHASE: 'warmup'}).thresholds.dropped_iterations, []);
-});
-
-for (const env of [{}, {MODE: 'steady', PHASE: 'warmup'}, {MODE: 'overload', PHASE: 'measured'}]) {
-  test(`HTTP drop thresholds remain strict outside overload warmup (${JSON.stringify(env)})`, () => {
-    assert.deepEqual(httpOptions(env).thresholds.dropped_iterations, ['count==0']);
-  });
-}
-
-test('overload warmup retains strict correctness and HTTP failure thresholds', () => {
-  const {thresholds} = httpOptions({MODE: 'overload', PHASE: 'warmup'});
-  assert.deepEqual(thresholds.checks, ['rate==1']);
-  assert.deepEqual(thresholds.http_req_failed, ['rate==0']);
+test('steady selects ten workloads and overload selects the eight ordinary HTTP fixtures', () => {
+  const workloads = JSON.parse(fs.readFileSync(new URL('./workloads.json', import.meta.url)));
+  assert.equal(Object.keys(workloads).length, 10);
+  assert.deepEqual(Object.entries(workloads).filter(([, value]) => value.ramp).map(([name]) => name),
+    ['plaintext', 'json-bytes', 'echo', 'stream', 'route-literal', 'route-parameter', 'not-found', 'wrong-method']);
 });
 
 for (const mode of ['normal', 'oom']) {

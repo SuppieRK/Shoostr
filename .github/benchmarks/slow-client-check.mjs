@@ -2,38 +2,56 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
-import { gunzipSync } from 'node:zlib';
 import { pathToFileURL } from 'node:url';
 
-export function verifyHealth(summary) {
-  const completed = summary.metrics?.health_completed?.count;
-  if (![100, 101].includes(completed)) {
-    throw new Error('Expected 100 or 101 complete health probes');
+function verifyNative(summary, connections, seconds, closed) {
+  const config = summary.config;
+  assert.equal(summary.zrk_version, '3.0.0', 'Missing pinned native version');
+  assert.ok(Number.isSafeInteger(summary.requests) && summary.requests > 0, 'Missing completed responses');
+  assert.ok(Number.isFinite(summary.duration_s) && summary.duration_s >= seconds, 'Incomplete native duration');
+  assert.equal(config?.duration_s, seconds, 'Unexpected configured duration');
+  assert.equal(config?.connections, connections, 'Unexpected configured connections');
+  assert.equal(config?.launched, connections, 'Incomplete native launch');
+  assert.equal(config?.closed, closed, 'Unexpected native load model');
+  assert.equal(config?.streams, 1, 'Unexpected stream count');
+  assert.equal(config?.interval_s, 1, 'Unexpected native interval');
+  assert.equal(config?.deadline_ms, 0, 'Unexpected deadline policy');
+  assert.equal(config?.deadline_abort, false, 'Unexpected deadline abort policy');
+  assert.equal(config?.record_timeouts, true, 'Timeouts must remain visible');
+  for (const name of ['connect', 'read', 'write', 'timeout', 'deadline', 'non_2xx_3xx']) {
+    assert.equal(summary.errors?.[name], 0, `Native ${name} failure or missing evidence`);
   }
-  const elapsed = summary.metrics?.health_elapsed?.max;
-  if (!Number.isFinite(elapsed) || elapsed < 0 || elapsed > 1000) {
-    throw new Error('Every complete healthy response must finish within one second');
+  assert.equal(summary.workload?.response?.calls, summary.requests, 'Missing status/body validation');
+  assert.equal(summary.error_rate, 0, 'Unexpected native error rate');
+  assert.ok(Number.isFinite(summary.latency_us?.max) && summary.latency_us.max >= 0,
+    'Missing native maximum latency');
+  for (const name of ['1xx', '2xx', '3xx', '4xx', '5xx']) {
+    assert.equal(summary.status_codes?.[name], name === '2xx' ? summary.requests : 0, 'Unexpected status counts');
   }
-  if (summary.metrics?.checks?.value !== 1 || summary.metrics?.checks?.passes !== 3 * completed
-      || summary.metrics?.checks?.fails !== 0) {
-    throw new Error('Healthy response status/body validation failed');
-  }
-  if (summary.metrics?.http_req_failed?.value !== 0) {
-    throw new Error('Healthy HTTP failure detected');
-  }
-  if (summary.metrics?.dropped_iterations?.count !== 0) {
-    throw new Error('Healthy probes were dropped or their evidence is missing');
-  }
-  return completed;
+  assert.ok(typeof summary.latency_histogram === 'string' && summary.latency_histogram.length > 0,
+    'Missing native histogram');
 }
 
-export function verifyRecovery(state, clients) {
+export function verifyHealth(summary) {
+  verifyNative(summary, 1, 100, false);
+  assert.ok([99, 100, 101].includes(summary.requests), 'Expected 99, 100 or 101 complete health probes');
+  assert.equal(summary.config.disable_keepalive, true, 'Health probes must reconnect');
+  assert.equal(summary.config.target_rate, 1, 'Expected one scheduled probe per second');
+  assert.equal(summary.config.target_rate_end, 1, 'Expected fixed health rate');
+  assert.equal(summary.config.timeout_ms, 1000, 'Unexpected health timeout');
+  const maximum = summary.latency_us?.max;
+  assert.ok(Number.isFinite(maximum) && maximum >= 0 && maximum <= 1000000,
+    'Reported maximum scheduled latency must be within one second');
+  return summary.requests;
+}
+
+export function verifyRecovery(state, clients, healthRunning = false) {
   if (![32, 128].includes(clients)) throw new Error('Expected 32 or 128 clients');
   for (const name of ['active_bodies', 'active_blocked', 'active_exchanges']) {
     if (state[name] !== 0) throw new Error(`Recovery has outstanding ${name}`);
   }
-  if (state.connections !== 1) {
-    throw new Error('Only the current state-control connection may remain');
+  if (state.connections !== 1 && !(healthRunning && state.connections === 2)) {
+    throw new Error('Only the control connection and an owned running health connection may remain');
   }
   if (!Number.isSafeInteger(state.admitted) || state.admitted < clients
       || state.completed !== state.admitted) {
@@ -44,22 +62,47 @@ export function verifyRecovery(state, clients) {
   }
 }
 
-export function verifyTiming(phase, points, completed = 100) {
-  if (![phase.start_ms, phase.load_end_ms, phase.recovery_end_ms].every(Number.isFinite)) {
-    throw new Error('Missing phase timing evidence');
+function verifyIntervals(rows, maximumLatency = Infinity) {
+  assert.ok(Array.isArray(rows) && rows.length > 0, 'Missing native interval coverage');
+  let previous = 0;
+  for (const row of rows) {
+    assert.ok(Number.isFinite(row.t) && row.t > previous && row.t - previous <= 3.5,
+      'Native interval coverage gap');
+    assert.ok(Number.isSafeInteger(row.requests) && row.requests >= 0 && row.errors === 0,
+      'Invalid native interval counts');
+    assert.ok(Number.isFinite(row.latency_us?.max) && row.latency_us.max >= 0
+      && row.latency_us.max <= maximumLatency, 'Invalid interval scheduled latency');
+    for (const name of ['connect', 'read', 'write', 'timeout', 'deadline', 'non_2xx_3xx']) {
+      assert.equal(row.errors_by_kind?.[name], 0, 'Native interval failure or missing evidence');
+    }
+    assert.ok(typeof row.latency_histogram === 'string' && row.latency_histogram.length > 0,
+      'Missing interval histogram');
+    previous = row.t;
   }
-  if (phase.load_end_ms - phase.start_ms < 60000) throw new Error('Load did not last 60 seconds');
-  if (phase.recovery_end_ms - phase.load_end_ms < 30000) {
-    throw new Error('Recovery was not observed for 30 seconds');
-  }
-  if (![100, 101].includes(completed) || !Array.isArray(points) || points.length !== completed
-      || !points.every(Number.isFinite)) {
-    throw new Error('Missing complete raw probe evidence');
-  }
-  if (Math.min(...points) > phase.start_ms + 1000
-      || Math.max(...points) < phase.recovery_end_ms - 1000) {
-    throw new Error('Health probe coverage does not span load and recovery');
-  }
+  return previous;
+}
+
+export function verifyTiming(phase, rows, completed) {
+  assert.ok([phase.start_ms, phase.load_end_ms, phase.recovery_end_ms,
+    phase.health_start_ms, phase.health_ready_ms].every(Number.isFinite), 'Missing monotonic phase timing');
+  assert.ok(phase.load_end_ms - phase.start_ms >= 60000, 'Load did not last 60 seconds');
+  assert.ok(phase.recovery_end_ms - phase.load_end_ms >= 30000, 'Recovery was not observed for 30 seconds');
+  assert.ok(phase.health_start_ms <= phase.health_ready_ms && phase.health_ready_ms <= phase.start_ms,
+    'Health was not ready before exposure');
+  assert.ok(Array.isArray(rows) && rows.length >= 99, 'Missing native interval coverage');
+  const previous = verifyIntervals(rows, 1000000);
+  assert.ok(previous >= 99, 'Truncated native interval coverage');
+  const positive = rows.filter(row => row.requests > 0);
+  assert.ok(positive.length > 0 && positive[0].t <= 2, 'Missing initial positive health interval');
+  // The native start lies between process launch and readiness minus the first
+  // positive interval time. These are interval boundaries, not response timestamps.
+  const latestStart = phase.health_ready_ms - positive[0].t * 1000;
+  assert.ok(latestStart >= phase.health_start_ms, 'Inconsistent health launch/readiness bounds');
+  assert.ok(phase.health_start_ms + (positive.at(-1).t - 1) * 1000 >= phase.recovery_end_ms - 1000,
+    'Health interval coverage does not span recovery');
+  const total = rows.reduce((count, row) => count + row.requests, 0);
+  assert.ok(total <= completed && completed - total <= 1, 'Unbounded native interval/summary boundary difference');
+  return completed - total;
 }
 
 export function verifyRecoveryWindow(samples, phase, clients) {
@@ -69,7 +112,7 @@ export function verifyRecoveryWindow(samples, phase, clients) {
       continue;
     }
     try {
-      verifyRecovery(sample, clients);
+      verifyRecovery(sample, clients, true);
       return elapsed;
     } catch {
       // Continue observing native/control-connection cleanup until the fixed deadline.
@@ -113,41 +156,29 @@ export function verifyBodies(csv, clients) {
   }
 }
 
-function verifyBlocked(rows, phase, clients) {
-  // Native HTTP durations end when the response body completes. Allow five seconds
-  // for startup and the final interrupted handler batch; bound between-call gaps to
-  // one observation interval, not an offered/completed throughput target.
+export function verifyBlocked(samples, phase, clients) {
   const start = phase.start_ms + 5000;
   const end = phase.start_ms + 55000;
-  const vus = rows.filter(row => row.type === 'Point' && row.metric === 'vus')
-    .map(row => ({ time: Date.parse(row.data.time), count: row.data.value }))
-    .filter(row => row.time >= start && row.time < phase.start_ms + 60000)
-    .sort((a, b) => a.time - b.time);
-  if (!vus.length || vus[0].time > start + 1500
-      || vus.at(-1).time < phase.start_ms + 58000
-      || vus.some((row, index) => row.count !== clients
-        || (index > 0 && row.time - vus[index - 1].time > 1500))) {
-    throw new Error('Missing sustained selected VU exposure');
-  }
-  const requests = rows.filter(row => row.type === 'Point' && row.metric === 'http_req_duration'
-    && row.data.tags?.scenario === 'blocked' && row.data.tags?.status === '200');
-  for (let vu = 1; vu <= clients; vu++) {
-    const intervals = requests.filter(row => row.data.metadata?.vu === String(vu)).map(row => {
-      const finished = Date.parse(row.data.time);
-      if (!Number.isFinite(finished) || !Number.isFinite(row.data.value) || row.data.value <= 0) {
-        throw new Error('Invalid native blocked exposure evidence');
-      }
-      return { start: finished - row.data.value, end: finished };
-    }).sort((a, b) => a.start - b.start);
-    let covered = start;
-    for (const interval of intervals) {
-      if (interval.end < start) continue;
-      if (interval.start > covered + 1000) break;
-      covered = Math.max(covered, interval.end);
-      if (covered >= end) break;
+  const observations = samples.filter(row => row.phase === 'load'
+    && row.timestamp_ms >= start && row.timestamp_ms <= end);
+  let previous = start;
+  let full = start;
+  for (const row of observations) {
+    assert.ok(Number.isFinite(row.timestamp_ms) && row.timestamp_ms >= previous
+      && row.timestamp_ms - previous <= 3500, 'Missing sampled exposure evidence');
+    for (const name of ['active_blocked', 'active_bodies', 'active_exchanges', 'admitted', 'completed']) {
+      assert.ok(Number.isSafeInteger(row[name]) && row[name] >= 0, 'Invalid sampled workload counters');
     }
-    if (covered < end - 1000) throw new Error(`Blocked exposure gap for VU ${vu}`);
+    assert.ok(row.active_blocked <= clients && row.active_bodies === 0
+      && row.active_exchanges >= row.active_blocked
+      && row.admitted - row.completed === row.active_exchanges, 'Invalid sampled workload accounting');
+    if (row.active_blocked === clients) {
+      assert.ok(row.timestamp_ms - full <= 3500, 'Reduced sampled blocked exposure');
+      full = row.timestamp_ms;
+    }
+    previous = row.timestamp_ms;
   }
+  assert.ok(end - previous <= 3500 && end - full <= 3500, 'Incomplete sampled blocked exposure');
 }
 
 export function verifyCycle(directory, clients) {
@@ -160,31 +191,34 @@ export function verifyCycle(directory, clients) {
     if (read(name).trim() !== '0') throw new Error(`Load tool failed: ${name}`);
   }
   const summary = json('health-summary.json');
+  assert.ok(read('health.hgrm').trim().length > 0, 'Missing health histogram');
   const completed = verifyHealth(summary);
   const state = json('recovered-state.json');
   verifyRecovery(state, clients);
-  const raw = gunzipSync(fs.readFileSync(path.join(directory, 'health-metrics.json.gz')))
-    .toString().trim().split('\n').map(line => JSON.parse(line))
-    .filter(row => row.type === 'Point' && row.metric === 'health_completed');
-  if (raw.some(row => row.data.value !== 1)) throw new Error('Invalid raw probe evidence');
-  verifyTiming(phase, raw.map(row => Date.parse(row.data.time)), completed);
+  const intervals = read('health.ndjson').trim().split('\n').map(line => JSON.parse(line));
+  const boundaryDifference = verifyTiming(phase, intervals, completed);
   const samples = read('state-samples.jsonl').trim().split('\n').map(line => JSON.parse(line));
   const recoveryMs = verifyRecoveryWindow(samples, phase, clients);
   verifyMemory(read('memory.events'), read('server.log') + '\n' + read('java-errors.txt'));
   if (phase.kind === 'blocked') {
-    const blocked = gunzipSync(fs.readFileSync(path.join(directory, 'blocked-metrics.json.gz')))
-      .toString().trim().split('\n').map(line => JSON.parse(line));
-    verifyBlocked(blocked, phase, clients);
-    const checks = json('blocked-summary.json').metrics?.checks;
-    if (checks?.value !== 1 || !(checks.passes > 0) || checks.fails !== 0) {
-      throw new Error('Blocked workload validation failed');
-    }
+    const blocked = json('blocked-summary.json');
+    assert.ok(read('blocked.hgrm').trim().length > 0, 'Missing blocked histogram');
+    verifyNative(blocked, clients, 60, true);
+    assert.equal(blocked.config.disable_keepalive, false, 'Blocked clients must reuse connections');
+    assert.equal(blocked.config.timeout_ms, 8000, 'Unexpected blocked timeout');
+    const rows = read('blocked.ndjson').trim().split('\n').map(line => JSON.parse(line));
+    assert.ok(rows.length >= 59 && verifyIntervals(rows) >= 59, 'Truncated blocked interval evidence');
+    const total = rows.reduce((count, row) => count + row.requests, 0);
+    assert.ok(total <= blocked.requests && blocked.requests - total <= clients,
+      'Unbounded blocked interval/summary boundary difference');
+    verifyBlocked(samples, phase, clients);
   } else {
     verifyBodies(read('body.csv'), clients);
   }
   return { verified: true, kind: phase.kind, clients, peak_work: state.peak_work,
     admitted: state.admitted, completed: state.completed,
-    health_probes: completed, health_max_ms: summary.metrics.health_elapsed.max, recovery_ms: recoveryMs };
+    health_probes: completed, health_max_scheduled_us: summary.latency_us.max, interval_summary_boundary_difference: boundaryDifference,
+    exposure: "sampled population", recovery_ms: recoveryMs };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

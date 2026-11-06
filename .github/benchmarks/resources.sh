@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Sourced by the campaign and its tests. Only the JVM enters the memory cgroup;
-# /usr/bin/time, k6, jcmd and artifact processing remain outside it.
+# /usr/bin/time, zrk, jcmd and artifact processing remain outside it.
 select_cpus() {
   local permitted=$1 requested=$2 first last cpu range
   local -a ranges cpus=()
@@ -12,7 +12,7 @@ select_cpus() {
     last=${range##*-}
     for ((cpu=first; cpu<=last; cpu++)); do cpus+=("$cpu"); done
   done
-  (( requested < ${#cpus[@]} )) || { echo 'JVM_CPUS must leave at least one permitted CPU for k6' >&2; return 2; }
+  (( requested < ${#cpus[@]} )) || { echo 'JVM_CPUS must leave at least one permitted CPU for zrk' >&2; return 2; }
   server_cpus=$(IFS=,; echo "${cpus[*]:0:requested}")
   client_cpus=$(IFS=,; echo "${cpus[*]:requested}")
   export server_cpus client_cpus

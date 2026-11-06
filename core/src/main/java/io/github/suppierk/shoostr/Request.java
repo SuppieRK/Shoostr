@@ -116,13 +116,14 @@ public sealed class Request permits TypedRequest {
     this.limit = options.maxRequestBytes();
     this.maxParameters = options.maxParameters();
     this.multipartOptions = options.multipart();
-    this.uploads = new ArrayList<>();
     this.webSocketProtocols = List.of();
     this.owner = Thread.currentThread();
     this.representation = BodyRepresentation.UNREAD;
     this.nativeHeaders = delegate.getHeaders().asImmutable();
     this.cookies =
         nativeHeaders.contains(HttpHeaders.COOKIE.value()) ? parseCookies(delegate) : Map.of();
+    boolean multipartRequest = isMultipart();
+    this.uploads = multipartRequest ? new ArrayList<>() : List.of();
     this.response =
         codec == null
             ? new Response(
@@ -138,7 +139,7 @@ public sealed class Request permits TypedRequest {
                 HttpMethods.HEAD.value().equals(delegate.getMethod()),
                 this,
                 codec);
-    if (isMultipart()) {
+    if (multipartRequest) {
       org.eclipse.jetty.server.Request.addCompletionListener(
           delegate, ignored2 -> closeMultipart());
     }

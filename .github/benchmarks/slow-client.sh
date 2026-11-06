@@ -10,7 +10,7 @@ tools=$2
 mkdir -- "$destination"
 destination=$(realpath "$destination")
 printf 'FAILED\n' > "$destination/outcome.txt"
-[[ -x "$tools/k6" && -d "$tools/lib" ]] \
+[[ -x "$tools/zrk" && -d "$tools/lib" ]] \
   || { echo 'Missing prepared benchmark tools' >&2; exit 2; }
 : "${JAVA_HOME:?Set JAVA_HOME}"
 tools=$(realpath "$tools")
@@ -98,7 +98,7 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-now_ms() { date +%s%3N; }
+now_ms() { node -p 'Number(process.hrtime.bigint() / 1000000n)'; }
 control() { curl --silent --show-error --fail --max-time 2 -X POST "$base/$1"; }
 
 snapshot() {
@@ -126,7 +126,10 @@ sample() {
   } >> "$run_dir/resource-samples.txt"
   if awk '$1 ~ /^oom/ && $2 > 0 {found=1} END {exit !found}' "$server_cgroup/memory.events" \
       || grep -qE '\bOutOfMemoryError\b' "$destination/server.log" \
-      || grep -q 'health-failure' "$run_dir/health-client.log"; then
+      || grep -q 'health-failure' "$run_dir/health-client.log" \
+      || ! kill -0 "$health_pid" 2>/dev/null \
+      || jq -e -s 'any(.[]; .errors > 0 or .latency_us.max > 1000000)' \
+        "$run_dir/health.ndjson" > /dev/null 2>&1; then
     echo 'Safety or healthy-probe failure; stopping the campaign' >&2
     return 1
   fi
@@ -148,12 +151,12 @@ jq -n --arg revision "$(git rev-parse HEAD)" --arg image "${ImageVersion:-unknow
   --arg image_os "${ImageOS:-unknown}" \
   '{revision:$revision,image:$image,image_os:$image_os,jvm_cpus:1,jvm_memory_mib:1024,
     heap_mib:256,collector:"G1",swap_bytes:0,clients:[32,128],repeats:2,
-    load_seconds:60,recovery_seconds:30,health_probe_target:100,health_probe_boundary_allowance:1,
+    load_seconds:60,recovery_seconds:30,health_probe_target:100,health_probe_boundary_allowance:1,health_latency:"scheduled; excludes connection setup",exposure:"sampled population",
     body_arguments:["-B","-r N","-l 60","-i 1","-s 65536","-x 8","-t POST"],
     blocked_wait_seconds:5,native_policy:"defaults; recorded without mutation"}' \
   > "$destination/configuration.json"
 "$JAVA_HOME/bin/java" -version > "$destination/java.txt" 2>&1
-"$tools/k6" version > "$destination/k6.txt"
+"$tools/zrk" --version > "$destination/zrk.txt"
 # Native 1.9.0 prints its version/help and returns 1 for -h; -v is a verbosity argument.
 status=0
 slowhttptest -h > "$destination/slowhttptest.txt" 2>&1 || status=$?
@@ -166,8 +169,8 @@ grep -q 'version 1.9.0' "$destination/slowhttptest.txt"
   df -h "$destination"
   cat "/proc/$$/cgroup"
 } > "$destination/host.txt"
-sha256sum "$tools/k6" "$tools"/lib/*.jar "$(command -v slowhttptest)" \
-  "$support/slow-client.sh" "$support/slow-client.js" "$support/slow-client-check.mjs" \
+sha256sum "$tools/zrk" "$tools"/lib/*.jar "$(command -v slowhttptest)" \
+  "$support/slow-client.sh" "$support/slow-client.lua" "$support/slow-client-check.mjs" \
   "$support/resources.sh" > "$destination/sha256.txt"
 printf 'SERVER_CPUS=%s\nCLIENT_CPUS=%s\n' "$server_cpus" "$client_cpus" > "$destination/affinity.txt"
 create_server_cgroup
@@ -208,19 +211,24 @@ for kind in body blocked; do
       echo "::group::Slow-client $kind clients=$clients repeat=$repeat"
       [[ $(control arm) == armed ]]
       snapshot baseline
+      date -u +%FT%TZ > "$run_dir/start-wall.txt"
+      health_start_ms=$(now_ms)
       setsid /usr/bin/time -v -o "$run_dir/health-client-resource.txt" \
-        taskset -c "$client_cpus" "$tools/k6" run --no-usage-report --no-color --quiet \
-        -e ROLE=health -e BASE_URL="$base" -e CLIENTS="$clients" \
-        --summary-export "$run_dir/health-summary.json" --out "json=$run_dir/health-metrics.json.gz" \
-        "$support/slow-client.js" > "$run_dir/health-client.log" 2>&1 &
+        taskset -c "$client_cpus" "$tools/zrk" -t1 -c1 -R1 -d100s --timeout 1s \
+        --disable-keepalive --plain --script "$support/slow-client.lua" \
+        --format json -o "$run_dir/health-summary.json" --hdr "$run_dir/health.hgrm" \
+        --timeseries "$run_dir/health.ndjson" --timeseries-histogram \
+        "$base/healthy" health > "$run_dir/health-client.log" 2>&1 &
       health_group=$!
-      health_pid=$(native_pid "$health_group" k6)
+      health_pid=$(native_pid "$health_group" zrk)
       for ((attempt=0; attempt<100; attempt++)); do
-        if grep -q 'READY health' "$run_dir/health-client.log"; then break; fi
+        if [[ -s "$run_dir/health.ndjson" ]] && jq -e -s 'any(.[]; .requests > 0)' \
+            "$run_dir/health.ndjson" > /dev/null 2>&1; then break; fi
         kill -0 "$health_pid"
         sleep 0.1
       done
-      grep -q 'READY health' "$run_dir/health-client.log"
+      jq -e -s 'any(.[]; .requests > 0)' "$run_dir/health.ndjson" > /dev/null
+      health_ready_ms=$(now_ms)
       start_ms=$(now_ms)
       if [[ "$kind" == body ]]; then
         setsid /usr/bin/time -v -o "$run_dir/load-client-resource.txt" \
@@ -231,12 +239,12 @@ for kind in body blocked; do
         load_pid=$(native_pid "$load_group" slowhttptest)
       else
         setsid /usr/bin/time -v -o "$run_dir/load-client-resource.txt" \
-          taskset -c "$client_cpus" "$tools/k6" run --no-usage-report --no-color --quiet \
-          -e ROLE=blocked -e BASE_URL="$base" -e CLIENTS="$clients" \
-          --summary-export "$run_dir/blocked-summary.json" --out "json=$run_dir/blocked-metrics.json.gz" \
-          "$support/slow-client.js" > "$run_dir/load-client.log" 2>&1 &
+          taskset -c "$client_cpus" "$tools/zrk" -t2 -c"$clients" --closed -d60s --timeout 8s \
+          --plain --script "$support/slow-client.lua" --format json -o "$run_dir/blocked-summary.json" \
+          --hdr "$run_dir/blocked.hgrm" --timeseries "$run_dir/blocked.ndjson" --timeseries-histogram \
+          "$base/blocked" blocked > "$run_dir/load-client.log" 2>&1 &
         load_group=$!
-        load_pid=$(native_pid "$load_group" k6)
+        load_pid=$(native_pid "$load_group" zrk)
       fi
       {
         for pid in "$health_pid" "$load_pid"; do
@@ -248,15 +256,10 @@ for kind in body blocked; do
       } > "$run_dir/client-placement.txt"
       top -b -d 1 -w 160 -p "$server_pid,$health_pid,$load_pid" > "$run_dir/process-monitor.txt" &
       monitor_pid=$!
-      sampled_load=0
       while kill -0 "$load_group" 2>/dev/null; do
         sample load
         elapsed_ms=$(($(now_ms) - start_ms))
         (( elapsed_ms < 75000 )) || { echo 'Load tool exceeded its finite budget' >&2; exit 1; }
-        if (( elapsed_ms >= 10000 && sampled_load == 0 )); then
-          snapshot load
-          sampled_load=1
-        fi
         sleep 1
       done
       status=0
@@ -273,8 +276,10 @@ for kind in body blocked; do
       done
       recovery_end_ms=$(now_ms)
       jq -n --arg kind "$kind" --argjson start "$start_ms" --argjson end "$load_end_ms" \
-        --argjson recovered "$recovery_end_ms" \
-        '{kind:$kind,start_ms:$start,load_end_ms:$end,recovery_end_ms:$recovered}' > "$run_dir/phase.json"
+        --argjson recovered "$recovery_end_ms" --argjson health_start "$health_start_ms" \
+        --argjson health_ready "$health_ready_ms" \
+        '{kind:$kind,start_ms:$start,load_end_ms:$end,recovery_end_ms:$recovered,
+          health_start_ms:$health_start,health_ready_ms:$health_ready}' > "$run_dir/phase.json"
       status=0
       while kill -0 "$health_group" 2>/dev/null; do
         (( $(now_ms) - start_ms < 115000 )) \

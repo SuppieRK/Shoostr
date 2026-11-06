@@ -14,38 +14,6 @@ function fixture(t) {
   return directory;
 }
 
-for (const [mode, kind] of [['steady', 'http'], ['overload', 'http'], ['steady', 'sse'], ['steady', 'ws']]) {
-  for (const missing of [null, 'count', 'p(95)']) {
-    test(`${mode}/${kind} metrics ${missing ? 'reject missing ' + missing : 'accept complete evidence'}`, t => {
-      const directory = fixture(t);
-      const configuration = { mode, smoke_rates: [1000, 5000, 10000, 50000],
-        fixture: { kind, metric: kind === 'http' ? 'http_req_duration{scenario:requests}' : 'stream_duration' } };
-      const scenarios = mode === 'overload' ? configuration.smoke_rates.map(rate => `step_${rate}`) : ['requests'];
-      const metrics = { checks: { passes: 1, fails: 0 } };
-      for (const scenario of scenarios) {
-        metrics[`http_reqs{scenario:${scenario}}`] = { count: 1 };
-        metrics[`http_req_duration{scenario:${scenario}}`] = { 'p(95)': 2 };
-      }
-      if (kind !== 'http') {
-        metrics.iterations = { values: { count: 1 } };
-        metrics.stream_duration = { 'p(95)': 2 };
-      }
-      if (missing) {
-        const key = kind === 'http'
-          ? `${missing === 'count' ? 'http_reqs' : 'http_req_duration'}{scenario:${scenarios.at(-1)}}`
-          : missing === 'count' ? 'iterations' : 'stream_duration';
-        if (key === 'iterations') metrics[key] = metrics[key].values;
-        delete metrics[key][missing];
-      }
-      writeFileSync(join(directory, 'configuration.json'), JSON.stringify(configuration));
-      writeFileSync(join(directory, 'summary.json'), JSON.stringify({ metrics }));
-      const result = spawnSync('jq', ['-e', '--slurpfile', 'configuration', 'configuration.json',
-        '-f', join(support, 'check-results.jq'), 'summary.json'], { cwd: directory, encoding: 'utf8' });
-      assert.equal(result.status, missing ? 1 : 0, result.stderr + result.stdout);
-    });
-  }
-}
-
 for (const invalid of [null, 'limit', 'peak']) {
   test(`cleanup retains evidence and attempts removal with ${invalid ?? 'valid'} resource controls`, t => {
     const directory = fixture(t);
