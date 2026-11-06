@@ -30,6 +30,8 @@ The validation job runs `ciBuild` and MCP conformance. `ciBuild` retains all pro
 checks and assembles libraries and benchmark projects. Example compilation remains
 necessary for Java tests and coverage; the selected container matrix owns example
 packaging. The ordinary local `build` command still assembles all projects.
+Trusted runs include Sonar in the same Gradle invocation, so analysis reuses test
+results without republishing the consumer fixture and rerunning core tests.
 
 Trusted pull requests and CI runs in `SuppieRK/Shoostr` must pass the Sonar quality gate
 and have zero open issues. A missing analysis token, scanner failure, failed quality gate,
