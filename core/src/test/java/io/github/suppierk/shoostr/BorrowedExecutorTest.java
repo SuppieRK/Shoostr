@@ -113,9 +113,12 @@ class BorrowedExecutorTest {
 
   @Test
   void readsAndStreamsHttp2RequestBodiesOnSelectedWorkers() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var workers = Executors.newSingleThreadExecutor();
-        var app = new Shoostr()) {
-      app.http2();
+        var app = new Shoostr(configuredOptions)) {
+
       app.routes().get("/ready", workers, (ignored4, response) -> response.text("ready"));
       app.routes()
           .post(
@@ -158,11 +161,11 @@ class BorrowedExecutorTest {
   @ValueSource(booleans = {false, true})
   void keepsEndpointExecutorsIndependentOfApplicationExecutionMode(boolean virtual)
       throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(virtual);
+
     try (var workers = Executors.newSingleThreadExecutor();
-        var app = new Shoostr()) {
-      if (virtual) {
-        app.virtualThreads();
-      }
+        var app = new Shoostr(configuredOptions)) {
 
       Handler endpoint =
           (ignored5, response) ->

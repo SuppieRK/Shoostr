@@ -259,14 +259,13 @@ class BufferedRequestBodyTest {
                   throw new UnsupportedOperationException(method.getName());
                 });
 
-    var defaults = Options.defaults();
-    var options =
-        new Options(
-            limit,
-            defaults.maxResponseBytes(),
-            defaults.streamBufferBytes(),
-            1000,
-            MultipartOptions.defaults());
+    var defaults = new Options();
+    var options = new Options();
+    options.setMaxRequestBytes(limit);
+    options.setMaxResponseBytes(defaults.getMaxResponseBytes());
+    options.setStreamBufferBytes(defaults.getStreamBufferBytes());
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
     return Request.create(delegate, sink, options, Callback.NOOP);
   }
 }

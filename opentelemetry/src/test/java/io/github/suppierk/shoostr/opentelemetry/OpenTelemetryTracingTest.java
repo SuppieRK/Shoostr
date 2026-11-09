@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -46,7 +47,7 @@ class OpenTelemetryTracingTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       var tracing =
           new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build());
       app.extensions(tracing);
@@ -80,7 +81,7 @@ class OpenTelemetryTracingTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       app.extensions(
           new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build())
               .allRequests());
@@ -104,7 +105,7 @@ class OpenTelemetryTracingTest {
   @ValueSource(booleans = {false, true})
   void noOpTracingDoesNotChangeRequestHandlingOrInstallCurrentSpans(boolean virtualApplication)
       throws Exception {
-    try (var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+    try (var app = withExecutionMode(new Options(), virtualApplication)) {
       app.extensions(new OpenTelemetryTracing(OpenTelemetry.noop()).allRequests());
       app.routes()
           .get(
@@ -132,7 +133,7 @@ class OpenTelemetryTracingTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
       app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
       app.afterRequest(
@@ -200,7 +201,7 @@ class OpenTelemetryTracingTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var app = withExecutionMode(new Shoostr(), virtualApplication);
+        var app = withExecutionMode(new Options(), virtualApplication);
         var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
       var telemetry =
           OpenTelemetrySdk.builder()
@@ -270,7 +271,7 @@ class OpenTelemetryTracingTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -317,13 +318,11 @@ class OpenTelemetryTracingTest {
     }
   }
 
-  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
-    if (virtualApplication) {
-      app.virtualThreads();
-    }
-
-    return app.onRequestHeaders(
-        (request, response) ->
-            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

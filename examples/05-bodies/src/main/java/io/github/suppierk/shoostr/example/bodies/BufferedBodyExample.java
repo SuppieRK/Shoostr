@@ -17,7 +17,12 @@ public final class BufferedBodyExample {
    * @return application owned by its caller
    */
   public static Shoostr application() {
-    var options = new Options(64, 4096, 512, 4, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(64);
+    options.setMaxResponseBytes(4096);
+    options.setStreamBufferBytes(512);
+    options.setMaxParameters(4);
+    options.setMultipart(MultipartOptions.defaults());
     return new Shoostr(options)
         .routes(
             routes ->

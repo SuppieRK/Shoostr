@@ -31,12 +31,15 @@ class RequestObservationTest {
     var scopeClosed = new CountDownLatch(1);
     var terminal = new CompletableFuture<RequestOutcome>();
 
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(1024);
+    configuredOptions.setMaxResponseBytes(16 * 1024 * 1024);
+    configuredOptions.setStreamBufferBytes(1024);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
     try (var app =
-            withExecutionMode(
-                    new Shoostr(
-                        new Options(
-                            1024, 16 * 1024 * 1024, 1024, 1000, MultipartOptions.defaults())),
-                    virtualApplication)
+            withExecutionMode(configuredOptions, virtualApplication)
                 .modifyServer(
                     nativeServer -> {
                       var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
@@ -98,7 +101,7 @@ class RequestObservationTest {
     var result = new CompletableFuture<RequestOutcome>();
     var closed = new AtomicBoolean();
 
-    try (var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+    try (var app = withExecutionMode(new Options(), virtualApplication)) {
       app.observe(
           ignored3 -> {
             throw new IllegalStateException("factory failed");
@@ -151,7 +154,7 @@ class RequestObservationTest {
     var closed = new AtomicBoolean();
     var result = new CompletableFuture<RequestOutcome>();
 
-    try (var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+    try (var app = withExecutionMode(new Options(), virtualApplication)) {
       app.observe(
           ignored7 -> {
             current.set("observed");
@@ -184,13 +187,11 @@ class RequestObservationTest {
     }
   }
 
-  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
-    if (virtualApplication) {
-      app.virtualThreads();
-    }
-
-    return app.onRequestHeaders(
-        (request, response) ->
-            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

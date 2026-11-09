@@ -107,7 +107,7 @@ public class TelemetryObservationBenchmark {
                 (ignored3, method, ignored4) -> {
                   throw new UnsupportedOperationException(method.getName());
                 });
-    request = Request.create(delegate, sink, Options.defaults(), Callback.NOOP);
+    request = Request.create(delegate, sink, new Options(), Callback.NOOP);
     terminal =
         switch (outcome) {
           case "matched" -> new RequestOutcome("GET", "/users/{id}", 200, 1_000_000, null, null);

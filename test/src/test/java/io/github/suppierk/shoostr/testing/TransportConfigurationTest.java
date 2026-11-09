@@ -104,7 +104,10 @@ class TransportConfigurationTest {
 
   @Test
   void preservesConfiguredHttp2Negotiation() throws Exception {
-    var app = new Shoostr().http2();
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
+    var app = new Shoostr(configuredOptions);
     app.routes().get("/value", (ignored2, response) -> response.text("http2"));
 
     try (var test = TestServer.start(app)) {
@@ -116,8 +119,15 @@ class TransportConfigurationTest {
 
   @Test
   void preservesApplicationBodyLimitsWhileChangingItsTestAddress() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(16);
+    configuredOptions.setMaxResponseBytes(1024);
+    configuredOptions.setStreamBufferBytes(64);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
     var app =
-        new Shoostr(new Options(16, 1024, 64, 1000, MultipartOptions.defaults()))
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServer -> {
                   var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
@@ -186,7 +196,10 @@ class TransportConfigurationTest {
     trust.init(store);
     var context = SSLContext.getInstance("TLS");
     context.init(null, trust.getTrustManagers(), null);
-    var app = new Shoostr().http2();
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
+    var app = new Shoostr(configuredOptions);
     app.tls(
         tls -> {
           tls.setKeyStore(store);

@@ -37,7 +37,7 @@ public final class SlowClientServer implements AutoCloseable {
     release = new CountDownLatch(1);
     connectors = List.of();
     nativeConfiguration = "";
-    var defaults = Options.defaults();
+    var defaults = new Options();
     app =
         new Shoostr()
             .modifyServer(
@@ -85,7 +85,7 @@ public final class SlowClientServer implements AutoCloseable {
             (ignored6, response) ->
                 response.text(
                     "max_request_bytes="
-                        + defaults.maxRequestBytes()
+                        + defaults.getMaxRequestBytes()
                         + "\nconnector_idle_timeout_ms="
                         + connectors.stream().map(Connector::getIdleTimeout).toList()
                         + "\n"

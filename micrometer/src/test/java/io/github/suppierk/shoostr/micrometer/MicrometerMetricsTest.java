@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Extension;
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -441,7 +442,10 @@ class MicrometerMetricsTest {
     var terminal = new CountDownLatch(24);
     var registry = new SimpleMeterRegistry();
 
-    try (var app = new Shoostr().virtualThreads();
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
+    try (var app = new Shoostr(configuredOptions);
         var clients = Executors.newVirtualThreadPerTaskExecutor()) {
       registry.config().meterFilter(MeterFilter.commonTags(List.of(Tag.of("deployment", "test"))));
       app.extensions(new MicrometerMetrics(registry).allRequests());

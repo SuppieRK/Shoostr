@@ -100,7 +100,7 @@ class ResponseResourceTest {
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
     return io.github.suppierk.shoostr.Request.create(
-            request, delegate, Options.defaults(), Callback.NOOP)
+            request, delegate, new Options(), Callback.NOOP)
         .response();
   }
 

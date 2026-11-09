@@ -41,10 +41,10 @@ class TypedWebSocketTest {
       throws Exception {
     var opened = new AtomicReference<TypedWebSocketConnection>();
     var closed = new CompletableFuture<TypedWebSocketConnection>();
-    var base = new Shoostr();
-    if (virtual) {
-      base.virtualThreads();
-    }
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(virtual);
+
+    var base = new Shoostr(configuredOptions);
 
     var app =
         base.codec(new TextCodec())

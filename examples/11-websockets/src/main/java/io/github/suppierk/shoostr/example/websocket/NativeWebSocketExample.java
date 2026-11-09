@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.example.websocket;
 
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
@@ -22,8 +23,10 @@ public final class NativeWebSocketExample {
    * @return unstarted, caller-owned application
    */
   public static Shoostr application() {
-    return new Shoostr()
-        .http2()
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
+    return new Shoostr(configuredOptions)
         .routes(
             routes ->
                 routes.websocket(

@@ -18,7 +18,7 @@ An executor chooses where application work runs. Shoostr normally invokes ordina
 
 An observation tracks a request across that handoff. `RequestObservation` manages context attachment and cleanup around invocation; `RequestOutcome` is the detached summary supplied at terminal completion. This task first chooses execution and follows that context, then separately demonstrates admission for a long-lived stream.
 
-Select virtual execution with `app.virtualThreads()` before startup when that mode suits ordinary handlers and managed WebSocket callbacks. Jetty retains its platform pool for transport work. Native [pool configuration](../../application/native-configuration/) remains authoritative: fluent call order does not make this convenience selection override native callbacks.
+Select virtual execution with `options.setVirtualThreads(true)` before passing those options to the `Shoostr` constructor when that mode suits ordinary handlers and managed WebSocket callbacks. Jetty retains its platform pool for transport work. Native [pool configuration](../../application/native-configuration/) remains authoritative: native callbacks can override the initial selection from `Options`.
 
 Choose the mode after measuring your request mix and downstream limits.
 Virtual threads can help when concurrent tasks wait on resources that have spare capacity, but they do not remove CPU, database connection, or service capacity limits; see [Webtide's workload analysis](https://webtide.com/if-virtual-threads-are-the-solution-what-is-the-problem/).

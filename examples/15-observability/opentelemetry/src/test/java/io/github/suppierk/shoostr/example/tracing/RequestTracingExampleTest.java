@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
@@ -19,6 +20,7 @@ import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.net.http.HttpResponse;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
@@ -37,8 +39,7 @@ class RequestTracingExampleTest {
         var workers = Executors.newSingleThreadExecutor();
         var test =
             TestServer.start(
-                withExecutionMode(
-                        RequestTracingExample.application(telemetry, workers), virtualApplication)
+                withExecutionMode(telemetry, workers, virtualApplication)
                     .afterRequest(outcomes::offer))) {
       var response =
           test.send(
@@ -88,8 +89,7 @@ class RequestTracingExampleTest {
         var workers = Executors.newSingleThreadExecutor()) {
       try (var test =
           TestServer.start(
-              withExecutionMode(
-                      RequestTracingExample.application(telemetry, workers), virtualApplication)
+              withExecutionMode(telemetry, workers, virtualApplication)
                   .afterRequest(outcomes::offer))) {
         var response =
             test.send(request -> request.path("/health"), HttpResponse.BodyHandlers.ofString());
@@ -120,8 +120,7 @@ class RequestTracingExampleTest {
         var workers = Executors.newSingleThreadExecutor();
         var test =
             TestServer.start(
-                withExecutionMode(
-                        RequestTracingExample.application(telemetry, workers), virtualApplication)
+                withExecutionMode(telemetry, workers, virtualApplication)
                     .afterRequest(outcomes::offer))) {
       var response =
           test.send(
@@ -148,8 +147,7 @@ class RequestTracingExampleTest {
     try (var telemetry = telemetry(exporter);
         var workers = Executors.newSingleThreadExecutor();
         var app =
-            withExecutionMode(
-                    RequestTracingExample.application(telemetry, workers), virtualApplication)
+            withExecutionMode(telemetry, workers, virtualApplication)
                 .beforeRouteHandler(
                     (ignored, ignored2) -> {
                       throw new IllegalStateException("private failure");
@@ -190,13 +188,13 @@ class RequestTracingExampleTest {
         .build();
   }
 
-  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
-    if (virtualApplication) {
-      app.virtualThreads();
-    }
-
-    return app.onRequestHeaders(
-        (request, response) ->
-            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  private static Shoostr withExecutionMode(
+      OpenTelemetrySdk telemetry, ExecutorService workers, boolean virtualApplication) {
+    var options = new Options();
+    options.setVirtualThreads(virtualApplication);
+    return RequestTracingExample.application(telemetry, workers, options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

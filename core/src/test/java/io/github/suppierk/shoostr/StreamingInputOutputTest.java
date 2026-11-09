@@ -150,7 +150,12 @@ class StreamingInputOutputTest {
 
   @Test
   void rejectsChunkedStreamingInputAfterTheConsumedByteLimit() throws Exception {
-    var options = new Options(3, 1_048_576, 8192, 1000, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(3);
+    options.setMaxResponseBytes(1_048_576);
+    options.setStreamBufferBytes(8192);
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
 
     try (var app =
             new Shoostr(options)
@@ -184,7 +189,12 @@ class StreamingInputOutputTest {
 
   @Test
   void rejectsChunkedStreamingInputSkippedPastTheConsumedByteLimit() throws Exception {
-    var options = new Options(3, 1_048_576, 8192, 1000, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(3);
+    options.setMaxResponseBytes(1_048_576);
+    options.setStreamBufferBytes(8192);
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
 
     try (var app =
             new Shoostr(options)
@@ -310,7 +320,12 @@ class StreamingInputOutputTest {
 
   @Test
   void rejectsOversizedFiniteBodiesWithoutChangingThePreviouslyStagedBody() throws Exception {
-    var options = new Options(1024, 3, 2, 1000, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(1024);
+    options.setMaxResponseBytes(3);
+    options.setStreamBufferBytes(2);
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
     var oversizedBody = "abcd".getBytes(StandardCharsets.UTF_8);
 
     try (var app =
@@ -343,7 +358,12 @@ class StreamingInputOutputTest {
 
   @Test
   void streamsOutputLargerThanTheFiniteResponseLimit() throws Exception {
-    var options = new Options(1_048_576, 3, 2, 1000, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(1_048_576);
+    options.setMaxResponseBytes(3);
+    options.setStreamBufferBytes(2);
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
 
     try (var app =
         new Shoostr(options)

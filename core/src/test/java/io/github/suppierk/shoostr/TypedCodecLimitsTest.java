@@ -26,8 +26,15 @@ class TypedCodecLimitsTest {
           }
         };
 
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(4);
+    configuredOptions.setMaxResponseBytes(256);
+    configuredOptions.setStreamBufferBytes(8);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
     try (var app =
-        new Shoostr(new Options(4, 256, 8, 1000, MultipartOptions.defaults()))
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServer -> {
                   var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
@@ -54,8 +61,15 @@ class TypedCodecLimitsTest {
 
   @Test
   void decodesRequestAtExactByteLimit() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(4);
+    configuredOptions.setMaxResponseBytes(256);
+    configuredOptions.setStreamBufferBytes(8);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
     try (var app =
-        new Shoostr(new Options(4, 256, 8, 1000, MultipartOptions.defaults()))
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServer -> {
                   var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
@@ -87,8 +101,15 @@ class TypedCodecLimitsTest {
 
   @Test
   void enforcesFiniteLimitAfterEncodingWithoutReplacingStagedBody() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(64);
+    configuredOptions.setMaxResponseBytes(8);
+    configuredOptions.setStreamBufferBytes(8);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
     try (var app =
-        new Shoostr(new Options(64, 8, 8, 1000, MultipartOptions.defaults()))
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServer -> {
                   var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];

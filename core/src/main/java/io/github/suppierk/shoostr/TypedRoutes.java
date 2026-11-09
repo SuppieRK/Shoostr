@@ -1126,8 +1126,8 @@ public final class TypedRoutes implements Closeable {
 
   /**
    * Selects a borrowed HTTP handshake executor. Managed callbacks use the application's native
-   * execution mode: platform threads by default, with {@link Shoostr#virtualThreads()} for virtual
-   * execution.
+   * execution mode: platform threads by default, with {@link Options#setVirtualThreads(Boolean)}
+   * for virtual execution.
    *
    * @param path relative endpoint path
    * @param executor caller-owned handshake executor

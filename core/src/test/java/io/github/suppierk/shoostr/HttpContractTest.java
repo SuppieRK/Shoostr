@@ -56,8 +56,15 @@ class HttpContractTest {
 
   @BeforeEach
   void startServer() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(16);
+    configuredOptions.setMaxResponseBytes(1024);
+    configuredOptions.setStreamBufferBytes(8);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
     app =
-        new Shoostr(new Options(16, 1024, 8, 1000, MultipartOptions.defaults()))
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServer -> {
                   var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
@@ -576,7 +583,7 @@ class HttpContractTest {
                       case "addHttpStreamWrapper" -> null;
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
-    return Request.create(nativeRequest, sink, Options.defaults(), completion).response();
+    return Request.create(nativeRequest, sink, new Options(), completion).response();
   }
 
   private static HttpRequest.Builder request(String uri) {

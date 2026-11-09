@@ -26,7 +26,10 @@ public final class PersistUploadExample {
     var storage =
         Files.createDirectories(Objects.requireNonNull(directory).toAbsolutePath().normalize());
     var multipart = MultipartOptions.defaults().withTemporaryDirectory(storage);
-    return new Shoostr(Options.defaults().withMultipart(multipart))
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    return new Shoostr(configuredOptions)
         .modifyServer(
             nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))
         .routes(

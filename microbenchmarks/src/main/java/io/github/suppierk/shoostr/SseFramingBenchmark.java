@@ -54,7 +54,7 @@ public class SseFramingBenchmark {
   /** Prepares payloads and a callback-completing transport outside timed work. */
   @Setup
   public void setupTrial() {
-    options = Options.defaults();
+    options = new Options();
     payload =
         "multiline".equals(lineShape)
             ? "x".repeat(payloadBytes / 2) + "\n" + "x".repeat(payloadBytes - payloadBytes / 2 - 1)

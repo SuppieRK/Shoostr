@@ -93,7 +93,7 @@ class EndpointTracingTest {
           };
 
       try (workers;
-          var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+          var app = withExecutionMode(new Options(), virtualApplication)) {
         var tracing = new OpenTelemetryTracing(telemetry);
         app.extensions(appWide ? tracing.allRequests() : tracing);
         app.afterRequest(ignored2 -> completed.complete(null));
@@ -158,7 +158,7 @@ class EndpointTracingTest {
                 .build();
         var workers = new ForkJoinPool(parallelism);
         var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -219,7 +219,7 @@ class EndpointTracingTest {
                 .build();
         var workers = new ForkJoinPool(1);
         var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -303,7 +303,7 @@ class EndpointTracingTest {
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
         var workers = new ForkJoinPool(1);
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -364,7 +364,7 @@ class EndpointTracingTest {
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
         var workers = new ForkJoinPool(1);
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -438,7 +438,7 @@ class EndpointTracingTest {
         var workers = new ForkJoinPool(1);
         var drivers = Executors.newVirtualThreadPerTaskExecutor();
         var app =
-            withExecutionMode(new Shoostr(), virtualApplication)
+            withExecutionMode(new Options(), virtualApplication)
                 .modifyServer(
                     nativeServer ->
                         ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
@@ -577,13 +577,11 @@ class EndpointTracingTest {
         false);
   }
 
-  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
-    if (virtualApplication) {
-      app.virtualThreads();
-    }
-
-    return app.onRequestHeaders(
-        (request, response) ->
-            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

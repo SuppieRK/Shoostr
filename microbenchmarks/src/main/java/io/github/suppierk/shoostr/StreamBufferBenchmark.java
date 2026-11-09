@@ -63,15 +63,16 @@ public class StreamBufferBenchmark {
     kilobyte = new byte[1024];
     large = new byte[65536];
     singleByte = new byte[1];
-    var defaults = Options.defaults();
+    var defaults = new Options();
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(defaults.getMaxRequestBytes());
+    configuredOptions.setMaxResponseBytes(defaults.getMaxResponseBytes());
+    configuredOptions.setStreamBufferBytes(GROWTH_BYTES);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
     options = defaults;
-    growthOptions =
-        new Options(
-            defaults.maxRequestBytes(),
-            defaults.maxResponseBytes(),
-            GROWTH_BYTES,
-            1000,
-            MultipartOptions.defaults());
+    growthOptions = configuredOptions;
     var inbound =
         (Request)
             Proxy.newProxyInstance(
@@ -274,15 +275,14 @@ public class StreamBufferBenchmark {
         throw new IllegalStateException("Invalid fixed-total stream matrix parameters");
       }
 
-      var defaults = Options.defaults();
+      var defaults = new Options();
       chunk = new byte[chunkBytes];
-      options =
-          new Options(
-              defaults.maxRequestBytes(),
-              defaults.maxResponseBytes(),
-              bufferBytes,
-              1000,
-              MultipartOptions.defaults());
+      options = new Options();
+      options.setMaxRequestBytes(defaults.getMaxRequestBytes());
+      options.setMaxResponseBytes(defaults.getMaxResponseBytes());
+      options.setStreamBufferBytes(bufferBytes);
+      options.setMaxParameters(1000);
+      options.setMultipart(MultipartOptions.defaults());
     }
 
     /**

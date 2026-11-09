@@ -113,9 +113,9 @@ public sealed class Request permits TypedRequest {
     Objects.requireNonNull(nativeResponse);
     Objects.requireNonNull(completion);
     this.delegate = Objects.requireNonNull(delegate);
-    this.limit = options.maxRequestBytes();
-    this.maxParameters = options.maxParameters();
-    this.multipartOptions = options.multipart();
+    this.limit = options.getMaxRequestBytes();
+    this.maxParameters = options.getMaxParameters();
+    this.multipartOptions = options.getMultipart();
     this.webSocketProtocols = List.of();
     this.owner = Thread.currentThread();
     this.representation = BodyRepresentation.UNREAD;

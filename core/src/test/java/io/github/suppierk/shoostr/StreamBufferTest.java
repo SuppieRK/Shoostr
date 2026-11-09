@@ -503,14 +503,13 @@ class StreamBufferTest {
                       }
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
-    var defaults = Options.defaults();
-    var options =
-        new Options(
-            defaults.maxRequestBytes(),
-            defaults.maxResponseBytes(),
-            capacity,
-            1000,
-            MultipartOptions.defaults());
+    var defaults = new Options();
+    var options = new Options();
+    options.setMaxRequestBytes(defaults.getMaxRequestBytes());
+    options.setMaxResponseBytes(defaults.getMaxResponseBytes());
+    options.setStreamBufferBytes(capacity);
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
     var nativeRequest =
         (Request)
             Proxy.newProxyInstance(

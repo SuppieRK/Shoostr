@@ -155,12 +155,15 @@ class RequestParametersTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void enforcesParameterCountIncludingRepeatedNames(boolean repeated) throws Exception {
-    assertEquals(1000, Options.defaults().maxParameters());
-    var defaults = Options.defaults();
-    assertThrows(IllegalArgumentException.class, () -> defaults.withMaxParameters(0));
-    assertThrows(IllegalArgumentException.class, () -> defaults.withMaxParameters(-1));
+    assertEquals(1000, new Options().getMaxParameters());
+    var defaults = new Options();
+    assertThrows(IllegalArgumentException.class, () -> defaults.setMaxParameters(0));
+    assertThrows(IllegalArgumentException.class, () -> defaults.setMaxParameters(-1));
     app.close();
-    app = new Shoostr(Options.defaults().withMaxParameters(2));
+    var configuredOptions = new Options();
+    configuredOptions.setMaxParameters(2);
+
+    app = new Shoostr(configuredOptions);
     app.routes()
         .get(
             "/query",
@@ -383,8 +386,15 @@ class RequestParametersTest {
     // Independent transport access is required by this test's wire/client behavior.
     try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
       app.close();
+      var configuredOptions = new Options();
+      configuredOptions.setMaxRequestBytes(7);
+      configuredOptions.setMaxResponseBytes(1024);
+      configuredOptions.setStreamBufferBytes(64);
+      configuredOptions.setMaxParameters(1000);
+      configuredOptions.setMultipart(MultipartOptions.defaults());
+
       app =
-          new Shoostr(new Options(7, 1024, 64, 1000, MultipartOptions.defaults()))
+          new Shoostr(configuredOptions)
               .modifyServer(
                   nativeServer -> {
                     var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
@@ -478,7 +488,10 @@ class RequestParametersTest {
   @Test
   void limitsFormPairsIndependentlyFromQueryPairs() throws Exception {
     app.close();
-    app = new Shoostr(Options.defaults().withMaxParameters(2));
+    var configuredOptions = new Options();
+    configuredOptions.setMaxParameters(2);
+
+    app = new Shoostr(configuredOptions);
     app.routes()
         .post(
             "/form",
@@ -520,8 +533,15 @@ class RequestParametersTest {
     // Independent transport access is required by this test's wire/client behavior.
     try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
       app.close();
+      var configuredOptions = new Options();
+      configuredOptions.setMaxRequestBytes(7);
+      configuredOptions.setMaxResponseBytes(1024);
+      configuredOptions.setStreamBufferBytes(64);
+      configuredOptions.setMaxParameters(1000);
+      configuredOptions.setMultipart(MultipartOptions.defaults());
+
       app =
-          new Shoostr(new Options(7, 1024, 64, 1000, MultipartOptions.defaults()))
+          new Shoostr(configuredOptions)
               .modifyServer(
                   nativeServer -> {
                     var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];

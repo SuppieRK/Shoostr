@@ -20,7 +20,7 @@ pagefind: false
       <div><dt>Define behavior through Java calls</dt><dd>Register handlers with a fluent API and keep request handling in application code. Follow the <a href="routing/methods/">method-routing example</a> from registration to HTTP response.</dd></div>
       <div><dt>Work with Java values</dt><dd>Use your serialization code to convert request bodies into Java values and objects into responses. The <a href="json/codec/">JSON guide</a> follows a user payload from decoding to an HTTP response.</dd></div>
       <div><dt>Keep related endpoint policy together</dt><dd>A route group shares a path prefix and behavior across related endpoints. Use groups to organize an API area, then give it an <a href="errors/exceptions/">error response policy</a>.</dd></div>
-      <div><dt>Configure the Jetty foundation</dt><dd>When transport requirements change, use callbacks that configure Jetty's own server objects. Set listener and HTTP options through the <a href="application/native-configuration/">native configuration callbacks</a>.</dd></div>
+      <div><dt>Configure the Jetty foundation</dt><dd>Set ordinary listener, timeout, and protocol choices through <a href="application/server-options/">application settings</a>. Use <a href="application/native-configuration/">native configuration callbacks</a> for advanced Jetty customization.</dd></div>
     </dl>
   </section>
   <section className="landing-section" aria-labelledby="choose-task">

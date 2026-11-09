@@ -228,7 +228,14 @@ class Http1FramingTest {
   }
 
   private static Shoostr app() {
-    return new Shoostr(new Options(1024, 1024, 256, 1000, MultipartOptions.defaults()))
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(1024);
+    configuredOptions.setMaxResponseBytes(1024);
+    configuredOptions.setStreamBufferBytes(256);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
+    return new Shoostr(configuredOptions)
         .modifyServer(
             nativeServer -> {
               var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];

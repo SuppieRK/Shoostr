@@ -32,7 +32,7 @@ class ObservationHandoffTest {
     workers.submit(() -> context.set("worker-base")).get(5, TimeUnit.SECONDS);
 
     try (workers;
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       for (var value : List.of("alpha", "beta")) {
         app.observe(
             ignored -> {
@@ -93,7 +93,7 @@ class ObservationHandoffTest {
     var workers = Executors.newFixedThreadPool(1);
 
     try (workers;
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       app.observe(
           ignored4 ->
               new RequestObservation() {
@@ -164,7 +164,7 @@ class ObservationHandoffTest {
     var workers = Executors.newFixedThreadPool(1);
 
     try (workers;
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       app.observe(
           ignored9 -> {
             var owner = Thread.currentThread();
@@ -213,13 +213,11 @@ class ObservationHandoffTest {
     }
   }
 
-  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
-    if (virtualApplication) {
-      app.virtualThreads();
-    }
-
-    return app.onRequestHeaders(
-        (request, response) ->
-            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

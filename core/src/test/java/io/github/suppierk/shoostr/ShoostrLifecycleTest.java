@@ -101,9 +101,11 @@ class ShoostrLifecycleTest {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
 
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
     try (var app =
-        new Shoostr()
-            .virtualThreads()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
@@ -513,9 +515,11 @@ class ShoostrLifecycleTest {
     var nativeServer = new AtomicReference<Server>();
     var ownedExecutor = new AtomicReference<ExecutorService>();
 
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
     try (var app =
-        new Shoostr()
-            .virtualThreads()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
@@ -658,9 +662,11 @@ class ShoostrLifecycleTest {
     var ownedExecutor = new AtomicReference<ExecutorService>();
     var failure = new IllegalArgumentException("configuration failed");
 
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
     try (var app =
-        new Shoostr()
-            .virtualThreads()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {

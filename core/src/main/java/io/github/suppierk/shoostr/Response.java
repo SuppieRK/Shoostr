@@ -408,7 +408,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     }
 
     Objects.requireNonNull(value);
-    if (value.length > options.maxResponseBytes()) {
+    if (value.length > options.getMaxResponseBytes()) {
       throw new IllegalArgumentException("Finite response exceeds limit");
     }
 
@@ -477,7 +477,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       }
 
       var output = startStream(contentType);
-      var buffer = new byte[options.streamBufferBytes()];
+      var buffer = new byte[options.getStreamBufferBytes()];
       for (int read; (read = source.read(buffer)) >= 0; ) {
         if (read > 0) {
           output.write(read == buffer.length ? buffer : Arrays.copyOf(buffer, read));
@@ -1063,7 +1063,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     reset(status);
     delegate.getHeaders().put(TEXT);
     var message = status.reasonPhrase().getBytes(StandardCharsets.UTF_8);
-    body = message.length <= options.maxResponseBytes() ? message : EMPTY;
+    body = message.length <= options.getMaxResponseBytes() ? message : EMPTY;
     complete();
   }
 
@@ -2357,12 +2357,12 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       Objects.requireNonNull(bytes);
       int offset = 0;
       while (offset < bytes.length) {
-        int count = Math.min(options.streamBufferBytes() - used, bytes.length - offset);
+        int count = Math.min(options.getStreamBufferBytes() - used, bytes.length - offset);
         ensureStorage(used + count);
         System.arraycopy(bytes, offset, buffer, used, count);
         used += count;
         offset += count;
-        if (used == options.streamBufferBytes()) {
+        if (used == options.getStreamBufferBytes()) {
           flush();
         }
       }
@@ -2411,7 +2411,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
         return;
       }
 
-      int limit = options.streamBufferBytes();
+      int limit = options.getStreamBufferBytes();
       int doubled = buffer.length > limit / 2 ? limit : buffer.length * 2;
       int capacity = Math.clamp(Math.max(INITIAL_BUFFER_BYTES, doubled), required, limit);
       var grown = new byte[capacity];

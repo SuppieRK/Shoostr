@@ -35,8 +35,8 @@ import org.jspecify.annotations.Nullable;
  * executor wrappers must honor the same contract. Shoostr never shuts these executors down or
  * interrupts their running workers. The caller must keep them usable until the app has closed and
  * its running handlers have finished. Default registrations use the application's native execution
- * mode: platform threads by default, with {@link Shoostr#virtualThreads()} for virtual execution.
- * Request observation context is explicitly attached; arbitrary thread-local state and
+ * mode: platform threads by default, with {@link Options#setVirtualThreads(Boolean)} for virtual
+ * execution. Request observation context is explicitly attached; arbitrary thread-local state and
  * application-created child tasks are not propagated.
  */
 public final class Routes implements Closeable {

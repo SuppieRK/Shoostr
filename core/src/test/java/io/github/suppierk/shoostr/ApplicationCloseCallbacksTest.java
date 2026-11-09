@@ -428,7 +428,10 @@ class ApplicationCloseCallbacksTest {
     var extensionClosed = new AtomicBoolean();
     var finalCallback = new AtomicBoolean();
 
-    try (var app = new Shoostr().virtualThreads();
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
+    try (var app = new Shoostr(configuredOptions);
         var client = HttpClient.newHttpClient()) {
       app.modifyServer(
           server -> {
@@ -674,7 +677,10 @@ class ApplicationCloseCallbacksTest {
     var finalized = new AtomicBoolean();
     var events = new ArrayList<String>();
 
-    try (var app = new Shoostr().virtualThreads()) {
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.modifyServer(
           nativeServer -> {
             server.set(nativeServer);

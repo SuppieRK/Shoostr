@@ -100,8 +100,15 @@ class ResponseTextCharsetTest {
 
   @Test
   void appliesTheLimitToEncodedBytesAndPreservesOutputWhenReplacementIsTooLarge() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(1024);
+    configuredOptions.setMaxResponseBytes(1);
+    configuredOptions.setStreamBufferBytes(512);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
     try (var app =
-        new Shoostr(new Options(1024, 1, 512, 1000, MultipartOptions.defaults()))
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServer -> {
                   var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];

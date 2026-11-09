@@ -16,9 +16,9 @@ A streamed response sends output incrementally while its handler is active. Star
 
 This task writes a finite response and transfers an input source through a bounded output buffer. Backpressure means a write waits for transport progress before reusing that buffer. The buffer limit bounds pending application bytes, not the total transfer or its duration.
 
-Write incrementally through `startStream(...)`, or give `response.input(...)` an input source for transfer. Both use the bounded output buffer and bypass the finite-body limit. `Options.streamBufferBytes()` limits that application buffer, not total bytes or duration. Filling the buffer or calling `flush()` waits for transport progress before reuse, providing backpressure to the handler.
+Write incrementally through `startStream(...)`, or give `response.input(...)` an input source for transfer. Both use the bounded output buffer and bypass the finite-body limit. The `streamBufferBytes` setting limits that application buffer, not total bytes or duration. Filling the buffer or calling `flush()` waits for transport progress before reuse, providing backpressure to the handler.
 
-The default stream buffer capacity is 8 KiB (8,192 bytes). It flushes automatically when full; returning from the handler sends any remaining bytes. To change the capacity for an application, pass `Options.defaults().withStreamBufferBytes(16_384)` to `new Shoostr(...)`; see [request and response limits](../../application/server-options/). The buffer grows as needed up to that capacity.
+The default stream buffer capacity is 8 KiB (8,192 bytes). It flushes automatically when full; returning from the handler sends any remaining bytes. To change the capacity for an application, call `options.setStreamBufferBytes(16_384)` before passing those options to `new Shoostr(options)`; see [application settings](../../application/server-options/). The buffer grows as needed up to that capacity.
 Call `flush()` when output must be submitted before the buffer fills. It waits for transport consumption so the buffer can be reused; it does not guarantee that the client has received the bytes. Native Jetty output-buffer settings do not change Shoostr’s stream capacity.
 
 Starting the stream commits the response, so select its status and headers first and do not mix streaming with a staged body or file transfer.

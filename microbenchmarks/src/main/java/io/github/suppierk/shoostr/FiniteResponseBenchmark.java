@@ -119,7 +119,7 @@ public class FiniteResponseBenchmark {
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
     response =
-        io.github.suppierk.shoostr.Request.create(inbound, sink, Options.defaults(), Callback.NOOP)
+        io.github.suppierk.shoostr.Request.create(inbound, sink, new Options(), Callback.NOOP)
             .response();
   }
 

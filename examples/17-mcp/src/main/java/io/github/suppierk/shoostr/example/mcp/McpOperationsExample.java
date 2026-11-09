@@ -2,6 +2,7 @@ package io.github.suppierk.shoostr.example.mcp;
 
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.bulkhead.BulkheadFullException;
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.mcp.Mcp;
 import io.github.suppierk.shoostr.mcp.McpHttpSecurity;
@@ -78,9 +79,12 @@ public final class McpOperationsExample {
                                                         .build())))
                             .build())
                     .build());
-    return new Shoostr()
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
+    return new Shoostr(configuredOptions)
         // Idle HTTP streams release virtual-thread carriers; callback execution is independent.
-        .virtualThreads()
+
         .extensions(mcp)
         .routes(
             routes ->

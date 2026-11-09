@@ -2,7 +2,7 @@ plugins {
 	id 'java-library'
 }
 
-version = '2026.11.6.0'
+version = '2026.11.9.0'
 
 dependencies {
 	api shoostrDependency('http', '2026.11.5.0')
@@ -15,6 +15,7 @@ dependencies {
 	api 'org.eclipse.jetty.websocket:jetty-websocket-jetty-server:12.1.14'
 	runtimeOnly 'org.eclipse.jetty.compression:jetty-compression-gzip:12.1.14'
 	testImplementation project(':test')
+	testImplementation 'org.yaml:snakeyaml:2.7'
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 	testImplementation 'org.eclipse.jetty.compression:jetty-compression-gzip:12.1.14'
 	testImplementation 'org.eclipse.jetty.http2:jetty-http2-client:12.1.14'

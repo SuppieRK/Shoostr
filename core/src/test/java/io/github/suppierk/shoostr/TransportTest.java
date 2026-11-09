@@ -259,15 +259,18 @@ class TransportTest {
     var entered = new CountDownLatch(2);
     var release = new CountDownLatch(1);
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app);
-      app.http2();
+
       app.routes()
           .get(
               "/parallel/{id}",
@@ -323,15 +326,18 @@ class TransportTest {
   void mappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable() throws Exception {
     var peers = new CopyOnWriteArrayList<SocketAddress>();
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app);
-      app.http2();
+
       app.onRequestHeaders((request, ignored4) -> peers.add(request.remoteAddress().orElseThrow()));
       app.exception(
           IllegalArgumentException.class,
@@ -403,15 +409,18 @@ class TransportTest {
     body.write(content);
     body.write("\r\n--http2-upload-boundary--\r\n".getBytes(StandardCharsets.US_ASCII));
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app);
-      app.http2();
+
       app.routes()
           .post(
               "/upload",
@@ -459,15 +468,18 @@ class TransportTest {
         """
             .getBytes(StandardCharsets.UTF_8);
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app);
-      app.http2();
+
       app.routes()
           .post(
               "/json",
@@ -501,23 +513,24 @@ class TransportTest {
     var ownedExecutor = new AtomicReference<ExecutorService>();
     var tlsContext = new AtomicReference<SslContextFactory.Server>();
 
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
-                .virtualThreads()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app, tlsContext);
-      app.http2()
-          .modifyServer(
-              server -> {
-                nativeServer.set(server);
-                ownedExecutor.set(
-                    (ExecutorService)
-                        VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
-              });
+      app.modifyServer(
+          server -> {
+            nativeServer.set(server);
+            ownedExecutor.set(
+                (ExecutorService) VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
+          });
       app.routes().get("/warmup", (ignored10, response) -> response.text("ready"));
       app.routes()
           .get(
@@ -620,9 +633,12 @@ class TransportTest {
     var sessionHandler = new AtomicReference<SessionHandler>();
     var tlsContext = new AtomicReference<SslContextFactory.Server>();
 
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
-                .virtualThreads()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
@@ -637,16 +653,14 @@ class TransportTest {
             }
           });
       app.sessions(sessionHandler::set);
-      app.http2()
-          .modifyServer(
-              server -> {
-                nativeServer.set(server);
-                ownedExecutor.set(
-                    (ExecutorService)
-                        VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
-                server.setStopTimeout(100);
-                ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
-              });
+      app.modifyServer(
+          server -> {
+            nativeServer.set(server);
+            ownedExecutor.set(
+                (ExecutorService) VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
+            server.setStopTimeout(100);
+            ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
+          });
       app.routes()
           .path(
               "/",
@@ -742,20 +756,20 @@ class TransportTest {
     var cleanupConnector = new AtomicReference<ServerConnector>();
     var cleanupPool = new AtomicReference<QueuedThreadPool>();
 
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(virtual);
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = secureClient(HttpClient.Version.HTTP_2)) {
-      if (virtual) {
-        app.virtualThreads();
-      }
 
       enableTls(app);
-      app.http2()
-          .observe(
+      app.observe(
               request ->
                   new RequestObservation() {
                     @Override
@@ -887,14 +901,17 @@ class TransportTest {
     var sessionHandler = new AtomicReference<SessionHandler>();
     var nativeServer = new AtomicReference<Server>();
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()) {
-      app.sessions(sessionHandler::set).http2().modifyServer(nativeServer::set);
+      app.sessions(sessionHandler::set).modifyServer(nativeServer::set);
       app.routes()
           .path(
               "/",
@@ -962,12 +979,15 @@ class TransportTest {
   void responseCompressionIsOptInAndVariesOnAcceptEncoding() throws Exception {
     var payload = "compressible-body-".repeat(100);
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes().get("/data", (ignored17, response) -> response.text(payload));
 
       try (var test = TestServer.start(app)) {
@@ -1015,12 +1035,15 @@ class TransportTest {
 
   @Test
   void compressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes().get("/finite", (ignored18, response) -> response.text("body"));
       app.routes().head("/finite", (ignored19, response) -> response.text("body"));
       app.routes()
@@ -1099,12 +1122,15 @@ class TransportTest {
   void compressionRejectsRangedFileWhenIdentityIsForbidden() throws Exception {
     var file = Files.writeString(temporary.resolve("range-rejected.txt"), "0123456789".repeat(300));
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes().get("/file", (ignored24, response) -> response.file(file, "text/plain"));
 
       try (var test = TestServer.start(app)) {
@@ -1126,12 +1152,15 @@ class TransportTest {
 
   @Test
   void compressionRejectsUnacceptableExceptionHandlerRecovery() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.exception(
           NotFoundException.class,
           (ignored25, ignored26, response) -> response.status(200).text("recovered"));
@@ -1161,12 +1190,15 @@ class TransportTest {
   void compressionCanBeDisabledPerResponseAndHonorsAnExcludedEncoding() throws Exception {
     var payload = "uncompressed-".repeat(100);
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes()
           .get("/opt-out", (ignored29, response) -> response.disableCompression().text(payload));
 
@@ -1195,12 +1227,15 @@ class TransportTest {
     var content = "0123456789".repeat(300);
     var file = Files.writeString(temporary.resolve("range.txt"), content);
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes().get("/file", (ignored30, response) -> response.file(file, "text/plain"));
       app.routes().head("/file", (ignored31, response) -> response.file(file, "text/plain"));
       app.routes().get("/empty", (ignored32, response) -> response.status(204));
@@ -1254,12 +1289,15 @@ class TransportTest {
     var content = "compressible-file-".repeat(300);
     var file = Files.writeString(temporary.resolve("head-gzip.txt"), content);
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes().get("/head-gzip", (ignored34, response) -> response.file(file, "text/plain"));
       app.routes().head("/head-gzip", (ignored35, response) -> response.file(file, "text/plain"));
 
@@ -1298,9 +1336,11 @@ class TransportTest {
     var sessionHandler = new AtomicReference<SessionHandler>();
     var tlsContext = new AtomicReference<SslContextFactory.Server>();
 
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
     try (var app =
-        new Shoostr()
-            .virtualThreads()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
@@ -1334,15 +1374,18 @@ class TransportTest {
 
   @Test
   void encryptedHttp2PreservesDirectAndTrustedProxyMetadata() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app);
-      app.http2().trustedProxies(InetAddress::isLoopbackAddress);
+      app.trustedProxies(InetAddress::isLoopbackAddress);
       app.routes()
           .get(
               "/metadata",
@@ -1372,14 +1415,17 @@ class TransportTest {
 
   @Test
   void clearTextHttp2KeepsPhysicalSecuritySeparateFromForwardedHttps() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()) {
-      app.http2().trustedProxies(InetAddress::isLoopbackAddress);
+      app.trustedProxies(InetAddress::isLoopbackAddress);
       app.routes()
           .get(
               "/metadata",
@@ -1410,15 +1456,19 @@ class TransportTest {
   void gzipCompressionWorksOnEncryptedHttp2AndLeavesHeadBodyless() throws Exception {
     var payload = "over-http2-".repeat(100);
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+    configuredOptions.setCompression(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app);
-      app.http2().compression();
+
       app.routes().get("/data", (ignored37, response) -> response.text(payload));
       app.routes().head("/data", (ignored38, response) -> response.text(payload));
       app.start();
@@ -1458,12 +1508,15 @@ class TransportTest {
       gzip.write(payload);
     }
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes()
           .post(
               "/bytes",
@@ -1489,12 +1542,15 @@ class TransportTest {
   void compressionSkipsAlreadyCompressedMediaAndEventStreams() throws Exception {
     var content = new byte[2048];
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes().get("/image", (ignored39, response) -> response.body("image/png", content));
       app.routes()
           .get("/events", (ignored40, response) -> response.body("text/event-stream", content));
@@ -1513,12 +1569,15 @@ class TransportTest {
 
   @Test
   void rejectsForbiddenIdentityWhenNativeCompressionExcludesMedia() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes()
           .get("/image", (ignored41, response) -> response.body("image/png", new byte[2048]));
 
@@ -1538,12 +1597,15 @@ class TransportTest {
 
   @Test
   void rejectsForbiddenIdentityBelowTheNativeCompressionThreshold() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes().get("/small", (ignored42, response) -> response.text("tiny"));
 
       try (var test = TestServer.start(app)) {
@@ -1564,12 +1626,15 @@ class TransportTest {
   void honorsNativeCompressionExclusionsWhenIdentityIsForbidden() throws Exception {
     var payload = "otherwise-compressible-".repeat(100);
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.modifyServer(
           server -> {
             var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
@@ -1602,12 +1667,15 @@ class TransportTest {
   void honorsCompressionConfigurationMatchedOutsideTheApplicationContext() throws Exception {
     var payload = "context-path-content-".repeat(100);
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.modifyServer(
           server -> {
             var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
@@ -1643,12 +1711,15 @@ class TransportTest {
   void usesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden() throws Exception {
     var payload = "selected-gzip-content-".repeat(100);
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.modifyServer(
           server -> {
             var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
@@ -1685,12 +1756,15 @@ class TransportTest {
 
   @Test
   void rejectsForbiddenIdentityWhenNativeMethodExcludesCompression() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes().put("/data", (ignored46, response) -> response.text("method response"));
 
       try (var test = TestServer.start(app)) {
@@ -1713,12 +1787,15 @@ class TransportTest {
   void streamingResponsesCompressAndCanOptOutBeforeTheFirstWrite() throws Exception {
     var payload = "streamed-text-".repeat(150);
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.routes()
           .get(
               "/stream",
@@ -1762,12 +1839,15 @@ class TransportTest {
   void recoveredResponsesRetainCompressionCacheVariation() throws Exception {
     var payload = "recovered-response-".repeat(100);
 
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
     try (var app =
-        new Shoostr()
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServerConfiguration ->
                     ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0))) {
-      app.compression();
+
       app.exception(
           IllegalStateException.class,
           (ignored49, ignored50, response) -> response.status(200).text(payload));
@@ -1806,15 +1886,18 @@ class TransportTest {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app);
-      app.http2();
+
       app.exception(
           NotFoundException.class,
           (ignored53, ignored54, ignored55) -> {
@@ -1884,15 +1967,18 @@ class TransportTest {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServerConfiguration ->
                         ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
                             .setPort(0));
         var client = secureClient(HttpClient.Version.HTTP_2)) {
       enableTls(app);
-      app.http2();
+
       app.routes().get("/warmup", (ignored58, response) -> response.text("ready"));
       app.routes()
           .get(

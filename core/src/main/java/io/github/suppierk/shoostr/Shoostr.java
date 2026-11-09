@@ -62,7 +62,6 @@ import org.jspecify.annotations.Nullable;
  */
 @SuppressWarnings("java:S6539")
 public final class Shoostr implements Closeable {
-  private static final long DEFAULT_STOP_TIMEOUT_MILLIS = 5000;
   private static final int DEFAULT_WEBSOCKET_MAX_OUTGOING_FRAMES = 32;
   private static final String WEBSOCKET_PROTOCOL = "websocket";
 
@@ -89,9 +88,6 @@ public final class Shoostr implements Closeable {
   private final List<Runnable> afterCloseCallbacks;
   private @Nullable TrustedProxy trustedProxy;
   private @Nullable Consumer<SslContextFactory.Server> tlsConfiguration;
-  private boolean http2;
-  private boolean compression;
-  private boolean virtualThreadsEnabled;
   private @Nullable Consumer<SessionHandler> sessionConfiguration;
   private @Nullable Server server;
   private @Nullable ServerConnector connector;
@@ -109,19 +105,19 @@ public final class Shoostr implements Closeable {
    * @throws IllegalStateException if JVM shutdown has begun
    */
   public Shoostr() {
-    this(Options.defaults());
+    this(new Options());
   }
 
   /**
-   * Creates an application with explicit server limits. Its unstarted JVM hook retains the
+   * Creates an application with explicit serving settings. Its unstarted JVM hook retains the
    * application until explicit close or JVM shutdown.
    *
-   * @param options server configuration
+   * @param options serving configuration captured before application resources are acquired
    * @throws NullPointerException if options is null
    * @throws IllegalStateException if JVM shutdown has begun
    */
   public Shoostr(Options options) {
-    this.options = Objects.requireNonNull(options);
+    this.options = new Options(Objects.requireNonNull(options));
     pendingMatches = new HashSet<>();
     routes = new Routes();
     extensions = new ArrayList<>();
@@ -186,27 +182,6 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Enables virtual execution for blocking request handlers and managed WebSocket callbacks. Jetty
-   * retains its native platform pool for transport work. Explicit endpoint executors and later
-   * native pool configuration take precedence. Repeated calls before startup are harmless.
-   *
-   * <p>The application's dedicated virtual executor is acquired during startup and closed with the
-   * application. A replacement delegate supplied through native configuration remains caller-owned.
-   * Choose this mode after measuring the application's workload and downstream capacity.
-   *
-   * @return this application
-   * @throws IllegalStateException if startup has begun or the application is closed
-   */
-  public synchronized Shoostr virtualThreads() {
-    if (started || closed) {
-      throw new IllegalStateException("Thread execution must be configured before startup");
-    }
-
-    virtualThreadsEnabled = true;
-    return this;
-  }
-
-  /**
    * Enables TLS on the default listener. The callback configures Jetty's native, unstarted TLS
    * context, including its key store. Shoostr owns the context and connector lifecycle. Configure
    * before startup; the default listener remains HTTP/1.1 unless HTTP/2 is also enabled.
@@ -224,42 +199,6 @@ public final class Shoostr implements Closeable {
     }
 
     tlsConfiguration = Objects.requireNonNull(configuration);
-    return this;
-  }
-
-  /**
-   * Enables HTTP/2 on the default listener. With TLS, ALPN negotiates HTTP/2 and retains HTTP/1.1
-   * fallback; without TLS, the listener supports clear-text HTTP/1.1 and h2c. Configure before
-   * startup. Native Jetty settings remain available through the configuration callbacks.
-   *
-   * @return this application
-   * @throws IllegalStateException if startup has begun, Shoostr is closed, or HTTP/2 is already
-   *     enabled
-   */
-  public synchronized Shoostr http2() {
-    if (started || closed || http2) {
-      throw new IllegalStateException("HTTP/2 must be configured once before startup");
-    }
-
-    http2 = true;
-    return this;
-  }
-
-  /**
-   * Enables Jetty gzip response compression on eligible GET and POST responses. Request-body
-   * decompression remains disabled, so the existing request-size limit applies to wire bytes.
-   * Individual responses may opt out with {@link Response#disableCompression()}.
-   *
-   * @return this application
-   * @throws IllegalStateException if startup has begun, Shoostr is closed, or compression is
-   *     enabled
-   */
-  public synchronized Shoostr compression() {
-    if (started || closed || compression) {
-      throw new IllegalStateException("Compression must be configured once before startup");
-    }
-
-    compression = true;
     return this;
   }
 
@@ -1310,13 +1249,13 @@ public final class Shoostr implements Closeable {
   private void startServer() throws Exception {
     var dispatch = DispatchConfiguration.capture(this);
     var pool = new QueuedThreadPool();
-    if (virtualThreadsEnabled) {
+    if (options.getVirtualThreads()) {
       ownedVirtualThreads = Executors.newVirtualThreadPerTaskExecutor();
       pool.setVirtualThreadsExecutor(ownedVirtualThreads);
     }
 
     server = new Server(pool);
-    server.setStopTimeout(DEFAULT_STOP_TIMEOUT_MILLIS);
+    server.setStopTimeout(options.getShutdownTimeout().toMillis());
     var proxy = trustedProxy;
     var websocketRoutes = websocketRouter;
     managedWebSockets =
@@ -1326,13 +1265,13 @@ public final class Shoostr implements Closeable {
     var http = configureHttp();
     connector = createConnector(Objects.requireNonNull(server), http);
     tlsConfiguration = null;
-    connector.setHost("0.0.0.0");
-    connector.setPort(8080);
-    connector.setIdleTimeout(30_000);
+    connector.setHost(options.getHost());
+    connector.setPort(options.getPort());
+    connector.setIdleTimeout(options.getIdleTimeout().toMillis());
     server.addConnector(connector);
     var graceful = new GracefulHandler();
     server.setHandler(graceful);
-    var compressionHandler = compression ? new CompressionHandler() : null;
+    var compressionHandler = options.getCompression() ? new CompressionHandler() : null;
     var applicationHandler =
         new ApplicationHandler(
             dispatch, proxy, websocketRoutes, compressionHandler, managedWebSockets);
@@ -1368,6 +1307,7 @@ public final class Shoostr implements Closeable {
    */
   private HttpConfiguration configureHttp() {
     var http = new HttpConfiguration();
+    http.setRequestHeaderSize(options.getMaxRequestHeaderBytes());
     http.setSendServerVersion(false);
     var tls = tlsConfiguration;
     if (tls != null) {
@@ -1397,7 +1337,7 @@ public final class Shoostr implements Closeable {
     var tls = tlsConfiguration;
     var http11 = new HttpConnectionFactory(http);
     if (tls == null) {
-      return http2
+      return options.getHttp2()
           ? new ServerConnector(server, http11, new HTTP2CServerConnectionFactory(http))
           : new ServerConnector(server, http11);
     }
@@ -1408,7 +1348,7 @@ public final class Shoostr implements Closeable {
       throw new IllegalStateException("Shoostr was closed during TLS configuration");
     }
 
-    if (http2) {
+    if (options.getHttp2()) {
       var h2 = new HTTP2ServerConnectionFactory(http);
       var alpn = new ALPNServerConnectionFactory();
       alpn.setDefaultProtocol(http11.getProtocol());

@@ -112,7 +112,7 @@ class OpenApiUiTest {
         assertEquals(200, test.send(request -> request.path("/docs/swagger-ui.css")).statusCode());
         var bundle = test.send(request -> request.path("/docs/swagger-ui-bundle.js"));
         assertEquals(200, bundle.statusCode());
-        assertTrue(bundle.body().length > Options.defaults().maxResponseBytes());
+        assertTrue(bundle.body().length > new Options().getMaxResponseBytes());
         var configuration =
             test.send(
                 request -> request.path("/docs/swagger-initializer.js"),

@@ -244,8 +244,15 @@ class RequestBodyCharsetTest {
             ? HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))
             : HttpRequest.BodyPublishers.ofByteArray(bytes);
 
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(4);
+    configuredOptions.setMaxResponseBytes(1024);
+    configuredOptions.setStreamBufferBytes(8);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
     try (var app =
-            new Shoostr(new Options(4, 1024, 8, 1000, MultipartOptions.defaults()))
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServer -> {
                       var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];

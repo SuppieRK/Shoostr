@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -113,7 +114,10 @@ class McpVirtualThreadTest {
               },
               (ignored, ignored2) -> {});
       var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
-      var app = new Shoostr().virtualThreads();
+      var configuredOptions = new Options();
+      configuredOptions.setVirtualThreads(true);
+
+      var app = new Shoostr(configuredOptions);
       app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
       app.routes()
           .get(

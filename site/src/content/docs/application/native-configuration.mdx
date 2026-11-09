@@ -2,7 +2,7 @@
 title: Configure the Jetty listener and server
 description: Configure the listener, HTTP parsing, native thread pool, and shutdown through Jetty hooks with clear startup ordering and resource ownership.
 next:
-  label: Set request and response limits
+  label: Configure application settings
   link: ../server-options/
 ---
 
@@ -12,7 +12,7 @@ import test from '../../../../../examples/02-application/src/test/java/io/github
 
 ## Description
 
-A Shoostr application uses Jetty to accept connections and process HTTP traffic. Native configuration callbacks let you change Jetty's own server objects before the listener starts. This task changes listener, parser and thread-pool settings without replacing the application routes.
+A Shoostr application uses Jetty to accept connections and process HTTP traffic. Native configuration callbacks let you change Jetty's own server objects before the listener starts. Use [`Options`](../server-options/) for ordinary host, port, timeout, request-header, execution, HTTP/2, and compression settings. This task demonstrates native overrides and thread-pool settings without replacing the application routes.
 
 A callback receives the native object while the application is being configured. It is setup work, rather than a handler that runs for each request. Use the documented Jetty APIs for the object supplied to each callback.
 
@@ -25,13 +25,13 @@ Configure the native objects through Shoostr's setup callbacks before startup. M
 | Native platform pool settings                     | Existing <code>Queued<wbr />Thread<wbr />Pool</code> in <code>modify<wbr />Server</code>. See the [threading guide](https://jetty.org/docs/jetty/12.1/programming-guide/arch/threads.html).                                                                                                                         |
 | Native shutdown timeouts                          | `Server` and existing <code>Queued<wbr />Thread<wbr />Pool</code> in <code>modify<wbr />Server</code>. See the [server](https://javadoc.jetty.org/jetty-12.1/org/eclipse/jetty/server/Server.html) and [pool references](https://javadoc.jetty.org/jetty-12.1/org/eclipse/jetty/util/thread/QueuedThreadPool.html). |
 
-Keep Shoostr's [request and response limits](../server-options/) in `Options`.
+Configure ordinary serving settings and Shoostr's [request and response limits](../server-options/) in `Options`.
 For execution mode, use [platform execution or virtual-thread opt-in](../../lifecycle/executors/); native pool configuration remains authoritative.
 
 Register these callbacks before `app.start()`; Shoostr stores them until startup rather than running them immediately.
 HTTP callbacks run first, followed by server callbacks, with registration order preserved within each category.
 The default connector and application handler are installed before server callbacks run, and native settings can override those initial transport values.
-These callbacks do not replace the limits enforced by `Options`; further registration is rejected after startup or application closure.
+These callbacks can override the initial transport settings from `Options`. They do not replace its buffered-body or staged-response limits. Further registration is rejected after startup or application closure.
 
 ## Example
 
@@ -63,4 +63,4 @@ It checks callback timing, listener and pool settings, ordinary requests, a `431
 
 ## Continue
 
-Next, [Set request and response limits](../server-options/) to configure Shoostr buffering separately from the transport.
+Next, [Configure application settings](../server-options/) to set ordinary listener choices and resource limits through `Options`.

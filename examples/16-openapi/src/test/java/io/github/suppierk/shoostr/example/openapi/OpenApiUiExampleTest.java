@@ -57,7 +57,7 @@ class OpenApiUiExampleTest {
                       .path("/docs/swagger-ui-bundle.js")
                       .header("Authorization", credentials()));
       assertEquals(200, bundle.statusCode());
-      assertTrue(bundle.body().length > Options.defaults().maxResponseBytes());
+      assertTrue(bundle.body().length > new Options().getMaxResponseBytes());
       var initializer =
           test.send(
               request ->

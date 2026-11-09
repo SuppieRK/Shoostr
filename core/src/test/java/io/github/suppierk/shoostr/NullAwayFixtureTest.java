@@ -59,11 +59,11 @@ class NullAwayFixtureTest {
         """
         package io.github.suppierk.fixture;
 
-        import io.github.suppierk.shoostr.Options;
+        import io.github.suppierk.shoostr.Shoostr;
 
         final class NullInput {
-          static Options invalidInput() {
-            return new Options(64, 128, 32, 4, null);
+          static Shoostr invalidInput() {
+            return new Shoostr(null);
           }
         }
         """);

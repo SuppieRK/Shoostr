@@ -41,7 +41,7 @@ class SelectiveTracingIsolationTest {
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
         var workers = new ForkJoinPool(1);
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -96,7 +96,7 @@ class SelectiveTracingIsolationTest {
                 .build();
         var workers = new ForkJoinPool(1);
         var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+        var app = withExecutionMode(new Options(), virtualApplication)) {
       var telemetry =
           OpenTelemetrySdk.builder()
               .setTracerProvider(provider)
@@ -193,13 +193,11 @@ class SelectiveTracingIsolationTest {
     }
   }
 
-  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
-    if (virtualApplication) {
-      app.virtualThreads();
-    }
-
-    return app.onRequestHeaders(
-        (request, response) ->
-            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

@@ -109,14 +109,13 @@ class ServerSentEventsTest {
 
   @Test
   void preservesInitialAutomaticExplicitAndTerminalFlushesForASingleLineEvent() throws Exception {
-    var defaults = Options.defaults();
-    var options =
-        new Options(
-            defaults.maxRequestBytes(),
-            defaults.maxResponseBytes(),
-            8,
-            1000,
-            MultipartOptions.defaults());
+    var defaults = new Options();
+    var options = new Options();
+    options.setMaxRequestBytes(defaults.getMaxRequestBytes());
+    options.setMaxResponseBytes(defaults.getMaxResponseBytes());
+    options.setStreamBufferBytes(8);
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
     var before = new AtomicInteger();
     var after = new AtomicInteger();
 
@@ -596,8 +595,11 @@ class ServerSentEventsTest {
 
   @Test
   void sendsEventsOverClearTextHttp2() throws Exception {
-    try (var app = new Shoostr()) {
-      app.http2();
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
+    try (var app = new Shoostr(configuredOptions)) {
+
       app.routes().get("/events", (ignored27, response) -> response.startEventStream().send("h2"));
 
       try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_2))) {

@@ -309,9 +309,12 @@ class BufferedRequestLifecycleTest {
   @ValueSource(booleans = {false, true})
   void keepsHttp2ConnectionsAvailableAfterFiniteResponsesWithUnreadInput(boolean afterFlush)
       throws Exception {
-    try (var app = new Shoostr();
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
+    try (var app = new Shoostr(configuredOptions);
         var client = new HTTP2Client()) {
-      app.http2();
+
       if (afterFlush) {
         app.afterResponseFlush((request, response) -> {});
       }
@@ -794,9 +797,8 @@ class BufferedRequestLifecycleTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var rejections = new LinkedBlockingQueue<ContentTooLargeException>();
 
-    try (var app = app();
+    try (var app = app(true);
         var client = new HTTP2Client()) {
-      app.http2();
       routes(app, outcomes, rejections);
       app.start();
       client.setConnectTimeout(3000);
@@ -871,7 +873,18 @@ class BufferedRequestLifecycleTest {
   }
 
   private static Shoostr app() {
-    return new Shoostr(new Options(16, 1024, 64, 1000, MultipartOptions.defaults()))
+    return app(false);
+  }
+
+  private static Shoostr app(boolean http2) {
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(16);
+    configuredOptions.setMaxResponseBytes(1024);
+    configuredOptions.setStreamBufferBytes(64);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setHttp2(http2);
+    return new Shoostr(configuredOptions)
         .modifyServer(
             nativeServer -> {
               var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];

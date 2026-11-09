@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.AuthenticationExtension;
 import io.github.suppierk.shoostr.Extensions;
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Response;
@@ -36,7 +37,7 @@ class SelectedTracingTest {
   private final InMemorySpanExporter exporter;
   private final OpenTelemetrySdk telemetry;
   private final OpenTelemetryTracing tracing;
-  private final Shoostr app;
+  private Shoostr app;
   private final LinkedBlockingQueue<RequestOutcome> outcomes;
 
   SelectedTracingTest() {
@@ -66,7 +67,7 @@ class SelectedTracingTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void createsServerSpansOnlyForSelectedRoutes(boolean virtualApplication) throws Exception {
-    withExecutionMode(app, virtualApplication);
+    withExecutionMode(virtualApplication);
     app.extensions(tracing);
     app.routes()
         .get(
@@ -98,7 +99,7 @@ class SelectedTracingTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void excludingDefaultTracingLeavesTheRouteUntraced(boolean virtualApplication) throws Exception {
-    withExecutionMode(app, virtualApplication);
+    withExecutionMode(virtualApplication);
     app.extensions(tracing).configureExtensionsDefaults(e -> e.with(tracing));
     app.routes()
         .get(
@@ -117,7 +118,7 @@ class SelectedTracingTest {
   @ValueSource(booleans = {false, true})
   void inheritedAndRepeatedActivationCreatesOneServerSpan(boolean virtualApplication)
       throws Exception {
-    withExecutionMode(app, virtualApplication);
+    withExecutionMode(virtualApplication);
     app.extensions(tracing);
     app.routes()
         .path(
@@ -146,7 +147,7 @@ class SelectedTracingTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void enablingOneChildDoesNotEnableItsSibling(boolean virtualApplication) throws Exception {
-    withExecutionMode(app, virtualApplication);
+    withExecutionMode(virtualApplication);
     app.extensions(tracing);
     app.routes()
         .path(
@@ -171,7 +172,7 @@ class SelectedTracingTest {
   @ValueSource(booleans = {false, true})
   void appWideTracingSurvivesScopedExclusionWithoutCreatingDuplicateSpans(
       boolean virtualApplication) throws Exception {
-    withExecutionMode(app, virtualApplication);
+    withExecutionMode(virtualApplication);
     app.extensions(tracing.allRequests());
     app.routes()
         .get(
@@ -219,7 +220,7 @@ class SelectedTracingTest {
   @ValueSource(booleans = {false, true})
   void leavesApplicationSpansOnUnselectedRoutesControlledByTheSdk(boolean virtualApplication)
       throws Exception {
-    withExecutionMode(app, virtualApplication);
+    withExecutionMode(virtualApplication);
     app.extensions(tracing);
     app.routes().get("/selected", (ignored12, ignored13) -> {}, e -> e.with(tracing));
     app.routes()
@@ -250,7 +251,7 @@ class SelectedTracingTest {
   @ValueSource(booleans = {false, true})
   void activatesContextBeforeManagedAuthenticationAndMatchCallbacks(boolean virtualApplication)
       throws Exception {
-    withExecutionMode(app, virtualApplication);
+    withExecutionMode(virtualApplication);
     var authentication = new ContextAuthentication();
     app.extensions(tracing).authentication(authentication);
     app.onRouteMatched(
@@ -278,7 +279,7 @@ class SelectedTracingTest {
   @CsvSource({"/missing,false", "/missing,true", "/selected,false", "/selected,true"})
   void doesNotObserveUnmatchedPathsOrMethodMismatches(String path, boolean virtualApplication)
       throws Exception {
-    withExecutionMode(app, virtualApplication);
+    withExecutionMode(virtualApplication);
     app.extensions(tracing);
     app.routes().get("/selected", (ignored17, ignored18) -> {}, e -> e.with(tracing));
 
@@ -293,7 +294,7 @@ class SelectedTracingTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void doesNotObserveARequestRejectedBeforeMatching(boolean virtualApplication) throws Exception {
-    withExecutionMode(app, virtualApplication);
+    withExecutionMode(virtualApplication);
     app.extensions(tracing);
     app.onRequestHeaders(
         (ignored19, ignored20) -> {
@@ -312,7 +313,7 @@ class SelectedTracingTest {
   @ValueSource(booleans = {false, true})
   void distinctTracingInstancesEachContributeTheirOwnSpan(boolean virtualApplication)
       throws Exception {
-    withExecutionMode(app, virtualApplication);
+    withExecutionMode(virtualApplication);
     var second = new OpenTelemetryTracing(telemetry);
     app.extensions(tracing, second);
     app.routes()
@@ -337,7 +338,7 @@ class SelectedTracingTest {
   @ValueSource(booleans = {false, true})
   void recordsTheGenerated404WhenAvailabilityRejectsAMatchedEndpoint(boolean virtualApplication)
       throws Exception {
-    withExecutionMode(app, virtualApplication);
+    withExecutionMode(virtualApplication);
     app.extensions(tracing);
     app.routes()
         .when(
@@ -364,13 +365,15 @@ class SelectedTracingTest {
     }
   }
 
-  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
-    if (virtualApplication) {
-      app.virtualThreads();
-    }
-
-    return app.onRequestHeaders(
-        (request, response) ->
-            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  private void withExecutionMode(boolean virtualApplication) throws IOException {
+    app.close();
+    var options = new Options();
+    options.setVirtualThreads(virtualApplication);
+    app =
+        new Shoostr(options)
+            .afterRequest(outcomes::add)
+            .onRequestHeaders(
+                (request, response) ->
+                    assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

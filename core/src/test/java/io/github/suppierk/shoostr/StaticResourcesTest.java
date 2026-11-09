@@ -1053,8 +1053,11 @@ class StaticResourcesTest {
       boolean tls, boolean http2, HttpClient.Version expectedVersion) throws Exception {
     Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(http2);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServer ->
                         ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
@@ -1084,8 +1087,11 @@ class StaticResourcesTest {
       boolean tls, boolean http2, HttpClient.Version expectedVersion) throws Exception {
     Files.writeString(temporaryDirectory.resolve("site.txt"), "static over transport: €\n");
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(http2);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServer ->
                         ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
@@ -1121,8 +1127,11 @@ class StaticResourcesTest {
         temporaryDirectory.resolve("site.txt"),
         FileTime.from(Instant.parse("2020-01-01T00:00:00.500Z")));
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(http2);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServer ->
                         ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
@@ -1182,8 +1191,11 @@ class StaticResourcesTest {
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
-    try (var app = new Shoostr()) {
-      app.compression();
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
+    try (var app = new Shoostr(configuredOptions)) {
+
       app.routes().staticFiles("/assets", temporaryDirectory);
 
       try (var test = TestServer.start(app)) {
@@ -1212,8 +1224,11 @@ class StaticResourcesTest {
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
-    try (var app = new Shoostr()) {
-      app.compression();
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
+    try (var app = new Shoostr(configuredOptions)) {
+
       app.routes().staticFiles("/assets", temporaryDirectory);
 
       try (var test = TestServer.start(app)) {
@@ -1244,8 +1259,11 @@ class StaticResourcesTest {
     var payload = "mounted-compressible-data-€\n".repeat(1024);
     Files.writeString(temporaryDirectory.resolve("site.txt"), payload);
 
-    try (var app = new Shoostr()) {
-      app.compression();
+    var configuredOptions = new Options();
+    configuredOptions.setCompression(true);
+
+    try (var app = new Shoostr(configuredOptions)) {
+
       app.routes().staticFiles("/assets", temporaryDirectory);
 
       try (var test = TestServer.start(app)) {
@@ -1890,10 +1908,6 @@ class StaticResourcesTest {
         HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
             .version(http2 ? HttpClient.Version.HTTP_2 : HttpClient.Version.HTTP_1_1);
-    if (http2) {
-      app.http2();
-    }
-
     if (tls) {
       var store = KeyStore.getInstance("PKCS12");
 

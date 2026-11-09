@@ -313,8 +313,15 @@ class LifecycleHooksTest {
   @Test
   void waitsForFiniteTransportAndReportsDisconnect() throws Exception {
     app.close();
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(1024);
+    configuredOptions.setMaxResponseBytes(16 * 1024 * 1024);
+    configuredOptions.setStreamBufferBytes(1024);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
     app =
-        new Shoostr(new Options(1024, 16 * 1024 * 1024, 1024, 1000, MultipartOptions.defaults()))
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServer -> {
                   var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
@@ -640,8 +647,15 @@ class LifecycleHooksTest {
     // Independent transport access is required by this test's wire/client behavior.
     try (var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
       app.close();
+      var configuredOptions = new Options();
+      configuredOptions.setMaxRequestBytes(4);
+      configuredOptions.setMaxResponseBytes(1024);
+      configuredOptions.setStreamBufferBytes(64);
+      configuredOptions.setMaxParameters(1000);
+      configuredOptions.setMultipart(MultipartOptions.defaults());
+
       app =
-          new Shoostr(new Options(4, 1024, 64, 1000, MultipartOptions.defaults()))
+          new Shoostr(configuredOptions)
               .modifyServer(
                   nativeServer -> {
                     var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];

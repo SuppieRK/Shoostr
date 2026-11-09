@@ -191,7 +191,10 @@ class StreamReadContractTest {
   @CsvSource({"AB, 200", "ABC, 413"})
   void countsOnlyConsumedRequestBytesAcrossEmptyReads(String body, int expectedStatus)
       throws Exception {
-    try (var app = new Shoostr(Options.defaults().withMaxRequestBytes(2))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(2);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/input",
@@ -284,7 +287,10 @@ class StreamReadContractTest {
 
   private Shoostr application(boolean diskBacked) {
     var multipart = new MultipartOptions(1024, 16, 1, 512, diskBacked ? 0 : 16, temporaryDirectory);
-    return new Shoostr(Options.defaults().withMultipart(multipart));
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    return new Shoostr(configuredOptions);
   }
 
   private static HttpResponse<String> post(TestServer test, boolean multipart) throws Exception {

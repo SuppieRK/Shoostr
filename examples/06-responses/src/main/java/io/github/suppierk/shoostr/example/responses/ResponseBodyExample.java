@@ -19,7 +19,12 @@ public final class ResponseBodyExample {
    * @return application owned by its caller
    */
   public static Shoostr application() {
-    var options = new Options(1024, 64, 512, 1000, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(1024);
+    options.setMaxResponseBytes(64);
+    options.setStreamBufferBytes(512);
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
     return new Shoostr(options)
         .routes(
             routes ->

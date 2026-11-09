@@ -104,13 +104,15 @@ public class WebSocketRoutesTest {
           factories.incrementAndGet();
         };
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var http = HttpClient.newHttpClient();
         var client = new HTTP2Client()) {
       app.sessions()
-          .http2()
           .authentication(authentication)
           .extensions(csrf)
           .configureExtensionsDefaults(
@@ -234,13 +236,15 @@ public class WebSocketRoutesTest {
           factories.incrementAndGet();
         };
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var http = HttpClient.newHttpClient();
         var client = new HTTP2Client()) {
-      app.http2()
-          .authentication(authentication)
+      app.authentication(authentication)
           .extensions(cors)
           .configureExtensionsDefaults(
               e -> {
@@ -379,8 +383,11 @@ public class WebSocketRoutesTest {
     var context = SSLContext.getInstance("TLS");
     context.init(null, trust.getTrustManagers(), null);
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var http =
             HttpClient.newBuilder()
@@ -388,7 +395,7 @@ public class WebSocketRoutesTest {
                 .connectTimeout(Duration.ofSeconds(3))
                 .build();
         var client = new HTTP2Client()) {
-      app.http2();
+
       if (secure) {
         app.tls(
             tls -> {
@@ -497,11 +504,14 @@ public class WebSocketRoutesTest {
     var factories = new AtomicInteger();
     var authentication = chatAuthentication();
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = new HTTP2Client()) {
-      app.http2().authentication(authentication);
+      app.authentication(authentication);
       app.routes()
           .websocket(
               "/authenticated",
@@ -538,11 +548,14 @@ public class WebSocketRoutesTest {
   void keepsOtherExtendedConnectProtocolsOnOrdinaryConnectRoutes() throws Exception {
     var factories = new AtomicInteger();
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = new HTTP2Client()) {
-      app.http2();
+
       app.routes()
           .websocket(
               "/connect",
@@ -565,11 +578,14 @@ public class WebSocketRoutesTest {
   void rejectsUnsupportedHttp2WebSocketVersionsWithoutHttp1UpgradeHeaders() throws Exception {
     var factories = new AtomicInteger();
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = new HTTP2Client()) {
-      app.http2();
+
       app.routes()
           .websocket(
               "/version",
@@ -596,11 +612,14 @@ public class WebSocketRoutesTest {
   @Test
   @Timeout(15)
   void matchesHttp2WebSocketTemplatesBeforeRunningRouteCallbacks() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = new HTTP2Client()) {
-      app.http2();
+
       app.routes()
           .websocket(
               "/rooms/{room}",
@@ -639,11 +658,14 @@ public class WebSocketRoutesTest {
     var available = new AtomicBoolean(true);
     var factories = new AtomicInteger();
 
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
     try (var app =
-            new Shoostr()
+            new Shoostr(configuredOptions)
                 .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
         var client = new HTTP2Client()) {
-      app.http2();
+
       app.routes()
           .when(
               available::get,

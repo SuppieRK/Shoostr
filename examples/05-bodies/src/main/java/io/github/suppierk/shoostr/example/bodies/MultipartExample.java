@@ -28,7 +28,10 @@ public final class MultipartExample {
             Objects.requireNonNull(temporaryDirectory).toAbsolutePath().normalize());
     // Keep large parts in this temporary directory instead of retaining every byte in memory.
     var multipart = new MultipartOptions(8192, 1024, 8, 1024, 128, storage);
-    return new Shoostr(Options.defaults().withMultipart(multipart))
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    return new Shoostr(configuredOptions)
         .modifyServer(
             nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))
         .routes(

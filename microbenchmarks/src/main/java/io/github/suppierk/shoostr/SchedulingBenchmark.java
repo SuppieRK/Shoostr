@@ -66,7 +66,7 @@ public class SchedulingBenchmark {
   /** Creates the common producer queue and framework options outside timing. */
   public SchedulingBenchmark() {
     pending = new LinkedBlockingQueue<>();
-    options = Options.defaults();
+    options = new Options();
   }
 
   /**

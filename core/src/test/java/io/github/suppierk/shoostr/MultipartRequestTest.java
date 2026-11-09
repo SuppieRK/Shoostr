@@ -342,7 +342,10 @@ class MultipartRequestTest {
                 + "--\r\n")
             .getBytes(StandardCharsets.UTF_8);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.afterRequest(ignored -> completed.complete(null));
       app.routes()
           .post(
@@ -386,7 +389,10 @@ class MultipartRequestTest {
     var multipart = new MultipartOptions(300_000, 250_000, 2, 8192, 1024, directory);
     var completed = new CompletableFuture<Void>();
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.afterRequest(ignored2 -> completed.complete(null));
       app.routes()
           .post(
@@ -502,7 +508,10 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-threshold-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 8, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/upload",
@@ -553,7 +562,10 @@ class MultipartRequestTest {
     var destination = directory.resolve("saved.bin");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/upload",
@@ -677,7 +689,10 @@ class MultipartRequestTest {
     var destination = directory.resolve("saved.txt");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/upload",
@@ -795,7 +810,10 @@ class MultipartRequestTest {
   void rejectsMultipartBodiesExceedingTheAggregateLimit() throws Exception {
     var multipart = new MultipartOptions(100, 100, 100, 8192, 16_384, null);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/upload",
@@ -850,8 +868,11 @@ class MultipartRequestTest {
   void rejectsChunkedMultipartBodiesExceedingTheAggregateLimit() throws Exception {
     var multipart = new MultipartOptions(100, 100, 100, 8192, 16_384, null);
 
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
     try (var app =
-            new Shoostr(Options.defaults().withMultipart(multipart))
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServer ->
                         ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
@@ -881,8 +902,11 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-limit-test");
     var multipart = new MultipartOptions(100, 100, 100, 8192, 0, directory);
 
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
     try (var app =
-            new Shoostr(Options.defaults().withMultipart(multipart))
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServer ->
                         ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
@@ -919,8 +943,11 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-chunked-limit-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
     try (var app =
-        new Shoostr(Options.defaults().withMultipart(multipart))
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.routes()
@@ -967,7 +994,10 @@ class MultipartRequestTest {
   void rejectsFilesExceedingThePerFileLimit() throws Exception {
     var multipart = new MultipartOptions(1000, 3, 100, 8192, 16_384, null);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/upload",
@@ -995,7 +1025,10 @@ class MultipartRequestTest {
   void rejectsMultipartRequestsExceedingThePartLimit() throws Exception {
     var multipart = new MultipartOptions(1000, 1000, 1, 8192, 16_384, null);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/upload",
@@ -1022,7 +1055,10 @@ class MultipartRequestTest {
   void rejectsMultipartPartsExceedingTheHeaderLimit() throws Exception {
     var multipart = new MultipartOptions(1000, 1000, 100, 10, 16_384, null);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/upload",
@@ -1163,7 +1199,10 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/upload",
@@ -1200,7 +1239,10 @@ class MultipartRequestTest {
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
     var firstByte = new AtomicInteger(-1);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/upload",
@@ -1240,7 +1282,10 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/upload",
@@ -1276,7 +1321,10 @@ class MultipartRequestTest {
     var storage = Files.createTempFile(temporaryDirectory, "multipart-storage-test", ".tmp");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, storage);
 
-    try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    try (var app = new Shoostr(configuredOptions)) {
       app.routes()
           .post(
               "/upload",
@@ -1307,8 +1355,11 @@ class MultipartRequestTest {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
     try (var app =
-        new Shoostr(Options.defaults().withMultipart(multipart))
+        new Shoostr(configuredOptions)
             .modifyServer(
                 nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
       app.routes()
@@ -1354,7 +1405,10 @@ class MultipartRequestTest {
       var survivorBody = fileBody("survivor.txt", "survivor".repeat(1024));
       var closingBoundary = ("\r\n--" + BOUNDARY + "--\r\n").getBytes(StandardCharsets.US_ASCII);
 
-      try (var app = new Shoostr(Options.defaults().withMultipart(multipart))) {
+      var configuredOptions = new Options();
+      configuredOptions.setMultipart(multipart);
+
+      try (var app = new Shoostr(configuredOptions)) {
         app.afterRequest(
             outcome -> {
               if ("/abandon".equals(outcome.routePattern())) {

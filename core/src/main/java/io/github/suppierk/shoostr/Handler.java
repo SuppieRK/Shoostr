@@ -2,10 +2,10 @@ package io.github.suppierk.shoostr;
 
 /**
  * Runs on the registered endpoint's executor, or the application's native Jetty executor when none
- * is selected. Default execution uses platform threads; {@link Shoostr#virtualThreads()} enables
- * virtual execution. Request and response belong to this invocation only; application-created child
- * work must not retain them. Executor selection covers the matched lifecycle, not transport
- * completion callbacks.
+ * is selected. Default execution uses platform threads; {@link Options#setVirtualThreads(Boolean)}
+ * enables virtual execution. Request and response belong to this invocation only;
+ * application-created child work must not retain them. Executor selection covers the matched
+ * lifecycle, not transport completion callbacks.
  */
 @FunctionalInterface
 public interface Handler {

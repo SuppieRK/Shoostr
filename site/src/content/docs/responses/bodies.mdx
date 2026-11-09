@@ -34,7 +34,7 @@ For an empty response with `204`, `205`, or `304`, leave the body unset: Shoostr
 The messages endpoint returns `201` with UTF-8 text, while `/bytes` sends binary data and `/latin1` uses the text helper to select ISO-8859-1.
 The DELETE handler returns `204`; the matching `GET` and `HEAD` handlers for `/message` select the same representation, with HEAD suppressing the transmitted bytes.
 
-This example limits finite responses to 64 bytes through `Options.maxResponseBytes()`.
+This example limits finite responses to 64 bytes through the `maxResponseBytes` setting.
 Finite output remains staged until the handler returns successfully, and selecting another body replaces the previous one rather than appending to it.
 Keep response access on the handler thread and within its lifetime; Shoostr completes the transfer, so application code must not close `Response`.
 See [exception recovery](../../errors/exceptions/) for output replacement before commitment and failures after it.

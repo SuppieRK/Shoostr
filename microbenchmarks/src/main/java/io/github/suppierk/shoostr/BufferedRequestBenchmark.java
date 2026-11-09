@@ -120,14 +120,13 @@ public class BufferedRequestBenchmark {
 
     textPayload = unit.repeat(bytes / unitBytes).getBytes(textCharset);
     contentLength = payload.length;
-    var defaults = Options.defaults();
-    options =
-        new Options(
-            LIMIT,
-            defaults.maxResponseBytes(),
-            defaults.streamBufferBytes(),
-            1000,
-            MultipartOptions.defaults());
+    var defaults = new Options();
+    options = new Options();
+    options.setMaxRequestBytes(LIMIT);
+    options.setMaxResponseBytes(defaults.getMaxResponseBytes());
+    options.setStreamBufferBytes(defaults.getStreamBufferBytes());
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
     var fields = HttpFields.build();
     for (int index = 0; index < headers; index++) {
       fields.add("X-Benchmark-" + index, "value-" + index);

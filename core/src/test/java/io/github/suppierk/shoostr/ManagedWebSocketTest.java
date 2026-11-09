@@ -242,10 +242,10 @@ class ManagedWebSocketTest {
   @ValueSource(booleans = {false, true})
   @Timeout(10)
   void runsTheOpeningCallbackOnTheConfiguredThreadKind(boolean virtual) throws Exception {
-    var app = new Shoostr();
-    if (virtual) {
-      app.virtualThreads();
-    }
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(virtual);
+
+    var app = new Shoostr(configuredOptions);
 
     app.routes(
         routes ->
@@ -560,10 +560,10 @@ class ManagedWebSocketTest {
   @Timeout(10)
   void separatesTheHandshakeExecutorFromConfiguredMessageThreads(boolean virtual) throws Exception {
     try (var executor = new ForkJoinPool(1)) {
-      var app = new Shoostr();
-      if (virtual) {
-        app.virtualThreads();
-      }
+      var configuredOptions = new Options();
+      configuredOptions.setVirtualThreads(virtual);
+
+      var app = new Shoostr(configuredOptions);
 
       app.routes(
           routes ->
@@ -746,10 +746,10 @@ class ManagedWebSocketTest {
   void serializesRapidMessagesUntilThePreviousCallbackReturns(boolean virtual) throws Exception {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
-    var app = new Shoostr();
-    if (virtual) {
-      app.virtualThreads();
-    }
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(virtual);
+
+    var app = new Shoostr(configuredOptions);
 
     app.routes(
         routes ->

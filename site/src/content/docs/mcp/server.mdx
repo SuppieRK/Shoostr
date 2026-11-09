@@ -85,7 +85,7 @@ application bulkhead; this is not a reserved protocol-worker guarantee.
 The caller owns the scheduler and must coordinate outstanding work before disposing it.
 See [Resilience4j bulkheads](https://resilience4j.readme.io/docs/bulkhead) for other policies.
 
-HTTP execution remains separate: this variant selects `virtualThreads()` for idle
+HTTP execution remains separate: this variant sets `options.setVirtualThreads(true)` before application construction for idle
 HTTP pumps. To borrow an endpoint executor instead, register
 `mcp.routes(group, httpExecutor)`; that executor serves GET, POST and DELETE.
 A finite pool filled with streams can delay replies and deletion before their

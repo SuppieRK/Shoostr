@@ -33,10 +33,10 @@ class NativeExecutionTest {
   void runsHandlersOnTheSelectedNativeExecutionMode(boolean virtual) throws Exception {
     var owned = new AtomicReference<ExecutorService>();
 
-    try (var app = new Shoostr()) {
-      if (virtual) {
-        app.virtualThreads().virtualThreads();
-      }
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(virtual);
+
+    try (var app = new Shoostr(configuredOptions)) {
 
       app.modifyServer(
           server -> {
@@ -59,10 +59,7 @@ class NativeExecutionTest {
             test.send(request -> request.path("/thread"), HttpResponse.BodyHandlers.ofString());
         assertEquals(200, result.statusCode());
         assertEquals("virtual=" + virtual, result.body());
-        assertThrows(IllegalStateException.class, app::virtualThreads);
       }
-
-      assertThrows(IllegalStateException.class, app::virtualThreads);
     }
 
     if (virtual) {
@@ -78,8 +75,11 @@ class NativeExecutionTest {
     var nativePool = new AtomicReference<QueuedThreadPool>();
 
     try (var borrowed = Executors.newVirtualThreadPerTaskExecutor()) {
+      var configuredOptions = new Options();
+      configuredOptions.setVirtualThreads(true);
+
       try (var app =
-          new Shoostr()
+          new Shoostr(configuredOptions)
               .modifyServer(
                   server -> {
                     var pool = (QueuedThreadPool) server.getThreadPool();
@@ -87,8 +87,7 @@ class NativeExecutionTest {
                     owned.set(
                         assertInstanceOf(ExecutorService.class, pool.getVirtualThreadsExecutor()));
                     pool.setVirtualThreadsExecutor(clear ? null : borrowed);
-                  })
-              .virtualThreads()) {
+                  })) {
         app.routes()
             .get(
                 "/thread",
@@ -119,8 +118,11 @@ class NativeExecutionTest {
   void failedNativeConfigurationClosesOnlyTheFrameworkCreatedExecutor() throws Exception {
     var owned = new AtomicReference<ExecutorService>();
 
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
     try (var borrowed = Executors.newVirtualThreadPerTaskExecutor();
-        var app = new Shoostr().virtualThreads()) {
+        var app = new Shoostr(configuredOptions)) {
       app.modifyServer(
           server -> {
             var pool = (QueuedThreadPool) server.getThreadPool();
@@ -166,11 +168,12 @@ class NativeExecutionTest {
       throws Exception {
     var payload = "x".repeat(131_072);
 
-    try (var app = new Shoostr().http2();
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(virtual);
+    configuredOptions.setHttp2(true);
+
+    try (var app = new Shoostr(configuredOptions);
         var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_2).build()) {
-      if (virtual) {
-        app.virtualThreads();
-      }
 
       app.modifyServer(server -> ((QueuedThreadPool) server.getThreadPool()).setMaxThreads(32));
       app.routes()
@@ -212,8 +215,10 @@ class NativeExecutionTest {
   }
 
   private static Shoostr application(AtomicReference<ExecutorService> owned) {
-    return new Shoostr()
-        .virtualThreads()
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
+    return new Shoostr(configuredOptions)
         .modifyServer(
             server ->
                 owned.set(

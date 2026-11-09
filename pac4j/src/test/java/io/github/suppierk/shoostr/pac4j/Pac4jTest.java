@@ -532,8 +532,15 @@ class Pac4jTest {
     provider.setSupportPostRequest(true);
     provider.setSupportGetRequest(false);
 
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(16);
+    configuredOptions.setMaxResponseBytes(1024);
+    configuredOptions.setStreamBufferBytes(1024);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+
     try (var app =
-            new Shoostr(new Options(16, 1024, 1024, 1000, MultipartOptions.defaults()))
+            new Shoostr(configuredOptions)
                 .modifyServer(
                     nativeServer -> {
                       var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];

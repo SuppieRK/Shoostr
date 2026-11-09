@@ -40,7 +40,7 @@ class LocalRequestObservationTest {
           };
         };
 
-    try (var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+    try (var app = withExecutionMode(new Options(), virtualApplication)) {
       app.routes()
           .path(
               "/api",
@@ -67,7 +67,7 @@ class LocalRequestObservationTest {
     var completed = new CompletableFuture<RequestOutcome>();
     var current = new ThreadLocal<String>();
 
-    try (var app = withExecutionMode(new Shoostr(), virtualApplication)) {
+    try (var app = withExecutionMode(new Options(), virtualApplication)) {
       app.routes()
           .get(
               "/ok",
@@ -142,13 +142,11 @@ class LocalRequestObservationTest {
     }
   }
 
-  private static Shoostr withExecutionMode(Shoostr app, boolean virtualApplication) {
-    if (virtualApplication) {
-      app.virtualThreads();
-    }
-
-    return app.onRequestHeaders(
-        (request, response) ->
-            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

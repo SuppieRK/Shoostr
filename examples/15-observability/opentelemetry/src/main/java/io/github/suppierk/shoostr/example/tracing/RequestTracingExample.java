@@ -1,5 +1,6 @@
 package io.github.suppierk.shoostr.example.tracing;
 
+import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.opentelemetry.OpenTelemetryTracing;
 import io.opentelemetry.api.OpenTelemetry;
@@ -20,10 +21,23 @@ public final class RequestTracingExample {
    * @return unstarted application
    */
   public static Shoostr application(OpenTelemetry telemetry, ExecutorService workers) {
+    return application(telemetry, workers, new Options());
+  }
+
+  /**
+   * Creates an unstarted application using caller-supplied serving settings.
+   *
+   * @param telemetry caller-owned telemetry configuration
+   * @param workers caller-owned asynchronous endpoint executor
+   * @param options serving settings captured during application construction
+   * @return application owned by its caller
+   */
+  public static Shoostr application(
+      OpenTelemetry telemetry, ExecutorService workers, Options options) {
     Objects.requireNonNull(workers);
     var tracing = new OpenTelemetryTracing(telemetry);
     var tracer = telemetry.getTracer("example.items");
-    return new Shoostr()
+    return new Shoostr(options)
         // Borrow the caller's SDK; installing tracing does not enable it on every endpoint.
         .extensions(tracing)
         .routes(

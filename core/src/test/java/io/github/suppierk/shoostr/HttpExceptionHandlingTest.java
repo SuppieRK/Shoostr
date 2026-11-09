@@ -142,7 +142,12 @@ class HttpExceptionHandlingTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void omitsReasonPhraseWhenItExceedsTheResponseLimit(boolean httpFailure) throws Exception {
-    var options = new Options(16, 1, 8, 1000, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(16);
+    options.setMaxResponseBytes(1);
+    options.setStreamBufferBytes(8);
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
 
     try (var app =
         new Shoostr(options)
@@ -241,7 +246,12 @@ class HttpExceptionHandlingTest {
 
   @Test
   void handlersCanCatchBodyLimitErrorsThroughThePublicHierarchy() throws Exception {
-    var options = new Options(4, 1024, 8, 1000, MultipartOptions.defaults());
+    var options = new Options();
+    options.setMaxRequestBytes(4);
+    options.setMaxResponseBytes(1024);
+    options.setStreamBufferBytes(8);
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
 
     try (var app =
             new Shoostr(options)
