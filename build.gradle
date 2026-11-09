@@ -6,7 +6,7 @@ buildscript {
 			because 'Align Jib build dependencies with the patched Jackson version used by the project.'
 		}
 		constraints {
-			add('classpath', 'com.google.guava:guava:33.7.2-jre') {
+			add('classpath', 'com.google.guava:guava:33.8.0-jre') {
 				because 'Fix CVE-2026-102554 in the transitive Jib build dependency.'
 			}
 			add('classpath', 'org.apache.commons:commons-lang3:3.21.0') {
@@ -19,8 +19,8 @@ buildscript {
 plugins {
 	id 'java'
 	id 'checkstyle'
-	id 'com.diffplug.spotless' version '8.10.4'
-	id 'net.ltgt.errorprone' version '5.1.1' apply false
+	id 'com.diffplug.spotless' version '8.11.0'
+	id 'net.ltgt.errorprone' version '5.2.0' apply false
 	id 'net.ltgt.nullaway' version '3.3.0' apply false
 	id 'org.sonarqube' version '7.5.0.8588'
 	id 'info.solidsoft.pitest' version '1.19.0' apply false
@@ -51,7 +51,7 @@ allprojects {
 	}
 	dependencies {
 		constraints {
-			add('checkstyle', 'com.google.guava:guava:33.7.2-jre') {
+			add('checkstyle', 'com.google.guava:guava:33.8.0-jre') {
 				because 'Fix CVE-2026-102554 in Checkstyle tooling.'
 			}
 		}
@@ -59,7 +59,7 @@ allprojects {
 		testImplementation platform('org.junit:junit-bom:6.1.3')
 		testImplementation 'org.junit.jupiter:junit-jupiter'
 		testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-		checkstyle 'com.puppycrawl.tools:checkstyle:14.3.0'
+		checkstyle 'com.puppycrawl.tools:checkstyle:14.4.0'
 		checkstyle files(rootProject.file('buildSrc/build/libs/buildSrc.jar'))
 	}
 }
@@ -132,11 +132,11 @@ def checkstyleBuildLogicTests = tasks.register('checkstyleBuildLogicTests', Chec
 sourceSets.test.java.srcDirs = ['config/checkstyle/tests']
 dependencies {
 	constraints {
-		add('testImplementation', 'com.google.guava:guava:33.7.2-jre') {
+		add('testImplementation', 'com.google.guava:guava:33.8.0-jre') {
 			because 'Fix CVE-2026-102554 in the Checkstyle policy-test dependency.'
 		}
 	}
-	testImplementation 'com.puppycrawl.tools:checkstyle:14.3.0'
+	testImplementation 'com.puppycrawl.tools:checkstyle:14.4.0'
 	testImplementation files('buildSrc/build/libs/buildSrc.jar')
 }
 tasks.named('check') {

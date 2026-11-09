@@ -16,12 +16,12 @@ version = '2026.11.5.0'
 
 dependencies {
 	api shoostrDependency('core', '2026.11.5.0')
-	api platform('tools.jackson:jackson-bom:3.2.3')
+	api platform('tools.jackson:jackson-bom:3.2.4')
 	api 'io.swagger.core.v3:swagger-core:3.0.0'
 	// Explicit patched dependencies also protect consumers using only the published Maven POM.
-	api 'tools.jackson.core:jackson-core:3.2.3'
-	api 'tools.jackson.core:jackson-databind:3.2.3'
-	swaggerUiAssets 'org.webjars:swagger-ui:5.34.0'
+	api 'tools.jackson.core:jackson-core:3.2.4'
+	api 'tools.jackson.core:jackson-databind:3.2.4'
+	swaggerUiAssets 'org.webjars:swagger-ui:5.34.1'
 	testImplementation project(':test')
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 }
