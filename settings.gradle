@@ -1,4 +1,4 @@
-plugins { id 'io.github.ben-manes.versions' version '0.66.0' }
+plugins { id 'io.github.ben-manes.versions' version '0.67.0' }
 
 rootProject.name = 'Shoostr'
 include 'http', 'core', 'test', 'pac4j', 'benchmarks', 'microbenchmarks'
