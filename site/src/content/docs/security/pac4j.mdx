@@ -14,7 +14,7 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 pac4j is a security library whose clients validate credentials and produce profiles. A direct client reads credentials from the current request, rather than redirecting a browser through a login callback flow.
 
-Shoostr's `Pac4j` adapter is the authenticator registered with the application. The built-in `Extensions` configuration supplied to a route or group selects that same installed instance. This task configures the native client and authorizer before protecting the selected endpoints.
+Shoostr's `Pac4j` adapter is an authenticator. The built-in `Lifecycle` configuration supplied to a route or group selects that instance with `withExtension(...)` and establishes shared setup automatically. This task configures the native client and authorizer before protecting the selected endpoints.
 
 Choose the pac4j adapter with a configured `DirectClient` for credentials carried by each request. A browser redirect-and-callback login flow needs a different integration approach.
 
@@ -28,7 +28,7 @@ Configure the client's authenticator before constructing `Pac4j` and do not muta
 
 The adapter extracts and validates credentials, requires an unexpired profile, publishes its principal, and then calls the configured authorizer.
 Missing or rejected credentials receive the configured `401` challenge, while a verified profile denied by the authorizer receives `403`.
-Install the adapter and select that same instance on the protected group, following the [route authentication](../authentication/) selection rules.
+Select the adapter instance on the protected group, following the [route authentication](../authentication/) selection rules.
 
 ## Example
 

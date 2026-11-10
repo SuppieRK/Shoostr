@@ -9,6 +9,7 @@ import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.Closeable;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -22,20 +23,24 @@ class RequestMetricsExampleTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var registry = new SimpleMeterRegistry();
 
-    try (var app = RequestMetricsExample.application(registry).afterRequest(outcomes::offer);
-        var test = TestServer.start(app)) {
-      assertEquals(200, test.send(request -> request.path("/api/items/41")).statusCode());
-      assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
-      assertEquals(200, test.send(request -> request.path("/api/items/42")).statusCode());
-      assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
-      var timer =
-          registry
-              .get("http.server.requests")
-              .tags("method", "GET", "route", "/api/items/{id}", "status", "200", "error", "none")
-              .timer();
-      assertEquals(2, timer.count());
-      assertEquals(0, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
-      assertEquals(1, registry.find("http.server.requests").timers().size());
+    try {
+      var app = RequestMetricsExample.application(registry).afterRequest(outcomes::offer);
+
+      try (Closeable appCleanup = app::close;
+          var test = TestServer.start(app)) {
+        assertEquals(200, test.send(request -> request.path("/api/items/41")).statusCode());
+        assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
+        assertEquals(200, test.send(request -> request.path("/api/items/42")).statusCode());
+        assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
+        var timer =
+            registry
+                .get("http.server.requests")
+                .tags("method", "GET", "route", "/api/items/{id}", "status", "200", "error", "none")
+                .timer();
+        assertEquals(2, timer.count());
+        assertEquals(0, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
+        assertEquals(1, registry.find("http.server.requests").timers().size());
+      }
     } finally {
       registry.close();
     }
@@ -47,6 +52,7 @@ class RequestMetricsExampleTest {
     var registry = new SimpleMeterRegistry();
 
     try {
+
       try (var test =
           TestServer.start(
               RequestMetricsExample.application(registry).afterRequest(outcomes::offer))) {
@@ -70,33 +76,37 @@ class RequestMetricsExampleTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var registry = new SimpleMeterRegistry();
 
-    try (var clients = Executors.newVirtualThreadPerTaskExecutor();
-        var app =
-            RequestMetricsExample.application(registry)
-                .beforeClose(release::countDown)
-                .beforeRouteHandler(
-                    (ignored, ignored2) -> {
-                      entered.countDown();
-                      if (!release.await(5, TimeUnit.SECONDS)) {
-                        throw new IllegalStateException("request was not released");
-                      }
-                    })
-                .afterRequest(outcomes::offer);
-        var test = TestServer.start(app)) {
-      var response = clients.submit(() -> test.send(request -> request.path("/api/items/42")));
+    try (var clients = Executors.newVirtualThreadPerTaskExecutor()) {
+      var app =
+          RequestMetricsExample.application(registry)
+              .beforeClose(release::countDown)
+              .beforeRouteHandler(
+                  (ignored, ignored2) -> {
+                    entered.countDown();
+                    if (!release.await(5, TimeUnit.SECONDS)) {
+                      throw new IllegalStateException("request was not released");
+                    }
+                  })
+              .afterRequest(outcomes::offer);
 
-      try {
-        assertTrue(entered.await(5, TimeUnit.SECONDS));
-        assertEquals(1, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
-        assertNull(registry.find("http.server.requests").timer());
-      } finally {
-        release.countDown();
+      try (Closeable appCleanup1 = app::close;
+          var test = TestServer.start(app)) {
+        var response = clients.submit(() -> test.send(request -> request.path("/api/items/42")));
+
+        try {
+          assertTrue(entered.await(5, TimeUnit.SECONDS));
+          assertEquals(
+              1, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
+          assertNull(registry.find("http.server.requests").timer());
+        } finally {
+          release.countDown();
+        }
+
+        assertEquals(200, response.get(5, TimeUnit.SECONDS).statusCode());
+        assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
+        assertEquals(0, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
+        assertEquals(1, registry.get("http.server.requests").timer().count());
       }
-
-      assertEquals(200, response.get(5, TimeUnit.SECONDS).statusCode());
-      assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
-      assertEquals(0, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
-      assertEquals(1, registry.get("http.server.requests").timer().count());
     } finally {
       registry.close();
     }
@@ -107,27 +117,31 @@ class RequestMetricsExampleTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var registry = new SimpleMeterRegistry();
 
-    try (var app =
-            RequestMetricsExample.application(registry)
-                .beforeRouteHandler(
-                    (ignored3, ignored4) -> {
-                      throw new IllegalStateException("private failure");
-                    })
-                .afterRequest(outcomes::offer);
-        var test = TestServer.start(app)) {
-      assertEquals(500, test.send(request -> request.path("/api/items/42")).statusCode());
-      assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
-      assertEquals(
-          1,
-          registry
-              .get("http.server.requests")
-              .tags("route", "/api/items/{id}", "status", "500", "error", "application")
-              .timer()
-              .count());
-      assertEquals(0, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
-      assertTrue(
-          registry.getMeters().stream()
-              .noneMatch(meter -> meter.getId().toString().contains("private")));
+    try {
+      var app =
+          RequestMetricsExample.application(registry)
+              .beforeRouteHandler(
+                  (ignored3, ignored4) -> {
+                    throw new IllegalStateException("private failure");
+                  })
+              .afterRequest(outcomes::offer);
+
+      try (Closeable appCleanup2 = app::close;
+          var test = TestServer.start(app)) {
+        assertEquals(500, test.send(request -> request.path("/api/items/42")).statusCode());
+        assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
+        assertEquals(
+            1,
+            registry
+                .get("http.server.requests")
+                .tags("route", "/api/items/{id}", "status", "500", "error", "application")
+                .timer()
+                .count());
+        assertEquals(0, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
+        assertTrue(
+            registry.getMeters().stream()
+                .noneMatch(meter -> meter.getId().toString().contains("private")));
+      }
     } finally {
       registry.close();
     }

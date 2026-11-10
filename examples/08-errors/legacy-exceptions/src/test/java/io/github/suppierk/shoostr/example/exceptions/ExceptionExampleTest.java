@@ -13,6 +13,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class ExceptionExampleTest {
   @Test
   void recoversFromAMissingIntegerInsideTheHandler() throws Exception {
+
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(request -> request.path("/number"), HttpResponse.BodyHandlers.ofString());
@@ -28,6 +29,7 @@ class ExceptionExampleTest {
 
   @Test
   void keepsAThrownNotFoundSeparateFromTheGeneratedStatusRenderer() throws Exception {
+
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(
@@ -44,6 +46,7 @@ class ExceptionExampleTest {
 
   @Test
   void rendersARouterGeneratedNotFoundWithTheStatusHandler() throws Exception {
+
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(request -> request.path("/unknown"), HttpResponse.BodyHandlers.ofString());
@@ -59,6 +62,7 @@ class ExceptionExampleTest {
 
   @Test
   void inheritsTheRootRendererWhenTheGroupDoesNotReplaceIt() throws Exception {
+
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(
@@ -75,6 +79,7 @@ class ExceptionExampleTest {
 
   @Test
   void usesTheGroupOverrideInsteadOfTheInheritedRenderer() throws Exception {
+
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(request -> request.path("/group/input"), HttpResponse.BodyHandlers.ofString());
@@ -90,6 +95,7 @@ class ExceptionExampleTest {
 
   @Test
   void rendersARootScopedInputFailure() throws Exception {
+
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(
@@ -106,6 +112,7 @@ class ExceptionExampleTest {
 
   @Test
   void rendersAnApplicationFailureWithoutExposingStagedOutputOrDiagnostics() throws Exception {
+
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(request -> request.path("/app-failure"), HttpResponse.BodyHandlers.ofString());
@@ -122,6 +129,7 @@ class ExceptionExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"abc", "2147483648"})
   void recoversFromAnInvalidIntegerInsideTheHandler(String value) throws Exception {
+
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(
@@ -139,6 +147,7 @@ class ExceptionExampleTest {
 
   @Test
   void returnsAValidIntegerWithoutInvokingAnErrorRenderer() throws Exception {
+
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(
@@ -155,6 +164,7 @@ class ExceptionExampleTest {
 
   @Test
   void rendersAnHttpExceptionWithoutExposingItsDiagnostic() throws Exception {
+
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(

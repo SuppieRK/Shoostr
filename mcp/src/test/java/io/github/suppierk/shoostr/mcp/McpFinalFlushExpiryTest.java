@@ -55,7 +55,7 @@ class McpFinalFlushExpiryTest {
                 (ignored, ignored2) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
+    app.routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
     app.afterRouteHandler(
         (request, ignored3) -> {
           if (request.header("X-Expiring").isPresent()) {

@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Timeout;
 class ClientStateTest {
   @Test
   void keepsCookiesAcrossRequestsWithinOneFixture() throws Exception {
+
     try (var test = TestServer.start(cookieApp())) {
       test.send(request -> request.path("/set"));
       assertEquals(
@@ -21,14 +22,17 @@ class ClientStateTest {
 
   @Test
   void doesNotShareCookiesWithAnotherFixtureOnTheSameHost() throws Exception {
-    try (var first = TestServer.start(cookieApp());
-        var second = TestServer.start(cookieApp())) {
-      first.send(request -> request.path("/set"));
-      assertEquals(
-          "absent",
-          second
-              .send(request -> request.path("/read"), HttpResponse.BodyHandlers.ofString())
-              .body());
+
+    try (var first = TestServer.start(cookieApp())) {
+
+      try (var second = TestServer.start(cookieApp())) {
+        first.send(request -> request.path("/set"));
+        assertEquals(
+            "absent",
+            second
+                .send(request -> request.path("/read"), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 

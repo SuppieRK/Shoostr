@@ -51,39 +51,37 @@ class McpCompletedDeadlineTest {
                 (ignored, ignored2) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp)
-        .routes(
-            routes -> {
-              routes.path("/mcp", group -> mcp.routes(group, selected));
-              routes.get(
-                  "/occupy",
-                  selected,
-                  (ignored3, response) -> {
-                    var target = Objects.requireNonNull(expiry.get()).plusMillis(100);
-                    var started = System.nanoTime();
-                    var initial = Duration.between(Instant.now(), target);
-                    await("the reused worker reaches the verified expiry without interruption")
-                        .pollInSameThread()
-                        .pollDelay(Duration.ZERO)
-                        .pollInterval(Duration.ofMillis(10))
-                        .atMost(Duration.ofSeconds(5))
-                        .until(
-                            () -> {
-                              if (Thread.interrupted()) {
-                                throw new InterruptedException("The reused worker was interrupted");
-                              }
+    app.routes(
+        routes -> {
+          routes.path("/mcp", group -> mcp.routes(group, selected));
+          routes.get(
+              "/occupy",
+              selected,
+              (ignored3, response) -> {
+                var target = Objects.requireNonNull(expiry.get()).plusMillis(100);
+                var started = System.nanoTime();
+                var initial = Duration.between(Instant.now(), target);
+                await("the reused worker reaches the verified expiry without interruption")
+                    .pollInSameThread()
+                    .pollDelay(Duration.ZERO)
+                    .pollInterval(Duration.ofMillis(10))
+                    .atMost(Duration.ofSeconds(5))
+                    .until(
+                        () -> {
+                          if (Thread.interrupted()) {
+                            throw new InterruptedException("The reused worker was interrupted");
+                          }
 
-                              return Duration.ofNanos(System.nanoTime() - started)
-                                          .compareTo(initial)
-                                      >= 0
-                                  && !Instant.now().isBefore(target);
-                            });
-                    response.text(
-                        (Thread.currentThread() == owner.get())
-                            + ":"
-                            + Thread.currentThread().isInterrupted());
-                  });
-            });
+                          return Duration.ofNanos(System.nanoTime() - started).compareTo(initial)
+                                  >= 0
+                              && !Instant.now().isBefore(target);
+                        });
+                response.text(
+                    (Thread.currentThread() == owner.get())
+                        + ":"
+                        + Thread.currentThread().isInterrupted());
+              });
+        });
 
     try (selected;
         var test = TestServer.start(app)) {

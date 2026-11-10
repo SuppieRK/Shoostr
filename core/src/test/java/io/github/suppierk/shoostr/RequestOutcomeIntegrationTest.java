@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
@@ -31,44 +32,47 @@ class RequestOutcomeIntegrationTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var privateId = "private-id-" + "x".repeat(1024);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.afterRequest(outcomes::add);
-      app.routes()
-          .websocket(
-              "/socket/{id}", (ignored, ignored2) -> new Session.Listener.AutoDemanding() {});
-      app.start();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .connectTimeout(Duration.ofSeconds(3))
-              .header("Authorization", "Bearer private-token-" + "y".repeat(1024))
-              .header("Cookie", "session=private-cookie-" + "z".repeat(1024))
-              .buildAsync(
-                  URI.create(
-                      "ws://127.0.0.1:"
-                          + app.port()
-                          + "/socket/"
-                          + privateId
-                          + "?secret=private-query"),
-                  new WebSocket.Listener() {})
-              .get(3, TimeUnit.SECONDS);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      try {
-        var outcome = outcomes.poll(3, TimeUnit.SECONDS);
-        assertNotNull(outcome);
-        assertEquals("GET", outcome.method());
-        assertEquals("/socket/{id}", outcome.routePattern());
-        assertEquals(101, outcome.statusCode());
-        assertTrue(outcome.durationNanos() > 0);
-        assertNull(outcome.applicationFailure());
-        assertNull(outcome.transportFailure());
-      } finally {
-        socket.abort();
+      try (Closeable appCleanup = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.afterRequest(outcomes::add);
+        app.routes()
+            .websocket(
+                "/socket/{id}", (ignored, ignored2) -> new Session.Listener.AutoDemanding() {});
+        app.start();
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .header("Authorization", "Bearer private-token-" + "y".repeat(1024))
+                .header("Cookie", "session=private-cookie-" + "z".repeat(1024))
+                .buildAsync(
+                    URI.create(
+                        "ws://127.0.0.1:"
+                            + app.port()
+                            + "/socket/"
+                            + privateId
+                            + "?secret=private-query"),
+                    new WebSocket.Listener() {})
+                .get(3, TimeUnit.SECONDS);
+
+        try {
+          var outcome = outcomes.poll(3, TimeUnit.SECONDS);
+          assertNotNull(outcome);
+          assertEquals("GET", outcome.method());
+          assertEquals("/socket/{id}", outcome.routePattern());
+          assertEquals(101, outcome.statusCode());
+          assertTrue(outcome.durationNanos() > 0);
+          assertNull(outcome.applicationFailure());
+          assertNull(outcome.transportFailure());
+        } finally {
+          socket.abort();
+        }
       }
     }
 
@@ -82,56 +86,59 @@ class RequestOutcomeIntegrationTest {
     var factoryCalls = new AtomicInteger();
     var privateId = "private-id-" + "x".repeat(1024);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.afterRequest(outcomes::add);
-      app.beforeRouteHandler(
-          (ignored3, ignored4) -> {
-            throw new ForbiddenException("private failure details");
-          });
-      app.routes()
-          .websocket(
-              "/socket/{id}",
-              (ignored5, ignored6) -> {
-                factoryCalls.incrementAndGet();
-                return new Session.Listener.AutoDemanding() {};
-              });
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      var rejection =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  client
-                      .newWebSocketBuilder()
-                      .connectTimeout(Duration.ofSeconds(3))
-                      .header("Authorization", "Bearer private-token-" + "y".repeat(1024))
-                      .header("Cookie", "session=private-cookie-" + "z".repeat(1024))
-                      .buildAsync(
-                          URI.create(
-                              "ws://127.0.0.1:"
-                                  + app.port()
-                                  + "/socket/"
-                                  + privateId
-                                  + "?secret=private-query"),
-                          new WebSocket.Listener() {})
-                      .get(3, TimeUnit.SECONDS));
-      var handshake = assertInstanceOf(WebSocketHandshakeException.class, rejection.getCause());
-      assertEquals(403, handshake.getResponse().statusCode());
-      assertEquals(0, factoryCalls.get());
+      try (Closeable appCleanup1 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.afterRequest(outcomes::add);
+        app.beforeRouteHandler(
+            (ignored3, ignored4) -> {
+              throw new ForbiddenException("private failure details");
+            });
+        app.routes()
+            .websocket(
+                "/socket/{id}",
+                (ignored5, ignored6) -> {
+                  factoryCalls.incrementAndGet();
+                  return new Session.Listener.AutoDemanding() {};
+                });
+        app.start();
 
-      var outcome = outcomes.poll(3, TimeUnit.SECONDS);
-      assertNotNull(outcome);
-      assertEquals("GET", outcome.method());
-      assertEquals("/socket/{id}", outcome.routePattern());
-      assertEquals(403, outcome.statusCode());
-      assertTrue(outcome.durationNanos() > 0);
-      assertInstanceOf(ForbiddenException.class, outcome.applicationFailure());
-      assertNull(outcome.transportFailure());
+        var rejection =
+            assertThrows(
+                ExecutionException.class,
+                () ->
+                    client
+                        .newWebSocketBuilder()
+                        .connectTimeout(Duration.ofSeconds(3))
+                        .header("Authorization", "Bearer private-token-" + "y".repeat(1024))
+                        .header("Cookie", "session=private-cookie-" + "z".repeat(1024))
+                        .buildAsync(
+                            URI.create(
+                                "ws://127.0.0.1:"
+                                    + app.port()
+                                    + "/socket/"
+                                    + privateId
+                                    + "?secret=private-query"),
+                            new WebSocket.Listener() {})
+                        .get(3, TimeUnit.SECONDS));
+        var handshake = assertInstanceOf(WebSocketHandshakeException.class, rejection.getCause());
+        assertEquals(403, handshake.getResponse().statusCode());
+        assertEquals(0, factoryCalls.get());
+
+        var outcome = outcomes.poll(3, TimeUnit.SECONDS);
+        assertNotNull(outcome);
+        assertEquals("GET", outcome.method());
+        assertEquals("/socket/{id}", outcome.routePattern());
+        assertEquals(403, outcome.statusCode());
+        assertTrue(outcome.durationNanos() > 0);
+        assertInstanceOf(ForbiddenException.class, outcome.applicationFailure());
+        assertNull(outcome.transportFailure());
+      }
     }
 
     assertTrue(outcomes.isEmpty());

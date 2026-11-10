@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -42,47 +43,54 @@ class Http1FramingTest {
     var authenticationCalls = new AtomicInteger();
     var protectedCalls = new AtomicInteger();
 
-    try (var app = app()) {
-      // Jetty 12.1.14's default RFC9110 policy rejects both ambiguous framing forms.
-      app.onRequestHeaders((ignored, ignored2) -> admissions.incrementAndGet());
-      protectedRoute(app, authenticationCalls, protectedCalls);
-      app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
-      app.routes().get("/healthy", (ignored3, response) -> response.text("healthy"));
-      app.start();
+    {
+      var app = app();
 
-      try (var socket = connect(app.port())) {
-        var input = HttpTester.from(socket.getInputStream());
-        write(
-            socket,
-            "POST /body HTTP/1.1\r\nHost: localhost\r\n"
-                + headers
-                + "\r\n0\r\n\r\n"
-                + PROTECTED_REQUEST);
-        var rejected = receive(input);
-        assertTrue(rejected.getStatus() >= 400 && rejected.getStatus() < 500);
-        assertNull(HttpTester.parseResponse(input));
-        assertTrue(input.isEOF());
-        assertEquals(0, admissions.get());
-        assertEquals(0, authenticationCalls.get());
-        assertEquals(0, protectedCalls.get());
+      try (Closeable appCleanup = app::close) {
+        // Jetty 12.1.14's default RFC9110 policy rejects both ambiguous framing forms.
+        app.onRequestHeaders((ignored, ignored2) -> admissions.incrementAndGet());
+        protectedRoute(app, authenticationCalls, protectedCalls);
+        app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
+        app.routes().get("/healthy", (ignored3, response) -> response.text("healthy"));
+        app.start();
+
+        try (var socket = connect(app.port())) {
+          var input = HttpTester.from(socket.getInputStream());
+          write(
+              socket,
+              "POST /body HTTP/1.1\r\nHost: localhost\r\n"
+                  + headers
+                  + "\r\n0\r\n\r\n"
+                  + PROTECTED_REQUEST);
+          var rejected = receive(input);
+          assertTrue(rejected.getStatus() >= 400 && rejected.getStatus() < 500);
+          assertNull(HttpTester.parseResponse(input));
+          assertTrue(input.isEOF());
+          assertEquals(0, admissions.get());
+          assertEquals(0, authenticationCalls.get());
+          assertEquals(0, protectedCalls.get());
+        }
+
+        assertHealthy(app);
       }
-
-      assertHealthy(app);
     }
   }
 
   @Test
   void acceptsAChunkedBodyAndReusesTheSameHttp1Connection() throws Exception {
-    try (var app = app()) {
-      app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
-      app.routes().get("/healthy", (ignored4, response) -> response.text("healthy"));
-      app.start();
+    {
+      var app = app();
 
-      try (var socket = connect(app.port())) {
-        var input = HttpTester.from(socket.getInputStream());
-        write(
-            socket,
-            """
+      try (Closeable appCleanup1 = app::close) {
+        app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
+        app.routes().get("/healthy", (ignored4, response) -> response.text("healthy"));
+        app.start();
+
+        try (var socket = connect(app.port())) {
+          var input = HttpTester.from(socket.getInputStream());
+          write(
+              socket,
+              """
             POST /body HTTP/1.1\r
             Host: localhost\r
             Transfer-Encoding: chunked\r
@@ -92,14 +100,15 @@ class Http1FramingTest {
             0\r
             \r
             """);
-        var body = receive(input);
-        assertEquals(200, body.getStatus());
-        assertEquals("body", body.getContent());
+          var body = receive(input);
+          assertEquals(200, body.getStatus());
+          assertEquals("body", body.getContent());
 
-        write(socket, "GET /healthy HTTP/1.1\r\nHost: localhost\r\n\r\n");
-        var healthy = receive(input);
-        assertEquals(200, healthy.getStatus());
-        assertEquals("healthy", healthy.getContent());
+          write(socket, "GET /healthy HTTP/1.1\r\nHost: localhost\r\n\r\n");
+          var healthy = receive(input);
+          assertEquals(200, healthy.getStatus());
+          assertEquals("healthy", healthy.getContent());
+        }
       }
     }
   }
@@ -112,28 +121,31 @@ class Http1FramingTest {
     var protectedCalls = new AtomicInteger();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
-    try (var app = app()) {
-      app.afterRequest(outcomes::add);
-      protectedRoute(app, authenticationCalls, protectedCalls);
-      app.exception(
-          AuthenticationRequiredException.class,
-          (ignored5, ignored6, response) -> response.text("denied"));
-      app.routes()
-          .get(
-              "/slow",
-              (ignored7, response) -> {
-                entered.countDown();
-                assertTrue(release.await(3, TimeUnit.SECONDS));
-                response.text("first");
-              });
-      app.start();
+    {
+      var app = app();
 
-      try (var socket = connect(app.port())) {
-        try {
-          var input = HttpTester.from(socket.getInputStream());
-          write(
-              socket,
-              """
+      try (Closeable appCleanup2 = app::close) {
+        app.afterRequest(outcomes::add);
+        protectedRoute(app, authenticationCalls, protectedCalls);
+        app.exception(
+            AuthenticationRequiredException.class,
+            (ignored5, ignored6, response) -> response.text("denied"));
+        app.routes()
+            .get(
+                "/slow",
+                (ignored7, response) -> {
+                  entered.countDown();
+                  assertTrue(release.await(3, TimeUnit.SECONDS));
+                  response.text("first");
+                });
+        app.start();
+
+        try (var socket = connect(app.port())) {
+          try {
+            var input = HttpTester.from(socket.getInputStream());
+            write(
+                socket,
+                """
                   GET /slow HTTP/1.1\r
                   Host: localhost\r
                   \r
@@ -141,27 +153,28 @@ class Http1FramingTest {
                   Host: localhost\r
                   \r
                   """
-                  + PROTECTED_REQUEST);
-          assertTrue(entered.await(3, TimeUnit.SECONDS));
-          release.countDown();
+                    + PROTECTED_REQUEST);
+            assertTrue(entered.await(3, TimeUnit.SECONDS));
+            release.countDown();
 
-          var first = receive(input);
-          assertEquals(200, first.getStatus());
-          assertEquals("first", first.getContent());
-          var denied = receive(input);
-          assertEquals(401, denied.getStatus());
-          assertEquals("denied", denied.getContent());
-          var permitted = receive(input);
-          assertEquals(200, permitted.getStatus());
-          assertEquals("permitted", permitted.getContent());
-          assertEquals(200, completed(outcomes).statusCode());
-          assertEquals(401, completed(outcomes).statusCode());
-          assertEquals(200, completed(outcomes).statusCode());
-          assertNull(outcomes.poll());
-          assertEquals(2, authenticationCalls.get());
-          assertEquals(1, protectedCalls.get());
-        } finally {
-          release.countDown();
+            var first = receive(input);
+            assertEquals(200, first.getStatus());
+            assertEquals("first", first.getContent());
+            var denied = receive(input);
+            assertEquals(401, denied.getStatus());
+            assertEquals("denied", denied.getContent());
+            var permitted = receive(input);
+            assertEquals(200, permitted.getStatus());
+            assertEquals("permitted", permitted.getContent());
+            assertEquals(200, completed(outcomes).statusCode());
+            assertEquals(401, completed(outcomes).statusCode());
+            assertEquals(200, completed(outcomes).statusCode());
+            assertNull(outcomes.poll());
+            assertEquals(2, authenticationCalls.get());
+            assertEquals(1, protectedCalls.get());
+          } finally {
+            release.countDown();
+          }
         }
       }
     }
@@ -177,29 +190,32 @@ class Http1FramingTest {
     var failures = new LinkedBlockingQueue<IOException>();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
-    try (var app = app()) {
-      app.onRequestHeaders((ignored8, ignored9) -> admissions.incrementAndGet());
-      app.afterRequest(outcomes::add);
-      protectedRoute(app, authenticationCalls, protectedCalls);
-      app.routes()
-          .post(
-              "/body",
-              (request, ignored10) -> {
-                var source = request.input();
-                assertEquals('a', source.read());
-                initialRead.countDown();
-                var failure = assertThrows(IOException.class, source::read);
-                failures.add(failure);
-                throw failure;
-              });
-      app.routes().get("/healthy", (ignored11, response) -> response.text("healthy"));
-      app.start();
+    {
+      var app = app();
 
-      try (var socket = connect(app.port())) {
-        var input = HttpTester.from(socket.getInputStream());
-        write(
-            socket,
-            """
+      try (Closeable appCleanup3 = app::close) {
+        app.onRequestHeaders((ignored8, ignored9) -> admissions.incrementAndGet());
+        app.afterRequest(outcomes::add);
+        protectedRoute(app, authenticationCalls, protectedCalls);
+        app.routes()
+            .post(
+                "/body",
+                (request, ignored10) -> {
+                  var source = request.input();
+                  assertEquals('a', source.read());
+                  initialRead.countDown();
+                  var failure = assertThrows(IOException.class, source::read);
+                  failures.add(failure);
+                  throw failure;
+                });
+        app.routes().get("/healthy", (ignored11, response) -> response.text("healthy"));
+        app.start();
+
+        try (var socket = connect(app.port())) {
+          var input = HttpTester.from(socket.getInputStream());
+          write(
+              socket,
+              """
             POST /body HTTP/1.1\r
             Host: localhost\r
             Transfer-Encoding: chunked\r
@@ -207,23 +223,24 @@ class Http1FramingTest {
             1\r
             a\r
             """);
-        assertTrue(initialRead.await(3, TimeUnit.SECONDS));
-        write(socket, "Z\r\nmalformed\r\n0\r\n\r\n" + PROTECTED_REQUEST);
+          assertTrue(initialRead.await(3, TimeUnit.SECONDS));
+          write(socket, "Z\r\nmalformed\r\n0\r\n\r\n" + PROTECTED_REQUEST);
 
-        var rejected = receive(input);
-        assertTrue(rejected.getStatus() >= 400 && rejected.getStatus() < 600);
-        assertNull(HttpTester.parseResponse(input));
-        assertTrue(input.isEOF());
-        var failure = failures.poll(3, TimeUnit.SECONDS);
-        assertNotNull(failure);
-        assertSame(failure, completed(outcomes).applicationFailure());
-        assertNull(outcomes.poll());
-        assertEquals(1, admissions.get());
-        assertEquals(0, authenticationCalls.get());
-        assertEquals(0, protectedCalls.get());
+          var rejected = receive(input);
+          assertTrue(rejected.getStatus() >= 400 && rejected.getStatus() < 600);
+          assertNull(HttpTester.parseResponse(input));
+          assertTrue(input.isEOF());
+          var failure = failures.poll(3, TimeUnit.SECONDS);
+          assertNotNull(failure);
+          assertSame(failure, completed(outcomes).applicationFailure());
+          assertNull(outcomes.poll());
+          assertEquals(1, admissions.get());
+          assertEquals(0, authenticationCalls.get());
+          assertEquals(0, protectedCalls.get());
+        }
+
+        assertHealthy(app);
       }
-
-      assertHealthy(app);
     }
   }
 
@@ -257,7 +274,7 @@ class Http1FramingTest {
             }
           }
         };
-    app.authentication(authentication);
+
     app.routes()
         .path(
             "/protected",
@@ -268,7 +285,7 @@ class Http1FramingTest {
                       protectedCalls.incrementAndGet();
                       response.text("permitted");
                     }),
-            extensions -> extensions.with(authentication));
+            extensions -> extensions.withExtension(authentication));
   }
 
   private static Socket connect(int port) throws IOException {

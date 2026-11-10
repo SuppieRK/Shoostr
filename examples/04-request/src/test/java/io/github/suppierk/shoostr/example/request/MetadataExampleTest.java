@@ -18,6 +18,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 class MetadataExampleTest {
   @Test
   void ignoresUntrustedForwardingAndIdentityHeaders() throws Exception {
+
     try (var test = TestServer.start(MetadataExample.application())) {
       var response =
           test.send(
@@ -47,6 +48,7 @@ class MetadataExampleTest {
   @ParameterizedTest
   @CsvSource({"/inspect/Ada, (missing)", "/inspect/Ada?bad=%FF, bad=%FF"})
   void readsRawQueriesWithoutDecodingThem(String path, String query) throws Exception {
+
     try (var test = TestServer.start(MetadataExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
       assertEquals(200, response.statusCode());
@@ -58,6 +60,7 @@ class MetadataExampleTest {
 
   @Test
   void distinguishesLogicalAuthorityAndSchemeFromThePhysicalConnection() throws Exception {
+
     try (var test = TestServer.start(MetadataExample.application());
         var socket =
             new Socket(InetAddress.getAllByName("127.0.0.1")[0], test.baseUri().getPort())) {
@@ -90,6 +93,7 @@ class MetadataExampleTest {
 
   @Test
   void preservesRawUrlSpellingAlongsideDecodedCaptures() throws Exception {
+
     try (var test =
         TestServer.start(
             MetadataExample.application(), client -> client.version(HttpClient.Version.HTTP_1_1))) {

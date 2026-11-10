@@ -82,7 +82,7 @@ class McpPostExpiryTest {
                             .build())
                     .build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.afterRequest(
         outcome -> {
           if (outcome.applicationFailure() != null && "POST".equals(outcome.method())) {

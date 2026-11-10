@@ -1,11 +1,12 @@
 package io.github.suppierk.shoostr.opentelemetry;
 
 import io.github.suppierk.shoostr.ApplicationCallbacks;
-import io.github.suppierk.shoostr.Extension;
-import io.github.suppierk.shoostr.Extensions;
+import io.github.suppierk.shoostr.ApplicationExtension;
+import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestObservation;
 import io.github.suppierk.shoostr.RequestOutcome;
+import io.github.suppierk.shoostr.RouteExtension;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.SpanKind;
@@ -20,11 +21,13 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Optional SERVER spans with application-owned SDK, exporters and propagation configuration.
- * Equality compares the telemetry provider, tracer and registration flags through their own
- * equality contracts. Configuration and installation changes can change equality and hash codes.
+ * Equality compares the telemetry provider and tracer through their own equality contracts;
+ * activation does not change equality or hash codes.
  */
 public final class OpenTelemetryTracing
-    implements Extension<OpenTelemetryTracing>, Function<Request, RequestObservation> {
+    implements ApplicationExtension<OpenTelemetryTracing>,
+        RouteExtension<OpenTelemetryTracing>,
+        Function<Request, RequestObservation> {
   private static final TextMapGetter<Request> HEADERS =
       new TextMapGetter<>() {
         /**
@@ -51,8 +54,6 @@ public final class OpenTelemetryTracing
 
   private final OpenTelemetry telemetry;
   private final Tracer tracer;
-  private boolean allRequests;
-  private boolean installed;
 
   /**
    * Uses an explicit provider without installing globals or owning its lifetime.
@@ -65,7 +66,7 @@ public final class OpenTelemetryTracing
   }
 
   /**
-   * Compares all stored collaborators and registration state.
+   * Compares all stored collaborators.
    *
    * @param other candidate provider
    * @return whether both providers have equal stored state
@@ -74,19 +75,17 @@ public final class OpenTelemetryTracing
   public boolean equals(@Nullable Object other) {
     return other instanceof OpenTelemetryTracing provider
         && telemetry.equals(provider.telemetry)
-        && tracer.equals(provider.tracer)
-        && allRequests == provider.allRequests
-        && installed == provider.installed;
+        && tracer.equals(provider.tracer);
   }
 
   /**
-   * Hashes the same collaborators and registration state used by equality.
+   * Hashes the same collaborators used by equality.
    *
    * @return hash of the current provider state
    */
   @Override
   public int hashCode() {
-    return Objects.hash(telemetry, tracer, allRequests, installed);
+    return Objects.hash(telemetry, tracer);
   }
 
   /**
@@ -98,11 +97,8 @@ public final class OpenTelemetryTracing
    */
   @Override
   public synchronized OpenTelemetryTracing configure(
-      Extensions endpoint, @Nullable OpenTelemetryTracing inherited) {
-    endpoint.requireInstalled(this);
-    if (!allRequests) {
-      endpoint.lifecycle().observe(this);
-    }
+      Lifecycle endpoint, @Nullable OpenTelemetryTracing inherited) {
+    endpoint.observe(this);
 
     return this;
   }
@@ -194,21 +190,6 @@ public final class OpenTelemetryTracing
   }
 
   /**
-   * Enables app-wide instrumentation explicitly before extension installation.
-   *
-   * @return this extension
-   * @throws IllegalStateException if already installed
-   */
-  public synchronized OpenTelemetryTracing allRequests() {
-    if (installed) {
-      throw new IllegalStateException("Configure instrumentation before installation");
-    }
-
-    allRequests = true;
-    return this;
-  }
-
-  /**
    * Installs configured observation without owning borrowed dependencies. Selective mode carries
    * admission context across every request handoff, including unselected endpoints, without
    * creating SERVER spans there.
@@ -217,12 +198,7 @@ public final class OpenTelemetryTracing
    */
   @Override
   public synchronized void install(ApplicationCallbacks callbacks) {
-    installed = true;
-    if (allRequests) {
-      callbacks.observe(this);
-    } else {
-      callbacks.observe(ignored -> admissionContext());
-    }
+    callbacks.observe(ignored -> admissionContext());
   }
 
   /**

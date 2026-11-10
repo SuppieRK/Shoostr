@@ -43,9 +43,8 @@ public final class StreamBulkheadExample {
                           output.send("ready");
                           output.send(next.call());
                         },
-                        extensions ->
-                            extensions
-                                .lifecycle()
+                        lifecycle ->
+                            lifecycle
                                 .observe(
                                     request -> {
                                       var acquired = new AtomicBoolean();

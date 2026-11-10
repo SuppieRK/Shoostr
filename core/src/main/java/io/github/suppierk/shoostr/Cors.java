@@ -22,7 +22,8 @@ import org.jspecify.annotations.Nullable;
  *
  * @param policy immutable cross-origin permissions
  */
-public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
+public record Cors(CorsPolicy policy)
+    implements ApplicationExtension<Cors.Configuration>, RouteExtension<Cors.Configuration> {
   private static final Map<String, String> VARIATION =
       Map.of(HttpHeaders.VARY.value(), HttpHeaders.ORIGIN.value());
   static final Map<String, String> OPTIONS_VARIATION =
@@ -55,13 +56,13 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
 
   /** {@inheritDoc} */
   @Override
-  public Configuration configure(Extensions endpoint, @Nullable Configuration inherited) {
+  public Configuration configure(Lifecycle endpoint, @Nullable Configuration inherited) {
     return new Configuration(endpoint, this, inherited);
   }
 
   /** Scope-local complete policy replacement for one installed owner. */
   public static final class Configuration {
-    private final Extensions endpoint;
+    private final Lifecycle endpoint;
     private final Cors cors;
     private CorsPolicy policy;
 
@@ -72,7 +73,7 @@ public record Cors(CorsPolicy policy) implements Extension<Cors.Configuration> {
      * @param cors installed owner
      * @param inherited enclosing configuration, or null
      */
-    private Configuration(Extensions endpoint, Cors cors, @Nullable Configuration inherited) {
+    private Configuration(Lifecycle endpoint, Cors cors, @Nullable Configuration inherited) {
       this.endpoint = Objects.requireNonNull(endpoint);
       this.cors = Objects.requireNonNull(cors);
       policy = inherited == null ? cors.policy : inherited.policy;

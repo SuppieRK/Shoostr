@@ -28,42 +28,46 @@ class OfficialConformanceTest {
     var log = output.resolve("runner.log");
     var port = Integer.parseInt(System.getProperty("conformance.port"));
 
-    try (var test = TestServer.startOnPort(McpExample.application(port), port)) {
-      assertEquals(200, test.send(request -> request.path("/health")).statusCode());
-      var command =
-          new ArrayList<>(
-              List.of(
-                  "node",
-                  cli.toString(),
-                  "server",
-                  "--url",
-                  test.baseUri().resolve("/mcp").toString(),
-                  "--timeout",
-                  "30000",
-                  "--output-dir",
-                  output.toString()));
-      if ("requirements".equals(selection)) {
-        command.addAll(List.of("--requirements", "2025-11-25"));
-      } else {
-        command.addAll(List.of("--spec-version", "2025-11-25", "--scenario", selection));
-      }
+    {
+      var test = TestServer.startOnPort(McpExample.application(port), port);
 
-      var process =
-          new ProcessBuilder(command)
-              .directory(directory.toFile())
-              .redirectErrorStream(true)
-              .redirectOutput(log.toFile())
-              .start();
+      try (test) {
+        assertEquals(200, test.send(request -> request.path("/health")).statusCode());
+        var command =
+            new ArrayList<>(
+                List.of(
+                    "node",
+                    cli.toString(),
+                    "server",
+                    "--url",
+                    test.baseUri().resolve("/mcp").toString(),
+                    "--timeout",
+                    "30000",
+                    "--output-dir",
+                    output.toString()));
+        if ("requirements".equals(selection)) {
+          command.addAll(List.of("--requirements", "2025-11-25"));
+        } else {
+          command.addAll(List.of("--spec-version", "2025-11-25", "--scenario", selection));
+        }
 
-      try {
-        assertTrue(process.waitFor(8, TimeUnit.MINUTES), "Conformance timed out; see " + log);
-        assertEquals(0, process.exitValue(), () -> "Conformance failed; see " + log);
-      } finally {
-        if (process.isAlive()) {
-          process.destroy();
-          if (!process.waitFor(5, TimeUnit.SECONDS)) {
-            process.destroyForcibly();
-            assertTrue(process.waitFor(5, TimeUnit.SECONDS), "Cannot stop conformance process");
+        var process =
+            new ProcessBuilder(command)
+                .directory(directory.toFile())
+                .redirectErrorStream(true)
+                .redirectOutput(log.toFile())
+                .start();
+
+        try {
+          assertTrue(process.waitFor(8, TimeUnit.MINUTES), "Conformance timed out; see " + log);
+          assertEquals(0, process.exitValue(), () -> "Conformance failed; see " + log);
+        } finally {
+          if (process.isAlive()) {
+            process.destroy();
+            if (!process.waitFor(5, TimeUnit.SECONDS)) {
+              process.destroyForcibly();
+              assertTrue(process.waitFor(5, TimeUnit.SECONDS), "Cannot stop conformance process");
+            }
           }
         }
       }

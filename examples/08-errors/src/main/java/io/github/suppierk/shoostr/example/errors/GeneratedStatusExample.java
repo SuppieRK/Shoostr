@@ -52,10 +52,8 @@ public final class GeneratedStatusExample {
                                         "/daily",
                                         (ignored7, response) -> response.text("Report ready"))),
                         configuration ->
-                            configuration
-                                .lifecycle()
-                                .status(
-                                    HttpStatusCodes.NOT_FOUND.value(),
-                                    (ignored8, response) -> response.text("Report unavailable"))));
+                            configuration.status(
+                                HttpStatusCodes.NOT_FOUND.value(),
+                                (ignored8, response) -> response.text("Report unavailable"))));
   }
 }

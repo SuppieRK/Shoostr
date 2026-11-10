@@ -8,7 +8,6 @@ import io.github.suppierk.shoostr.http.HttpStatusCodes;
 import io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException;
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import io.github.suppierk.shoostr.http.exceptions.HttpException;
-import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.util.ArrayList;
@@ -61,7 +60,7 @@ import org.jspecify.annotations.Nullable;
  * their application lifecycle; those dependencies are part of its responsibility.
  */
 @SuppressWarnings("java:S6539")
-public final class Shoostr implements Closeable {
+public final class Shoostr {
   private static final int DEFAULT_WEBSOCKET_MAX_OUTGOING_FRAMES = 32;
   private static final String WEBSOCKET_PROTOCOL = "websocket";
 
@@ -69,7 +68,7 @@ public final class Shoostr implements Closeable {
   private final Set<ApplicationHandler.MatchedTask> pendingMatches;
   private boolean stoppingMatches;
   private final Routes routes;
-  private final List<Extension<?>> extensions;
+  private final List<Extension> extensions;
   private @Nullable Codec codec;
   private boolean installing;
   private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> exceptionHandlers;
@@ -119,7 +118,7 @@ public final class Shoostr implements Closeable {
   public Shoostr(Options options) {
     this.options = new Options(Objects.requireNonNull(options));
     pendingMatches = new HashSet<>();
-    routes = new Routes();
+    routes = new Routes(this::ensureExtension);
     extensions = new ArrayList<>();
     exceptionHandlers = new HashMap<>();
     statusHandlers = new HashMap<>();
@@ -231,150 +230,89 @@ public final class Shoostr implements Closeable {
   }
 
   /**
-   * Installs ordinary capabilities eagerly, in written order. Instance identity determines
-   * selection; multiple instances of one type may coexist. Bare installation does not activate
-   * route behavior. A bad batch is rejected before setup; provider failure closes the application.
+   * Activates inherited endpoint defaults and eagerly establishes shared infrastructure. Configure
+   * application extensions before registering routes. Selection is by exact instance; another
+   * instance of the same type remains independent. Unmatched requests are not selected.
    *
-   * @param first required first capability
-   * @param additional additional capabilities; null means none
+   * @param extension application capability
    * @return this application
-   * @throws NullPointerException if first or an additional capability is null
-   * @throws IllegalArgumentException if a capability is duplicated or is an authenticator
-   * @throws IllegalStateException if startup, closure or provider installation has begun, or a
-   *     provider rejects ownership
+   * @throws IllegalArgumentException if this instance was already activated on the application
+   * @throws IllegalStateException if route registration, startup or closure has begun
    */
-  public synchronized Shoostr extensions(
-      Extension<?> first, Extension<?> @Nullable ... additional) {
-    requireExtensionRegistration();
-    var batch = extensionBatch(first, additional);
-    for (var extension : batch) {
-      if (extension instanceof AuthenticationExtension) {
-        throw new IllegalArgumentException("Install authentication through app.authentication");
-      }
-    }
-    installExtensions(batch);
+  public Shoostr withExtension(ApplicationExtension<?> extension) {
+    return withExtension(extension, ignored -> {});
+  }
+
+  /**
+   * Activates typed application defaults before routes, without an installation prerequisite.
+   * Provider setup is application-owned; supplied SDKs and registries remain caller-owned.
+   *
+   * @param extension application capability
+   * @param configuration typed inherited defaults
+   * @param <C> provider configuration
+   * @return this application
+   * @throws IllegalArgumentException if this instance was already activated on the application
+   * @throws IllegalStateException if route registration, startup or closure has begun
+   */
+  public <C> Shoostr withExtension(
+      ApplicationExtension<C> extension, Consumer<? super C> configuration) {
+    routes.activate(Objects.requireNonNull(extension), Objects.requireNonNull(configuration));
     return this;
   }
 
   /**
-   * Configures inherited extension defaults once before route or group registration.
+   * Completes infrastructure setup once before a selected instance can configure a scope. The
+   * application monitor serializes claims and setup; scoped configuration runs after return.
    *
-   * @param configuration defaults applied to independently configured endpoint scopes
-   * @return this application
-   * @throws IllegalStateException if defaults or route registration have already begun
-   * @throws NullPointerException if the configuration is null
+   * @param extension exact selected instance
+   * @throws IllegalStateException if startup, closure or another setup callback has begun
    */
-  public Shoostr configureExtensionsDefaults(Consumer<Extensions> configuration) {
-    routes.configureDefaults(configuration);
-    return this;
-  }
-
-  /**
-   * Installs one managed identity source. Routes/groups explicitly require it using
-   * extensions.with(instance); installation itself leaves routes public.
-   *
-   * @param extension identity source
-   * @return this application
-   * @throws NullPointerException if extension is null
-   * @throws IllegalArgumentException if the instance is already installed
-   * @throws IllegalStateException if installation is closed or the provider rejects ownership
-   */
-  public synchronized Shoostr authentication(AuthenticationExtension extension) {
-    return authentication(extension, (AuthenticationExtension[]) null);
-  }
-
-  /**
-   * Installs managed identity sources eagerly in written order. Each route/group explicitly
-   * requires an installed instance; installation does not activate authentication. A bad batch is
-   * rejected before setup, and provider failure closes the application. Each bound endpoint may
-   * require only one distinct identity source; conflicting requirements fail during registration.
-   *
-   * @param first required first identity source
-   * @param additional additional identity sources; null means none
-   * @return this application
-   * @throws NullPointerException if first or an additional identity source is null
-   * @throws IllegalArgumentException if an instance is duplicated or already installed
-   * @throws IllegalStateException if startup, closure or provider installation has begun, or a
-   *     provider rejects ownership
-   */
-  public synchronized Shoostr authentication(
-      AuthenticationExtension first, AuthenticationExtension @Nullable ... additional) {
-    requireExtensionRegistration();
-    installExtensions(extensionBatch(first, additional));
-    return this;
-  }
-
-  /**
-   * Validates non-null instances without invoking provider code.
-   *
-   * @param first required first capability
-   * @param additional optional additional capabilities
-   * @return validated batch in written order
-   * @throws NullPointerException if any supplied instance is null
-   */
-  private static List<Extension<?>> extensionBatch(
-      Extension<?> first, Extension<?> @Nullable [] additional) {
-    var batch = new ArrayList<Extension<?>>();
-    batch.add(Objects.requireNonNull(first));
-    if (additional != null) {
-      for (var extension : additional) {
-        batch.add(Objects.requireNonNull(extension));
-      }
-    }
-
-    return batch;
-  }
-
-  /**
-   * Rejects extension registration after startup/closure or during provider setup.
-   *
-   * @throws IllegalStateException if application setup is closed or already running
-   */
-  private void requireExtensionRegistration() {
+  private synchronized void ensureExtension(Extension extension) {
     if (started || closed || installing) {
-      throw new IllegalStateException("Install extensions before starting or closing the app");
+      throw new IllegalStateException("Configure extensions before starting or closing the app");
     }
+
+    if (routes.installed(extension)) {
+      return;
+    }
+
+    installExtension(extension);
   }
 
   /**
-   * Claims validated instances before publishing the batch and eagerly installing providers.
+   * Claims one instance, completes shared setup and publishes its infrastructure callbacks.
    *
-   * @param batch non-null capabilities in written order
+   * @param extension exact capability to install
    * @throws IllegalStateException if setup closes the application
    */
   @SuppressWarnings("java:S1181") // Provider setup must clean resources even on Error.
-  private void installExtensions(List<Extension<?>> batch) {
-    routes.validateInstallation(batch);
+  private void installExtension(Extension extension) {
+    routes.validateInstallation(extension);
     installing = true;
 
     try {
-      for (var extension : batch) {
-        claimExtension(extension);
+      claimExtension(extension);
+      var callbacks = new ApplicationCallbacks();
+
+      try {
+        extension.install(callbacks);
+      } finally {
+        callbacks.freeze();
       }
-      routes.install(batch);
 
-      for (var extension : batch) {
-        var callbacks = new ApplicationCallbacks();
-
-        try {
-          extension.install(callbacks);
-        } finally {
-          callbacks.freeze();
-        }
-
-        if (closed) {
-          throw new IllegalStateException("Provider setup closed the application");
-        }
-
-        requestHeaderHandlers.addAll(callbacks.headers);
-        routeMatchedHandlers.addAll(callbacks.matched);
-        beforeHandlers.addAll(callbacks.before);
-        afterRouteHandlers.addAll(callbacks.after);
-        beforeFlushHandlers.addAll(callbacks.beforeFlush);
-        afterFlushHandlers.addAll(callbacks.afterFlush);
-        afterHandlers.addAll(callbacks.completed);
-        observationFactories.addAll(callbacks.observations);
+      if (closed) {
+        throw new IllegalStateException("Provider setup closed the application");
       }
+
+      requestHeaderHandlers.addAll(callbacks.headers);
+      routeMatchedHandlers.addAll(callbacks.matched);
+      beforeHandlers.addAll(callbacks.before);
+      afterRouteHandlers.addAll(callbacks.after);
+      beforeFlushHandlers.addAll(callbacks.beforeFlush);
+      afterFlushHandlers.addAll(callbacks.afterFlush);
+      afterHandlers.addAll(callbacks.completed);
+      observationFactories.addAll(callbacks.observations);
+      routes.install(extension);
     } catch (RuntimeException | Error failure) {
       Throwable primary = failure;
 
@@ -407,7 +345,7 @@ public final class Shoostr implements Closeable {
    * @param extension capability to claim
    * @throws IllegalStateException if the claim closes the application
    */
-  private void claimExtension(Extension<?> extension) {
+  private void claimExtension(Extension extension) {
     extension.claimOwnership();
     if (closed) {
       var failure = new IllegalStateException("Provider ownership claim closed the application");
@@ -798,7 +736,6 @@ public final class Shoostr implements Closeable {
    * @throws IOException if resources cannot be closed without an Error
    * @throws Error if a shutdown callback or cleanup fails fatally
    */
-  @Override
   @SuppressWarnings("java:S1181") // Retain fatal failures while completing the shutdown phases.
   public synchronized void close() throws IOException {
     if (closed) {
@@ -1114,7 +1051,7 @@ public final class Shoostr implements Closeable {
    * @return accumulated shutdown failure, or null
    */
   private static @Nullable IOException signalExtensionBeforeStop(
-      Extension<?> extension, @Nullable IOException failure) {
+      Extension extension, @Nullable IOException failure) {
     try {
       extension.beforeStop();
       return failure;
@@ -1154,7 +1091,7 @@ public final class Shoostr implements Closeable {
    * @return accumulated shutdown failure, or null
    */
   private static @Nullable IOException closeExtension(
-      Extension<?> extension, @Nullable IOException failure) {
+      Extension extension, @Nullable IOException failure) {
     try {
       extension.close();
       return failure;
@@ -1214,7 +1151,7 @@ public final class Shoostr implements Closeable {
    */
   private @Nullable IOException closeRouteResources(@Nullable IOException failure) {
     try {
-      routes.close();
+      routes.disposeRegistration();
       return failure;
     } catch (RuntimeException closeFailure) {
       return appendCloseFailure(failure, "Could not close route resources", closeFailure);

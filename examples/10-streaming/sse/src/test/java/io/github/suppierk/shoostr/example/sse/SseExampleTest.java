@@ -13,6 +13,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class SseExampleTest {
   @Test
   void sendsTheSuppliedReportAsAResultEvent() throws Exception {
+
     try (var test = TestServer.start(SseExample.application(() -> "Ready"))) {
       var response =
           test.send(
@@ -30,6 +31,7 @@ class SseExampleTest {
 
   @Test
   void sendsASafeFailureEventAfterStreamingHasStarted() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
@@ -51,6 +53,7 @@ class SseExampleTest {
 
   @Test
   void handlesAFailureBeforeStreamingAsAnHttpError() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
@@ -71,6 +74,7 @@ class SseExampleTest {
 
   @Test
   void stopsReconnectionAfterTheFinalReplayEntry() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
@@ -87,6 +91,7 @@ class SseExampleTest {
 
   @Test
   void resumesAfterTheClientsLastEventId() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
@@ -108,6 +113,7 @@ class SseExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"abc", "-1", "4", "2147483648"})
   void rejectsInvalidReplayCursorsBeforeStartingAStream(String cursor) throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
@@ -129,6 +135,7 @@ class SseExampleTest {
 
   @Test
   void replaysAllThreeEntriesWithoutALastEventId() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
@@ -146,6 +153,7 @@ class SseExampleTest {
 
   @Test
   void sendsTheNamedProgressFeedWithItsMetadata() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
@@ -163,6 +171,7 @@ class SseExampleTest {
 
   @Test
   void completesAfterSendingBothUnnamedEvents() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response =
           test.send(
@@ -181,6 +190,7 @@ class SseExampleTest {
 
   @Test
   void servesThePlainTextEndpointList() throws Exception {
+
     try (var test = TestServer.start(SseExample.application())) {
       var response = test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString());
       assertAll(

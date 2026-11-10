@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.pac4j.Pac4j;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.Optional;
 import java.util.Set;
@@ -52,44 +53,46 @@ class EndpointAuthenticationTest {
               return Optional.of(credentials);
             });
 
-    try (var workers = executor(executorType, owned);
-        var app = new Shoostr()) {
-      var auth =
-          new Pac4j(
-              client,
-              "Basic",
-              (ignored2, ignored3, ignored4) -> {
-                authorized.complete(Thread.currentThread());
-                return false;
-              });
-      app.authentication(auth)
-          .routes()
-          .get(
-              "/me",
-              workers,
-              (ignored5, response) -> {
-                invoked.set(true);
-                response.text("wrong");
-              },
-              extensions -> extensions.with(auth));
-      var credentials =
-          "wrong".equals(rejection) ? "Basic YWxpY2U6d3Jvbmc=" : "Basic YWxpY2U6Y29ycmVjdA==";
+    try (var workers = executor(executorType, owned)) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            status,
-            test.send(request -> request.path("/me").header("Authorization", credentials))
-                .statusCode());
-        assertFalse(invoked.get());
-        assertTrue(owned.contains(authenticated.get(5, TimeUnit.SECONDS)));
-        if (status == 403) {
-          assertSame(authenticated.get(5, TimeUnit.SECONDS), authorized.get(5, TimeUnit.SECONDS));
-        } else {
-          assertFalse(authorized.isDone());
+      try (Closeable appCleanup = app::close) {
+        var auth =
+            new Pac4j(
+                client,
+                "Basic",
+                (ignored2, ignored3, ignored4) -> {
+                  authorized.complete(Thread.currentThread());
+                  return false;
+                });
+        app.routes()
+            .get(
+                "/me",
+                workers,
+                (ignored5, response) -> {
+                  invoked.set(true);
+                  response.text("wrong");
+                },
+                extensions -> extensions.withExtension(auth));
+        var credentials =
+            "wrong".equals(rejection) ? "Basic YWxpY2U6d3Jvbmc=" : "Basic YWxpY2U6Y29ycmVjdA==";
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              status,
+              test.send(request -> request.path("/me").header("Authorization", credentials))
+                  .statusCode());
+          assertFalse(invoked.get());
+          assertTrue(owned.contains(authenticated.get(5, TimeUnit.SECONDS)));
+          if (status == 403) {
+            assertSame(authenticated.get(5, TimeUnit.SECONDS), authorized.get(5, TimeUnit.SECONDS));
+          } else {
+            assertFalse(authorized.isDone());
+          }
         }
-      }
 
-      assertFalse(workers.isShutdown());
+        assertFalse(workers.isShutdown());
+      }
     }
   }
 
@@ -116,42 +119,44 @@ class EndpointAuthenticationTest {
               return Optional.of(credentials);
             });
 
-    try (var workers = executor(executorType, owned);
-        var app = new Shoostr()) {
-      var auth =
-          new Pac4j(
-              client,
-              "Basic",
-              (ignored7, ignored8, ignored9) -> {
-                authorized.complete(Thread.currentThread());
-                return true;
-              });
-      app.authentication(auth)
-          .routes()
-          .get(
-              "/me",
-              workers,
-              (request, response) -> {
-                handled.complete(Thread.currentThread());
-                response.text(request.principal().orElseThrow().getName());
-              },
-              extensions -> extensions.with(auth));
+    try (var workers = executor(executorType, owned)) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request.path("/me").header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("alice", result.body());
-        var thread = authenticated.get(5, TimeUnit.SECONDS);
-        assertTrue(owned.contains(thread));
-        assertSame(thread, authorized.get(5, TimeUnit.SECONDS));
-        assertSame(thread, handled.get(5, TimeUnit.SECONDS));
+      try (Closeable appCleanup1 = app::close) {
+        var auth =
+            new Pac4j(
+                client,
+                "Basic",
+                (ignored7, ignored8, ignored9) -> {
+                  authorized.complete(Thread.currentThread());
+                  return true;
+                });
+        app.routes()
+            .get(
+                "/me",
+                workers,
+                (request, response) -> {
+                  handled.complete(Thread.currentThread());
+                  response.text(request.principal().orElseThrow().getName());
+                },
+                extensions -> extensions.withExtension(auth));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request ->
+                      request.path("/me").header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("alice", result.body());
+          var thread = authenticated.get(5, TimeUnit.SECONDS);
+          assertTrue(owned.contains(thread));
+          assertSame(thread, authorized.get(5, TimeUnit.SECONDS));
+          assertSame(thread, handled.get(5, TimeUnit.SECONDS));
+        }
+
+        assertFalse(workers.isShutdown());
       }
-
-      assertFalse(workers.isShutdown());
     }
   }
 

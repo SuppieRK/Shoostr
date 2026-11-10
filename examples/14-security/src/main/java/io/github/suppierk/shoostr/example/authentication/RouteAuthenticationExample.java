@@ -48,8 +48,6 @@ public final class RouteAuthenticationExample {
         };
 
     return new Shoostr()
-        // Installation leaves /public open; the /private group explicitly selects authentication.
-        .authentication(authentication)
         .routes(
             routes ->
                 routes
@@ -74,6 +72,6 @@ public final class RouteAuthenticationExample {
 
                                       response.text("admin operation allowed");
                                     }),
-                        extensions -> extensions.with(authentication)));
+                        lifecycle -> lifecycle.withExtension(authentication)));
   }
 }

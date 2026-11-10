@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.Closeable;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
@@ -28,67 +29,67 @@ class EndpointUpgradeTest {
     var selected = new CompletableFuture<Thread>();
 
     try (var workers =
-            Executors.newFixedThreadPool(
-                1,
-                task -> {
-                  var thread = Thread.ofPlatform().unstarted(task);
-                  owned.add(thread);
-                  return thread;
-                });
-        var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      var configuredThread = new CompletableFuture<Thread>();
-      BiFunction<Request, ServerUpgradeResponse, Session.Listener> factory =
-          (ignored, ignored2) -> {
-            selected.complete(Thread.currentThread());
-            return new Session.Listener.AutoDemanding() {};
-          };
-      Consumer<Extensions> configuration =
-          extensions ->
-              extensions
-                  .lifecycle()
-                  .beforeRouteHandler(
-                      (ignored3, ignored4) -> configuredThread.complete(Thread.currentThread()));
-      if (pathless) {
-        app.routes()
-            .path(
-                "/socket",
-                routes -> {
-                  if (configured) {
-                    routes.websocket(workers, factory, configuration);
-                  } else {
-                    routes.websocket(workers, factory);
-                  }
-                });
-      } else if (configured) {
-        app.routes().websocket("/socket", workers, factory, configuration);
-      } else {
-        app.routes().websocket("/socket", workers, factory);
-      }
+        Executors.newFixedThreadPool(
+            1,
+            task -> {
+              var thread = Thread.ofPlatform().unstarted(task);
+              owned.add(thread);
+              return thread;
+            })) {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      app.start();
+      try (Closeable appCleanup = app::close) {
+        var configuredThread = new CompletableFuture<Thread>();
+        BiFunction<Request, ServerUpgradeResponse, Session.Listener> factory =
+            (ignored, ignored2) -> {
+              selected.complete(Thread.currentThread());
+              return new Session.Listener.AutoDemanding() {};
+            };
+        Consumer<Lifecycle> configuration =
+            extensions ->
+                extensions.beforeRouteHandler(
+                    (ignored3, ignored4) -> configuredThread.complete(Thread.currentThread()));
+        if (pathless) {
+          app.routes()
+              .path(
+                  "/socket",
+                  routes -> {
+                    if (configured) {
+                      routes.websocket(workers, factory, configuration);
+                    } else {
+                      routes.websocket(workers, factory);
+                    }
+                  });
+        } else if (configured) {
+          app.routes().websocket("/socket", workers, factory, configuration);
+        } else {
+          app.routes().websocket("/socket", workers, factory);
+        }
 
-      try (var client = HttpClient.newHttpClient()) {
-        var socket =
-            client
-                .newWebSocketBuilder()
-                .buildAsync(
-                    URI.create("ws://127.0.0.1:" + app.port() + "/socket"),
-                    new WebSocket.Listener() {})
-                .get(5, TimeUnit.SECONDS);
+        app.start();
 
-        try {
-          var thread = selected.get(5, TimeUnit.SECONDS);
-          assertTrue(owned.contains(thread));
-          assertEquals(configured, configuredThread.isDone());
-          if (configured) {
-            assertSame(thread, configuredThread.get(5, TimeUnit.SECONDS));
+        try (var client = HttpClient.newHttpClient()) {
+          var socket =
+              client
+                  .newWebSocketBuilder()
+                  .buildAsync(
+                      URI.create("ws://127.0.0.1:" + app.port() + "/socket"),
+                      new WebSocket.Listener() {})
+                  .get(5, TimeUnit.SECONDS);
+
+          try {
+            var thread = selected.get(5, TimeUnit.SECONDS);
+            assertTrue(owned.contains(thread));
+            assertEquals(configured, configuredThread.isDone());
+            if (configured) {
+              assertSame(thread, configuredThread.get(5, TimeUnit.SECONDS));
+            }
+          } finally {
+            socket.abort();
           }
-        } finally {
-          socket.abort();
         }
       }
     }

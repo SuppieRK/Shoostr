@@ -38,7 +38,7 @@ class McpProtocolInputTest {
                 (ignored2, ignored3) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var response =
@@ -75,7 +75,7 @@ class McpProtocolInputTest {
                 (ignored5, ignored6) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
     var json =
         """
         {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
@@ -117,7 +117,7 @@ class McpProtocolInputTest {
                 (ignored8, ignored9) -> {}),
             transport -> McpServer.sync(transport).serverInfo("input", "1.0").build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var initialized =
@@ -190,7 +190,7 @@ class McpProtocolInputTest {
                 (ignored11, ignored12) -> {}),
             transport -> McpServer.sync(transport).serverInfo("input", "1.0").build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var response =
@@ -231,7 +231,7 @@ class McpProtocolInputTest {
                 (ignored14, ignored15) -> {}),
             transport -> McpServer.sync(transport).serverInfo("input", "1.0").build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var response =

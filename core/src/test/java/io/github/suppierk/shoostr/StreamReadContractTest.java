@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetAddress;
@@ -46,25 +47,29 @@ class StreamReadContractTest {
   void returnsAnExactRequestPrefixBeforeAnotherChunkArrives() throws Exception {
     var prefix = new CompletableFuture<byte[]>();
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                var input = request.input();
-                prefix.complete(input.readNBytes(1));
-                response.text(new String(input.readAllBytes(), StandardCharsets.US_ASCII));
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app);
-          var socket = new Socket()) {
-        connect(socket, test);
-        write(socket, CHUNKED_HEADERS + "1\r\nA\r\n");
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  var input = request.input();
+                  prefix.complete(input.readNBytes(1));
+                  response.text(new String(input.readAllBytes(), StandardCharsets.US_ASCII));
+                });
 
-        assertArrayEquals(new byte[] {'A'}, prefix.get(3, TimeUnit.SECONDS));
+        try (var test = TestServer.start(app);
+            var socket = new Socket()) {
+          connect(socket, test);
+          write(socket, CHUNKED_HEADERS + "1\r\nA\r\n");
 
-        write(socket, "1\r\nB\r\n0\r\n\r\n");
-        assertResponse(socket, "B");
+          assertArrayEquals(new byte[] {'A'}, prefix.get(3, TimeUnit.SECONDS));
+
+          write(socket, "1\r\nB\r\n0\r\n\r\n");
+          assertResponse(socket, "B");
+        }
       }
     }
   }
@@ -73,26 +78,30 @@ class StreamReadContractTest {
   void returnsZeroBeforeAnyRequestBodyBytesArrive() throws Exception {
     var emptyRead = new CompletableFuture<Integer>();
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                var input = request.input();
-                assertEquals(0, input.read(new byte[0]));
-                emptyRead.complete(input.read(new byte[2], 2, 0));
-                response.text(new String(input.readAllBytes(), StandardCharsets.US_ASCII));
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app);
-          var socket = new Socket()) {
-        connect(socket, test);
-        write(socket, CHUNKED_HEADERS);
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  var input = request.input();
+                  assertEquals(0, input.read(new byte[0]));
+                  emptyRead.complete(input.read(new byte[2], 2, 0));
+                  response.text(new String(input.readAllBytes(), StandardCharsets.US_ASCII));
+                });
 
-        assertEquals(0, emptyRead.get(3, TimeUnit.SECONDS));
+        try (var test = TestServer.start(app);
+            var socket = new Socket()) {
+          connect(socket, test);
+          write(socket, CHUNKED_HEADERS);
 
-        write(socket, "2\r\nAB\r\n0\r\n\r\n");
-        assertResponse(socket, "AB");
+          assertEquals(0, emptyRead.get(3, TimeUnit.SECONDS));
+
+          write(socket, "2\r\nAB\r\n0\r\n\r\n");
+          assertResponse(socket, "AB");
+        }
       }
     }
   }
@@ -101,33 +110,37 @@ class StreamReadContractTest {
   @CsvSource({"false, false", "true, false", "true, true"})
   void preservesContentAcrossEmptyReadsBeforeAndAfterEof(boolean multipart, boolean diskBacked)
       throws Exception {
-    try (var app = application(diskBacked)) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                try (var input = content(request, multipart)) {
-                  var buffer = new byte[] {'x', 'y'};
-                  assertEquals(0, input.read(new byte[0]));
-                  assertEquals(0, input.read(buffer, 1, 0));
-                  assertEquals(0, input.read(buffer, buffer.length, 0));
-                  assertArrayEquals(new byte[] {'A'}, input.readNBytes(1));
-                  assertEquals(0, input.read(buffer, 0, 0));
-                  assertArrayEquals(new byte[] {'B'}, input.readAllBytes());
-                  assertEquals(-1, input.read());
-                  assertEquals(0, input.read(new byte[0]));
-                  assertEquals(0, input.read(buffer, 1, 0));
-                  assertEquals(0, input.read(buffer, buffer.length, 0));
-                  assertArrayEquals(new byte[] {'x', 'y'}, buffer);
-                }
+    {
+      var app = application(diskBacked);
 
-                response.text("ok");
-              });
+      try (Closeable appCleanup2 = app::close) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  try (var input = content(request, multipart)) {
+                    var buffer = new byte[] {'x', 'y'};
+                    assertEquals(0, input.read(new byte[0]));
+                    assertEquals(0, input.read(buffer, 1, 0));
+                    assertEquals(0, input.read(buffer, buffer.length, 0));
+                    assertArrayEquals(new byte[] {'A'}, input.readNBytes(1));
+                    assertEquals(0, input.read(buffer, 0, 0));
+                    assertArrayEquals(new byte[] {'B'}, input.readAllBytes());
+                    assertEquals(-1, input.read());
+                    assertEquals(0, input.read(new byte[0]));
+                    assertEquals(0, input.read(buffer, 1, 0));
+                    assertEquals(0, input.read(buffer, buffer.length, 0));
+                    assertArrayEquals(new byte[] {'x', 'y'}, buffer);
+                  }
 
-      try (var test = TestServer.start(app)) {
-        var result = post(test, multipart);
-        assertEquals(200, result.statusCode());
-        assertEquals("ok", result.body());
+                  response.text("ok");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = post(test, multipart);
+          assertEquals(200, result.statusCode());
+          assertEquals("ok", result.body());
+        }
       }
     }
   }
@@ -136,25 +149,29 @@ class StreamReadContractTest {
   @CsvSource({"false, false", "true, false", "true, true"})
   void rejectsInvalidRangesBeforeAndAfterEofWithoutConsumingContent(
       boolean multipart, boolean diskBacked) throws Exception {
-    try (var app = application(diskBacked)) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                try (var input = content(request, multipart)) {
-                  assertInvalidRanges(input);
-                  assertArrayEquals(new byte[] {'A', 'B'}, input.readAllBytes());
-                  assertEquals(-1, input.read());
-                  assertInvalidRanges(input);
-                }
+    {
+      var app = application(diskBacked);
 
-                response.text("ok");
-              });
+      try (Closeable appCleanup3 = app::close) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  try (var input = content(request, multipart)) {
+                    assertInvalidRanges(input);
+                    assertArrayEquals(new byte[] {'A', 'B'}, input.readAllBytes());
+                    assertEquals(-1, input.read());
+                    assertInvalidRanges(input);
+                  }
 
-      try (var test = TestServer.start(app)) {
-        var result = post(test, multipart);
-        assertEquals(200, result.statusCode());
-        assertEquals("ok", result.body());
+                  response.text("ok");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = post(test, multipart);
+          assertEquals(200, result.statusCode());
+          assertEquals("ok", result.body());
+        }
       }
     }
   }
@@ -165,24 +182,28 @@ class StreamReadContractTest {
       boolean multipart, boolean diskBacked) throws Exception {
     var retained = new AtomicReference<InputStream>();
 
-    try (var app = application(diskBacked)) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                retained.set(content(request, multipart));
-                response.text("ok");
-              });
+    {
+      var app = application(diskBacked);
 
-      try (var test = TestServer.start(app)) {
-        var result = post(test, multipart);
-        assertEquals(200, result.statusCode());
-        assertEquals("ok", result.body());
-        var input = retained.get();
-        assertNotNull(input);
-        assertThrows(IllegalStateException.class, () -> input.read(new byte[0], 0, 0));
-        assertThrows(IllegalStateException.class, () -> input.read(new byte[0], 1, 0));
-        assertThrows(IllegalStateException.class, () -> input.read(null, 0, 0));
+      try (Closeable appCleanup4 = app::close) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  retained.set(content(request, multipart));
+                  response.text("ok");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = post(test, multipart);
+          assertEquals(200, result.statusCode());
+          assertEquals("ok", result.body());
+          var input = retained.get();
+          assertNotNull(input);
+          assertThrows(IllegalStateException.class, () -> input.read(new byte[0], 0, 0));
+          assertThrows(IllegalStateException.class, () -> input.read(new byte[0], 1, 0));
+          assertThrows(IllegalStateException.class, () -> input.read(null, 0, 0));
+        }
       }
     }
   }
@@ -194,33 +215,37 @@ class StreamReadContractTest {
     var configuredOptions = new Options();
     configuredOptions.setMaxRequestBytes(2);
 
-    try (var app = new Shoostr(configuredOptions)) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                var input = request.input();
-                assertEquals(0, input.read(new byte[0], 0, 0));
-                assertArrayEquals(new byte[] {'A', 'B'}, input.readNBytes(2));
-                assertEquals(0, input.read(new byte[2], 2, 0));
-                assertEquals(-1, input.read());
-                response.text("ok");
-              });
+    {
+      var app = new Shoostr(configuredOptions);
 
-      try (var test = TestServer.start(app);
-          var client = HttpClient.newHttpClient()) {
-        var bytes = body.getBytes(StandardCharsets.US_ASCII);
-        var result =
-            client.send(
-                HttpRequest.newBuilder(test.baseUri().resolve("input"))
-                    .timeout(Duration.ofSeconds(3))
-                    .POST(
-                        HttpRequest.BodyPublishers.ofInputStream(
-                            () -> new ByteArrayInputStream(bytes)))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(expectedStatus, result.statusCode());
-        assertEquals(expectedStatus == 200 ? "ok" : "Content Too Large", result.body());
+      try (Closeable appCleanup5 = app::close) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  var input = request.input();
+                  assertEquals(0, input.read(new byte[0], 0, 0));
+                  assertArrayEquals(new byte[] {'A', 'B'}, input.readNBytes(2));
+                  assertEquals(0, input.read(new byte[2], 2, 0));
+                  assertEquals(-1, input.read());
+                  response.text("ok");
+                });
+
+        try (var test = TestServer.start(app);
+            var client = HttpClient.newHttpClient()) {
+          var bytes = body.getBytes(StandardCharsets.US_ASCII);
+          var result =
+              client.send(
+                  HttpRequest.newBuilder(test.baseUri().resolve("input"))
+                      .timeout(Duration.ofSeconds(3))
+                      .POST(
+                          HttpRequest.BodyPublishers.ofInputStream(
+                              () -> new ByteArrayInputStream(bytes)))
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(expectedStatus, result.statusCode());
+          assertEquals(expectedStatus == 200 ? "ok" : "Content Too Large", result.body());
+        }
       }
     }
   }
@@ -265,22 +290,26 @@ class StreamReadContractTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void returnsZeroForAnEmptyUploadReadAfterEof(boolean diskBacked) throws Exception {
-    try (var app = application(diskBacked)) {
-      app.routes()
-          .post(
-              "/input",
-              (request, response) -> {
-                try (var input = request.file("document").orElseThrow().content()) {
-                  assertArrayEquals(new byte[] {'A', 'B'}, input.readAllBytes());
-                  assertEquals(-1, input.read());
-                  response.text(Integer.toString(input.read(new byte[0], 0, 0)));
-                }
-              });
+    {
+      var app = application(diskBacked);
 
-      try (var test = TestServer.start(app)) {
-        var result = post(test, true);
-        assertEquals(200, result.statusCode());
-        assertEquals("0", result.body());
+      try (Closeable appCleanup6 = app::close) {
+        app.routes()
+            .post(
+                "/input",
+                (request, response) -> {
+                  try (var input = request.file("document").orElseThrow().content()) {
+                    assertArrayEquals(new byte[] {'A', 'B'}, input.readAllBytes());
+                    assertEquals(-1, input.read());
+                    response.text(Integer.toString(input.read(new byte[0], 0, 0)));
+                  }
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result = post(test, true);
+          assertEquals(200, result.statusCode());
+          assertEquals("0", result.body());
+        }
       }
     }
   }

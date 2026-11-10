@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Test;
 class OpenApiUiExampleTest {
   @Test
   void requiresAuthenticationForThePageEveryAssetAndTheSpecification() throws Exception {
+
     try (var test = TestServer.start(OpenApiUiExample.application())) {
       for (var path :
           List.of(
@@ -34,6 +35,7 @@ class OpenApiUiExampleTest {
 
   @Test
   void servesLocalAssetsAndDisablesImplicitCredentialsForApiCalls() throws Exception {
+
     try (var test = TestServer.start(OpenApiUiExample.application())) {
       var page =
           test.send(
@@ -82,6 +84,7 @@ class OpenApiUiExampleTest {
 
   @Test
   void protectsTheActualApiAndDescribesItsExplicitAuthorization() throws Exception {
+
     try (var test = TestServer.start(OpenApiUiExample.application())) {
       assertEquals(401, test.send(request -> request.path("/me")).statusCode());
       assertEquals(

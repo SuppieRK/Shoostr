@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
@@ -58,74 +59,84 @@ class CorsPolicyReplacementTest {
     var cors = new Cors(parent);
     var retained = new AtomicReference<Cors.Configuration>();
 
-    try (var app = new Shoostr()) {
-      app.extensions(cors).configureExtensionsDefaults(e -> e.with(cors));
-      app.routes()
-          .path(
-              "/leaf",
-              routes ->
-                  routes
-                      .get("/value", (request, response) -> response.text("read"))
-                      .post("/value", (request, response) -> response.text("written")),
-              e -> {
-                var configuration = e.with(cors).policy(wildcard).policy(replacement);
-                retained.set(configuration);
-              })
-          .get("/sibling", (request, response) -> response.text("sibling"));
-      var configuration = retained.get();
-      assertThrows(IllegalStateException.class, () -> configuration.policy(parent));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var origin = "wildcard".equals(mode) ? "https://unlisted.example" : "https://child.example";
-        var result = preflight(test, "/leaf/value", origin, "GET", "X-Child");
-        if (mode.startsWith("empty")) {
-          assertEquals(403, result.statusCode());
-          assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
-          assertEquals(
-              403, test.send(r -> r.path("/leaf/value").header("Origin", origin)).statusCode());
-        } else {
-          assertEquals(204, result.statusCode());
-          assertEquals("0", result.headers().firstValue("Access-Control-Max-Age").orElseThrow());
-          assertFalse(result.headers().firstValue("Access-Control-Allow-Credentials").isPresent());
-          assertEquals(
-              "x-child", result.headers().firstValue("Access-Control-Allow-Headers").orElseThrow());
-          var actual = test.send(r -> r.path("/leaf/value").header("Origin", origin));
-          assertEquals(200, actual.statusCode());
-          assertEquals(
-              "wildcard".equals(mode) ? "*" : "X-Child",
-              actual.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
-          if ("wildcard".equals(mode)) {
-            var any = preflight(test, "/leaf/value", origin, "POST", "X-Arbitrary, Authorization");
-            assertEquals(204, any.statusCode());
+      try (Closeable appCleanup = app::close) {
+        app.withExtension(cors);
+        app.routes()
+            .path(
+                "/leaf",
+                routes ->
+                    routes
+                        .get("/value", (request, response) -> response.text("read"))
+                        .post("/value", (request, response) -> response.text("written")),
+                e -> {
+                  var configuration = e.withExtension(cors).policy(wildcard).policy(replacement);
+                  retained.set(configuration);
+                })
+            .get("/sibling", (request, response) -> response.text("sibling"));
+        var configuration = retained.get();
+        assertThrows(IllegalStateException.class, () -> configuration.policy(parent));
+
+        try (var test = TestServer.start(app)) {
+          var origin =
+              "wildcard".equals(mode) ? "https://unlisted.example" : "https://child.example";
+          var result = preflight(test, "/leaf/value", origin, "GET", "X-Child");
+          if (mode.startsWith("empty")) {
+            assertEquals(403, result.statusCode());
+            assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
             assertEquals(
-                "POST", any.headers().firstValue("Access-Control-Allow-Methods").orElseThrow());
-            assertEquals(
-                "authorization, x-arbitrary",
-                any.headers().firstValue("Access-Control-Allow-Headers").orElseThrow());
-            assertEquals(
-                "*", any.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
+                403, test.send(r -> r.path("/leaf/value").header("Origin", origin)).statusCode());
           } else {
+            assertEquals(204, result.statusCode());
+            assertEquals("0", result.headers().firstValue("Access-Control-Max-Age").orElseThrow());
+            assertFalse(
+                result.headers().firstValue("Access-Control-Allow-Credentials").isPresent());
             assertEquals(
-                403, preflight(test, "/leaf/value", origin, "POST", "X-Child").statusCode());
+                "x-child",
+                result.headers().firstValue("Access-Control-Allow-Headers").orElseThrow());
+            var actual = test.send(r -> r.path("/leaf/value").header("Origin", origin));
+            assertEquals(200, actual.statusCode());
             assertEquals(
-                403, preflight(test, "/leaf/value", origin, "GET", "X-Parent").statusCode());
-            assertEquals(
-                403,
-                test.send(r -> r.path("/leaf/value").header("Origin", "https://parent.example"))
-                    .statusCode());
+                "wildcard".equals(mode) ? "*" : "X-Child",
+                actual.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
+            if ("wildcard".equals(mode)) {
+              var any =
+                  preflight(test, "/leaf/value", origin, "POST", "X-Arbitrary, Authorization");
+              assertEquals(204, any.statusCode());
+              assertEquals(
+                  "POST", any.headers().firstValue("Access-Control-Allow-Methods").orElseThrow());
+              assertEquals(
+                  "authorization, x-arbitrary",
+                  any.headers().firstValue("Access-Control-Allow-Headers").orElseThrow());
+              assertEquals(
+                  "*", any.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
+            } else {
+              assertEquals(
+                  403, preflight(test, "/leaf/value", origin, "POST", "X-Child").statusCode());
+              assertEquals(
+                  403, preflight(test, "/leaf/value", origin, "GET", "X-Parent").statusCode());
+              assertEquals(
+                  403,
+                  test.send(r -> r.path("/leaf/value").header("Origin", "https://parent.example"))
+                      .statusCode());
+            }
           }
-        }
 
-        var sibling = test.send(r -> r.path("/sibling").header("Origin", "https://parent.example"));
-        assertEquals(200, sibling.statusCode());
-        assertEquals(
-            "true", sibling.headers().firstValue("Access-Control-Allow-Credentials").orElseThrow());
-        assertEquals(
-            "ETag", sibling.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
-        assertEquals(
-            403,
-            test.send(r -> r.path("/sibling").header("Origin", "https://child.example"))
-                .statusCode());
+          var sibling =
+              test.send(r -> r.path("/sibling").header("Origin", "https://parent.example"));
+          assertEquals(200, sibling.statusCode());
+          assertEquals(
+              "true",
+              sibling.headers().firstValue("Access-Control-Allow-Credentials").orElseThrow());
+          assertEquals(
+              "ETag", sibling.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
+          assertEquals(
+              403,
+              test.send(r -> r.path("/sibling").header("Origin", "https://child.example"))
+                  .statusCode());
+        }
       }
     }
 
@@ -145,24 +156,30 @@ class CorsPolicyReplacementTest {
                 .allowedHeaders(Set.of(HttpHeaders.of("*")))
                 .build());
 
-    try (var app = new Shoostr()) {
-      app.extensions(cors).configureExtensionsDefaults(e -> e.with(cors));
-      app.routes().post("/value", (request, response) -> response.text("written"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            preflight(test, "/value", "https://client.example", "POST", "Authorization, X-Client");
-        assertEquals(204, result.statusCode());
-        assertEquals(
-            "https://client.example",
-            result.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
-        assertEquals(
-            "true", result.headers().firstValue("Access-Control-Allow-Credentials").orElseThrow());
-        assertEquals(
-            "POST", result.headers().firstValue("Access-Control-Allow-Methods").orElseThrow());
-        assertEquals(
-            "authorization, x-client",
-            result.headers().firstValue("Access-Control-Allow-Headers").orElseThrow());
+      try (Closeable appCleanup1 = app::close) {
+        app.withExtension(cors);
+        app.routes().post("/value", (request, response) -> response.text("written"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              preflight(
+                  test, "/value", "https://client.example", "POST", "Authorization, X-Client");
+          assertEquals(204, result.statusCode());
+          assertEquals(
+              "https://client.example",
+              result.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
+          assertEquals(
+              "true",
+              result.headers().firstValue("Access-Control-Allow-Credentials").orElseThrow());
+          assertEquals(
+              "POST", result.headers().firstValue("Access-Control-Allow-Methods").orElseThrow());
+          assertEquals(
+              "authorization, x-client",
+              result.headers().firstValue("Access-Control-Allow-Headers").orElseThrow());
+        }
       }
     }
   }

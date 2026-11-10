@@ -13,6 +13,7 @@ import static org.junit.jupiter.api.Assertions.fail;
 import io.github.suppierk.shoostr.WebSocket.MessageHandler;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -424,36 +425,42 @@ class TypedWebSocketTest {
 
   @Test
   void rejectsDuplicateConfigurationAndFreezesEveryCallbackAfterRegistration() throws Exception {
-    try (var app = new Shoostr()) {
-      var routes = app.codec(new TextCodec()).routes();
-      var saved = new AtomicReference<TypedWebSocket>();
-      routes.websocket("/frozen", saved::set);
-      var socket = saved.get();
-      assertThrows(
-          IllegalStateException.class,
-          () -> socket.onObject(String.class, (ignored11, ignored12) -> {}));
-      assertThrows(IllegalStateException.class, () -> socket.onText((ignored13, ignored14) -> {}));
-      assertThrows(
-          IllegalStateException.class, () -> socket.onBinary((ignored15, ignored16) -> {}));
-      assertThrows(IllegalStateException.class, () -> socket.onOpen(ignored17 -> {}));
-      assertThrows(IllegalStateException.class, () -> socket.onError((ignored18, ignored19) -> {}));
-      assertThrows(
-          IllegalStateException.class,
-          () -> socket.onClose((ignored20, ignored21, ignored22) -> {}));
-      assertThrows(
-          IllegalStateException.class, () -> socket.beforeUpgrade((ignored23, ignored24) -> {}));
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> routes.websocket("/frozen", ignored25 -> fail("Duplicate configuration")));
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.websocket(
-                  "/retry",
-                  ignored26 -> {
-                    throw new IllegalArgumentException("retry");
-                  }));
-      routes.websocket("/retry", events -> events.onText(WebSocketConnection::send));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        var routes = app.codec(new TextCodec()).routes();
+        var saved = new AtomicReference<TypedWebSocket>();
+        routes.websocket("/frozen", saved::set);
+        var socket = saved.get();
+        assertThrows(
+            IllegalStateException.class,
+            () -> socket.onObject(String.class, (ignored11, ignored12) -> {}));
+        assertThrows(
+            IllegalStateException.class, () -> socket.onText((ignored13, ignored14) -> {}));
+        assertThrows(
+            IllegalStateException.class, () -> socket.onBinary((ignored15, ignored16) -> {}));
+        assertThrows(IllegalStateException.class, () -> socket.onOpen(ignored17 -> {}));
+        assertThrows(
+            IllegalStateException.class, () -> socket.onError((ignored18, ignored19) -> {}));
+        assertThrows(
+            IllegalStateException.class,
+            () -> socket.onClose((ignored20, ignored21, ignored22) -> {}));
+        assertThrows(
+            IllegalStateException.class, () -> socket.beforeUpgrade((ignored23, ignored24) -> {}));
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> routes.websocket("/frozen", ignored25 -> fail("Duplicate configuration")));
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.websocket(
+                    "/retry",
+                    ignored26 -> {
+                      throw new IllegalArgumentException("retry");
+                    }));
+        routes.websocket("/retry", events -> events.onText(WebSocketConnection::send));
+      }
     }
   }
 

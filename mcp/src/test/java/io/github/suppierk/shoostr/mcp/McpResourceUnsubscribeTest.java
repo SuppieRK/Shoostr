@@ -64,7 +64,7 @@ class McpResourceUnsubscribeTest {
                                     .build()))
                     .build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
         (request, ignored8) -> {
           if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {

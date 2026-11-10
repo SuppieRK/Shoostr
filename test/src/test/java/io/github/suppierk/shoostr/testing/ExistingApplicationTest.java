@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.Shoostr;
+import java.io.Closeable;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -44,22 +45,25 @@ class ExistingApplicationTest {
 
   @Test
   void rejectsARunningApplicationWithoutStoppingIt() throws Exception {
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes().get("/value", (ignored2, response) -> response.text("still running"));
-      app.start();
-      var target = URI.create("http://127.0.0.1:" + app.port() + "/value");
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      assertThrows(IllegalStateException.class, () -> TestServer.start(app));
-      assertEquals(
-          "still running",
-          client
-              .send(HttpRequest.newBuilder(target).build(), HttpResponse.BodyHandlers.ofString())
-              .body());
+      try (Closeable appCleanup = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes().get("/value", (ignored2, response) -> response.text("still running"));
+        app.start();
+        var target = URI.create("http://127.0.0.1:" + app.port() + "/value");
+
+        assertThrows(IllegalStateException.class, () -> TestServer.start(app));
+        assertEquals(
+            "still running",
+            client
+                .send(HttpRequest.newBuilder(target).build(), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 

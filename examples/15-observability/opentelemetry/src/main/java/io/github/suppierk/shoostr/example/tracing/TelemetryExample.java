@@ -39,9 +39,9 @@ public final class TelemetryExample {
     app.afterClose(configuration::close);
     // The SDK's Tracer creates application spans; this service borrows it for internal calls.
     var greetings = new GreetingService(configuration.sdk().getTracer("shoostr-tracing-example"));
-    // Shoostr's opentelemetry module provides the adapter; installation alone leaves tracing off.
+    // Scoped selection below establishes shared setup and enables tracing only for the greeting.
     var tracing = new OpenTelemetryTracing(configuration.sdk());
-    app.extensions(tracing);
+
     return app.routes(
         routes -> {
           // This endpoint remains untraced; extension selection belongs to individual
@@ -51,7 +51,7 @@ public final class TelemetryExample {
               "/hello/{name}",
               (request, response) ->
                   response.text(greetings.greet(request.pathParam("name").orElseThrow())),
-              extensions -> extensions.with(tracing));
+              lifecycle -> lifecycle.withExtension(tracing));
         });
   }
 }

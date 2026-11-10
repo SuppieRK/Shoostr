@@ -38,8 +38,6 @@ public final class RequestTracingExample {
     var tracing = new OpenTelemetryTracing(telemetry);
     var tracer = telemetry.getTracer("example.items");
     return new Shoostr(options)
-        // Borrow the caller's SDK; installing tracing does not enable it on every endpoint.
-        .extensions(tracing)
         .routes(
             routes ->
                 routes
@@ -62,6 +60,6 @@ public final class RequestTracingExample {
                             child.end();
                           }
                         },
-                        extensions -> extensions.with(tracing)));
+                        lifecycle -> lifecycle.withExtension(tracing)));
   }
 }

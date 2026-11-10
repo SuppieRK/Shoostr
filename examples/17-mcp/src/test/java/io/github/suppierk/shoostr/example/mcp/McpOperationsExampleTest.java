@@ -35,6 +35,7 @@ class McpOperationsExampleTest {
             BulkheadConfig.custom().maxConcurrentCalls(1).maxWaitDuration(Duration.ZERO).build());
 
     try {
+
       try (var test =
               TestServer.start(
                   McpOperationsExample.application(
@@ -77,60 +78,64 @@ class McpOperationsExampleTest {
             BulkheadConfig.custom().maxConcurrentCalls(1).maxWaitDuration(Duration.ZERO).build());
 
     try {
-      try (var pending = Executors.newVirtualThreadPerTaskExecutor();
-          var test =
-              TestServer.start(
-                  McpOperationsExample.application(
-                      () -> {
-                        if (calls.getAndIncrement() == 0) {
-                          entered.countDown();
-                          if (!release.await(5, TimeUnit.SECONDS)) {
-                            throw new IllegalStateException("Fixture was not released");
+      try (var pending = Executors.newVirtualThreadPerTaskExecutor()) {
+
+        try (var test =
+                TestServer.start(
+                    McpOperationsExample.application(
+                        () -> {
+                          if (calls.getAndIncrement() == 0) {
+                            entered.countDown();
+                            if (!release.await(5, TimeUnit.SECONDS)) {
+                              throw new IllegalStateException("Fixture was not released");
+                            }
                           }
-                        }
 
-                        return "healthy";
-                      },
-                      bulkhead,
-                      callbacks));
-          var client =
-              McpClient.sync(
-                      HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                          .endpoint("/mcp")
-                          .build())
-                  .requestTimeout(Duration.ofSeconds(5))
-                  .build();
-          var other =
-              McpClient.sync(
-                      HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                          .endpoint("/mcp")
-                          .build())
-                  .requestTimeout(Duration.ofSeconds(5))
-                  .build()) {
-        client.initialize();
-        other.initialize();
-        var active =
-            pending.submit(
-                () -> client.callTool(McpSchema.CallToolRequest.builder("status").build()));
+                          return "healthy";
+                        },
+                        bulkhead,
+                        callbacks));
+            var client =
+                McpClient.sync(
+                        HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                            .endpoint("/mcp")
+                            .build())
+                    .requestTimeout(Duration.ofSeconds(5))
+                    .build();
+            var other =
+                McpClient.sync(
+                        HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                            .endpoint("/mcp")
+                            .build())
+                    .requestTimeout(Duration.ofSeconds(5))
+                    .build()) {
+          client.initialize();
+          other.initialize();
+          var active =
+              pending.submit(
+                  () -> client.callTool(McpSchema.CallToolRequest.builder("status").build()));
 
-        try {
-          assertTrue(entered.await(3, TimeUnit.SECONDS));
-          var rejected = other.callTool(McpSchema.CallToolRequest.builder("status").build());
-          assertTrue(rejected.isError());
-          assertEquals(
-              "Status is busy",
-              assertInstanceOf(McpSchema.TextContent.class, rejected.content().getFirst()).text());
-          assertEquals(1, calls.get());
-          var health =
-              test.send(request -> request.path("/health"), HttpResponse.BodyHandlers.ofString());
-          assertEquals(200, health.statusCode());
-          assertEquals("healthy", health.body());
-        } finally {
-          release.countDown();
+          try {
+            assertTrue(entered.await(3, TimeUnit.SECONDS));
+            var rejected = other.callTool(McpSchema.CallToolRequest.builder("status").build());
+            assertTrue(rejected.isError());
+            assertEquals(
+                "Status is busy",
+                assertInstanceOf(McpSchema.TextContent.class, rejected.content().getFirst())
+                    .text());
+            assertEquals(1, calls.get());
+            var health =
+                test.send(request -> request.path("/health"), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, health.statusCode());
+            assertEquals("healthy", health.body());
+          } finally {
+            release.countDown();
+          }
+
+          assertFalse(active.get(3, TimeUnit.SECONDS).isError());
+          assertFalse(
+              other.callTool(McpSchema.CallToolRequest.builder("status").build()).isError());
         }
-
-        assertFalse(active.get(3, TimeUnit.SECONDS).isError());
-        assertFalse(other.callTool(McpSchema.CallToolRequest.builder("status").build()).isError());
       }
     } finally {
       release.countDown();
@@ -148,6 +153,7 @@ class McpOperationsExampleTest {
             BulkheadConfig.custom().maxConcurrentCalls(1).maxWaitDuration(Duration.ZERO).build());
 
     try {
+
       try (var test =
               TestServer.start(
                   McpOperationsExample.application(
@@ -172,6 +178,7 @@ class McpOperationsExampleTest {
         assertThrows(McpError.class, () -> client.callTool(call));
         assertFalse(client.callTool(call).isError());
       }
+
     } finally {
       callbacks.dispose();
     }

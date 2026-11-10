@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -26,39 +27,43 @@ import org.junit.jupiter.api.Timeout;
 class RoutesConcurrencyTest {
   @Test
   void preservesRegistrationsAcrossRootAndSharedPathScopes() throws Exception {
-    try (var app = new Shoostr();
-        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-      var scopes = scopes(app);
-      var ready = new CountDownLatch(1);
-      var tasks = new ArrayList<Future<?>>();
-      for (int worker = 0; worker < 8; worker++) {
-        int index = worker;
-        tasks.add(
-            workers.submit(
-                () -> {
-                  await(ready);
-                  for (int route = 0; route < 8; route++) {
-                    String path = index + "/" + route;
-                    var scope = scopes.get(index % scopes.size());
-                    scope.route("GET", prefix(index) + path, (ignored, res) -> res.text(path));
-                  }
-                }));
-      }
-      ready.countDown();
-      for (var task : tasks) {
-        task.get(5, TimeUnit.SECONDS);
-      }
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup = app::close;
+          var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+        var scopes = scopes(app);
+        var ready = new CountDownLatch(1);
+        var tasks = new ArrayList<Future<?>>();
         for (int worker = 0; worker < 8; worker++) {
-          for (int route = 0; route < 8; route++) {
-            String path = worker + "/" + route;
-            assertEquals(
-                path,
-                test.send(
-                        request -> request.path("/api/" + path).timeout(Duration.ofSeconds(3)),
-                        HttpResponse.BodyHandlers.ofString())
-                    .body());
+          int index = worker;
+          tasks.add(
+              workers.submit(
+                  () -> {
+                    await(ready);
+                    for (int route = 0; route < 8; route++) {
+                      String path = index + "/" + route;
+                      var scope = scopes.get(index % scopes.size());
+                      scope.route("GET", prefix(index) + path, (ignored, res) -> res.text(path));
+                    }
+                  }));
+        }
+        ready.countDown();
+        for (var task : tasks) {
+          task.get(5, TimeUnit.SECONDS);
+        }
+
+        try (var test = TestServer.start(app)) {
+          for (int worker = 0; worker < 8; worker++) {
+            for (int route = 0; route < 8; route++) {
+              String path = worker + "/" + route;
+              assertEquals(
+                  path,
+                  test.send(
+                          request -> request.path("/api/" + path).timeout(Duration.ofSeconds(3)),
+                          HttpResponse.BodyHandlers.ofString())
+                      .body());
+            }
           }
         }
       }
@@ -67,79 +72,87 @@ class RoutesConcurrencyTest {
 
   @Test
   void rejectsConcurrentDuplicateShapesAcrossDifferentScopes() throws Exception {
-    try (var app = new Shoostr();
-        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-      var scopes = scopes(app);
-      var ready = new CountDownLatch(1);
-      var tasks = new ArrayList<Future<Boolean>>();
-      for (int worker = 0; worker < 24; worker++) {
-        int index = worker;
-        tasks.add(
-            workers.submit(
-                () -> {
-                  await(ready);
+    {
+      var app = new Shoostr();
 
-                  try {
-                    scopes
-                        .get(index % scopes.size())
-                        .get(
-                            prefix(index) + "{id" + index + "}",
-                            (ignored2, res) -> res.text(Integer.toString(index)));
-                    return true;
-                  } catch (IllegalArgumentException ignored3) {
-                    return false;
-                  }
-                }));
-      }
-      ready.countDown();
-      int winners = 0;
-      int winner = -1;
-      for (int index = 0; index < tasks.size(); index++) {
-        if (tasks.get(index).get(5, TimeUnit.SECONDS)) {
-          winners++;
-          winner = index;
+      try (Closeable appCleanup1 = app::close;
+          var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+        var scopes = scopes(app);
+        var ready = new CountDownLatch(1);
+        var tasks = new ArrayList<Future<Boolean>>();
+        for (int worker = 0; worker < 24; worker++) {
+          int index = worker;
+          tasks.add(
+              workers.submit(
+                  () -> {
+                    await(ready);
+
+                    try {
+                      scopes
+                          .get(index % scopes.size())
+                          .get(
+                              prefix(index) + "{id" + index + "}",
+                              (ignored2, res) -> res.text(Integer.toString(index)));
+                      return true;
+                    } catch (IllegalArgumentException ignored3) {
+                      return false;
+                    }
+                  }));
         }
-      }
-      assertEquals(1, winners);
+        ready.countDown();
+        int winners = 0;
+        int winner = -1;
+        for (int index = 0; index < tasks.size(); index++) {
+          if (tasks.get(index).get(5, TimeUnit.SECONDS)) {
+            winners++;
+            winner = index;
+          }
+        }
+        assertEquals(1, winners);
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            Integer.toString(winner),
-            test.send(
-                    request -> request.path("/api/42").timeout(Duration.ofSeconds(3)),
-                    HttpResponse.BodyHandlers.ofString())
-                .body());
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              Integer.toString(winner),
+              test.send(
+                      request -> request.path("/api/42").timeout(Duration.ofSeconds(3)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
       }
     }
   }
 
   @Test
   void callbacksCanWaitForRegistrationsFromOtherThreads() throws Exception {
-    try (var app = new Shoostr();
-        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-      app.routes()
-          .path(
-              "/api",
-              routes -> {
-                var task =
-                    workers.submit(
-                        () ->
-                            routes.path(
-                                "/nested",
-                                nested -> nested.get((ignored4, res) -> res.text("ready"))));
-                assertDoesNotThrow(() -> task.get(3, TimeUnit.SECONDS));
-                var startup =
-                    workers.submit(() -> assertThrows(IllegalStateException.class, app::start));
-                assertDoesNotThrow(() -> startup.get(3, TimeUnit.SECONDS));
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            "ready",
-            test.send(
-                    request -> request.path("/api/nested").timeout(Duration.ofSeconds(3)),
-                    HttpResponse.BodyHandlers.ofString())
-                .body());
+      try (Closeable appCleanup2 = app::close;
+          var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+        app.routes()
+            .path(
+                "/api",
+                routes -> {
+                  var task =
+                      workers.submit(
+                          () ->
+                              routes.path(
+                                  "/nested",
+                                  nested -> nested.get((ignored4, res) -> res.text("ready"))));
+                  assertDoesNotThrow(() -> task.get(3, TimeUnit.SECONDS));
+                  var startup =
+                      workers.submit(() -> assertThrows(IllegalStateException.class, app::start));
+                  assertDoesNotThrow(() -> startup.get(3, TimeUnit.SECONDS));
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "ready",
+              test.send(
+                      request -> request.path("/api/nested").timeout(Duration.ofSeconds(3)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
       }
     }
   }
@@ -149,34 +162,38 @@ class RoutesConcurrencyTest {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
 
-    try (var app = new Shoostr();
-        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-      var callback =
-          workers.submit(
-              () ->
-                  app.routes(
-                      routes -> {
-                        entered.countDown();
-                        await(release);
-                        routes.get("/ready", (ignored5, response) -> response.text("ready"));
-                      }));
+    {
+      var app = new Shoostr();
 
-      try {
-        assertTrue(entered.await(3, TimeUnit.SECONDS));
-        assertThrows(IllegalStateException.class, app::start);
-      } finally {
-        release.countDown();
-      }
+      try (Closeable appCleanup3 = app::close;
+          var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+        var callback =
+            workers.submit(
+                () ->
+                    app.routes(
+                        routes -> {
+                          entered.countDown();
+                          await(release);
+                          routes.get("/ready", (ignored5, response) -> response.text("ready"));
+                        }));
 
-      assertEquals(app, callback.get(3, TimeUnit.SECONDS));
+        try {
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
+          assertThrows(IllegalStateException.class, app::start);
+        } finally {
+          release.countDown();
+        }
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            "ready",
-            test.send(
-                    request -> request.path("/ready").timeout(Duration.ofSeconds(3)),
-                    HttpResponse.BodyHandlers.ofString())
-                .body());
+        assertEquals(app, callback.get(3, TimeUnit.SECONDS));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "ready",
+              test.send(
+                      request -> request.path("/ready").timeout(Duration.ofSeconds(3)),
+                      HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
       }
     }
   }
@@ -186,43 +203,46 @@ class RoutesConcurrencyTest {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-      var callback =
-          workers.submit(
-              () ->
-                  app.routes()
-                      .path(
-                          "/api",
-                          routes -> {
-                            entered.countDown();
-                            await(release);
-                            assertThrows(
-                                IllegalStateException.class,
-                                () -> routes.get((ignored6, ignored7) -> {}));
-                          }));
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      try {
-        assertTrue(entered.await(3, TimeUnit.SECONDS));
+      try (Closeable appCleanup4 = app::close;
+          var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+        var callback =
+            workers.submit(
+                () ->
+                    app.routes()
+                        .path(
+                            "/api",
+                            routes -> {
+                              entered.countDown();
+                              await(release);
+                              assertThrows(
+                                  IllegalStateException.class,
+                                  () -> routes.get((ignored6, ignored7) -> {}));
+                            }));
+
+        try {
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
+          assertThrows(IllegalStateException.class, app::start);
+          assertThrows(IllegalStateException.class, app::port);
+          workers
+              .submit(
+                  () -> {
+                    app.close();
+                    return null;
+                  })
+              .get(3, TimeUnit.SECONDS);
+        } finally {
+          release.countDown();
+        }
+
+        callback.get(3, TimeUnit.SECONDS);
         assertThrows(IllegalStateException.class, app::start);
-        assertThrows(IllegalStateException.class, app::port);
-        workers
-            .submit(
-                () -> {
-                  app.close();
-                  return null;
-                })
-            .get(3, TimeUnit.SECONDS);
-      } finally {
-        release.countDown();
       }
-
-      callback.get(3, TimeUnit.SECONDS);
-      assertThrows(IllegalStateException.class, app::start);
     }
   }
 
@@ -232,103 +252,109 @@ class RoutesConcurrencyTest {
     var firstRelease = new CountDownLatch(1);
     var secondRelease = new CountDownLatch(1);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-      var rootRoutes = app.routes();
-      var first =
-          workers.submit(
-              () ->
-                  assertThrows(
-                      IllegalArgumentException.class,
-                      () ->
-                          rootRoutes.path(
-                              "/first",
-                              ignored8 -> {
-                                entered.countDown();
-                                await(firstRelease);
-                                throw new IllegalArgumentException("registration failed");
-                              })));
-      var second =
-          workers.submit(
-              () ->
-                  app.routes()
-                      .path(
-                          "/second",
-                          routes -> {
-                            entered.countDown();
-                            await(secondRelease);
-                            routes.get((ignored9, ignored10) -> {});
-                          }));
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      try {
-        assertTrue(entered.await(3, TimeUnit.SECONDS));
-        firstRelease.countDown();
-        first.get(3, TimeUnit.SECONDS);
-        assertThrows(IllegalStateException.class, app::start);
-      } finally {
-        firstRelease.countDown();
-        secondRelease.countDown();
+      try (Closeable appCleanup5 = app::close;
+          var workers = Executors.newVirtualThreadPerTaskExecutor()) {
+        var rootRoutes = app.routes();
+        var first =
+            workers.submit(
+                () ->
+                    assertThrows(
+                        IllegalArgumentException.class,
+                        () ->
+                            rootRoutes.path(
+                                "/first",
+                                ignored8 -> {
+                                  entered.countDown();
+                                  await(firstRelease);
+                                  throw new IllegalArgumentException("registration failed");
+                                })));
+        var second =
+            workers.submit(
+                () ->
+                    app.routes()
+                        .path(
+                            "/second",
+                            routes -> {
+                              entered.countDown();
+                              await(secondRelease);
+                              routes.get((ignored9, ignored10) -> {});
+                            }));
+
+        try {
+          assertTrue(entered.await(3, TimeUnit.SECONDS));
+          firstRelease.countDown();
+          first.get(3, TimeUnit.SECONDS);
+          assertThrows(IllegalStateException.class, app::start);
+        } finally {
+          firstRelease.countDown();
+          secondRelease.countDown();
+        }
+
+        second.get(3, TimeUnit.SECONDS);
+        app.start();
+        assertTrue(app.port() > 0);
       }
-
-      second.get(3, TimeUnit.SECONDS);
-      app.start();
-      assertTrue(app.port() > 0);
     }
   }
 
   @RepeatedTest(5)
   void racingStartupEitherIncludesOrRejectsEachRegistration() throws Exception {
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var workers = Executors.newVirtualThreadPerTaskExecutor();
-        var client = HttpClient.newHttpClient()) {
-      var scopes = scopes(app);
-      var ready = new CountDownLatch(1);
-      var tasks = new ArrayList<Future<Boolean>>();
-      for (int worker = 0; worker < 16; worker++) {
-        int index = worker;
-        tasks.add(
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup6 = app::close;
+          var workers = Executors.newVirtualThreadPerTaskExecutor();
+          var client = HttpClient.newHttpClient()) {
+        var scopes = scopes(app);
+        var ready = new CountDownLatch(1);
+        var tasks = new ArrayList<Future<Boolean>>();
+        for (int worker = 0; worker < 16; worker++) {
+          int index = worker;
+          tasks.add(
+              workers.submit(
+                  () -> {
+                    await(ready);
+
+                    try {
+                      scopes
+                          .get(index % scopes.size())
+                          .get(prefix(index) + index, (ignored11, res) -> res.text("registered"));
+                      return true;
+                    } catch (IllegalStateException ignored12) {
+                      return false;
+                    }
+                  }));
+        }
+        var startup =
             workers.submit(
                 () -> {
                   await(ready);
-
-                  try {
-                    scopes
-                        .get(index % scopes.size())
-                        .get(prefix(index) + index, (ignored11, res) -> res.text("registered"));
-                    return true;
-                  } catch (IllegalStateException ignored12) {
-                    return false;
-                  }
-                }));
-      }
-      var startup =
-          workers.submit(
-              () -> {
-                await(ready);
-                return app.start();
-              });
-      ready.countDown();
-      startup.get(5, TimeUnit.SECONDS);
-      for (int index = 0; index < tasks.size(); index++) {
-        boolean registered = tasks.get(index).get(3, TimeUnit.SECONDS);
-        assertEquals(
-            registered ? 200 : 404,
-            client
-                .send(
-                    HttpRequest.newBuilder(
-                            URI.create("http://127.0.0.1:" + app.port() + "/api/" + index))
-                        .timeout(Duration.ofSeconds(3))
-                        .build(),
-                    HttpResponse.BodyHandlers.ofString())
-                .statusCode());
+                  return app.start();
+                });
+        ready.countDown();
+        startup.get(5, TimeUnit.SECONDS);
+        for (int index = 0; index < tasks.size(); index++) {
+          boolean registered = tasks.get(index).get(3, TimeUnit.SECONDS);
+          assertEquals(
+              registered ? 200 : 404,
+              client
+                  .send(
+                      HttpRequest.newBuilder(
+                              URI.create("http://127.0.0.1:" + app.port() + "/api/" + index))
+                          .timeout(Duration.ofSeconds(3))
+                          .build(),
+                      HttpResponse.BodyHandlers.ofString())
+                  .statusCode());
+        }
       }
     }
   }

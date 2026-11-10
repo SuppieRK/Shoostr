@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.http.HttpResponse;
@@ -47,77 +48,82 @@ class ExchangeEqualityTest {
     var hashes = new HashMap<Object, Integer>();
     var completed = new LinkedBlockingQueue<RequestOutcome>();
 
-    try (var app = new Shoostr().afterRequest(completed::add)) {
-      if (typed) {
-        app.codec(codec("configured"));
-      }
+    {
+      var app = new Shoostr().afterRequest(completed::add);
 
-      app.routes()
-          .post(
-              "/exchange",
-              (request, response) -> {
-                exchanges.add(Map.entry(request, response));
-                hashes.put(request, request.hashCode());
-                hashes.put(response, response.hashCode());
-                assertEquals("payload", request.bodyText());
-                request.attribute("processed", true);
-                var output = response.startStream("text/plain");
-                outputs.add(output);
-                hashes.put(output, output.hashCode());
-                output.write("done").flush();
-              })
-          .get(
-              "/events",
-              (request, response) -> {
-                var output = response.startEventStream();
-                events.add(output);
-                hashes.put(output, output.hashCode());
-                output.send("hello").heartbeat();
-              });
-
-      try (var server = TestServer.start(app)) {
-        for (int index = 0; index < 2; index++) {
-          var response =
-              server.send(
-                  request ->
-                      request
-                          .path("/exchange")
-                          .method("POST")
-                          .body("payload".getBytes(StandardCharsets.UTF_8)),
-                  HttpResponse.BodyHandlers.ofString());
-          assertEquals(200, response.statusCode());
-          assertEquals("done", response.body());
-          assertNotNull(completed.poll(3, TimeUnit.SECONDS));
-          var eventResponse =
-              server.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
-          assertEquals(200, eventResponse.statusCode());
-          assertTrue(eventResponse.body().contains("data: hello"));
-          assertNotNull(completed.poll(3, TimeUnit.SECONDS));
-        }
-        assertNotEquals(exchanges.get(0).getKey(), exchanges.get(1).getKey());
-        assertNotEquals(exchanges.get(0).getValue(), exchanges.get(1).getValue());
-        assertNotEquals(outputs.get(0), outputs.get(1));
-        assertNotEquals(events.get(0), events.get(1));
-
+      try (Closeable appCleanup = app::close) {
         if (typed) {
-          verifier(TypedRequest.class, exchanges, outputs).verify();
-          verifier(TypedResponse.class, exchanges, outputs).verify();
-          verifier(TypedEventStream.class, exchanges, outputs).verify();
-        } else {
-          verifier(Request.class, exchanges, outputs)
-              .withRedefinedSubclass(TypedRequest.class)
-              .verify();
-          verifier(Response.class, exchanges, outputs)
-              .withRedefinedSubclass(TypedResponse.class)
-              .verify();
-          verifier(Response.EventStream.class, exchanges, outputs)
-              .withRedefinedSubclass(TypedEventStream.class)
-              .verify();
+          app.codec(codec("configured"));
         }
 
-        verifier(Response.Stream.class, exchanges, outputs).verify();
-        verifier(Class.forName(Response.class.getName() + "$FlushCompletion"), exchanges, outputs)
-            .verify();
+        app.routes()
+            .post(
+                "/exchange",
+                (request, response) -> {
+                  exchanges.add(Map.entry(request, response));
+                  hashes.put(request, request.hashCode());
+                  hashes.put(response, response.hashCode());
+                  assertEquals("payload", request.bodyText());
+                  request.attribute("processed", true);
+                  var output = response.startStream("text/plain");
+                  outputs.add(output);
+                  hashes.put(output, output.hashCode());
+                  output.write("done").flush();
+                })
+            .get(
+                "/events",
+                (request, response) -> {
+                  var output = response.startEventStream();
+                  events.add(output);
+                  hashes.put(output, output.hashCode());
+                  output.send("hello").heartbeat();
+                });
+
+        try (var server = TestServer.start(app)) {
+          for (int index = 0; index < 2; index++) {
+            var response =
+                server.send(
+                    request ->
+                        request
+                            .path("/exchange")
+                            .method("POST")
+                            .body("payload".getBytes(StandardCharsets.UTF_8)),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode());
+            assertEquals("done", response.body());
+            assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+            var eventResponse =
+                server.send(
+                    request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, eventResponse.statusCode());
+            assertTrue(eventResponse.body().contains("data: hello"));
+            assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+          }
+          assertNotEquals(exchanges.get(0).getKey(), exchanges.get(1).getKey());
+          assertNotEquals(exchanges.get(0).getValue(), exchanges.get(1).getValue());
+          assertNotEquals(outputs.get(0), outputs.get(1));
+          assertNotEquals(events.get(0), events.get(1));
+
+          if (typed) {
+            verifier(TypedRequest.class, exchanges, outputs).verify();
+            verifier(TypedResponse.class, exchanges, outputs).verify();
+            verifier(TypedEventStream.class, exchanges, outputs).verify();
+          } else {
+            verifier(Request.class, exchanges, outputs)
+                .withRedefinedSubclass(TypedRequest.class)
+                .verify();
+            verifier(Response.class, exchanges, outputs)
+                .withRedefinedSubclass(TypedResponse.class)
+                .verify();
+            verifier(Response.EventStream.class, exchanges, outputs)
+                .withRedefinedSubclass(TypedEventStream.class)
+                .verify();
+          }
+
+          verifier(Response.Stream.class, exchanges, outputs).verify();
+          verifier(Class.forName(Response.class.getName() + "$FlushCompletion"), exchanges, outputs)
+              .verify();
+        }
       }
     }
 

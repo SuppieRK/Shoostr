@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -23,6 +24,7 @@ class MultipartExampleTest {
 
   @Test
   void readsAFieldAndUploadedBytes() throws Exception {
+
     try (var test = TestServer.start(MultipartExample.application(directory))) {
       var response =
           send(
@@ -38,6 +40,7 @@ class MultipartExampleTest {
 
   @Test
   void preservesRepeatedFilesBinaryContentAndAnEmptyFilename() throws Exception {
+
     try (var test = TestServer.start(MultipartExample.application(directory))) {
       var response =
           send(
@@ -55,6 +58,7 @@ class MultipartExampleTest {
   @ParameterizedTest
   @CsvSource({"1024, 200", "1025, 413"})
   void enforcesThePartLimitForBothFieldsAndFiles(int size, int status) throws Exception {
+
     try (var test = TestServer.start(MultipartExample.application(directory))) {
       assertEquals(
           status, send(test, multipart(part("document", "data.bin", new byte[size]))).statusCode());
@@ -93,6 +97,7 @@ class MultipartExampleTest {
 
   @Test
   void rejectsOversizedHeadersWithTinyContent() throws Exception {
+
     try (var test = TestServer.start(MultipartExample.application(directory))) {
       assertEquals(
           413, send(test, multipart(part("document", "x".repeat(1100), new byte[1]))).statusCode());
@@ -133,60 +138,68 @@ class MultipartExampleTest {
   @CsvSource({"128, 0", "129, 1"})
   void spillsAboveTheThresholdAndCleansUpAfterTheExchange(int size, int expectedFiles)
       throws Exception {
-    try (var app = MultipartExample.application(directory)) {
-      app.routes()
-          .post(
-              "/storage",
-              (request, response) -> {
-                request.files();
+    {
+      var app = MultipartExample.application(directory);
 
-                try (var files = Files.list(directory)) {
-                  response.text(Long.toString(files.count()));
-                }
-              });
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .post(
+                "/storage",
+                (request, response) -> {
+                  request.files();
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request ->
-                    request
-                        .path("/storage")
-                        .method("POST")
-                        .header("Content-Type", "multipart/form-data; boundary=example")
-                        .body(multipart(part("document", "data.bin", new byte[size]))),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals(Integer.toString(expectedFiles), response.body());
-        awaitEmptyDirectory();
+                  try (var files = Files.list(directory)) {
+                    response.text(Long.toString(files.count()));
+                  }
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(
+                  request ->
+                      request
+                          .path("/storage")
+                          .method("POST")
+                          .header("Content-Type", "multipart/form-data; boundary=example")
+                          .body(multipart(part("document", "data.bin", new byte[size]))),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, response.statusCode());
+          assertEquals(Integer.toString(expectedFiles), response.body());
+          awaitEmptyDirectory();
+        }
       }
     }
   }
 
   @Test
   void rejectsBufferedAndStreamingAccessAfterMultipartParsing() throws Exception {
-    try (var app = MultipartExample.application(directory)) {
-      app.routes()
-          .post(
-              "/modes",
-              (request, response) -> {
-                request.files();
-                assertThrows(IllegalStateException.class, request::bodyBytes);
-                assertThrows(IllegalStateException.class, request::input);
-                response.text("checked");
-              });
+    {
+      var app = MultipartExample.application(directory);
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request ->
-                    request
-                        .path("/modes")
-                        .method("POST")
-                        .header("Content-Type", "multipart/form-data; boundary=example")
-                        .body(multipart(part("document", "a.txt", new byte[0]))),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals("checked", response.body());
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .post(
+                "/modes",
+                (request, response) -> {
+                  request.files();
+                  assertThrows(IllegalStateException.class, request::bodyBytes);
+                  assertThrows(IllegalStateException.class, request::input);
+                  response.text("checked");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(
+                  request ->
+                      request
+                          .path("/modes")
+                          .method("POST")
+                          .header("Content-Type", "multipart/form-data; boundary=example")
+                          .body(multipart(part("document", "a.txt", new byte[0]))),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, response.statusCode());
+          assertEquals("checked", response.body());
+        }
       }
     }
   }

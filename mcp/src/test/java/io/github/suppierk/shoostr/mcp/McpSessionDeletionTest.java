@@ -32,7 +32,7 @@ class McpSessionDeletionTest {
             (ignored2, ignored3) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
         (request, ignored4) -> {
           if (request.header("X-Hold-Flush").isPresent()) {
@@ -113,7 +113,7 @@ class McpSessionDeletionTest {
             (ignored6, ignored7) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var workers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.Objects;
 import java.util.Set;
@@ -50,23 +51,26 @@ class TypedCodecCompositionTest {
           }
         };
 
-    try (var executor = factory.apply(workers);
-        var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .post(
-              "/codec",
-              executor,
-              (request, response) ->
-                  response.body(MediaType.APPLICATION_JSON, request.body(String.class)));
+    try (var executor = factory.apply(workers)) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/codec").method("POST").body(new byte[] {'A'}),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("\"A\"", result.body());
+      try (Closeable appCleanup = app::close) {
+        app.codec(codec)
+            .routes()
+            .post(
+                "/codec",
+                executor,
+                (request, response) ->
+                    response.body(MediaType.APPLICATION_JSON, request.body(String.class)));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/codec").method("POST").body(new byte[] {'A'}),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("\"A\"", result.body());
+        }
       }
     }
   }
@@ -76,7 +80,12 @@ class TypedCodecCompositionTest {
     var requestSeen = new AtomicReference<Request>();
     var responseSeen = new AtomicReference<Response>();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
-    class ExchangeObserver implements Extension<Void> {
+    class ExchangeObserver implements ApplicationExtension<Object> {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
       @Override
       public void install(ApplicationCallbacks callbacks) {
         callbacks
@@ -91,49 +100,57 @@ class TypedCodecCompositionTest {
 
     var extension = new ExchangeObserver();
 
-    try (var app = new Shoostr()) {
-      app.extensions(extension)
-          .codec(new TestCodec())
-          .routes()
-          .get(
-              "/shared",
-              (request, response) -> {
-                assertSame(requestSeen.get(), request);
-                assertSame(responseSeen.get(), response);
-                response.body(MediaType.APPLICATION_JSON, "same exchange");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/shared")).statusCode());
-        var outcome = outcomes.poll(3, TimeUnit.SECONDS);
-        assertEquals(200, Objects.requireNonNull(outcome).statusCode());
-        assertTrue(outcomes.isEmpty());
+      try (Closeable appCleanup1 = app::close) {
+        app.withExtension(extension)
+            .codec(new TestCodec())
+            .routes()
+            .get(
+                "/shared",
+                (request, response) -> {
+                  assertSame(requestSeen.get(), request);
+                  assertSame(responseSeen.get(), response);
+                  response.body(MediaType.APPLICATION_JSON, "same exchange");
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/shared")).statusCode());
+          var outcome = outcomes.poll(3, TimeUnit.SECONDS);
+          assertEquals(200, Objects.requireNonNull(outcome).statusCode());
+          assertTrue(outcomes.isEmpty());
+        }
       }
     }
   }
 
   @Test
   void mixesOrdinaryAndTypedHandlersInOneApp() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes().get("/ordinary", (ignored, response) -> response.text("ordinary"));
-      var returned =
-          app.codec(new TestCodec())
-              .routes(
-                  routes ->
-                      routes.get(
-                          "/typed",
-                          (ignored2, response) -> response.body("application/json", "typed")));
-      assertSame(app, returned);
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            "ordinary",
-            test.send(request -> request.path("/ordinary"), HttpResponse.BodyHandlers.ofString())
-                .body());
-        assertEquals(
-            "\"typed\"",
-            test.send(request -> request.path("/typed"), HttpResponse.BodyHandlers.ofString())
-                .body());
+      try (Closeable appCleanup2 = app::close) {
+        app.routes().get("/ordinary", (ignored, response) -> response.text("ordinary"));
+        var returned =
+            app.codec(new TestCodec())
+                .routes(
+                    routes ->
+                        routes.get(
+                            "/typed",
+                            (ignored2, response) -> response.body("application/json", "typed")));
+        assertSame(app, returned);
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "ordinary",
+              test.send(request -> request.path("/ordinary"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "\"typed\"",
+              test.send(request -> request.path("/typed"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
       }
     }
   }
@@ -169,36 +186,39 @@ class TypedCodecCompositionTest {
           }
         };
 
-    try (var app = new Shoostr()) {
-      app.authentication(authentication)
-          .codec(codec)
-          .routes()
-          .post(
-              "/secured",
-              (request, response) -> {
-                request.body(String.class);
-                response.body(
-                    MediaType.APPLICATION_JSON, request.principal().orElseThrow().getName());
-              },
-              extensions -> extensions.with(authentication));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> {
-                  request.path("/secured").method("POST").body(new byte[] {'A'});
-                  if (authorized) {
-                    request.header("Authorization", "Bearer token");
-                  }
+      try (Closeable appCleanup3 = app::close) {
+        app.codec(codec)
+            .routes()
+            .post(
+                "/secured",
+                (request, response) -> {
+                  request.body(String.class);
+                  response.body(
+                      MediaType.APPLICATION_JSON, request.principal().orElseThrow().getName());
                 },
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(authorized ? 200 : 401, result.statusCode());
-        assertEquals(authorized ? 1 : 0, reads.get());
-        assertEquals(authorized ? 1 : 0, writes.get());
-        if (authorized) {
-          assertEquals("\"Alice\"", result.body());
-        } else {
-          assertEquals("Bearer", result.headers().firstValue("WWW-Authenticate").orElseThrow());
+                extensions -> extensions.withExtension(authentication));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> {
+                    request.path("/secured").method("POST").body(new byte[] {'A'});
+                    if (authorized) {
+                      request.header("Authorization", "Bearer token");
+                    }
+                  },
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(authorized ? 200 : 401, result.statusCode());
+          assertEquals(authorized ? 1 : 0, reads.get());
+          assertEquals(authorized ? 1 : 0, writes.get());
+          if (authorized) {
+            assertEquals("\"Alice\"", result.body());
+          } else {
+            assertEquals("Bearer", result.headers().firstValue("WWW-Authenticate").orElseThrow());
+          }
         }
       }
     }

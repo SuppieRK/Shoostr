@@ -68,13 +68,8 @@ public final class LoginLogoutExample {
               handler.setHttpOnly(true);
               handler.setSameSite(HttpCookie.SameSite.LAX);
             })
-        .extensions(csrf)
-        .authentication(authentication)
-        .configureExtensionsDefaults(
-            extensions -> {
-              extensions.with(authentication);
-              extensions.with(csrf);
-            })
+        .withExtension(authentication)
+        .withExtension(csrf)
         .routes(
             routes ->
                 routes
@@ -92,7 +87,7 @@ public final class LoginLogoutExample {
                               .setHeader(HttpHeaders.CACHE_CONTROL.value(), NO_STORE)
                               .text(proof);
                         },
-                        extensions -> extensions.without(authentication))
+                        lifecycle -> lifecycle.withoutExtension(authentication))
                     .post(
                         "/login",
                         (request, response) -> {
@@ -125,7 +120,7 @@ public final class LoginLogoutExample {
                               .setHeader(HttpHeaders.CACHE_CONTROL.value(), NO_STORE)
                               .text(proof);
                         },
-                        extensions -> extensions.without(authentication))
+                        lifecycle -> lifecycle.withoutExtension(authentication))
                     .get(
                         "/account/me",
                         (request, response) -> {

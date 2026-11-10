@@ -47,8 +47,6 @@ public final class OpenApiUiExample {
                 new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme(BASIC_SECURITY_SCHEME));
     var ui = docs.uiHandler("/docs/", "/openapi.json");
     return new Shoostr()
-        .authentication(authentication)
-        .extensions(docs)
         // Protect the specification and every local UI asset, not just the HTML entry point.
         .routes(
             routes ->
@@ -56,23 +54,23 @@ public final class OpenApiUiExample {
                     .get(
                         "/openapi.json",
                         docs.handler(),
-                        extensions -> extensions.with(authentication))
+                        lifecycle -> lifecycle.withExtension(authentication))
                     .path(
                         "/docs",
                         group -> group.get("/", ui).get("/{*asset}", ui),
-                        extensions -> {
-                          extensions.with(authentication);
+                        lifecycle -> {
+                          lifecycle.withExtension(authentication);
                           // UI resource endpoints are not operations in the generated API document.
-                          extensions.with(docs).hidden();
+                          lifecycle.withExtension(docs).hidden();
                         })
                     .get(
                         "/me",
                         (request, response) ->
                             response.text(request.principal().orElseThrow().getName()),
-                        extensions -> {
-                          extensions.with(authentication);
-                          extensions
-                              .with(docs)
+                        lifecycle -> {
+                          lifecycle.withExtension(authentication);
+                          lifecycle
+                              .withExtension(docs)
                               .summary("Read the authenticated identity")
                               .security(BASIC_SECURITY_SCHEME)
                               .response(200, "Identity", MediaType.TEXT_PLAIN);

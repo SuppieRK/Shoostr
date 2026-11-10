@@ -62,7 +62,7 @@ class McpUrlElicitationTest {
                             .build())
                     .build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
         (request, ignored5) -> {
           if ("GET".equals(request.method())) {
@@ -142,7 +142,7 @@ class McpUrlElicitationTest {
                             .build())
                     .build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app);
         var client =

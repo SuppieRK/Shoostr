@@ -22,7 +22,7 @@ The authenticator receives the incoming `Request` and outgoing `Response`. It th
 
 This task connects those roles before handling messages. It builds on the basic transport model, but defines the identity and session policy needed by its own example.
 
-Check credentials on every POST, GET and DELETE, and bind the resulting MCP session to that verified identity. `McpHttpSecurity` supplies exact Origin admission, detached identity and a policy before message dispatch. The group callback receives `Extensions`, the built-in scope-configuration object. Select the managed authenticator there with `with(authentication)` so identity extraction receives its authenticated principal. An allowed Origin or a session ID does not authenticate a caller.
+Check credentials on every POST, GET and DELETE, and bind the resulting MCP session to that verified identity. `McpHttpSecurity` supplies exact Origin admission, detached identity and a policy before message dispatch. The group callback receives `Lifecycle`, the built-in scope-configuration object. Select the managed authenticator there with `withExtension(authentication)` so identity extraction receives its authenticated principal. An allowed Origin or a session ID does not authenticate a caller.
 
 This self-contained example uses fixed, development-only Bearer credentials with expiry stored in a local registry.
 It does not implement an OAuth provider, cryptographic token verification or external discovery.

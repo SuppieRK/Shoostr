@@ -67,7 +67,7 @@ class McpFiniteExpiryTest {
                 (ignored, ignored2) -> authorizations.incrementAndGet()),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       String sessionHeader = "";
@@ -175,7 +175,7 @@ class McpFiniteExpiryTest {
                 }),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var client = Executors.newSingleThreadExecutor();
         var test = TestServer.start(app)) {

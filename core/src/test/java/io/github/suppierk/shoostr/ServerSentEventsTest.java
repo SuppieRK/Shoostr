@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -35,74 +36,87 @@ class ServerSentEventsTest {
   @Timeout(10)
   void emitsTheQueryParameterAsExactEventBytesForPositiveAcceptHeaders(String accept)
       throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .sse(
-              "/events",
-              (request, response) ->
-                  response.startEventStream().send(request.queryParam("qp").orElseThrow()));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .sse(
+                "/events",
+                (request, response) ->
+                    response.startEventStream().send(request.queryParam("qp").orElseThrow()));
 
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/events?qp=my-qp")
-                        .header("Accept", accept)
-                        .timeout(Duration.ofSeconds(3)));
+        try (var test = TestServer.start(app)) {
 
-        assertEquals(200, result.statusCode());
-        assertEquals(
-            "text/event-stream; charset=utf-8",
-            result.headers().firstValue("Content-Type").orElseThrow());
-        assertArrayEquals("data: my-qp\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+          var result =
+              test.send(
+                  request ->
+                      request
+                          .path("/events?qp=my-qp")
+                          .header("Accept", accept)
+                          .timeout(Duration.ofSeconds(3)));
+
+          assertEquals(200, result.statusCode());
+          assertEquals(
+              "text/event-stream; charset=utf-8",
+              result.headers().firstValue("Content-Type").orElseThrow());
+          assertArrayEquals("data: my-qp\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+        }
       }
     }
   }
 
   @Test
   void sendsEmptyAsciiUnicodeAndMalformedSurrogateDataAsExactUtf8Bytes() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .sse(
-              "/events",
-              (ignored, response) -> {
-                var events = response.startEventStream();
-                events.send("");
-                events.send("plain");
-                events.send("café😀");
-                events.send("\uD800");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .sse(
+                "/events",
+                (ignored, response) -> {
+                  var events = response.startEventStream();
+                  events.send("");
+                  events.send("plain");
+                  events.send("café😀");
+                  events.send("\uD800");
+                });
 
-        var result = test.send(request -> request.path("/events"));
+        try (var test = TestServer.start(app)) {
 
-        assertArrayEquals(
-            "data: \n\ndata: plain\n\ndata: café😀\n\ndata: ?\n\n".getBytes(StandardCharsets.UTF_8),
-            result.body());
+          var result = test.send(request -> request.path("/events"));
+
+          assertArrayEquals(
+              "data: \n\ndata: plain\n\ndata: café😀\n\ndata: ?\n\n"
+                  .getBytes(StandardCharsets.UTF_8),
+              result.body());
+        }
       }
     }
   }
 
   @Test
   void rejectsNullDataWithoutWritingAFrame() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .sse(
-              "/events",
-              (ignored2, response) -> {
-                var events = response.startEventStream();
-                assertThrows(NullPointerException.class, () -> events.send((String) null));
-                events.send("valid");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup2 = app::close) {
+        app.routes()
+            .sse(
+                "/events",
+                (ignored2, response) -> {
+                  var events = response.startEventStream();
+                  assertThrows(NullPointerException.class, () -> events.send((String) null));
+                  events.send("valid");
+                });
 
-        var result = test.send(request -> request.path("/events"));
+        try (var test = TestServer.start(app)) {
 
-        assertArrayEquals("data: valid\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+          var result = test.send(request -> request.path("/events"));
+
+          assertArrayEquals("data: valid\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+        }
       }
     }
   }
@@ -119,18 +133,23 @@ class ServerSentEventsTest {
     var before = new AtomicInteger();
     var after = new AtomicInteger();
 
-    try (var app = new Shoostr(options)) {
-      app.beforeResponseFlush((ignored3, ignored4) -> before.incrementAndGet());
-      app.afterResponseFlush((ignored5, ignored6) -> after.incrementAndGet());
-      app.routes().sse("/events", (ignored7, response) -> response.startEventStream().send("abcd"));
+    {
+      var app = new Shoostr(options);
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup3 = app::close) {
+        app.beforeResponseFlush((ignored3, ignored4) -> before.incrementAndGet());
+        app.afterResponseFlush((ignored5, ignored6) -> after.incrementAndGet());
+        app.routes()
+            .sse("/events", (ignored7, response) -> response.startEventStream().send("abcd"));
 
-        var result = test.send(request -> request.path("/events"));
+        try (var test = TestServer.start(app)) {
 
-        assertArrayEquals("data: abcd\n\n".getBytes(StandardCharsets.UTF_8), result.body());
-        await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertEquals(4, after.get()));
-        assertEquals(4, before.get());
+          var result = test.send(request -> request.path("/events"));
+
+          assertArrayEquals("data: abcd\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+          await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertEquals(4, after.get()));
+          assertEquals(4, before.get());
+        }
       }
     }
   }
@@ -139,16 +158,20 @@ class ServerSentEventsTest {
   void sendsLargeSingleLinePayloadAsOneExactUtf8Frame() throws Exception {
     var payload = "x".repeat(65_536);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .sse("/events", (ignored8, response) -> response.startEventStream().send(payload));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup4 = app::close) {
+        app.routes()
+            .sse("/events", (ignored8, response) -> response.startEventStream().send(payload));
 
-        var result = test.send(request -> request.path("/events"));
+        try (var test = TestServer.start(app)) {
 
-        assertArrayEquals(
-            ("data: " + payload + "\n\n").getBytes(StandardCharsets.UTF_8), result.body());
+          var result = test.send(request -> request.path("/events"));
+
+          assertArrayEquals(
+              ("data: " + payload + "\n\n").getBytes(StandardCharsets.UTF_8), result.body());
+        }
       }
     }
   }
@@ -162,46 +185,55 @@ class ServerSentEventsTest {
       expected.append("data: ").append(sequence).append(':').append(payload).append("\n\n");
     }
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .sse(
-              "/events",
-              (ignored9, response) -> {
-                var events = response.startEventStream();
-                for (int sequence = 0; sequence < 100; sequence++) {
-                  events.send(sequence + ":" + payload);
-                }
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup5 = app::close) {
+        app.routes()
+            .sse(
+                "/events",
+                (ignored9, response) -> {
+                  var events = response.startEventStream();
+                  for (int sequence = 0; sequence < 100; sequence++) {
+                    events.send(sequence + ":" + payload);
+                  }
+                });
 
-        var result = test.send(request -> request.path("/events").timeout(Duration.ofSeconds(5)));
+        try (var test = TestServer.start(app)) {
 
-        assertEquals(200, result.statusCode());
-        assertEquals(
-            "text/event-stream; charset=utf-8",
-            result.headers().firstValue("Content-Type").orElseThrow());
-        assertArrayEquals(expected.toString().getBytes(StandardCharsets.UTF_8), result.body());
+          var result = test.send(request -> request.path("/events").timeout(Duration.ofSeconds(5)));
+
+          assertEquals(200, result.statusCode());
+          assertEquals(
+              "text/event-stream; charset=utf-8",
+              result.headers().firstValue("Content-Type").orElseThrow());
+          assertArrayEquals(expected.toString().getBytes(StandardCharsets.UTF_8), result.body());
+        }
       }
     }
   }
 
   @Test
   void sendsUtf8MultilineDataAsOneCompleteEvent() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .sse("/events", (ignored10, response) -> response.startEventStream().send("café\nnext"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup6 = app::close) {
+        app.routes()
+            .sse(
+                "/events", (ignored10, response) -> response.startEventStream().send("café\nnext"));
 
-        var result =
-            test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+        try (var test = TestServer.start(app)) {
 
-        assertEquals(200, result.statusCode());
-        assertEquals(
-            "text/event-stream; charset=utf-8",
-            result.headers().firstValue("Content-Type").orElseThrow());
-        assertEquals("data: café\ndata: next\n\n", result.body());
+          var result =
+              test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals(
+              "text/event-stream; charset=utf-8",
+              result.headers().firstValue("Content-Type").orElseThrow());
+          assertEquals("data: café\ndata: next\n\n", result.body());
+        }
       }
     }
   }
@@ -209,52 +241,61 @@ class ServerSentEventsTest {
   @Test
   @Timeout(10)
   void preservesLeadingWhitespaceInMultilineEventDataOnTheWire() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .sse("/events", (ignored11, response) -> response.startEventStream().send("café\n next"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup7 = app::close) {
+        app.routes()
+            .sse(
+                "/events",
+                (ignored11, response) -> response.startEventStream().send("café\n next"));
 
-        var result = test.send(request -> request.path("/events").timeout(Duration.ofSeconds(3)));
+        try (var test = TestServer.start(app)) {
 
-        assertEquals(200, result.statusCode());
-        assertEquals(
-            "text/event-stream; charset=utf-8",
-            result.headers().firstValue("Content-Type").orElseThrow());
-        assertArrayEquals(
-            "data: café\ndata:  next\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+          var result = test.send(request -> request.path("/events").timeout(Duration.ofSeconds(3)));
+
+          assertEquals(200, result.statusCode());
+          assertEquals(
+              "text/event-stream; charset=utf-8",
+              result.headers().firstValue("Content-Type").orElseThrow());
+          assertArrayEquals(
+              "data: café\ndata:  next\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+        }
       }
     }
   }
 
   @Test
   void chainsEventsCommentsAndHeartbeatsOnTheSameWriter() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .sse(
-              "/events",
-              (ignored12, response) -> {
-                var events = response.startEventStream();
-                var event =
-                    SseEvent.of("ready")
-                        .withEvent("update")
-                        .withId("cursor-7")
-                        .withRetry(Duration.ofSeconds(2));
-                assertSame(events, events.send("café\nnext"));
-                assertSame(events, events.send(event));
-                assertSame(events, events.comment("connected\nnext"));
-                assertSame(events, events.heartbeat());
-                events.send("tail").send(SseEvent.of("last")).comment("done").heartbeat();
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup8 = app::close) {
+        app.routes()
+            .sse(
+                "/events",
+                (ignored12, response) -> {
+                  var events = response.startEventStream();
+                  var event =
+                      SseEvent.of("ready")
+                          .withEvent("update")
+                          .withId("cursor-7")
+                          .withRetry(Duration.ofSeconds(2));
+                  assertSame(events, events.send("café\nnext"));
+                  assertSame(events, events.send(event));
+                  assertSame(events, events.comment("connected\nnext"));
+                  assertSame(events, events.heartbeat());
+                  events.send("tail").send(SseEvent.of("last")).comment("done").heartbeat();
+                });
 
-        var result =
-            test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+        try (var test = TestServer.start(app)) {
 
-        assertEquals(200, result.statusCode());
-        assertEquals(
-            """
+          var result =
+              test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals(
+              """
           data: café
           data: next
 
@@ -277,121 +318,148 @@ class ServerSentEventsTest {
           :
 
           """,
-            result.body());
+              result.body());
+        }
       }
     }
   }
 
   @Test
   void rejectsFiniteOutputFromAnSseRoute() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes().sse("/events", (ignored13, response) -> response.text("not an event stream"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup9 = app::close) {
+        app.routes().sse("/events", (ignored13, response) -> response.text("not an event stream"));
 
-        var result =
-            test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+        try (var test = TestServer.start(app)) {
 
-        assertEquals(500, result.statusCode());
+          var result =
+              test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(500, result.statusCode());
+        }
       }
     }
   }
 
   @Test
   void rejectsAnIncompatibleStreamBeforeCommittingTheSseResponse() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .sse(
-              "/events",
-              (ignored14, response) -> response.startStream("application/json").write("wrong"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup10 = app::close) {
+        app.routes()
+            .sse(
+                "/events",
+                (ignored14, response) -> response.startStream("application/json").write("wrong"));
 
-        var result =
-            test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+        try (var test = TestServer.start(app)) {
 
-        assertEquals(500, result.statusCode());
+          var result =
+              test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(500, result.statusCode());
+        }
       }
     }
   }
 
   @Test
   void composesAnSseRouteInsidePathScopes() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .path(
-              "/api",
-              routes ->
-                  routes.sse(
-                      "/events",
-                      (ignored15, response) -> response.startEventStream().send("scoped")));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup11 = app::close) {
+        app.routes()
+            .path(
+                "/api",
+                routes ->
+                    routes.sse(
+                        "/events",
+                        (ignored15, response) -> response.startEventStream().send("scoped")));
 
-        var result =
-            test.send(request -> request.path("/api/events"), HttpResponse.BodyHandlers.ofString());
+        try (var test = TestServer.start(app)) {
 
-        assertEquals("data: scoped\n\n", result.body());
+          var result =
+              test.send(
+                  request -> request.path("/api/events"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals("data: scoped\n\n", result.body());
+        }
       }
     }
   }
 
   @Test
   void treatsAnSseRouteAndGetAtTheSamePathAsDuplicates() throws Exception {
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      var routes = app.routes();
-      routes.sse("/events", (ignored16, response) -> response.startEventStream().send("ok"));
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> routes.get("/events", (ignored17, response) -> response.text("other")));
+      try (Closeable appCleanup12 = app::close) {
+        var routes = app.routes();
+        routes.sse("/events", (ignored16, response) -> response.startEventStream().send("ok"));
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () -> routes.get("/events", (ignored17, response) -> response.text("other")));
+      }
     }
   }
 
   @Test
   void allowsNoContentToStopEventSourceReconnection() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes().sse("/events", (ignored18, response) -> response.status(204));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup13 = app::close) {
+        app.routes().sse("/events", (ignored18, response) -> response.status(204));
 
-        var result =
-            test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+        try (var test = TestServer.start(app)) {
 
-        assertEquals(204, result.statusCode());
-        assertEquals("", result.body());
+          var result =
+              test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(204, result.statusCode());
+          assertEquals("", result.body());
+        }
       }
     }
   }
 
   @Test
   void globalExceptionHandlerCanStreamAReplacementErrorForAnSseRoute() throws Exception {
-    try (var app = new Shoostr()) {
-      app.exception(
-          IllegalArgumentException.class,
-          (ignored19, ignored20, response) ->
-              response
-                  .status(422)
-                  .startStream("application/json")
-                  .write("{\"error\":\"invalid\"}"));
-      app.routes()
-          .sse(
-              "/events",
-              (ignored21, ignored22) -> {
-                throw new IllegalArgumentException("invalid subscription");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup14 = app::close) {
+        app.exception(
+            IllegalArgumentException.class,
+            (ignored19, ignored20, response) ->
+                response
+                    .status(422)
+                    .startStream("application/json")
+                    .write("{\"error\":\"invalid\"}"));
+        app.routes()
+            .sse(
+                "/events",
+                (ignored21, ignored22) -> {
+                  throw new IllegalArgumentException("invalid subscription");
+                });
 
-        var result =
-            test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+        try (var test = TestServer.start(app)) {
 
-        assertEquals(422, result.statusCode());
-        assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
-        assertEquals("{\"error\":\"invalid\"}", result.body());
+          var result =
+              test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(422, result.statusCode());
+          assertEquals(
+              "application/json", result.headers().firstValue("Content-Type").orElseThrow());
+          assertEquals("{\"error\":\"invalid\"}", result.body());
+        }
       }
     }
   }
@@ -402,49 +470,53 @@ class ServerSentEventsTest {
     var release = new CountDownLatch(1);
     var exited = new CountDownLatch(1);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .sse(
-              "/events",
-              (ignored23, response) -> {
-                try {
-                  var events = response.startEventStream();
-                  events.send("");
-                  events.send("first");
-                  events.send("second");
-                  release.await();
-                } finally {
-                  exited.countDown();
-                }
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup15 = app::close) {
+        app.routes()
+            .sse(
+                "/events",
+                (ignored23, response) -> {
+                  try {
+                    var events = response.startEventStream();
+                    events.send("");
+                    events.send("first");
+                    events.send("second");
+                    release.await();
+                  } finally {
+                    exited.countDown();
+                  }
+                });
 
-        try {
-          var result =
-              test.send(
-                  request -> request.path("/events"), HttpResponse.BodyHandlers.ofInputStream());
+        try (var test = TestServer.start(app)) {
 
-          try (var input = result.body()) {
-            var frames = "data: \n\ndata: first\n\ndata: second\n\n";
-            assertEquals(
-                frames,
-                new String(
-                    input.readNBytes(frames.getBytes(StandardCharsets.UTF_8).length),
-                    StandardCharsets.UTF_8));
-            await("the event handler remains active until released")
-                .pollDelay(Duration.ZERO)
-                .pollInterval(Duration.ofMillis(10))
-                .during(Duration.ofMillis(100))
-                .atMost(Duration.ofMillis(1100))
-                .failFast("the event handler exited before release", () -> exited.getCount() == 0)
-                .until(() -> exited.getCount() > 0);
+          try {
+            var result =
+                test.send(
+                    request -> request.path("/events"), HttpResponse.BodyHandlers.ofInputStream());
+
+            try (var input = result.body()) {
+              var frames = "data: \n\ndata: first\n\ndata: second\n\n";
+              assertEquals(
+                  frames,
+                  new String(
+                      input.readNBytes(frames.getBytes(StandardCharsets.UTF_8).length),
+                      StandardCharsets.UTF_8));
+              await("the event handler remains active until released")
+                  .pollDelay(Duration.ZERO)
+                  .pollInterval(Duration.ofMillis(10))
+                  .during(Duration.ofMillis(100))
+                  .atMost(Duration.ofMillis(1100))
+                  .failFast("the event handler exited before release", () -> exited.getCount() == 0)
+                  .until(() -> exited.getCount() > 0);
+              release.countDown();
+              assertEquals(-1, input.read());
+              assertTrue(exited.await(3, TimeUnit.SECONDS));
+            }
+          } finally {
             release.countDown();
-            assertEquals(-1, input.read());
-            assertTrue(exited.await(3, TimeUnit.SECONDS));
           }
-        } finally {
-          release.countDown();
         }
       }
     }
@@ -452,83 +524,95 @@ class ServerSentEventsTest {
 
   @Test
   void sendsEventNameIdAndRetryBeforeData() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/events",
-              (ignored24, response) -> {
-                var event =
-                    SseEvent.of("ready")
-                        .withEvent("update")
-                        .withId("cursor-7")
-                        .withRetry(Duration.ofSeconds(2));
-                response.startEventStream().send(event);
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup16 = app::close) {
+        app.routes()
+            .get(
+                "/events",
+                (ignored24, response) -> {
+                  var event =
+                      SseEvent.of("ready")
+                          .withEvent("update")
+                          .withId("cursor-7")
+                          .withRetry(Duration.ofSeconds(2));
+                  response.startEventStream().send(event);
+                });
 
-        var result = test.send(request -> request.path("/events"));
+        try (var test = TestServer.start(app)) {
 
-        assertArrayEquals(
-            "event: update\nid: cursor-7\nretry: 2000\ndata: ready\n\n"
-                .getBytes(StandardCharsets.UTF_8),
-            result.body());
+          var result = test.send(request -> request.path("/events"));
+
+          assertArrayEquals(
+              "event: update\nid: cursor-7\nretry: 2000\ndata: ready\n\n"
+                  .getBytes(StandardCharsets.UTF_8),
+              result.body());
+        }
       }
     }
   }
 
   @Test
   void prefixesEveryNormalizedDataAndCommentLineIncludingTrailingEmptyLines() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/events",
-              (ignored25, response) -> {
-                var events = response.startEventStream();
-                events.send(SseEvent.of("first\r\nid: forged\rtail\n").withId("good"));
-                events.comment("note\rretry: 1\n");
-                events.heartbeat();
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup17 = app::close) {
+        app.routes()
+            .get(
+                "/events",
+                (ignored25, response) -> {
+                  var events = response.startEventStream();
+                  events.send(SseEvent.of("first\r\nid: forged\rtail\n").withId("good"));
+                  events.comment("note\rretry: 1\n");
+                  events.heartbeat();
+                });
 
-        var result = test.send(request -> request.path("/events"));
+        try (var test = TestServer.start(app)) {
 
-        assertArrayEquals(
-            String.join(
-                    "",
-                    "id: good\ndata: first\ndata: id: forged\ndata: tail\ndata: \n\n",
-                    ": note\n: retry: 1\n: \n\n:\n\n")
-                .getBytes(StandardCharsets.UTF_8),
-            result.body());
+          var result = test.send(request -> request.path("/events"));
+
+          assertArrayEquals(
+              String.join(
+                      "",
+                      "id: good\ndata: first\ndata: id: forged\ndata: tail\ndata: \n\n",
+                      ": note\n: retry: 1\n: \n\n:\n\n")
+                  .getBytes(StandardCharsets.UTF_8),
+              result.body());
+        }
       }
     }
   }
 
   @Test
   void normalizesCrOnlyDataForStringAndMetadataEventsWithoutFieldInjection() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .sse(
-              "/events",
-              (ignored26, response) -> {
-                var events = response.startEventStream();
-                var payload = "first\rid: forged\r";
-                events.send(payload);
-                events.send(SseEvent.of(payload).withEvent("update"));
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup18 = app::close) {
+        app.routes()
+            .sse(
+                "/events",
+                (ignored26, response) -> {
+                  var events = response.startEventStream();
+                  var payload = "first\rid: forged\r";
+                  events.send(payload);
+                  events.send(SseEvent.of(payload).withEvent("update"));
+                });
 
-        var result = test.send(request -> request.path("/events"));
+        try (var test = TestServer.start(app)) {
 
-        assertArrayEquals(
-            String.join(
-                    "",
-                    "data: first\ndata: id: forged\ndata: \n\n",
-                    "event: update\ndata: first\ndata: id: forged\ndata: \n\n")
-                .getBytes(StandardCharsets.UTF_8),
-            result.body());
+          var result = test.send(request -> request.path("/events"));
+
+          assertArrayEquals(
+              String.join(
+                      "",
+                      "data: first\ndata: id: forged\ndata: \n\n",
+                      "event: update\ndata: first\ndata: id: forged\ndata: \n\n")
+                  .getBytes(StandardCharsets.UTF_8),
+              result.body());
+        }
       }
     }
   }
@@ -561,34 +645,38 @@ class ServerSentEventsTest {
   void exposesLastEventIdOnReconnectWithoutImplicitHistory() throws Exception {
     var lastEventId = new AtomicReference<String>();
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/events",
-              (request, response) -> {
-                var previous = request.header(HttpHeaders.LAST_EVENT_ID.value());
-                previous.ifPresent(lastEventId::set);
+    {
+      var app = new Shoostr();
 
-                response
-                    .startEventStream()
-                    .send(
-                        previous.isEmpty()
-                            ? SseEvent.of("first").withId("cursor-1")
-                            : SseEvent.of("current").withId(""));
-              });
+      try (Closeable appCleanup19 = app::close) {
+        app.routes()
+            .get(
+                "/events",
+                (request, response) -> {
+                  var previous = request.header(HttpHeaders.LAST_EVENT_ID.value());
+                  previous.ifPresent(lastEventId::set);
 
-      try (var test = TestServer.start(app)) {
+                  response
+                      .startEventStream()
+                      .send(
+                          previous.isEmpty()
+                              ? SseEvent.of("first").withId("cursor-1")
+                              : SseEvent.of("current").withId(""));
+                });
 
-        var first =
-            test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
-        var reconnected =
-            test.send(
-                request -> request.path("/events").header("Last-Event-ID", "cursor-1"),
-                HttpResponse.BodyHandlers.ofString());
+        try (var test = TestServer.start(app)) {
 
-        assertEquals("id: cursor-1\ndata: first\n\n", first.body());
-        assertEquals("cursor-1", lastEventId.get());
-        assertEquals("id: \ndata: current\n\n", reconnected.body());
+          var first =
+              test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+          var reconnected =
+              test.send(
+                  request -> request.path("/events").header("Last-Event-ID", "cursor-1"),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals("id: cursor-1\ndata: first\n\n", first.body());
+          assertEquals("cursor-1", lastEventId.get());
+          assertEquals("id: \ndata: current\n\n", reconnected.body());
+        }
       }
     }
   }
@@ -598,17 +686,23 @@ class ServerSentEventsTest {
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
 
-    try (var app = new Shoostr(configuredOptions)) {
+    {
+      var app = new Shoostr(configuredOptions);
 
-      app.routes().get("/events", (ignored27, response) -> response.startEventStream().send("h2"));
+      try (Closeable appCleanup20 = app::close) {
 
-      try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_2))) {
+        app.routes()
+            .get("/events", (ignored27, response) -> response.startEventStream().send("h2"));
 
-        var result =
-            test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+        try (var test =
+            TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_2))) {
 
-        assertEquals(HttpClient.Version.HTTP_2, result.version());
-        assertEquals("data: h2\n\n", result.body());
+          var result =
+              test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(HttpClient.Version.HTTP_2, result.version());
+          assertEquals("data: h2\n\n", result.body());
+        }
       }
     }
   }
@@ -622,46 +716,49 @@ class ServerSentEventsTest {
     var cleaned = new CountDownLatch(1);
     var writeFailed = new CountDownLatch(1);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var socket = new Socket()) {
-      app.routes()
-          .get(
-              "/events",
-              (ignored28, response) -> {
-                var events = response.startEventStream();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-                try {
-                  events.send("ready");
-                  active.countDown();
-                  for (int attempt = 0; attempt < 100; attempt++) {
-                    Thread.sleep(50);
-                    events.heartbeat();
+      try (Closeable appCleanup21 = app::close;
+          var socket = new Socket()) {
+        app.routes()
+            .get(
+                "/events",
+                (ignored28, response) -> {
+                  var events = response.startEventStream();
+
+                  try {
+                    events.send("ready");
+                    active.countDown();
+                    for (int attempt = 0; attempt < 100; attempt++) {
+                      Thread.sleep(50);
+                      events.heartbeat();
+                    }
+                  } catch (IOException failure) {
+                    writeFailed.countDown();
+                    throw failure;
+                  } finally {
+                    cleaned.countDown();
                   }
-                } catch (IOException failure) {
-                  writeFailed.countDown();
-                  throw failure;
-                } finally {
-                  cleaned.countDown();
-                }
-              });
-      app.start();
-      socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()));
-      socket.setSoLinger(true, 0);
-      socket
-          .getOutputStream()
-          .write(
-              "GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n"
-                  .getBytes(StandardCharsets.US_ASCII));
-      socket.getOutputStream().flush();
-      await().atMost(Duration.ofSeconds(3)).until(() -> active.getCount() == 0);
+                });
+        app.start();
+        socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()));
+        socket.setSoLinger(true, 0);
+        socket
+            .getOutputStream()
+            .write(
+                "GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        await().atMost(Duration.ofSeconds(3)).until(() -> active.getCount() == 0);
 
-      socket.close();
-      await().atMost(Duration.ofSeconds(3)).until(() -> cleaned.getCount() == 0);
-      assertEquals(0, writeFailed.getCount());
+        socket.close();
+        await().atMost(Duration.ofSeconds(3)).until(() -> cleaned.getCount() == 0);
+        assertEquals(0, writeFailed.getCount());
+      }
     }
   }
 
@@ -673,50 +770,53 @@ class ServerSentEventsTest {
     var sent = new AtomicInteger();
     var payload = "x".repeat(64 * 1024);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var socket = new Socket()) {
-      app.routes()
-          .get(
-              "/events",
-              (ignored29, response) -> {
-                var events = response.startEventStream();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-                try {
-                  for (int attempt = 0; attempt < 256; attempt++) {
-                    events.send(payload);
-                    sent.incrementAndGet();
-                    firstSent.countDown();
+      try (Closeable appCleanup22 = app::close;
+          var socket = new Socket()) {
+        app.routes()
+            .get(
+                "/events",
+                (ignored29, response) -> {
+                  var events = response.startEventStream();
+
+                  try {
+                    for (int attempt = 0; attempt < 256; attempt++) {
+                      events.send(payload);
+                      sent.incrementAndGet();
+                      firstSent.countDown();
+                    }
+                  } finally {
+                    cleaned.countDown();
                   }
-                } finally {
-                  cleaned.countDown();
-                }
-              });
-      app.start();
-      socket.setReceiveBufferSize(4096);
-      socket.setSoLinger(true, 0);
-      socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()));
-      socket
-          .getOutputStream()
-          .write(
-              "GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n"
-                  .getBytes(StandardCharsets.US_ASCII));
-      socket.getOutputStream().flush();
-      assertTrue(firstSent.await(3, TimeUnit.SECONDS));
+                });
+        app.start();
+        socket.setReceiveBufferSize(4096);
+        socket.setSoLinger(true, 0);
+        socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()));
+        socket
+            .getOutputStream()
+            .write(
+                "GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                    .getBytes(StandardCharsets.US_ASCII));
+        socket.getOutputStream().flush();
+        assertTrue(firstSent.await(3, TimeUnit.SECONDS));
 
-      await()
-          .pollInterval(Duration.ofMillis(25))
-          .during(Duration.ofMillis(750))
-          .atMost(Duration.ofSeconds(2))
-          .untilAsserted(
-              () ->
-                  assertTrue(
-                      sent.get() < 256, "Stalled peer must not admit an unbounded event queue"));
-      socket.close();
-      await().atMost(Duration.ofSeconds(3)).until(() -> cleaned.getCount() == 0);
+        await()
+            .pollInterval(Duration.ofMillis(25))
+            .during(Duration.ofMillis(750))
+            .atMost(Duration.ofSeconds(2))
+            .untilAsserted(
+                () ->
+                    assertTrue(
+                        sent.get() < 256, "Stalled peer must not admit an unbounded event queue"));
+        socket.close();
+        await().atMost(Duration.ofSeconds(3)).until(() -> cleaned.getCount() == 0);
+      }
     }
   }
 
@@ -725,40 +825,43 @@ class ServerSentEventsTest {
   void forcedAppCloseReleasesAnActiveEventSource() throws Exception {
     var cleaned = new CountDownLatch(1);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.modifyServer(
-          server -> {
-            server.setStopTimeout(100);
-            ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
-          });
-      app.routes()
-          .get(
-              "/events",
-              (ignored30, response) -> {
-                try {
-                  response.startEventStream().send("ready");
-                  new CountDownLatch(1).await();
-                } finally {
-                  cleaned.countDown();
-                }
-              });
-      app.start();
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
-                  .build(),
-              HttpResponse.BodyHandlers.ofInputStream());
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      try (var body = result.body()) {
-        assertEquals("data: ready\n\n", new String(body.readNBytes(13), StandardCharsets.UTF_8));
+      try (Closeable appCleanup23 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.modifyServer(
+            server -> {
+              server.setStopTimeout(100);
+              ((ServerConnector) server.getConnectors()[0]).setShutdownIdleTimeout(0);
+            });
+        app.routes()
+            .get(
+                "/events",
+                (ignored30, response) -> {
+                  try {
+                    response.startEventStream().send("ready");
+                    new CountDownLatch(1).await();
+                  } finally {
+                    cleaned.countDown();
+                  }
+                });
+        app.start();
+        var result =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/events"))
+                    .build(),
+                HttpResponse.BodyHandlers.ofInputStream());
 
-        assertThrows(IOException.class, app::close);
-        assertTrue(cleaned.await(3, TimeUnit.SECONDS));
+        try (var body = result.body()) {
+          assertEquals("data: ready\n\n", new String(body.readNBytes(13), StandardCharsets.UTF_8));
+
+          assertThrows(IOException.class, app::close);
+          assertTrue(cleaned.await(3, TimeUnit.SECONDS));
+        }
       }
     }
   }

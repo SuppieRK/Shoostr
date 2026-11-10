@@ -17,6 +17,7 @@ class JsonExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"{\"name\":\"Ada\"} trailing", "{\"name\":\"Ada\"}{}"})
   void rejectsTrailingContentAfterAValidJsonObject(String body) throws Exception {
+
     try (var test = TestServer.start(JsonExample.application())) {
       var response =
           test.send(
@@ -35,6 +36,7 @@ class JsonExampleTest {
 
   @Test
   void rendersMalformedJsonAsAnInputErrorRatherThanAServerFailure() throws Exception {
+
     try (var test = TestServer.start(JsonExample.application())) {
       var response =
           test.send(
@@ -53,6 +55,7 @@ class JsonExampleTest {
 
   @Test
   void rendersAnUnexpectedFailureWithoutLeakingItsMessage() throws Exception {
+
     try (var test = TestServer.start(JsonExample.application())) {
       var response =
           test.send(
@@ -69,6 +72,7 @@ class JsonExampleTest {
 
   @Test
   void retainsPlainTextResponsesWhenTheCodecIsEnabled() throws Exception {
+
     try (var test = TestServer.start(JsonExample.application())) {
       var response =
           test.send(request -> request.path("/users/help"), HttpResponse.BodyHandlers.ofString());
@@ -84,6 +88,7 @@ class JsonExampleTest {
 
   @Test
   void rendersInvalidUserInputThroughTheScopedErrorHandler() throws Exception {
+
     try (var test = TestServer.start(JsonExample.application())) {
       var response =
           test.send(
@@ -106,6 +111,7 @@ class JsonExampleTest {
 
   @Test
   void returnsTheValidatedTypedUserAsJson() throws Exception {
+
     try (var test = TestServer.start(JsonExample.application())) {
       var response =
           test.send(

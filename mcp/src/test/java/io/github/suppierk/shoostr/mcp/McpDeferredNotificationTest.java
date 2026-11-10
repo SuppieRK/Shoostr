@@ -37,7 +37,7 @@ class McpDeferredNotificationTest {
             (ignored2, ignored3) -> {});
     var mcp = Mcp.async(security, transport -> McpServer.async(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
         (request, ignored4) -> {
           if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {

@@ -66,7 +66,7 @@ class ExtensionRequestBenchmarkTest {
   }
 
   private static Stream<Arguments> tracingCases() {
-    return Stream.of("plain", "otelInstalled", "otelSelected", "otelUnselected", "otelAppWide")
+    return Stream.of("plain", "otelSelected", "otelUnselected", "otelAppWide")
         .flatMap(
             configuration ->
                 Stream.of("default", "platform", "forkJoin")

@@ -55,10 +55,9 @@ public final class RequestHooksExample {
                                   phases.accept("handler");
                                   response.text("job " + request.pathParam("id").orElseThrow());
                                 }),
-                    extensions ->
+                    lifecycle ->
                         // These local phases compose with the application phases for /jobs only.
-                        extensions
-                            .lifecycle()
+                        lifecycle
                             .onRouteMatched(
                                 (ignored13, ignored14) -> phases.accept("local:matched"))
                             .beforeRouteHandler(

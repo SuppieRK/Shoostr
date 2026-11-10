@@ -30,7 +30,7 @@ class McpExpiryTest {
                 (ignored2, ignored3) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var initialized =
@@ -87,7 +87,7 @@ class McpExpiryTest {
             (ignored4, ignored5) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var readers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {

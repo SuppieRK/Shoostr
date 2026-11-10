@@ -10,6 +10,7 @@ import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
+import java.io.Closeable;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.Optional;
@@ -63,7 +64,7 @@ class McpOwnershipTest {
         Mcp.sync(
             security, transport -> McpServer.sync(transport).serverInfo("owner", "1.0").build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app);
         var client =
@@ -95,8 +96,12 @@ class McpOwnershipTest {
             transport -> McpServer.sync(transport).serverInfo("ownership", "1.0").build());
     mcp.close();
 
-    try (var app = new Shoostr()) {
-      assertThrows(IllegalStateException.class, () -> app.extensions(mcp));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        assertThrows(IllegalStateException.class, () -> app.routes().path("/mcp", mcp::routes));
+      }
     }
   }
 

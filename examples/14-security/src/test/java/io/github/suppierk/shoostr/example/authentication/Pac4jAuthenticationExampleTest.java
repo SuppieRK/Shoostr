@@ -17,6 +17,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class Pac4jAuthenticationExampleTest {
   @Test
   void publishesAProfileOnlyAfterTheDirectClientValidatesItsCredentials() throws Exception {
+
     try (var test = TestServer.start(Pac4jAuthenticationExample.application())) {
       var response =
           test.send(
@@ -32,6 +33,7 @@ class Pac4jAuthenticationExampleTest {
   @CsvSource({"reader, 403, Forbidden", "admin, 200, permitted"})
   void requiresTheAdministratorRoleAfterSuccessfulCredentialValidation(
       String user, int status, String body) throws Exception {
+
     try (var test = TestServer.start(Pac4jAuthenticationExample.application())) {
       var response =
           test.send(
@@ -48,6 +50,7 @@ class Pac4jAuthenticationExampleTest {
 
   @Test
   void challengesMissingCredentialsBeforeRunningTheAccountHandler() throws Exception {
+
     try (var test = TestServer.start(Pac4jAuthenticationExample.application())) {
       var response = test.send(request -> request.path("/accounts/me"));
       assertEquals(401, response.statusCode());
@@ -60,6 +63,7 @@ class Pac4jAuthenticationExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"reader:wrong", "unknown:local-only", "reader:"})
   void rejectsCredentialsThatTheAuthenticatorDoesNotValidate(String credentials) throws Exception {
+
     try (var test = TestServer.start(Pac4jAuthenticationExample.application())) {
       var response =
           test.send(
@@ -73,6 +77,7 @@ class Pac4jAuthenticationExampleTest {
 
   @Test
   void rejectsMultipleAuthorizationFieldsEvenWhenBothCredentialsAreValid() throws Exception {
+
     try (var test = TestServer.start(Pac4jAuthenticationExample.application())) {
       var response =
           test.send(

@@ -1,8 +1,8 @@
 package io.github.suppierk.shoostr.example.extensions;
 
-import io.github.suppierk.shoostr.ApplicationCallbacks;
-import io.github.suppierk.shoostr.Extension;
-import io.github.suppierk.shoostr.Extensions;
+import io.github.suppierk.shoostr.ApplicationExtension;
+import io.github.suppierk.shoostr.Lifecycle;
+import io.github.suppierk.shoostr.RouteExtension;
 import io.github.suppierk.shoostr.Shoostr;
 import java.util.ArrayList;
 import java.util.List;
@@ -25,18 +25,15 @@ public final class RouteCatalogExample {
     Objects.requireNonNull(previewAvailable);
     var catalog = new RouteCatalog();
     return new Shoostr()
-        // Install this instance before selecting its configuration on routes or groups.
-        .extensions(catalog)
-        .configureExtensionsDefaults(
-            extensions -> extensions.with(catalog).summary("List route descriptions"))
+        .withExtension(catalog, defaults -> defaults.summary("List route descriptions"))
         .routes(
             routes -> {
-              // Exclusion removes catalog facts, while its installed application hook still runs.
+              // Exclusion removes both catalog facts and the selected response header.
               routes
                   .get(
                       "/health",
                       (ignored, response) -> response.text("ok"),
-                      extensions -> extensions.without(catalog))
+                      lifecycle -> lifecycle.withoutExtension(catalog))
                   .get("/catalog", (ignored2, response) -> response.text(catalog.document()))
                   // Selected children inherit a summary and can override their own copy.
                   .path(
@@ -49,9 +46,9 @@ public final class RouteCatalogExample {
                               .get(
                                   "/status",
                                   (ignored3, response) -> response.text("ready"),
-                                  extensions ->
-                                      extensions.with(catalog).summary("Check readiness")),
-                      extensions -> extensions.with(catalog).summary("Read an item"))
+                                  lifecycle ->
+                                      lifecycle.withExtension(catalog).summary("Check readiness")),
+                      lifecycle -> lifecycle.withExtension(catalog).summary("Read an item"))
                   // Registration records this route even while its runtime condition is false.
                   .when(
                       previewAvailable,
@@ -59,12 +56,14 @@ public final class RouteCatalogExample {
                           preview.get(
                               "/preview",
                               (ignored4, response) -> response.text("preview"),
-                              extensions -> extensions.with(catalog).summary("Preview content")));
+                              lifecycle ->
+                                  lifecycle.withExtension(catalog).summary("Preview content")));
             });
   }
 
   /** Compiles selected route descriptions into a snapshot before accepting traffic. */
-  public static final class RouteCatalog implements Extension<Description> {
+  public static final class RouteCatalog
+      implements ApplicationExtension<Description>, RouteExtension<Description> {
     private final AtomicBoolean claimed;
     private final List<String> routes;
     private volatile String document;
@@ -87,14 +86,9 @@ public final class RouteCatalogExample {
 
     /** {@inheritDoc} */
     @Override
-    public void install(ApplicationCallbacks callbacks) {
-      callbacks.onRequestHeaders(
+    public Description configure(Lifecycle endpoint, Description inherited) {
+      endpoint.beforeRouteHandler(
           (ignored5, response) -> response.setHeader("X-Route-Catalog", "/catalog"));
-    }
-
-    /** {@inheritDoc} */
-    @Override
-    public Description configure(Extensions endpoint, Description inherited) {
       // Copy inherited settings instead of sharing a mutable object with parents or siblings.
       var description = new Description(inherited == null ? "Route" : inherited.summary);
       // Read final registration facts after this scope's configuration has been applied.

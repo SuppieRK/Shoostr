@@ -1,7 +1,6 @@
 package io.github.suppierk.shoostr;
 
 import io.github.suppierk.shoostr.http.HttpMethods;
-import java.io.Closeable;
 import java.util.Objects;
 import java.util.concurrent.ExecutorService;
 import java.util.function.BooleanSupplier;
@@ -12,10 +11,10 @@ import org.jspecify.annotations.Nullable;
 /**
  * Codec-backed registration sharing the existing router, group-depth limits, availability,
  * extension configuration and caller-owned executor contract. No runtime route view is allocated.
- * Use ordinary Routes for native WebSocket listeners and static resources. Closing any scope ends
- * registration for the entire app without stopping its listener.
+ * Use ordinary Routes for native WebSocket listeners and static resources. Registration resources
+ * belong to the application; route scopes have no separate cleanup operation.
  */
-public final class TypedRoutes implements Closeable {
+public final class TypedRoutes {
   private final Routes routes;
   private final Codec codec;
 
@@ -69,7 +68,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes path(
-      String path, Consumer<TypedRoutes> registration, Consumer<Extensions> configuration) {
+      String path, Consumer<TypedRoutes> registration, Consumer<Lifecycle> configuration) {
     Objects.requireNonNull(registration);
     routes.path(path, child -> registration.accept(new TypedRoutes(child, codec)), configuration);
     return this;
@@ -108,7 +107,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes get(TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes get(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.get(adapt(handler), configuration);
     return this;
   }
@@ -121,7 +120,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes get(String path, TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes get(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.get(path, adapt(handler), configuration);
     return this;
   }
@@ -175,7 +174,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.get(path, executor, adapt(handler), configuration);
     return this;
   }
@@ -201,7 +200,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes get(
-      ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration) {
+      ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.get(executor, adapt(handler), configuration);
     return this;
   }
@@ -213,7 +212,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes post(TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes post(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.post(adapt(handler), configuration);
     return this;
   }
@@ -226,7 +225,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes post(String path, TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes post(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.post(path, adapt(handler), configuration);
     return this;
   }
@@ -280,7 +279,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.post(path, executor, adapt(handler), configuration);
     return this;
   }
@@ -306,7 +305,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes post(
-      ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration) {
+      ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.post(executor, adapt(handler), configuration);
     return this;
   }
@@ -318,7 +317,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes put(TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes put(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.put(adapt(handler), configuration);
     return this;
   }
@@ -331,7 +330,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes put(String path, TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes put(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.put(path, adapt(handler), configuration);
     return this;
   }
@@ -385,7 +384,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.put(path, executor, adapt(handler), configuration);
     return this;
   }
@@ -411,7 +410,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes put(
-      ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration) {
+      ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.put(executor, adapt(handler), configuration);
     return this;
   }
@@ -423,7 +422,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes patch(TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes patch(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.patch(adapt(handler), configuration);
     return this;
   }
@@ -436,7 +435,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes patch(String path, TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes patch(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.patch(path, adapt(handler), configuration);
     return this;
   }
@@ -490,7 +489,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.patch(path, executor, adapt(handler), configuration);
     return this;
   }
@@ -516,7 +515,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes patch(
-      ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration) {
+      ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.patch(executor, adapt(handler), configuration);
     return this;
   }
@@ -528,7 +527,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes delete(TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes delete(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.delete(adapt(handler), configuration);
     return this;
   }
@@ -541,7 +540,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes delete(String path, TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes delete(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.delete(path, adapt(handler), configuration);
     return this;
   }
@@ -595,7 +594,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.delete(path, executor, adapt(handler), configuration);
     return this;
   }
@@ -621,7 +620,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes delete(
-      ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration) {
+      ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.delete(executor, adapt(handler), configuration);
     return this;
   }
@@ -633,7 +632,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes head(TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes head(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.head(adapt(handler), configuration);
     return this;
   }
@@ -646,7 +645,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes head(String path, TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes head(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.head(path, adapt(handler), configuration);
     return this;
   }
@@ -700,7 +699,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.head(path, executor, adapt(handler), configuration);
     return this;
   }
@@ -726,7 +725,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes head(
-      ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration) {
+      ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.head(executor, adapt(handler), configuration);
     return this;
   }
@@ -738,7 +737,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes options(TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes options(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.options(adapt(handler), configuration);
     return this;
   }
@@ -751,8 +750,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes options(
-      String path, TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes options(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.options(path, adapt(handler), configuration);
     return this;
   }
@@ -806,7 +804,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.options(path, executor, adapt(handler), configuration);
     return this;
   }
@@ -832,7 +830,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes options(
-      ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration) {
+      ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.options(executor, adapt(handler), configuration);
     return this;
   }
@@ -860,7 +858,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes route(
-      HttpMethods method, String path, TypedHandler handler, Consumer<Extensions> configuration) {
+      HttpMethods method, String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.route(method, path, adapt(handler), configuration);
     return this;
   }
@@ -888,7 +886,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes route(
-      String method, String path, TypedHandler handler, Consumer<Extensions> configuration) {
+      String method, String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.route(method, path, adapt(handler), configuration);
     return this;
   }
@@ -902,7 +900,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes route(
-      HttpMethods method, TypedHandler handler, Consumer<Extensions> configuration) {
+      HttpMethods method, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.route(method, adapt(handler), configuration);
     return this;
   }
@@ -915,8 +913,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public TypedRoutes route(
-      String method, TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes route(String method, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.route(method, adapt(handler), configuration);
     return this;
   }
@@ -975,7 +972,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.route(method, path, executor, adapt(handler), configuration);
     return this;
   }
@@ -1006,7 +1003,7 @@ public final class TypedRoutes implements Closeable {
       HttpMethods method,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.route(method, executor, adapt(handler), configuration);
     return this;
   }
@@ -1041,7 +1038,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.route(method, path, executor, adapt(handler), configuration);
     return this;
   }
@@ -1072,7 +1069,7 @@ public final class TypedRoutes implements Closeable {
       String method,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.route(method, executor, adapt(handler), configuration);
     return this;
   }
@@ -1108,7 +1105,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes websocket(
-      String path, Consumer<TypedWebSocket> configuration, Consumer<Extensions> extensions) {
+      String path, Consumer<TypedWebSocket> configuration, Consumer<Lifecycle> extensions) {
     return registerWebsocket(path, null, configuration, Objects.requireNonNull(extensions));
   }
 
@@ -1120,7 +1117,7 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes websocket(
-      Consumer<TypedWebSocket> configuration, Consumer<Extensions> extensions) {
+      Consumer<TypedWebSocket> configuration, Consumer<Lifecycle> extensions) {
     return websocket("", configuration, extensions);
   }
 
@@ -1152,7 +1149,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       ExecutorService executor,
       Consumer<TypedWebSocket> configuration,
-      Consumer<Extensions> extensions) {
+      Consumer<Lifecycle> extensions) {
     return registerWebsocket(
         path, Objects.requireNonNull(executor), configuration, Objects.requireNonNull(extensions));
   }
@@ -1179,7 +1176,7 @@ public final class TypedRoutes implements Closeable {
   public TypedRoutes websocket(
       ExecutorService executor,
       Consumer<TypedWebSocket> configuration,
-      Consumer<Extensions> extensions) {
+      Consumer<Lifecycle> extensions) {
     return websocket("", executor, configuration, extensions);
   }
 
@@ -1196,7 +1193,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       @Nullable ExecutorService executor,
       Consumer<TypedWebSocket> configuration,
-      @Nullable Consumer<Extensions> extensions) {
+      @Nullable Consumer<Lifecycle> extensions) {
     Objects.requireNonNull(configuration);
     var callbacks = new TypedWebSocket(codec);
     routes.registerManagedWebsocket(
@@ -1235,7 +1232,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extensions
    * @return this scope
    */
-  public TypedRoutes sse(String path, TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes sse(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.sse(path, adapt(handler), configuration);
     return this;
   }
@@ -1247,7 +1244,7 @@ public final class TypedRoutes implements Closeable {
    * @param configuration local extensions
    * @return this scope
    */
-  public TypedRoutes sse(TypedHandler handler, Consumer<Extensions> configuration) {
+  public TypedRoutes sse(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.sse(adapt(handler), configuration);
     return this;
   }
@@ -1278,7 +1275,7 @@ public final class TypedRoutes implements Closeable {
       String path,
       ExecutorService executor,
       TypedHandler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     routes.sse(path, executor, adapt(handler), configuration);
     return this;
   }
@@ -1304,17 +1301,9 @@ public final class TypedRoutes implements Closeable {
    * @return this scope
    */
   public TypedRoutes sse(
-      ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration) {
+      ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.sse(executor, adapt(handler), configuration);
     return this;
-  }
-
-  /**
-   * Ends registration for the original shared root; does not close the app or borrowed executors.
-   */
-  @Override
-  public void close() {
-    routes.close();
   }
 
   /**

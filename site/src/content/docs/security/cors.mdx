@@ -14,13 +14,13 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 Cross-Origin Resource Sharing (CORS) tells a browser which cross-origin requests and response data a service permits. It is a browser access policy, not authentication or protection against a non-browser client.
 
-`CorsPolicy` describes allowed origins, methods and headers. `Cors` is the provider registered with the application; the route's `Extensions` configuration selects that installed provider and its policy. `HttpMethods` and `HttpHeaders` supply named protocol values.
+`CorsPolicy` describes allowed origins, methods and headers. `Cors` is the provider; the route's `Lifecycle` configuration selects that instance and its policy. `HttpMethods` and `HttpHeaders` supply named protocol values.
 
 This task admits selected browser interactions and checks rejected origins and preflight requests.
 
-Describe allowed browser origins, methods and request headers in `CorsPolicy`, register `new Cors(policy)`, and select that instance with `extensions.with(cors)`. Select application defaults before registering routes with `app.configureExtensionsDefaults(...)`; exclude deliberately unprotected scopes with `without(cors)`. Group selection covers registered descendants, including their static files and SSE, rather than every URL that shares a prefix.
+Describe allowed browser origins, methods and request headers in `CorsPolicy`, create `new Cors(policy)`, and select that instance with `lifecycle.withExtension(cors)`. Shared setup is automatic. Activate application defaults before registering routes with `app.withExtension(cors)`; exclude deliberately unprotected scopes with `lifecycle.withoutExtension(cors)`. Group selection covers registered descendants, including their static files and SSE, rather than every URL that shares a prefix.
 
-A child inherits the complete policy until `extensions.with(cors).policy(replacement)` replaces it.
+A child inherits the complete policy until `lifecycle.withExtension(cors).policy(replacement)` replaces it.
 Define each replacement as an independent policy: its omitted fields use its own defaults, and its collections do not combine with inherited collections.
 This lets a child narrow permissions without carrying forward an origin or header from its parent.
 The replacement keeps the same extension owner and leaves parent and sibling settings unchanged; excluding an inherited owner does not allow selecting a different instance.

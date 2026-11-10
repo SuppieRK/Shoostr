@@ -20,15 +20,16 @@ class ExecutorExampleTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void usesTheSelectedModeWhenNoEndpointExecutorIsSelected(boolean virtual) throws Exception {
-    try (var workers = Executors.newSingleThreadExecutor();
-        var test =
-            TestServer.start(
-                ExecutorExample.application(
-                    virtual, workers, new ThreadLocal<>(), ignored -> {}))) {
-      var response =
-          test.send(request -> request.path("/default"), HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, response.statusCode());
-      assertEquals("virtual=" + virtual, response.body());
+    try (var workers = Executors.newSingleThreadExecutor()) {
+
+      try (var test =
+          TestServer.start(
+              ExecutorExample.application(virtual, workers, new ThreadLocal<>(), ignored -> {}))) {
+        var response =
+            test.send(request -> request.path("/default"), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
+        assertEquals("virtual=" + virtual, response.body());
+      }
     }
   }
 
@@ -73,24 +74,26 @@ class ExecutorExampleTest {
     var context = new ThreadLocal<String>();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
-    try (var workers = Executors.newSingleThreadExecutor();
-        var test =
-            TestServer.start(
-                verifyExecutionMode(
-                    ExecutorExample.application(
-                        virtualApplication, workers, context, outcomes::offer),
-                    virtualApplication))) {
-      workers.shutdown();
-      var response =
-          test.send(
-              request -> request.path("/selected").header("X-Request-Id", "request-8"),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(503, response.statusCode());
-      assertEquals("busy:request-8", response.body());
-      var outcome = outcomes.poll(5, TimeUnit.SECONDS);
-      assertNotNull(outcome);
-      assertEquals("/selected", outcome.routePattern());
-      assertInstanceOf(RejectedExecutionException.class, outcome.applicationFailure());
+    try (var workers = Executors.newSingleThreadExecutor()) {
+
+      try (var test =
+          TestServer.start(
+              verifyExecutionMode(
+                  ExecutorExample.application(
+                      virtualApplication, workers, context, outcomes::offer),
+                  virtualApplication))) {
+        workers.shutdown();
+        var response =
+            test.send(
+                request -> request.path("/selected").header("X-Request-Id", "request-8"),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(503, response.statusCode());
+        assertEquals("busy:request-8", response.body());
+        var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+        assertNotNull(outcome);
+        assertEquals("/selected", outcome.routePattern());
+        assertInstanceOf(RejectedExecutionException.class, outcome.applicationFailure());
+      }
     }
   }
 

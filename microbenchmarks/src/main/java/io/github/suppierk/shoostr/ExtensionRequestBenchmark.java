@@ -48,7 +48,6 @@ public class ExtensionRequestBenchmark {
     "localInstrumentation",
     "unselectedInstrumentation",
     "appInstrumentation",
-    "otelInstalled",
     "otelSelected",
     "otelUnselected",
     "otelAppWide"
@@ -188,12 +187,12 @@ public class ExtensionRequestBenchmark {
      */
     public static void register(ExtensionRequestBenchmark benchmark) {
       switch (benchmark.configuration) {
-        case "otelInstalled", "otelSelected", "otelUnselected", "otelAppWide" -> {
+        case "otelSelected", "otelUnselected", "otelAppWide" -> {
           registerTracing(benchmark);
           return;
         }
         case "inactive" -> {
-          benchmark.app.extensions(new Inactive());
+          benchmark.app.withExtension(new Inactive());
           benchmark.registerPlain();
           return;
         }
@@ -213,20 +212,17 @@ public class ExtensionRequestBenchmark {
       }
 
       var authentication = new Identity();
-      if ("authentication".equals(benchmark.configuration)) {
-        benchmark.app.authentication(authentication);
-      }
 
       for (int group = 0; group < benchmark.groups; group++) {
         var path = "/api/" + group + "/users/{id}";
         Handler handler = (ignored8, response) -> response.text("ok");
-        Consumer<Extensions> get =
+        Consumer<Lifecycle> get =
             e -> {
               if (!"unselectedInstrumentation".equals(benchmark.configuration)) {
                 configure(e, authentication, benchmark.configuration);
               }
             };
-        Consumer<Extensions> post = e -> configure(e, authentication, benchmark.configuration);
+        Consumer<Lifecycle> post = e -> configure(e, authentication, benchmark.configuration);
         if (benchmark.executor == null) {
           benchmark.app.routes().get(path, handler, get);
           benchmark.app.routes().post(path, handler, post);
@@ -247,17 +243,19 @@ public class ExtensionRequestBenchmark {
       benchmark.resources.add(provider);
       var tracing =
           new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build());
-      benchmark.app.extensions(
-          "otelAppWide".equals(benchmark.configuration) ? tracing.allRequests() : tracing);
+      if ("otelAppWide".equals(benchmark.configuration)) {
+        benchmark.app.withExtension(tracing);
+      }
+
       for (int group = 0; group < benchmark.groups; group++) {
         var path = "/api/" + group + "/users/{id}";
         for (var method : List.of("GET", "POST")) {
-          Consumer<Extensions> configure =
+          Consumer<Lifecycle> configure =
               e -> {
                 if ("otelSelected".equals(benchmark.configuration)
                     || ("otelUnselected".equals(benchmark.configuration)
                         && "POST".equals(method))) {
-                  e.with(tracing);
+                  e.withExtension(tracing);
                 }
               };
           Handler handler = (ignored9, response) -> response.text("ok");
@@ -278,27 +276,29 @@ public class ExtensionRequestBenchmark {
      * @param configuration selected mode
      */
     private static void configure(
-        Extensions endpoint, Identity authentication, String configuration) {
+        Lifecycle endpoint, Identity authentication, String configuration) {
       switch (configuration) {
-        case "authentication" -> endpoint.with(authentication);
-        case "localObserver" -> endpoint.lifecycle().afterRequest(ignored10 -> {});
+        case "authentication" -> endpoint.withExtension(authentication);
+        case "localObserver" -> endpoint.afterRequest(ignored10 -> {});
         case "localInstrumentation", "unselectedInstrumentation" ->
-            endpoint.lifecycle().observe(ignored11 -> ignored12 -> {});
+            endpoint.observe(ignored11 -> ignored12 -> {});
         default -> {
-          endpoint
-              .lifecycle()
-              .beforeRouteHandler(
-                  (request, ignored13) -> request.attribute("admitted", Boolean.TRUE));
-          endpoint
-              .lifecycle()
-              .afterRouteHandler((request, ignored14) -> request.attribute("admitted", null));
+          endpoint.beforeRouteHandler(
+              (request, ignored13) -> request.attribute("admitted", Boolean.TRUE));
+          endpoint.afterRouteHandler((request, ignored14) -> request.attribute("admitted", null));
         }
       }
     }
   }
 
   /** Available capability with deliberately no request behavior. */
-  private static final class Inactive implements Extension<Void> {}
+  private static final class Inactive implements ApplicationExtension<Inactive> {
+    /** {@inheritDoc} */
+    @Override
+    public Inactive configure(Lifecycle lifecycle, @Nullable Inactive inherited) {
+      return this;
+    }
+  }
 
   /** Identity fixture independent of any external security provider. */
   private static final class Identity extends AuthenticationExtension {

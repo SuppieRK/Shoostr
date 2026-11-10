@@ -44,10 +44,6 @@ public final class OpenApiExample {
     var security = OpenApiAuthentication.create();
     var app =
         new Shoostr()
-            // Install authentication and both documents; endpoint configuration selects each
-            // instance.
-            .authentication(security)
-            .extensions(configuration.docs(), configuration.internal())
             .routes(
                 routes -> {
                   var docs = configuration.docs();
@@ -56,13 +52,14 @@ public final class OpenApiExample {
                   // Shoostr's OpenAPI extension supplies the UI handler; register its URLs
                   // explicitly.
                   var ui = docs.uiHandler("/docs/", "/openapi.json");
-                  // e.with(docs) configures this endpoint's documentation on that installed
+                  // e.withExtension(docs) configures this endpoint's documentation on that
+                  // installed
                   // instance.
                   routes.get(
                       "/health",
                       (ignored, response) -> response.text("healthy"),
                       e ->
-                          e.with(docs)
+                          e.withExtension(docs)
                               .summary("Health")
                               .operationId("health")
                               .response(200, "Healthy", MediaType.TEXT_PLAIN));
@@ -74,7 +71,7 @@ public final class OpenApiExample {
                             "/",
                             (ignored2, response) -> response.text("Use a numeric user ID"),
                             e ->
-                                e.with(docs)
+                                e.withExtension(docs)
                                     .summary("User help")
                                     .response(200, "Plain text help", MediaType.TEXT_PLAIN));
                         group.get(
@@ -88,14 +85,14 @@ public final class OpenApiExample {
                                                 .createObjectNode()
                                                 .put("name", "Alice"))),
                             e ->
-                                e.with(docs)
+                                e.withExtension(docs)
                                     .summary("Find a user")
                                     .operationId("findUser")
                                     .pathParameter("id", "Numeric user identifier")
                                     .response(200, "User found", MediaType.APPLICATION_JSON, user));
                       },
                       e ->
-                          e.with(docs)
+                          e.withExtension(docs)
                               .tag("users")
                               .description("Grouped defaults copied independently")
                               .response(404, "Not found"));
@@ -105,8 +102,8 @@ public final class OpenApiExample {
                       (request, response) ->
                           response.text(request.principal().orElseThrow().getName()),
                       e -> {
-                        e.with(security);
-                        e.with(docs)
+                        e.withExtension(security);
+                        e.withExtension(docs)
                             .summary("Authenticated identity")
                             .security(BASIC_SCHEME)
                             .response(200, "Identity", MediaType.TEXT_PLAIN);
@@ -117,8 +114,8 @@ public final class OpenApiExample {
                       "/admin/ping",
                       (ignored4, response) -> response.text("pong"),
                       e -> {
-                        e.with(security);
-                        e.with(internal)
+                        e.withExtension(security);
+                        e.withExtension(internal)
                             .summary("Internal ping")
                             .security(BASIC_SCHEME)
                             .response(200, "Pong", MediaType.TEXT_PLAIN);
@@ -133,7 +130,7 @@ public final class OpenApiExample {
                               (ignored5, response) ->
                                   response.text("Conditional development route"),
                               e ->
-                                  e.with(internal)
+                                  e.withExtension(internal)
                                       .summary("Development endpoint")
                                       .response(200, "Available", MediaType.TEXT_PLAIN)));
                   // Serve UI assets through two routes; hidden keeps them out of the document.
@@ -144,21 +141,22 @@ public final class OpenApiExample {
                         group.get("/{*resource}", ui);
                       },
                       e -> {
-                        e.with(security);
-                        e.with(docs).hidden();
+                        e.withExtension(security);
+                        e.withExtension(docs).hidden();
                       });
                   // handler() serves the specification generated once during application startup.
                   routes.get(
                       "/openapi.json",
                       docs.handler(),
                       e -> {
-                        e.with(security);
-                        e.with(docs)
+                        e.withExtension(security);
+                        e.withExtension(docs)
                             .summary("This generated specification")
                             .security(BASIC_SCHEME)
                             .response(200, "OpenAPI document", MediaType.APPLICATION_JSON);
                       });
-                  routes.get("/internal-openapi.json", internal.handler(), e -> e.with(security));
+                  routes.get(
+                      "/internal-openapi.json", internal.handler(), e -> e.withExtension(security));
                 });
     // UserCodec is example-local and implements core's Codec using Swagger's Jackson mapper.
     // Only this typed route registration uses the codec; earlier byte/text routes remain untyped.
@@ -175,8 +173,8 @@ public final class OpenApiExample {
                     response.body(MediaType.APPLICATION_JSON, value);
                   },
                   e -> {
-                    e.with(security);
-                    e.with(docs)
+                    e.withExtension(security);
+                    e.withExtension(docs)
                         .summary("Create a user")
                         .operationId("createUser")
                         .tag("users")

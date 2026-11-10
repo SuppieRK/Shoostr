@@ -36,6 +36,7 @@ class NativeWebSocketExampleTest {
       })
   @Timeout(10)
   void rejectsMissingForeignAndAmbiguousOrigins(String origin) throws Exception {
+
     try (var test = TestServer.start(NativeWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var builder = client.newWebSocketBuilder().subprotocols("chat.v2");
@@ -71,6 +72,7 @@ class NativeWebSocketExampleTest {
   @Test
   @Timeout(10)
   void selectsAnOfferedSubprotocolAndDemandsEachCompleteTextMessage() throws Exception {
+
     try (var test = TestServer.start(NativeWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var messages = new Messages();
@@ -92,6 +94,7 @@ class NativeWebSocketExampleTest {
   @Test
   @Timeout(10)
   void echoesBinaryAfterItsReceiveBufferIsReleasedAndContinuesReceiving() throws Exception {
+
     try (var test = TestServer.start(NativeWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var messages = new Messages();
@@ -113,6 +116,7 @@ class NativeWebSocketExampleTest {
   @ValueSource(strings = {"text", "binary"})
   @Timeout(10)
   void closesIncomingMessagesAboveTheConfiguredLimit(String type) throws Exception {
+
     try (var test = TestServer.start(NativeWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var messages = new Messages();
@@ -135,6 +139,7 @@ class NativeWebSocketExampleTest {
   @Test
   @Timeout(10)
   void acceptsMessagesAtTheLimitAndAcknowledgesNormalClosure() throws Exception {
+
     try (var test = TestServer.start(NativeWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var messages = new Messages();
@@ -158,6 +163,7 @@ class NativeWebSocketExampleTest {
   @Timeout(10)
   void limitsMultibyteTextByItsUtf8BytesRatherThanItsCharacterCount(int characters)
       throws Exception {
+
     try (var test = TestServer.start(NativeWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var messages = new Messages();
@@ -180,6 +186,7 @@ class NativeWebSocketExampleTest {
   @ValueSource(strings = {"", "chat.v1"})
   @Timeout(10)
   void rejectsAHandshakeThatDoesNotOfferTheRequiredSubprotocol(String protocol) throws Exception {
+
     try (var test = TestServer.start(NativeWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var builder = client.newWebSocketBuilder().header("Origin", "https://app.example");

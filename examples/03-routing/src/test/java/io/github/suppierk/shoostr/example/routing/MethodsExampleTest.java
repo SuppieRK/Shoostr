@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -27,6 +28,7 @@ class MethodsExampleTest {
   })
   void selectsTheRegisteredMethod(String method, String path, int status, String body)
       throws Exception {
+
     try (var test = TestServer.start(MethodsExample.application())) {
       var response =
           test.send(
@@ -39,6 +41,7 @@ class MethodsExampleTest {
 
   @Test
   void servesExplicitHeadMetadataAndOptions() throws Exception {
+
     try (var test = TestServer.start(MethodsExample.application())) {
       var head =
           test.send(
@@ -57,6 +60,7 @@ class MethodsExampleTest {
 
   @Test
   void distinguishesUnknownPathsFromUnsupportedMethods() throws Exception {
+
     try (var test = TestServer.start(MethodsExample.application())) {
       var missing = test.send(request -> request.path("/missing"));
       assertEquals(404, missing.statusCode());
@@ -73,6 +77,7 @@ class MethodsExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"HEAD", "OPTIONS"})
   void doesNotAddImplicitMethodsToAGetRoute(String method) throws Exception {
+
     try (var test = TestServer.start(MethodsExample.application())) {
       var response = test.send(request -> request.path("/read-only").method(method));
 
@@ -83,17 +88,22 @@ class MethodsExampleTest {
 
   @Test
   void acceptsARecognizedWireMethodName() throws Exception {
-    try (var app = MethodsExample.application()) {
-      app.routes()
-          .route("PROPFIND", "/string-method", (ignored, response) -> response.text("registered"));
+    {
+      var app = MethodsExample.application();
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request -> request.path("/string-method").method("PROPFIND"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals("registered", response.body());
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .route(
+                "PROPFIND", "/string-method", (ignored, response) -> response.text("registered"));
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(
+                  request -> request.path("/string-method").method("PROPFIND"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, response.statusCode());
+          assertEquals("registered", response.body());
+        }
       }
     }
   }
@@ -101,11 +111,16 @@ class MethodsExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"get", "FETCH"})
   void rejectsUnrecognizedOrIncorrectlyCasedMethodNames(String method) throws Exception {
-    try (var app = MethodsExample.application()) {
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> routes.route(method, "/invalid", (ignored2, response) -> response.text("unused")));
+    {
+      var app = MethodsExample.application();
+
+      try (Closeable appCleanup1 = app::close) {
+        var routes = app.routes();
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.route(method, "/invalid", (ignored2, response) -> response.text("unused")));
+      }
     }
   }
 }

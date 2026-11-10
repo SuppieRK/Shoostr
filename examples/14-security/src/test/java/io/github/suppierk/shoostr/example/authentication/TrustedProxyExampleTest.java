@@ -22,6 +22,7 @@ class TrustedProxyExampleTest {
   @EnumSource(ForwardedHeaders.class)
   void readsSelectedForwardingMetadataWithoutClaimingThatTheTransportUsesTls(
       ForwardedHeaders family) throws Exception {
+
     try (var test =
         TestServer.start(
             TrustedProxyExample.application(
@@ -79,6 +80,7 @@ class TrustedProxyExampleTest {
   @EnumSource(ForwardedHeaders.class)
   void ignoresTheUnselectedForwardingFamilyRatherThanMergingAssertions(ForwardedHeaders family)
       throws Exception {
+
     try (var test =
         TestServer.start(
             TrustedProxyExample.application(
@@ -106,6 +108,7 @@ class TrustedProxyExampleTest {
 
   @Test
   void stopsAtTheFirstUntrustedNodeInsteadOfAcceptingTheSpoofedLeftmostEntry() throws Exception {
+
     try (var test =
         TestServer.start(
             TrustedProxyExample.application(
@@ -134,6 +137,7 @@ class TrustedProxyExampleTest {
 
   @Test
   void rejectsLegacyForwardingListsThatDoNotDescribeTheSameNumberOfHops() throws Exception {
+
     try (var test =
         TestServer.start(
             TrustedProxyExample.application(

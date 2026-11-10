@@ -44,7 +44,7 @@ class McpSessionLimitsTest {
   void boundsSessionsSharingAVerifiedOwnerWithTheDefaultPolicy() throws Exception {
     var mcp = Mcp.sync(security(), transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       for (int index = 0; index < 32; index++) {
@@ -64,7 +64,7 @@ class McpSessionLimitsTest {
             new McpSessionLimits(2, 2, Duration.ofMinutes(30)),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var first = initialize(test, "alice:client");
@@ -95,7 +95,7 @@ class McpSessionLimitsTest {
             new McpSessionLimits(1, 1, Duration.ofSeconds(1)),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app);
         var readers = Executors.newVirtualThreadPerTaskExecutor()) {
@@ -153,7 +153,7 @@ class McpSessionLimitsTest {
                             .build())
                     .build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var initialized = initialize(test, "alice:client");
@@ -229,7 +229,7 @@ class McpSessionLimitsTest {
                 McpServer.sync(delayedInitialization(transport, started, release, allocations))
                     .build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app);
         var callers = Executors.newVirtualThreadPerTaskExecutor()) {

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
+import java.io.Closeable;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -19,6 +20,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 class StreamingInputExampleTest {
   @Test
   void calculatesTheChecksumOfEmptyInput() throws Exception {
+
     try (var test = TestServer.start(StreamingInputExample.application())) {
       var response =
           test.send(
@@ -32,6 +34,7 @@ class StreamingInputExampleTest {
 
   @Test
   void processesInputLargerThanTheTransferBuffer() throws Exception {
+
     try (var test = TestServer.start(StreamingInputExample.application())) {
       var response =
           test.send(
@@ -82,70 +85,79 @@ class StreamingInputExampleTest {
 
   @Test
   void preservesStreamPositionAndRejectsBufferedAccess() throws Exception {
-    try (var app = StreamingInputExample.application()) {
-      app.routes()
-          .post(
-              "/position",
-              (request, response) -> {
-                var input = request.input();
-                assertEquals('a', input.read());
-                assertSame(input, request.input());
-                assertThrows(IllegalStateException.class, request::bodyBytes);
-                assertThrows(IllegalStateException.class, request::bodyText);
-                assertThrows(IllegalStateException.class, request::formParamMap);
-                assertArrayEquals(new byte[] {'b', 'c'}, request.input().readNBytes(2));
-                assertEquals(-1, input.read());
-                response.text("checked");
-              });
+    {
+      var app = StreamingInputExample.application();
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request ->
-                    request
-                        .path("/position")
-                        .method("POST")
-                        .header("Content-Type", "application/x-www-form-urlencoded")
-                        .body("abc".getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals("checked", response.body());
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .post(
+                "/position",
+                (request, response) -> {
+                  var input = request.input();
+                  assertEquals('a', input.read());
+                  assertSame(input, request.input());
+                  assertThrows(IllegalStateException.class, request::bodyBytes);
+                  assertThrows(IllegalStateException.class, request::bodyText);
+                  assertThrows(IllegalStateException.class, request::formParamMap);
+                  assertArrayEquals(new byte[] {'b', 'c'}, request.input().readNBytes(2));
+                  assertEquals(-1, input.read());
+                  response.text("checked");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(
+                  request ->
+                      request
+                          .path("/position")
+                          .method("POST")
+                          .header("Content-Type", "application/x-www-form-urlencoded")
+                          .body("abc".getBytes(StandardCharsets.UTF_8)),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, response.statusCode());
+          assertEquals("checked", response.body());
+        }
       }
     }
   }
 
   @Test
   void rejectsMultipartParsingAfterStreamingAccess() throws Exception {
-    try (var app = StreamingInputExample.application()) {
-      app.routes()
-          .post(
-              "/modes",
-              (request, response) -> {
-                var input = request.input();
-                assertThrows(IllegalStateException.class, request::files);
-                assertArrayEquals(
-                    "--x--\r\n".getBytes(StandardCharsets.UTF_8), input.readNBytes(7));
-                response.text("checked");
-              });
+    {
+      var app = StreamingInputExample.application();
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request ->
-                    request
-                        .path("/modes")
-                        .method("POST")
-                        .header("Content-Type", "multipart/form-data; boundary=x")
-                        .body("--x--\r\n".getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals("checked", response.body());
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .post(
+                "/modes",
+                (request, response) -> {
+                  var input = request.input();
+                  assertThrows(IllegalStateException.class, request::files);
+                  assertArrayEquals(
+                      "--x--\r\n".getBytes(StandardCharsets.UTF_8), input.readNBytes(7));
+                  response.text("checked");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(
+                  request ->
+                      request
+                          .path("/modes")
+                          .method("POST")
+                          .header("Content-Type", "multipart/form-data; boundary=x")
+                          .body("--x--\r\n".getBytes(StandardCharsets.UTF_8)),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, response.statusCode());
+          assertEquals("checked", response.body());
+        }
       }
     }
   }
 
   @Test
   void calculatesTheSha256ChecksumOfTheRequestBytes() throws Exception {
+
     try (var test = TestServer.start(StreamingInputExample.application())) {
       var response =
           test.send(

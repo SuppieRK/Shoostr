@@ -40,8 +40,7 @@ public final class CorsExample {
             .maxAgeSeconds(0)
             .build();
     return new Shoostr()
-        .extensions(cors)
-        .configureExtensionsDefaults(extensions -> extensions.with(cors))
+        .withExtension(cors)
         .routes(
             routes ->
                 routes
@@ -60,7 +59,7 @@ public final class CorsExample {
                     .get(
                         "/health",
                         (request, response) -> response.text("ready"),
-                        extensions -> extensions.without(cors))
+                        lifecycle -> lifecycle.withoutExtension(cors))
                     .path(
                         "/reports",
                         reportRoutes ->
@@ -73,6 +72,6 @@ public final class CorsExample {
                                             request.header(reportHeader.value()).orElse("plain"))),
                         // Replace the complete policy; parent origins and headers do not carry
                         // forward.
-                        extensions -> extensions.with(cors).policy(reports)));
+                        lifecycle -> lifecycle.withExtension(cors).policy(reports)));
   }
 }

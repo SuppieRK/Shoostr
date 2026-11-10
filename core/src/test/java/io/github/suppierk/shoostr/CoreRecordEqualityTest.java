@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.BiFunction;
 import nl.jqno.equalsverifier.EqualsVerifier;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -152,16 +153,31 @@ class CoreRecordEqualityTest {
   @Test
   void extensionSelectionComparesConfigurationContributionAndInclusion()
       throws ReflectiveOperationException {
-    var first = new Extensions(Set.of(), null);
-    var second = new Extensions(Set.of(), null);
-    first.lifecycle().onRouteMatched((request, response) -> {});
-    second.lifecycle().afterRouteHandler((request, response) -> {});
-    var type = nested(Extensions.class, "Selection");
+    var first = new Lifecycle(Set.of(), ignored -> {}, null);
+    var second = new Lifecycle(Set.of(), ignored -> {}, null);
+    first.onRouteMatched((request, response) -> {});
+    second.afterRouteHandler((request, response) -> {});
+    BiFunction<Lifecycle, Object, Object> firstConfigure =
+        new BiFunction<>() {
+          @Override
+          public Object apply(Lifecycle scope, Object inherited) {
+            return "first";
+          }
+        };
+    BiFunction<Lifecycle, Object, Object> secondConfigure =
+        new BiFunction<>() {
+          @Override
+          public Object apply(Lifecycle scope, Object inherited) {
+            return "second";
+          }
+        };
+    var type = nested(Lifecycle.class, "Selection");
     EqualsVerifier.forExamples(
-            constructRecord(type, "first", first, false),
-            constructRecord(type, "second", second, true))
-        .withPrefabValues(Extensions.class, first, second)
-        .withNonnullFields("configuration", "contribution")
+            constructRecord(type, "first", first, false, firstConfigure),
+            constructRecord(type, "second", second, true, secondConfigure))
+        .withPrefabValues(Lifecycle.class, first, second)
+        .withNonnullFields("configuration", "contribution", "configure")
+        .withPrefabValues(BiFunction.class, firstConfigure, secondConfigure)
         .verify();
   }
 

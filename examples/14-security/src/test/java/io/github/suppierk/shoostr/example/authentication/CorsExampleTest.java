@@ -81,6 +81,7 @@ class CorsExampleTest {
 
   @Test
   void keepsMissingTargetsAndUnsupportedMethodsAsRoutingErrorsWithoutCorsGrants() throws Exception {
+
     try (var test = TestServer.start(CorsExample.application())) {
       for (var path : new String[] {"/reports/missing", "/reports/daily"}) {
         var preflight =
@@ -143,6 +144,7 @@ class CorsExampleTest {
 
   @Test
   void answersAnAllowedCredentialedPreflightWithoutAnOptionsHandler() throws Exception {
+
     try (var test = TestServer.start(CorsExample.application())) {
       var response =
           test.send(
@@ -183,6 +185,7 @@ class CorsExampleTest {
   @CsvSource({"GET, 200, hello", "POST, 201, accepted"})
   void sharesAnAllowedResponseAndExposesOnlyTheConfiguredExtraHeader(
       String method, int status, String body) throws Exception {
+
     try (var test = TestServer.start(CorsExample.application())) {
       var response =
           test.send(
@@ -211,6 +214,7 @@ class CorsExampleTest {
   @CsvSource({"https://other.example, 403", "null, 403", "https://app.example/path, 400", "*, 400"})
   void rejectsForeignOrMalformedOriginsInsteadOfSharingTheResponse(String origin, int status)
       throws Exception {
+
     try (var test = TestServer.start(CorsExample.application())) {
       var response = test.send(request -> request.path("/messages").header("Origin", origin));
       assertEquals(status, response.statusCode());
@@ -222,6 +226,7 @@ class CorsExampleTest {
   @CsvSource({"DELETE, authorization, 405", "POST, x-unlisted, 403"})
   void rejectsAPreflightRequestingAnUnregisteredMethodOrUnlistedHeader(
       String method, String header, int status) throws Exception {
+
     try (var test = TestServer.start(CorsExample.application())) {
       var response =
           test.send(
@@ -241,6 +246,7 @@ class CorsExampleTest {
   @ValueSource(booleans = {false, true})
   void keepsRequestsWithoutAnOriginOrFromTheSameOriginInNormalDispatch(boolean sameOrigin)
       throws Exception {
+
     try (var test = TestServer.start(CorsExample.application())) {
       var response =
           test.send(
@@ -261,6 +267,7 @@ class CorsExampleTest {
 
   @Test
   void rejectsDuplicateOriginFields() throws Exception {
+
     try (var test = TestServer.start(CorsExample.application())) {
       var response =
           test.send(
@@ -282,12 +289,12 @@ class CorsExampleTest {
             throw new AuthenticationRequiredException("Bearer realm=\"private\"");
           }
         };
-    var app = CorsExample.application().authentication(authentication);
+    var app = CorsExample.application();
     app.routes()
         .get(
             "/fixture/private",
             (ignored, response) -> response.text("private"),
-            extensions -> extensions.with(authentication));
+            lifecycle -> lifecycle.withExtension(authentication));
 
     try (var test = TestServer.start(app)) {
       var preflight =
@@ -315,6 +322,7 @@ class CorsExampleTest {
 
   @Test
   void excludedHealthEndpointExecutesWithoutGrantingCrossOriginSharing() throws Exception {
+
     try (var test = TestServer.start(CorsExample.application())) {
       var actual =
           test.send(

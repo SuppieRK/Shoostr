@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
@@ -16,37 +17,42 @@ class ScopedExtensionsTest {
       throws Exception {
     var retained = new AtomicReference<Lifecycle>();
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .path(
-              "/scoped",
-              routes -> routes.get("/child", (request, response) -> response.text("child")),
-              extensions -> {
-                var lifecycle = extensions.lifecycle();
-                assertSame(lifecycle, extensions.lifecycle());
-                retained.set(lifecycle);
-                lifecycle.beforeRouteHandler(
-                    (request, response) -> response.setHeader("X-Scope", "parent"));
-              })
-          .get("/sibling", (request, response) -> response.text("sibling"));
-      var lifecycle = retained.get();
-      assertThrows(
-          IllegalStateException.class,
-          () -> lifecycle.beforeRouteHandler((request, response) -> response.text("late")));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            "parent",
-            test.send(
-                    request -> request.path("/scoped/child"), HttpResponse.BodyHandlers.ofString())
-                .headers()
-                .firstValue("X-Scope")
-                .orElseThrow());
-        assertEquals(
-            Optional.empty(),
-            test.send(request -> request.path("/sibling"), HttpResponse.BodyHandlers.ofString())
-                .headers()
-                .firstValue("X-Scope"));
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .path(
+                "/scoped",
+                routes -> routes.get("/child", (request, response) -> response.text("child")),
+                extensions -> {
+                  var lifecycle = extensions;
+                  assertSame(lifecycle, extensions);
+                  retained.set(lifecycle);
+                  lifecycle.beforeRouteHandler(
+                      (request, response) -> response.setHeader("X-Scope", "parent"));
+                })
+            .get("/sibling", (request, response) -> response.text("sibling"));
+        var lifecycle = retained.get();
+        assertThrows(
+            IllegalStateException.class,
+            () -> lifecycle.beforeRouteHandler((request, response) -> response.text("late")));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "parent",
+              test.send(
+                      request -> request.path("/scoped/child"),
+                      HttpResponse.BodyHandlers.ofString())
+                  .headers()
+                  .firstValue("X-Scope")
+                  .orElseThrow());
+          assertEquals(
+              Optional.empty(),
+              test.send(request -> request.path("/sibling"), HttpResponse.BodyHandlers.ofString())
+                  .headers()
+                  .firstValue("X-Scope"));
+        }
       }
     }
   }

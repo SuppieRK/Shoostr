@@ -24,15 +24,17 @@ import org.jspecify.annotations.Nullable;
 
 /**
  * Session-bound synchronizer tokens for explicitly protected browser routes. Create one instance
- * per application, enable {@link Shoostr#sessions()}, install with {@code app.extensions(csrf)},
- * then select {@code extensions.with(csrf)} on browser routes. Installation alone does not enable
- * protection or sessions. Token values are never put in a cookie or URL; an application embeds
- * {@link #token(Request)} in a page or response body.
+ * per application, enable {@link Shoostr#sessions()}, then select {@code
+ * lifecycle.withExtension(csrf)} on browser routes. First selection establishes shared setup
+ * automatically. Use {@code app.withExtension(csrf)} before route registration to protect endpoints
+ * by default. Selection does not enable sessions; protected endpoints require explicit session
+ * configuration. Token values are never put in a cookie or URL; an application embeds {@link
+ * #token(Request)} in a page or response body.
  *
  * <p>Equality compares configured trusted origins independently of generator state and token
  * history. Installation and endpoint selection still identify the exact extension instance.
  */
-public final class Csrf implements Extension<Csrf> {
+public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Csrf> {
   /** A token is valid only while its issuing session keeps the same identifier. */
   private record Token(String sessionId, String value) implements Serializable {
     @Serial private static final long serialVersionUID = 1L;
@@ -114,9 +116,9 @@ public final class Csrf implements Extension<Csrf> {
 
   /** {@inheritDoc} */
   @Override
-  public Csrf configure(Extensions endpoint, @Nullable Csrf inherited) {
+  public Csrf configure(Lifecycle endpoint, @Nullable Csrf inherited) {
     endpoint.csrf(this);
-    endpoint.lifecycle().beforeRouteHandler(this::verify);
+    endpoint.beforeRouteHandler(this::verify);
     return this;
   }
 

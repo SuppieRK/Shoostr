@@ -393,6 +393,7 @@ class McpInteractionsExampleTest {
 
   @Test
   void rejectsABlankClientGeneratedSummary() throws Exception {
+
     try (var test = TestServer.start(McpInteractionsExample.application());
         var client =
             client(test)
@@ -430,6 +431,7 @@ class McpInteractionsExampleTest {
 
   @Test
   void invalidatesAnExplicitlyDeletedSessionWithoutStoppingAnotherSession() throws Exception {
+
     try (var test = TestServer.start(McpInteractionsExample.application())) {
       var first = message(test, "", INITIALIZE);
       var second = message(test, "", INITIALIZE);
@@ -489,6 +491,7 @@ class McpInteractionsExampleTest {
 
   @Test
   void validatesHttpUpdatesBeforeChangingTheResource() throws Exception {
+
     try (var test = TestServer.start(McpInteractionsExample.application());
         var client = client(test).build()) {
       client.initialize();

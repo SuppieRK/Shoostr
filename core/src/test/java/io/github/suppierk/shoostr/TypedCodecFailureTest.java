@@ -9,6 +9,7 @@ import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.http.exceptions.InternalServerErrorException;
 import io.github.suppierk.shoostr.http.exceptions.UnsupportedMediaTypeException;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.util.stream.Stream;
@@ -31,19 +32,23 @@ class TypedCodecFailureTest {
           }
         };
 
-    try (var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .post(
-              "/decode",
-              (request, response) ->
-                  response.body(MediaType.APPLICATION_JSON, request.body(String.class)));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            status,
-            test.send(request -> request.path("/decode").method("POST").body(new byte[] {1}))
-                .statusCode());
+      try (Closeable appCleanup = app::close) {
+        app.codec(codec)
+            .routes()
+            .post(
+                "/decode",
+                (request, response) ->
+                    response.body(MediaType.APPLICATION_JSON, request.body(String.class)));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              status,
+              test.send(request -> request.path("/decode").method("POST").body(new byte[] {1}))
+                  .statusCode());
+        }
       }
     }
   }
@@ -59,13 +64,17 @@ class TypedCodecFailureTest {
           }
         };
 
-    try (var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .get("/encode", (ignored, response) -> response.body("application/json", "Alice"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(status, test.send(request -> request.path("/encode")).statusCode());
+      try (Closeable appCleanup1 = app::close) {
+        app.codec(codec)
+            .routes()
+            .get("/encode", (ignored, response) -> response.body("application/json", "Alice"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(status, test.send(request -> request.path("/encode")).statusCode());
+        }
       }
     }
   }
@@ -81,29 +90,34 @@ class TypedCodecFailureTest {
           }
         };
 
-    try (var app = new Shoostr()) {
-      app.exception(
-          IOException.class, (ignored2, ignored3, response) -> response.status(502).text("global"));
-      app.codec(codec)
-          .routes()
-          .path(
-              "/failure",
-              routes -> {
-                routes.exception(
-                    IOException.class,
-                    (caught, ignored4, response) -> {
-                      assertSame(failure, caught);
-                      response.status(503).text("local");
-                    });
-                routes.get(
-                    (ignored5, response) -> response.body(MediaType.APPLICATION_JSON, "Alice"));
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/failure"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(503, result.statusCode());
-        assertEquals("local", result.body());
+      try (Closeable appCleanup2 = app::close) {
+        app.exception(
+            IOException.class,
+            (ignored2, ignored3, response) -> response.status(502).text("global"));
+        app.codec(codec)
+            .routes()
+            .path(
+                "/failure",
+                routes -> {
+                  routes.exception(
+                      IOException.class,
+                      (caught, ignored4, response) -> {
+                        assertSame(failure, caught);
+                        response.status(503).text("local");
+                      });
+                  routes.get(
+                      (ignored5, response) -> response.body(MediaType.APPLICATION_JSON, "Alice"));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/failure"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(503, result.statusCode());
+          assertEquals("local", result.body());
+        }
       }
     }
   }
@@ -119,27 +133,32 @@ class TypedCodecFailureTest {
           }
         };
 
-    try (var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .get(
-              "/failure",
-              (ignored6, response) -> {
-                response.text("kept");
-                assertSame(
-                    failure,
-                    assertThrows(
-                        IOException.class,
-                        () -> response.body(MediaType.APPLICATION_JSON, "Alice")));
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/failure"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("kept", result.body());
-        assertEquals(
-            "text/plain; charset=utf-8", result.headers().firstValue("Content-Type").orElseThrow());
+      try (Closeable appCleanup3 = app::close) {
+        app.codec(codec)
+            .routes()
+            .get(
+                "/failure",
+                (ignored6, response) -> {
+                  response.text("kept");
+                  assertSame(
+                      failure,
+                      assertThrows(
+                          IOException.class,
+                          () -> response.body(MediaType.APPLICATION_JSON, "Alice")));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/failure"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("kept", result.body());
+          assertEquals(
+              "text/plain; charset=utf-8",
+              result.headers().firstValue("Content-Type").orElseThrow());
+        }
       }
     }
   }
@@ -155,13 +174,17 @@ class TypedCodecFailureTest {
           }
         };
 
-    try (var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .get("/null", (ignored7, response) -> response.body("application/json", "Alice"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(500, test.send(request -> request.path("/null")).statusCode());
+      try (Closeable appCleanup4 = app::close) {
+        app.codec(codec)
+            .routes()
+            .get("/null", (ignored7, response) -> response.body("application/json", "Alice"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(500, test.send(request -> request.path("/null")).statusCode());
+        }
       }
     }
   }
@@ -177,13 +200,18 @@ class TypedCodecFailureTest {
           }
         };
 
-    try (var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .post("/null", (request, response) -> response.text(request.body(String.class)));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(500, test.send(request -> request.path("/null").method("POST")).statusCode());
+      try (Closeable appCleanup5 = app::close) {
+        app.codec(codec)
+            .routes()
+            .post("/null", (request, response) -> response.text(request.body(String.class)));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              500, test.send(request -> request.path("/null").method("POST")).statusCode());
+        }
       }
     }
   }

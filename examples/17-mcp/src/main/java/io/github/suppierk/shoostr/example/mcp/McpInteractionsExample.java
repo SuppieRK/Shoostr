@@ -76,7 +76,6 @@ public final class McpInteractionsExample {
                                     .build()))
                     .build());
     return new Shoostr()
-        .extensions(mcp)
         .routes(
             routes ->
                 routes

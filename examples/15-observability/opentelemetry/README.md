@@ -48,11 +48,12 @@ is an ordinary `AutoCloseable`, not an extension; `app.afterClose(configuration:
 flushes and closes its SDK after framework and extension cleanup. No global SDK,
 Java agent, Collector or second Shoostr app is needed.
 
-Installation alone creates no SERVER spans. The greeting route selects
-`extensions.with(tracing)`; `/health` stays untraced. The same selection can be
+The greeting route selects `lifecycle.withExtension(tracing)`, which also establishes
+shared infrastructure automatically; `/health` stays untraced. The same selection can be
 attached to `routes.path(...)` to enable a whole group. Repeated activation adds no
-duplicate SERVER span. Alternatively, configure `.allRequests()` before installation
-to include all requests, including unmatched paths and pre-routing work.
+duplicate SERVER span. Alternatively, use `app.withExtension(tracing)` before
+route registration to select all registered endpoints by default. Unmatched requests
+produce no extension-generated spans.
 
 ```sh
 ./gradlew :opentelemetry-example:jibDockerBuild

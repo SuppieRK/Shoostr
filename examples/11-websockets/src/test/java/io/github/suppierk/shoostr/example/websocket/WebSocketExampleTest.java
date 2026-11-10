@@ -128,6 +128,7 @@ class WebSocketExampleTest {
   @CsvSource({"2147483647, double=4294967294", "-2147483648, double=-4294967296"})
   @Timeout(10)
   void doublesIntegerBoundaryValuesWithoutOverflow(String input, String expected) throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
@@ -150,6 +151,7 @@ class WebSocketExampleTest {
   @Test
   @Timeout(10)
   void echoesACompleteMessageAfterFragmentedText() throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
@@ -173,6 +175,7 @@ class WebSocketExampleTest {
   @Test
   @Timeout(10)
   void acknowledgesANormalClientClose() throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
@@ -195,6 +198,7 @@ class WebSocketExampleTest {
   @Test
   @Timeout(10)
   void closesTheTextProcessorForUnsupportedBinaryMessages() throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
@@ -221,6 +225,7 @@ class WebSocketExampleTest {
   @Test
   @Timeout(10)
   void closesWithASafeReasonAfterAnApplicationFailure() throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
@@ -245,6 +250,7 @@ class WebSocketExampleTest {
   @Test
   @Timeout(10)
   void recoversFromInvalidNumericInputOnTheSameConnection() throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
@@ -269,6 +275,7 @@ class WebSocketExampleTest {
   @Test
   @Timeout(10)
   void doublesANumericTextMessage() throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
@@ -291,6 +298,7 @@ class WebSocketExampleTest {
   @Test
   @Timeout(10)
   void rejectsAnOversizedRoomDuringTheHttpHandshake() throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var failure =
@@ -326,6 +334,7 @@ class WebSocketExampleTest {
   @Test
   @Timeout(15)
   void keepsRoomContextSeparateBetweenConnections() throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var alphaMessages = new Messages();
@@ -365,6 +374,7 @@ class WebSocketExampleTest {
   @Test
   @Timeout(10)
   void echoesBinaryThenContinuesWithText() throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
@@ -389,6 +399,7 @@ class WebSocketExampleTest {
   @Test
   @Timeout(10)
   void echoesRepeatedTextMessagesOnOneConnection() throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
@@ -412,6 +423,7 @@ class WebSocketExampleTest {
 
   @Test
   void servesThePlainTextEndpointList() throws Exception {
+
     try (var test = TestServer.start(WebSocketExample.application())) {
       var response = test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString());
       assertAll(

@@ -118,7 +118,7 @@ class McpVirtualThreadTest {
       configuredOptions.setVirtualThreads(true);
 
       var app = new Shoostr(configuredOptions);
-      app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+      app.routes(routes -> routes.path("/mcp", mcp::routes));
       app.routes()
           .get(
               "/ready",

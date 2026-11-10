@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
@@ -39,19 +40,23 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored2, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=2-5"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(206, result.statusCode());
-        assertEquals("2345", result.body());
-        assertEquals("bytes 2-5/10", result.headers().firstValue("Content-Range").orElseThrow());
-        assertEquals("4", result.headers().firstValue("Content-Length").orElseThrow());
-        assertEquals("bytes", result.headers().firstValue("Accept-Ranges").orElseThrow());
+      try (Closeable appCleanup = app::close) {
+        app.routes().get("/file", (ignored2, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=2-5"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(206, result.statusCode());
+          assertEquals("2345", result.body());
+          assertEquals("bytes 2-5/10", result.headers().firstValue("Content-Range").orElseThrow());
+          assertEquals("4", result.headers().firstValue("Content-Length").orElseThrow());
+          assertEquals("bytes", result.headers().firstValue("Accept-Ranges").orElseThrow());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -63,17 +68,21 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored3, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=10-"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(416, result.statusCode());
-        assertEquals("bytes */10", result.headers().firstValue("Content-Range").orElseThrow());
-        assertEquals("", result.body());
+      try (Closeable appCleanup1 = app::close) {
+        app.routes().get("/file", (ignored3, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=10-"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(416, result.statusCode());
+          assertEquals("bytes */10", result.headers().firstValue("Content-Range").orElseThrow());
+          assertEquals("", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -85,20 +94,24 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "cached", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored4, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var first =
-            test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
-        var validator = first.headers().firstValue("ETag").orElseThrow();
-        var second =
-            test.send(
-                request -> request.path("/file").header("If-None-Match", validator),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(304, second.statusCode());
-        assertEquals("", second.body());
-        assertEquals(validator, second.headers().firstValue("ETag").orElseThrow());
+      try (Closeable appCleanup2 = app::close) {
+        app.routes().get("/file", (ignored4, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var first =
+              test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
+          var validator = first.headers().firstValue("ETag").orElseThrow();
+          var second =
+              test.send(
+                  request -> request.path("/file").header("If-None-Match", validator),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(304, second.statusCode());
+          assertEquals("", second.body());
+          assertEquals(validator, second.headers().firstValue("ETag").orElseThrow());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -110,17 +123,21 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored5, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=-3"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(206, result.statusCode());
-        assertEquals("789", result.body());
-        assertEquals("bytes 7-9/10", result.headers().firstValue("Content-Range").orElseThrow());
+      try (Closeable appCleanup3 = app::close) {
+        app.routes().get("/file", (ignored5, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=-3"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(206, result.statusCode());
+          assertEquals("789", result.body());
+          assertEquals("bytes 7-9/10", result.headers().firstValue("Content-Range").orElseThrow());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -132,17 +149,21 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored6, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=7-"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(206, result.statusCode());
-        assertEquals("789", result.body());
-        assertEquals("bytes 7-9/10", result.headers().firstValue("Content-Range").orElseThrow());
+      try (Closeable appCleanup4 = app::close) {
+        app.routes().get("/file", (ignored6, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=7-"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(206, result.statusCode());
+          assertEquals("789", result.body());
+          assertEquals("bytes 7-9/10", result.headers().firstValue("Content-Range").orElseThrow());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -154,22 +175,26 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored7, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var commaSeparated =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=0-1,4-5"),
-                HttpResponse.BodyHandlers.ofString());
-        var unsupportedUnit =
-            test.send(
-                request -> request.path("/file").header("Range", "items=0-1"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, commaSeparated.statusCode());
-        assertEquals("0123456789", commaSeparated.body());
-        assertEquals(200, unsupportedUnit.statusCode());
-        assertEquals("0123456789", unsupportedUnit.body());
+      try (Closeable appCleanup5 = app::close) {
+        app.routes().get("/file", (ignored7, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var commaSeparated =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=0-1,4-5"),
+                  HttpResponse.BodyHandlers.ofString());
+          var unsupportedUnit =
+              test.send(
+                  request -> request.path("/file").header("Range", "items=0-1"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, commaSeparated.statusCode());
+          assertEquals("0123456789", commaSeparated.body());
+          assertEquals(200, unsupportedUnit.statusCode());
+          assertEquals("0123456789", unsupportedUnit.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -181,26 +206,30 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/file",
-              (ignored8, response) ->
-                  response
-                      .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
-                      .file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/file")
-                        .header("If-Match", "\"different\"")
-                        .header("Range", "bytes=2-5"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(412, result.statusCode());
-        assertEquals("", result.body());
+      try (Closeable appCleanup6 = app::close) {
+        app.routes()
+            .get(
+                "/file",
+                (ignored8, response) ->
+                    response
+                        .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
+                        .file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request ->
+                      request
+                          .path("/file")
+                          .header("If-Match", "\"different\"")
+                          .header("Range", "bytes=2-5"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(412, result.statusCode());
+          assertEquals("", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -212,18 +241,22 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().head("/file", (ignored9, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=2-5").method("HEAD"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("10", result.headers().firstValue("Content-Length").orElseThrow());
-        assertEquals("bytes", result.headers().firstValue("Accept-Ranges").orElseThrow());
-        assertEquals("", result.body());
+      try (Closeable appCleanup7 = app::close) {
+        app.routes().head("/file", (ignored9, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=2-5").method("HEAD"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("10", result.headers().firstValue("Content-Length").orElseThrow());
+          assertEquals("bytes", result.headers().firstValue("Accept-Ranges").orElseThrow());
+          assertEquals("", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -235,19 +268,23 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "cached", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored10, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var first =
-            test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
-        var lastModified = first.headers().firstValue("Last-Modified").orElseThrow();
-        var second =
-            test.send(
-                request -> request.path("/file").header("If-Modified-Since", lastModified),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(304, second.statusCode());
-        assertEquals("", second.body());
+      try (Closeable appCleanup8 = app::close) {
+        app.routes().get("/file", (ignored10, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var first =
+              test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
+          var lastModified = first.headers().firstValue("Last-Modified").orElseThrow();
+          var second =
+              test.send(
+                  request -> request.path("/file").header("If-Modified-Since", lastModified),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(304, second.statusCode());
+          assertEquals("", second.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -260,20 +297,25 @@ class RangeConditionalResponseTest {
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
     Files.setLastModifiedTime(file, FileTime.from(Instant.parse("2024-01-02T00:00:00Z")));
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored11, response) -> response.file(file, "text/plain"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/file")
-                        .header(
-                            HttpHeaders.IF_MODIFIED_SINCE.value(), "Mon, 01 Jan 2024 00:00:00 GMT"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("current", result.body());
+      try (Closeable appCleanup9 = app::close) {
+        app.routes().get("/file", (ignored11, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request ->
+                      request
+                          .path("/file")
+                          .header(
+                              HttpHeaders.IF_MODIFIED_SINCE.value(),
+                              "Mon, 01 Jan 2024 00:00:00 GMT"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("current", result.body());
+        }
       }
     }
   }
@@ -283,19 +325,23 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored12, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/file")
-                        .header("If-Unmodified-Since", "Thu, 01 Jan 1970 00:00:00 GMT"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(412, result.statusCode());
-        assertEquals("", result.body());
+      try (Closeable appCleanup10 = app::close) {
+        app.routes().get("/file", (ignored12, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request ->
+                      request
+                          .path("/file")
+                          .header("If-Unmodified-Since", "Thu, 01 Jan 1970 00:00:00 GMT"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(412, result.statusCode());
+          assertEquals("", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -307,36 +353,40 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/file",
-              (ignored13, response) ->
-                  response
-                      .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
-                      .file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var matched =
-            test.send(
-                request ->
-                    request
-                        .path("/file")
-                        .header("Range", "bytes=2-5")
-                        .header("If-Range", "\"revision-1\""),
-                HttpResponse.BodyHandlers.ofString());
-        var mismatched =
-            test.send(
-                request ->
-                    request
-                        .path("/file")
-                        .header("Range", "bytes=2-5")
-                        .header("If-Range", "\"revision-2\""),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(206, matched.statusCode());
-        assertEquals("2345", matched.body());
-        assertEquals(200, mismatched.statusCode());
-        assertEquals("0123456789", mismatched.body());
+      try (Closeable appCleanup11 = app::close) {
+        app.routes()
+            .get(
+                "/file",
+                (ignored13, response) ->
+                    response
+                        .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
+                        .file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var matched =
+              test.send(
+                  request ->
+                      request
+                          .path("/file")
+                          .header("Range", "bytes=2-5")
+                          .header("If-Range", "\"revision-1\""),
+                  HttpResponse.BodyHandlers.ofString());
+          var mismatched =
+              test.send(
+                  request ->
+                      request
+                          .path("/file")
+                          .header("Range", "bytes=2-5")
+                          .header("If-Range", "\"revision-2\""),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(206, matched.statusCode());
+          assertEquals("2345", matched.body());
+          assertEquals(200, mismatched.statusCode());
+          assertEquals("0123456789", mismatched.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -348,22 +398,26 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/file",
-              (ignored14, response) ->
-                  response
-                      .setHeader(HttpHeaders.ETAG.value(), "\"revision,1\"")
-                      .file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("If-Match", "\"other\", \"revision,1\""),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("current", result.body());
+      try (Closeable appCleanup12 = app::close) {
+        app.routes()
+            .get(
+                "/file",
+                (ignored14, response) ->
+                    response
+                        .setHeader(HttpHeaders.ETAG.value(), "\"revision,1\"")
+                        .file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("If-Match", "\"other\", \"revision,1\""),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("current", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -375,23 +429,30 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .post(
-              "/file",
-              (ignored15, response) ->
-                  response
-                      .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
-                      .file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request.path("/file").header("If-None-Match", "\"revision-1\"").method("POST"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(412, result.statusCode());
-        assertEquals("", result.body());
+      try (Closeable appCleanup13 = app::close) {
+        app.routes()
+            .post(
+                "/file",
+                (ignored15, response) ->
+                    response
+                        .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
+                        .file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request ->
+                      request
+                          .path("/file")
+                          .header("If-None-Match", "\"revision-1\"")
+                          .method("POST"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(412, result.statusCode());
+          assertEquals("", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -403,20 +464,25 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "file", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/file",
-              (ignored16, response) -> {
-                response.text("staged");
-                assertThrows(IllegalStateException.class, () -> response.file(file, "text/plain"));
-              });
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("staged", result.body());
+      try (Closeable appCleanup14 = app::close) {
+        app.routes()
+            .get(
+                "/file",
+                (ignored16, response) -> {
+                  response.text("staged");
+                  assertThrows(
+                      IllegalStateException.class, () -> response.file(file, "text/plain"));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("staged", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -428,23 +494,27 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored17, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var first =
-            test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
-        var lastModified = first.headers().firstValue("Last-Modified").orElseThrow();
-        var range =
-            test.send(
-                request ->
-                    request
-                        .path("/file")
-                        .header("Range", "bytes=2-5")
-                        .header("If-Range", lastModified),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, range.statusCode());
-        assertEquals("0123456789", range.body());
+      try (Closeable appCleanup15 = app::close) {
+        app.routes().get("/file", (ignored17, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var first =
+              test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
+          var lastModified = first.headers().firstValue("Last-Modified").orElseThrow();
+          var range =
+              test.send(
+                  request ->
+                      request
+                          .path("/file")
+                          .header("Range", "bytes=2-5")
+                          .header("If-Range", lastModified),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, range.statusCode());
+          assertEquals("0123456789", range.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -456,17 +526,21 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "missing", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get("/file", (ignored18, response) -> response.status(404).file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=0-1"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(404, result.statusCode());
-        assertEquals("missing", result.body());
+      try (Closeable appCleanup16 = app::close) {
+        app.routes()
+            .get("/file", (ignored18, response) -> response.status(404).file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=0-1"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(404, result.statusCode());
+          assertEquals("missing", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -478,21 +552,26 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "file", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/file",
-              (ignored19, response) -> {
-                response.file(file, "text/plain");
-                assertThrows(IllegalStateException.class, () -> response.text("replacement"));
-                assertThrows(IllegalStateException.class, () -> response.startStream("text/plain"));
-              });
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("file", result.body());
+      try (Closeable appCleanup17 = app::close) {
+        app.routes()
+            .get(
+                "/file",
+                (ignored19, response) -> {
+                  response.file(file, "text/plain");
+                  assertThrows(IllegalStateException.class, () -> response.text("replacement"));
+                  assertThrows(
+                      IllegalStateException.class, () -> response.startStream("text/plain"));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("file", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -504,16 +583,20 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored20, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("If-Match", "*"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("current", result.body());
+      try (Closeable appCleanup18 = app::close) {
+        app.routes().get("/file", (ignored20, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("If-Match", "*"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("current", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -525,18 +608,22 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored21, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        for (var range :
-            List.of("bytes=99-invalid", "bytes=99-1", "bytes=0-999999999999999999999")) {
-          var result =
-              test.send(
-                  request -> request.path("/file").header("Range", range),
-                  HttpResponse.BodyHandlers.ofString());
-          assertEquals(200, result.statusCode());
-          assertEquals("0123456789", result.body());
+      try (Closeable appCleanup19 = app::close) {
+        app.routes().get("/file", (ignored21, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          for (var range :
+              List.of("bytes=99-invalid", "bytes=99-1", "bytes=0-999999999999999999999")) {
+            var result =
+                test.send(
+                    request -> request.path("/file").header("Range", range),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, result.statusCode());
+            assertEquals("0123456789", result.body());
+          }
         }
       }
     } finally {
@@ -549,17 +636,21 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "created", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .post("/file", (ignored22, response) -> response.status(201).file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("If-None-Match", "*").method("POST"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(412, result.statusCode());
-        assertEquals("", result.body());
+      try (Closeable appCleanup20 = app::close) {
+        app.routes()
+            .post("/file", (ignored22, response) -> response.status(201).file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("If-None-Match", "*").method("POST"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(412, result.statusCode());
+          assertEquals("", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -571,23 +662,28 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "file", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/file",
-              (ignored23, response) -> {
-                response.file(file, "text/plain");
-                assertThrows(IllegalStateException.class, () -> response.text("replacement"));
-                assertThrows(IllegalStateException.class, () -> response.startStream("text/plain"));
-              });
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=99-"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(416, result.statusCode());
-        assertEquals("", result.body());
+      try (Closeable appCleanup21 = app::close) {
+        app.routes()
+            .get(
+                "/file",
+                (ignored23, response) -> {
+                  response.file(file, "text/plain");
+                  assertThrows(IllegalStateException.class, () -> response.text("replacement"));
+                  assertThrows(
+                      IllegalStateException.class, () -> response.startStream("text/plain"));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=99-"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(416, result.statusCode());
+          assertEquals("", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -599,19 +695,23 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/file",
-              (ignored24, response) ->
-                  response
-                      .setHeader(HttpHeaders.ETAG.value(), "\"revision 1\"")
-                      .file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(500, result.statusCode());
+      try (Closeable appCleanup22 = app::close) {
+        app.routes()
+            .get(
+                "/file",
+                (ignored24, response) ->
+                    response
+                        .setHeader(HttpHeaders.ETAG.value(), "\"revision 1\"")
+                        .file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(500, result.statusCode());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -623,28 +723,35 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored25, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var zeroSuffix =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=-0"),
-                HttpResponse.BodyHandlers.ofString());
-        var clamped =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=7-99"),
-                HttpResponse.BodyHandlers.ofString());
-        var repeated =
-            test.send(
-                request ->
-                    request.path("/file").header("Range", "bytes=0-1").header("Range", "bytes=4-5"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(416, zeroSuffix.statusCode());
-        assertEquals(206, clamped.statusCode());
-        assertEquals("789", clamped.body());
-        assertEquals(200, repeated.statusCode());
-        assertEquals("0123456789", repeated.body());
+      try (Closeable appCleanup23 = app::close) {
+        app.routes().get("/file", (ignored25, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var zeroSuffix =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=-0"),
+                  HttpResponse.BodyHandlers.ofString());
+          var clamped =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=7-99"),
+                  HttpResponse.BodyHandlers.ofString());
+          var repeated =
+              test.send(
+                  request ->
+                      request
+                          .path("/file")
+                          .header("Range", "bytes=0-1")
+                          .header("Range", "bytes=4-5"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(416, zeroSuffix.statusCode());
+          assertEquals(206, clamped.statusCode());
+          assertEquals("789", clamped.body());
+          assertEquals(200, repeated.statusCode());
+          assertEquals("0123456789", repeated.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -656,26 +763,30 @@ class RangeConditionalResponseTest {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/file",
-              (ignored26, response) ->
-                  response
-                      .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
-                      .file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/file")
-                        .header("If-None-Match", "\"different\"")
-                        .header("If-Modified-Since", "Sun, 06 Nov 2094 08:49:37 GMT"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("current", result.body());
+      try (Closeable appCleanup24 = app::close) {
+        app.routes()
+            .get(
+                "/file",
+                (ignored26, response) ->
+                    response
+                        .setHeader(HttpHeaders.ETAG.value(), "\"revision-1\"")
+                        .file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request ->
+                      request
+                          .path("/file")
+                          .header("If-None-Match", "\"different\"")
+                          .header("If-Modified-Since", "Sun, 06 Nov 2094 08:49:37 GMT"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("current", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -688,30 +799,34 @@ class RangeConditionalResponseTest {
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
     Files.setLastModifiedTime(file, FileTime.from(Instant.now().plusSeconds(86_400)));
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored27, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/file")
-                        .header("If-Modified-Since", "Sun, 06 Nov 2094 08:49:37 GMT")
-                        .header("If-Modified-Since", "Sun, 06 Nov 2094 08:49:37 GMT"),
-                HttpResponse.BodyHandlers.ofString());
-        var lastModified =
-            ZonedDateTime.parse(
-                result.headers().firstValue("Last-Modified").orElseThrow(),
-                DateTimeFormatter.RFC_1123_DATE_TIME);
-        var date =
-            ZonedDateTime.parse(
-                result.headers().firstValue("Date").orElseThrow(),
-                DateTimeFormatter.RFC_1123_DATE_TIME);
-        assertEquals(200, result.statusCode());
-        assertEquals("current", result.body());
-        assertFalse(lastModified.toInstant().isAfter(Instant.now()));
-        assertFalse(lastModified.toInstant().isAfter(date.toInstant()));
+      try (Closeable appCleanup25 = app::close) {
+        app.routes().get("/file", (ignored27, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request ->
+                      request
+                          .path("/file")
+                          .header("If-Modified-Since", "Sun, 06 Nov 2094 08:49:37 GMT")
+                          .header("If-Modified-Since", "Sun, 06 Nov 2094 08:49:37 GMT"),
+                  HttpResponse.BodyHandlers.ofString());
+          var lastModified =
+              ZonedDateTime.parse(
+                  result.headers().firstValue("Last-Modified").orElseThrow(),
+                  DateTimeFormatter.RFC_1123_DATE_TIME);
+          var date =
+              ZonedDateTime.parse(
+                  result.headers().firstValue("Date").orElseThrow(),
+                  DateTimeFormatter.RFC_1123_DATE_TIME);
+          assertEquals(200, result.statusCode());
+          assertEquals("current", result.body());
+          assertFalse(lastModified.toInstant().isAfter(Instant.now()));
+          assertFalse(lastModified.toInstant().isAfter(date.toInstant()));
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -722,17 +837,21 @@ class RangeConditionalResponseTest {
   void rejectsRangesForAnEmptyFileAndReleasesItAfterTheResponse() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
 
-    try (var app = new Shoostr()) {
-      app.routes().get("/file", (ignored28, response) -> response.file(file, "text/plain"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=0-"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(416, result.statusCode());
-        assertEquals("bytes */0", result.headers().firstValue("Content-Range").orElseThrow());
-        assertEquals("", result.body());
+      try (Closeable appCleanup26 = app::close) {
+        app.routes().get("/file", (ignored28, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=0-"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(416, result.statusCode());
+          assertEquals("bytes */0", result.headers().firstValue("Content-Range").orElseThrow());
+          assertEquals("", result.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -747,41 +866,45 @@ class RangeConditionalResponseTest {
     var release = new CountDownLatch(1);
     var waitTimedOut = new AtomicBoolean();
 
-    try (var app = new Shoostr();
-        var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
-      app.routes()
-          .get(
-              "/file",
-              (ignored29, response) -> {
-                response.file(file, "text/plain");
-                staged.countDown();
-                if (!release.await(5, TimeUnit.SECONDS)) {
-                  waitTimedOut.set(true);
-                }
-              });
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var first =
-            testRequests.submit(
-                () ->
-                    test.send(
-                        request -> request.path("/file").header("Range", "bytes=0-2"),
-                        HttpResponse.BodyHandlers.ofString()));
-        var second =
-            testRequests.submit(
-                () ->
-                    test.send(
-                        request -> request.path("/file").header("Range", "bytes=7-9"),
-                        HttpResponse.BodyHandlers.ofString()));
-        assertTrue(staged.await(5, TimeUnit.SECONDS));
-        release.countDown();
-        var firstResult = first.get(5, TimeUnit.SECONDS);
-        var secondResult = second.get(5, TimeUnit.SECONDS);
-        assertFalse(waitTimedOut.get());
-        assertEquals(206, firstResult.statusCode());
-        assertEquals(206, secondResult.statusCode());
-        assertEquals("012", firstResult.body());
-        assertEquals("789", secondResult.body());
+      try (Closeable appCleanup27 = app::close;
+          var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
+        app.routes()
+            .get(
+                "/file",
+                (ignored29, response) -> {
+                  response.file(file, "text/plain");
+                  staged.countDown();
+                  if (!release.await(5, TimeUnit.SECONDS)) {
+                    waitTimedOut.set(true);
+                  }
+                });
+
+        try (var test = TestServer.start(app)) {
+          var first =
+              testRequests.submit(
+                  () ->
+                      test.send(
+                          request -> request.path("/file").header("Range", "bytes=0-2"),
+                          HttpResponse.BodyHandlers.ofString()));
+          var second =
+              testRequests.submit(
+                  () ->
+                      test.send(
+                          request -> request.path("/file").header("Range", "bytes=7-9"),
+                          HttpResponse.BodyHandlers.ofString()));
+          assertTrue(staged.await(5, TimeUnit.SECONDS));
+          release.countDown();
+          var firstResult = first.get(5, TimeUnit.SECONDS);
+          var secondResult = second.get(5, TimeUnit.SECONDS);
+          assertFalse(waitTimedOut.get());
+          assertEquals(206, firstResult.statusCode());
+          assertEquals(206, secondResult.statusCode());
+          assertEquals("012", firstResult.body());
+          assertEquals("789", secondResult.body());
+        }
       }
     } finally {
       Files.deleteIfExists(file);
@@ -795,43 +918,47 @@ class RangeConditionalResponseTest {
     var completed = new CountDownLatch(1);
     var outcome = new AtomicReference<RequestOutcome>();
 
-    try (var app = new Shoostr()) {
-      app.afterRequest(
-          value -> {
-            outcome.set(value);
-            completed.countDown();
-          });
-      app.routes()
-          .get("/file", (ignored30, response) -> response.file(file, "application/octet-stream"));
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup28 = app::close) {
+        app.afterRequest(
+            value -> {
+              outcome.set(value);
+              completed.countDown();
+            });
+        app.routes()
+            .get("/file", (ignored30, response) -> response.file(file, "application/octet-stream"));
 
-        try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
-          socket
-              .getOutputStream()
-              .write(
-                  "GET /file HTTP/1.1\r\nHost: localhost\r\n\r\n"
-                      .getBytes(StandardCharsets.US_ASCII));
-          socket.getOutputStream().flush();
-          var initial = socket.getInputStream().readNBytes(1024);
-          var response = new String(initial, StandardCharsets.ISO_8859_1);
-          var headerEnd = response.indexOf("\r\n\r\n");
-          var contentStart = headerEnd + 4;
-          assertTrue(response.startsWith("HTTP/1.1 200"));
-          assertTrue(headerEnd >= 0);
-          assertTrue(initial.length > contentStart);
-          socket.setSoLinger(true, 0);
+        try (var test = TestServer.start(app)) {
+
+          try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
+            socket
+                .getOutputStream()
+                .write(
+                    "GET /file HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                        .getBytes(StandardCharsets.US_ASCII));
+            socket.getOutputStream().flush();
+            var initial = socket.getInputStream().readNBytes(1024);
+            var response = new String(initial, StandardCharsets.ISO_8859_1);
+            var headerEnd = response.indexOf("\r\n\r\n");
+            var contentStart = headerEnd + 4;
+            assertTrue(response.startsWith("HTTP/1.1 200"));
+            assertTrue(headerEnd >= 0);
+            assertTrue(initial.length > contentStart);
+            socket.setSoLinger(true, 0);
+          }
+
+          assertTrue(completed.await(5, TimeUnit.SECONDS));
+          assertEquals(200, outcome.get().statusCode());
+          assertNotNull(outcome.get().transportFailure());
+          var result =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=0-2"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(206, result.statusCode());
+          assertEquals("\u0000\u0000\u0000", result.body());
         }
-
-        assertTrue(completed.await(5, TimeUnit.SECONDS));
-        assertEquals(200, outcome.get().statusCode());
-        assertNotNull(outcome.get().transportFailure());
-        var result =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=0-2"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(206, result.statusCode());
-        assertEquals("\u0000\u0000\u0000", result.body());
       }
     } finally {
       Files.deleteIfExists(file);
@@ -844,19 +971,23 @@ class RangeConditionalResponseTest {
     Files.writeString(file, "complete", StandardCharsets.US_ASCII);
     var completed = new CountDownLatch(1);
 
-    try (var app = new Shoostr()) {
-      app.afterRequest(ignored -> completed.countDown());
-      app.routes().get("/file", (ignored31, response) -> response.file(file, "text/plain"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=0-2"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(206, result.statusCode());
-        assertTrue(completed.await(5, TimeUnit.SECONDS));
-        Files.delete(file);
-        assertFalse(Files.exists(file));
+      try (Closeable appCleanup29 = app::close) {
+        app.afterRequest(ignored -> completed.countDown());
+        app.routes().get("/file", (ignored31, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=0-2"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(206, result.statusCode());
+          assertTrue(completed.await(5, TimeUnit.SECONDS));
+          Files.delete(file);
+          assertFalse(Files.exists(file));
+        }
       }
     }
   }
@@ -868,32 +999,36 @@ class RangeConditionalResponseTest {
     var completed = new CountDownLatch(1);
     var outcome = new AtomicReference<RequestOutcome>();
 
-    try (var app = new Shoostr()) {
-      app.afterRequest(
-          value -> {
-            outcome.set(value);
-            completed.countDown();
-          });
-      app.routes()
-          .get(
-              "/file",
-              (ignored32, response) -> {
-                response.file(file, "text/plain");
-                Files.delete(file);
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
+      try (Closeable appCleanup30 = app::close) {
+        app.afterRequest(
+            value -> {
+              outcome.set(value);
+              completed.countDown();
+            });
+        app.routes()
+            .get(
+                "/file",
+                (ignored32, response) -> {
+                  response.file(file, "text/plain");
+                  Files.delete(file);
+                });
 
-        try {
-          test.send(
-              request -> request.path("/file").header("Range", "bytes=0-2"),
-              HttpResponse.BodyHandlers.ofString());
-        } catch (IOException ignored33) {
-          // The transport can fail before a complete response reaches the client.
+        try (var test = TestServer.start(app)) {
+
+          try {
+            test.send(
+                request -> request.path("/file").header("Range", "bytes=0-2"),
+                HttpResponse.BodyHandlers.ofString());
+          } catch (IOException ignored33) {
+            // The transport can fail before a complete response reaches the client.
+          }
+
+          assertTrue(completed.await(5, TimeUnit.SECONDS));
+          assertNotNull(outcome.get().transportFailure());
         }
-
-        assertTrue(completed.await(5, TimeUnit.SECONDS));
-        assertNotNull(outcome.get().transportFailure());
       }
     }
   }
@@ -903,19 +1038,21 @@ class RangeConditionalResponseTest {
     var archive = temporaryDirectory.resolve("content.zip");
 
     try (var filesystem =
-            FileSystems.newFileSystem(
-                URI.create("jar:" + archive.toUri()), Map.of("create", "true"));
-        var app = new Shoostr()) {
-      var file = filesystem.getPath("/file.txt");
-      Files.writeString(file, "archive", StandardCharsets.US_ASCII);
-      app.routes().get("/file", (ignored34, response) -> response.file(file, "text/plain"));
+        FileSystems.newFileSystem(URI.create("jar:" + archive.toUri()), Map.of("create", "true"))) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path("/file").header("Range", "bytes=0-2"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(500, result.statusCode());
+      try (Closeable appCleanup31 = app::close) {
+        var file = filesystem.getPath("/file.txt");
+        Files.writeString(file, "archive", StandardCharsets.US_ASCII);
+        app.routes().get("/file", (ignored34, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/file").header("Range", "bytes=0-2"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(500, result.statusCode());
+        }
       }
     }
   }

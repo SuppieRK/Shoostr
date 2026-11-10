@@ -14,9 +14,9 @@ import test from '../../../../../examples/15-observability/opentelemetry/src/tes
 
 A trace connects operations that belong to one distributed request. A server span describes this application's part of that work; child spans describe operations it performs. Your OpenTelemetry SDK controls propagation, sampling and export.
 
-`OpenTelemetryTracing` is the provider registered with Shoostr. Route and group callbacks receive an `Extensions` configuration object; selecting the same installed provider with `with(...)` enables its scoped behavior. This task traces a selected endpoint and follows context onto its worker without changing SDK ownership.
+`OpenTelemetryTracing` is Shoostr's tracing provider. Route and group callbacks receive a `Lifecycle` object; selecting the provider with `withExtension(...)` enables its scoped behavior and establishes shared infrastructure automatically. This task traces a selected endpoint and follows context onto its worker without changing SDK ownership.
 
-Configure the OpenTelemetry SDK's propagators, sampler and exporters in your application, then register `OpenTelemetryTracing` from `shoostr-opentelemetry`. Select that instance with `extensions.with(tracing)` for the routes that need SERVER spans; installing it does not select them. Application defaults can select it before route registration, with `without(tracing)` for a local exclusion. If unmatched and pre-routing work also need spans, set `allRequests()` before installation. That application-wide observation is outside scoped exclusion.
+Configure the OpenTelemetry SDK's propagators, sampler and exporters in your application, then create `OpenTelemetryTracing` from `shoostr-opentelemetry`. Select that instance with `lifecycle.withExtension(tracing)` for the routes that need SERVER spans. To select all registered endpoints by default, use `app.withExtension(tracing)` before route registration, with `lifecycle.withoutExtension(tracing)` for a local exclusion. Unmatched requests produce no extension-generated spans.
 
 Incoming context is extracted through the supplied propagator, so [W3C Trace Context](https://www.w3.org/TR/trace-context/) fields `traceparent` and `tracestate` depend on that SDK configuration.
 The adapter makes the server span current during invocation and explicitly reattaches it across a selected [endpoint executor](../../lifecycle/executors/), restoring the worker's previous context afterward.
@@ -27,7 +27,7 @@ The [OpenTelemetry context propagation guide](https://opentelemetry.io/docs/conc
 
 The item route selects tracing and creates a `load-item` child operation beneath its current server span on the supplied worker.
 `/health` selects no SERVER observation and reports whether any span is current; with empty admission context it returns `traced=false`.
-Selective installation carries admission SDK context across unselected handoffs too, without creating SERVER spans there or suppressing application-created spans.
+The provider's shared setup carries admission SDK context across unselected handoffs too, without creating SERVER spans there or suppressing application-created spans.
 
 Completed server spans use the composed method and route template, with terminal status and bounded error attributes rather than raw paths, credentials or exception events.
 Transport failures, 5xx responses and uncommitted application failures set an error status; a handled 4xx does not become an error solely because an exception produced it.

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.Handler;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.HashSet;
 import nl.jqno.equalsverifier.EqualsVerifier;
@@ -53,20 +54,25 @@ class OpenApiUiEqualityTest {
     handlers.add(sameConfiguration);
     assertEquals(1, handlers.size());
 
-    try (var app = new Shoostr().extensions(document)) {
-      app.routes().get("/docs/", ui).get("/{id:[0-9]+}/first", ui).get("/{id:[0-9]+}/second", ui);
+    {
+      var app = new Shoostr().withExtension(document, operation -> operation.hidden());
 
-      try (var server = TestServer.start(app)) {
-        assertEquals(sameConfiguration, ui);
-        assertEquals(initialHash, ui.hashCode());
-        assertTrue(handlers.contains(ui));
-        var response =
-            server.send(request -> request.path("/docs/"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertTrue(response.body().contains("swagger-ui"));
-        // Each constrained branch has multiple endpoint ranks; an unknown UI URL still returns 404.
-        assertEquals(404, server.send(request -> request.path("/1/first")).statusCode());
-        assertEquals(404, server.send(request -> request.path("/1/second")).statusCode());
+      try (Closeable appCleanup = app::close) {
+        app.routes().get("/docs/", ui).get("/{id:[0-9]+}/first", ui).get("/{id:[0-9]+}/second", ui);
+
+        try (var server = TestServer.start(app)) {
+          assertEquals(sameConfiguration, ui);
+          assertEquals(initialHash, ui.hashCode());
+          assertTrue(handlers.contains(ui));
+          var response =
+              server.send(request -> request.path("/docs/"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, response.statusCode());
+          assertTrue(response.body().contains("swagger-ui"));
+          // Each constrained branch has multiple endpoint ranks; an unknown UI URL still returns
+          // 404.
+          assertEquals(404, server.send(request -> request.path("/1/first")).statusCode());
+          assertEquals(404, server.send(request -> request.path("/1/second")).statusCode());
+        }
       }
     }
 

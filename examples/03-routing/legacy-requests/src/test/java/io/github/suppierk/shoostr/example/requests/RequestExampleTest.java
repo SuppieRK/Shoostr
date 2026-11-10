@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Test;
 class RequestExampleTest {
   @Test
   void preservesRepeatedFormValuesInOrder() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(
@@ -36,6 +37,7 @@ class RequestExampleTest {
 
   @Test
   void requiresThePreviewHeaderWhenTheLiveFlagIsEnabled() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name, () -> true))) {
       var response = test.send(request -> request.path("/preview"));
       assertAll(
@@ -49,6 +51,7 @@ class RequestExampleTest {
 
   @Test
   void rejectsAnIncorrectPreviewHeaderValue() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name, () -> true))) {
       assertEquals(
           404,
@@ -58,6 +61,7 @@ class RequestExampleTest {
 
   @Test
   void leavesPreviewDisabledInTheOneArgumentFactory() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       assertEquals(
           404,
@@ -67,6 +71,7 @@ class RequestExampleTest {
 
   @Test
   void retainsMethodDiscoveryForAnUnavailablePreviewRoute() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response = test.send(request -> request.path("/preview").method(HttpMethods.POST));
       assertAll(
@@ -79,6 +84,7 @@ class RequestExampleTest {
 
   @Test
   void rejectsPathSegmentsThatDoNotMatchTheNumericConstraint() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       assertEquals(404, test.send(request -> request.path("/items/abc")).statusCode());
     }
@@ -86,6 +92,7 @@ class RequestExampleTest {
 
   @Test
   void rejectsFormsWithAnUnsupportedMediaType() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       assertEquals(
           415,
@@ -103,6 +110,7 @@ class RequestExampleTest {
 
   @Test
   void rejectsAnExplicitlyBlankFormName() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       assertEquals(
           400,
@@ -121,6 +129,7 @@ class RequestExampleTest {
 
   @Test
   void doesNotUseAQueryNameAsAMissingFormName() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       assertEquals(
           400,
@@ -139,6 +148,7 @@ class RequestExampleTest {
 
   @Test
   void returnsNotFoundForAnUnregisteredPath() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       assertEquals(404, test.send(request -> request.path("/unknown")).statusCode());
     }
@@ -146,6 +156,7 @@ class RequestExampleTest {
 
   @Test
   void listsTheEchoMethodsWhenAnotherMethodIsRejected() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response = test.send(request -> request.path("/echo").method(HttpMethods.QUERY));
       assertAll(
@@ -191,6 +202,7 @@ class RequestExampleTest {
 
   @Test
   void capturesTheRemainingPathInANamedCatchAll() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(
@@ -204,6 +216,7 @@ class RequestExampleTest {
 
   @Test
   void capturesADigitOnlyNamedPathParameter() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(request -> request.path("/items/42"), HttpResponse.BodyHandlers.ofString());
@@ -215,6 +228,7 @@ class RequestExampleTest {
 
   @Test
   void echoesTheCallerSuppliedRequestIdHeader() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(request -> request.path("/preferences").header("X-Request-Id", "demo-42"));
@@ -227,6 +241,7 @@ class RequestExampleTest {
 
   @Test
   void readsTheCookieSetOnThePreviousResponse() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var initial =
           test.send(
@@ -244,6 +259,7 @@ class RequestExampleTest {
 
   @Test
   void decodesTheFormNameIndependentlyOfQueryParameters() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> "Welcome " + name))) {
       var response =
           test.send(
@@ -263,6 +279,7 @@ class RequestExampleTest {
 
   @Test
   void acceptsAQueryBodyThroughGenericEnumMethodRegistration() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(
@@ -280,6 +297,7 @@ class RequestExampleTest {
 
   @Test
   void advertisesTheSevenExplicitEchoMethodsThroughOptions() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response = test.send(request -> request.path("/echo").method(HttpMethods.OPTIONS));
       assertAll(
@@ -294,6 +312,7 @@ class RequestExampleTest {
 
   @Test
   void returnsExplicitHeadMetadataWithoutAResponseBody() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response = test.send(request -> request.path("/echo").method(HttpMethods.HEAD));
       assertAll(
@@ -306,6 +325,7 @@ class RequestExampleTest {
 
   @Test
   void returnsNoContentForDelete() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response = test.send(request -> request.path("/echo").method(HttpMethods.DELETE));
       assertAll(
@@ -316,6 +336,7 @@ class RequestExampleTest {
 
   @Test
   void echoesPatchTextAndIdentifiesTheRequestMethod() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(
@@ -336,6 +357,7 @@ class RequestExampleTest {
 
   @Test
   void preservesRawBytesSubmittedWithPut() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(
@@ -356,6 +378,7 @@ class RequestExampleTest {
 
   @Test
   void echoesUtf8TextSubmittedWithPost() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(
@@ -374,6 +397,7 @@ class RequestExampleTest {
 
   @Test
   void returnsTextFromTheGroupedGetEndpoint() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(request -> request.path("/echo"), HttpResponse.BodyHandlers.ofString());
@@ -385,6 +409,7 @@ class RequestExampleTest {
 
   @Test
   void passesTheDecodedExplicitQueryNameToTheDependency() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> "Welcome " + name))) {
       var response =
           test.send(
@@ -398,6 +423,7 @@ class RequestExampleTest {
 
   @Test
   void returnsEmptySearchTextWhenNoTagsAreSupplied() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(request -> request.path("/search"), HttpResponse.BodyHandlers.ofString());
@@ -408,6 +434,7 @@ class RequestExampleTest {
 
   @Test
   void rejectsABlankExplicitQueryNameRatherThanApplyingTheDefault() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       assertEquals(400, test.send(request -> request.path("/welcome?name=%20")).statusCode());
     }
@@ -415,6 +442,7 @@ class RequestExampleTest {
 
   @Test
   void usesWorldWhenTheOptionalQueryNameIsAbsent() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> "Welcome " + name))) {
       var response =
           test.send(request -> request.path("/welcome"), HttpResponse.BodyHandlers.ofString());
@@ -426,6 +454,7 @@ class RequestExampleTest {
 
   @Test
   void preservesRepeatedQueryValuesInOrder() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(
@@ -439,6 +468,7 @@ class RequestExampleTest {
 
   @Test
   void usesTheDependencySuppliedBeforeStartingTheFixture() throws Exception {
+
     try (var test = TestServer.start(RequestExample.application(name -> "Test " + name))) {
       var response =
           test.send(

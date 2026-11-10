@@ -1,9 +1,10 @@
 package io.github.suppierk.shoostr.openapi;
 
 import io.github.suppierk.shoostr.ApplicationCallbacks;
-import io.github.suppierk.shoostr.Extension;
-import io.github.suppierk.shoostr.Extensions;
+import io.github.suppierk.shoostr.ApplicationExtension;
 import io.github.suppierk.shoostr.Handler;
+import io.github.suppierk.shoostr.Lifecycle;
+import io.github.suppierk.shoostr.RouteExtension;
 import io.github.suppierk.shoostr.RouteInfo;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.swagger.v3.core.util.Json31;
@@ -33,7 +34,8 @@ import tools.jackson.core.JacksonException;
  * registration; register the serving handler explicitly. Configuration and generation are cold: no
  * documented handler runs, no runtime condition is evaluated, and serving reuses frozen bytes.
  */
-public final class OpenApi implements Extension<OpenApiOperation> {
+public final class OpenApi
+    implements ApplicationExtension<OpenApiOperation>, RouteExtension<OpenApiOperation> {
   private final Info info;
   private final List<Binding> bindings;
   private final Components components;
@@ -195,7 +197,7 @@ public final class OpenApi implements Extension<OpenApiOperation> {
    */
   @Override
   public synchronized OpenApiOperation configure(
-      Extensions endpoint, @Nullable OpenApiOperation inherited) {
+      Lifecycle endpoint, @Nullable OpenApiOperation inherited) {
     requireMutable();
     var operation = new OpenApiOperation(this, inherited);
     endpoint.onRoute(route -> collect(route, operation));

@@ -91,7 +91,7 @@ class McpScopeDenialTest {
                         })
                     .build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var denied =
@@ -167,7 +167,7 @@ class McpScopeDenialTest {
                             .build())
                     .build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var initialized =
@@ -234,8 +234,7 @@ class McpScopeDenialTest {
   void allowsAnAppRendererToCustomizeTheScopeDenialBody() throws Exception {
     var mcp = refusingServer();
     var app = new Shoostr();
-    app.extensions(mcp)
-        .exception(ForbiddenException.class, (ignored4, ignored5, response) -> response.text("app"))
+    app.exception(ForbiddenException.class, (ignored4, ignored5, response) -> response.text("app"))
         .routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
@@ -263,9 +262,7 @@ class McpScopeDenialTest {
     var observed = new CompletableFuture<RequestOutcome>();
     var mcp = refusingServer();
     var app = new Shoostr();
-    app.extensions(mcp)
-        .afterRequest(observed::complete)
-        .routes(routes -> routes.path("/mcp", mcp::routes));
+    app.afterRequest(observed::complete).routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var denied =

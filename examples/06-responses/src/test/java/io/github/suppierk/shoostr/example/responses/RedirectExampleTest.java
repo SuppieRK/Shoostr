@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -20,6 +21,7 @@ class RedirectExampleTest {
   @CsvSource({"/submit, 303, /receipt, GET:receipt", "/forward, 307, /receiver, POST:payload"})
   void followsRedirectsWithTheSelectedMethodAndBody(
       String path, int status, String destination, String expected) throws Exception {
+
     try (var test =
         TestServer.start(
             RedirectExample.application(),
@@ -47,7 +49,8 @@ class RedirectExampleTest {
         TestServer.start(
             RedirectExample.application(),
             client -> client.followRedirects(HttpClient.Redirect.NORMAL))) {
-      // Replay spans multiple input buffers; the redirect handler leaves the original body unread.
+      // Replay spans multiple input buffers; the redirect handler leaves the original body
+      // unread.
       var response =
           test.send(
               request ->
@@ -65,6 +68,7 @@ class RedirectExampleTest {
 
   @Test
   void keepsTheApplicationSelectedDestinationWhenAQuerySuggestsAnother() throws Exception {
+
     try (var test = TestServer.start(RedirectExample.application())) {
       var response =
           test.send(request -> request.path("/old?next=https%3A%2F%2Funtrusted.example%2F"));
@@ -75,24 +79,28 @@ class RedirectExampleTest {
 
   @Test
   void continuesAfterStagingTheRedirectAndClearsThePreviousBody() throws Exception {
-    try (var app = RedirectExample.application()) {
-      app.routes()
-          .get(
-              "/continue-check",
-              (ignored, response) -> {
-                response.text("discarded").setHeader("X-Keep", "kept").redirect("/current");
-                assertFalse(response.isCommitted());
-                response.setHeader("X-After", "continued");
-              });
+    {
+      var app = RedirectExample.application();
 
-      try (var test = TestServer.start(app)) {
-        var response = test.send(request -> request.path("/continue-check"));
-        assertEquals(302, response.statusCode());
-        assertEquals("/current", response.headers().firstValue("Location").orElseThrow());
-        assertEquals("kept", response.headers().firstValue("X-Keep").orElseThrow());
-        assertEquals("continued", response.headers().firstValue("X-After").orElseThrow());
-        assertTrue(response.headers().firstValue("Content-Type").isEmpty());
-        assertArrayEquals(new byte[0], response.body());
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .get(
+                "/continue-check",
+                (ignored, response) -> {
+                  response.text("discarded").setHeader("X-Keep", "kept").redirect("/current");
+                  assertFalse(response.isCommitted());
+                  response.setHeader("X-After", "continued");
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response = test.send(request -> request.path("/continue-check"));
+          assertEquals(302, response.statusCode());
+          assertEquals("/current", response.headers().firstValue("Location").orElseThrow());
+          assertEquals("kept", response.headers().firstValue("X-Keep").orElseThrow());
+          assertEquals("continued", response.headers().firstValue("X-After").orElseThrow());
+          assertTrue(response.headers().firstValue("Content-Type").isEmpty());
+          assertArrayEquals(new byte[0], response.body());
+        }
       }
     }
   }
@@ -105,6 +113,7 @@ class RedirectExampleTest {
   })
   void sendsTheSelectedNavigationStatusWithoutFollowingIt(
       String method, String path, int status, String location) throws Exception {
+
     try (var test =
         TestServer.start(
             RedirectExample.application(),

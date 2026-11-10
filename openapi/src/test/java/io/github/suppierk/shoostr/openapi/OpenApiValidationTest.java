@@ -12,6 +12,7 @@ import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.parameters.RequestBody;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import java.io.Closeable;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -39,12 +40,16 @@ class OpenApiValidationTest {
     var docs = new OpenApi("API", "1");
     docs.schema("Container", schema);
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs);
-      assertThrows(IllegalArgumentException.class, app::start);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup = app::close) {
+        app.withExtension(docs);
+        assertThrows(IllegalArgumentException.class, app::start);
+      }
     }
   }
 
@@ -58,14 +63,20 @@ class OpenApiValidationTest {
 
     var docs = new OpenApi("API", "1");
 
-    try (var app = new Shoostr()) {
-      app.extensions(docs);
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.post(
-                  "/users", (ignored, ignored2) -> {}, e -> e.with(docs).requestBody(body)));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup1 = app::close) {
+
+        var routes = app.routes();
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.post(
+                    "/users",
+                    (ignored, ignored2) -> {},
+                    e -> e.withExtension(docs).requestBody(body)));
+      }
     }
   }
 
@@ -87,17 +98,20 @@ class OpenApiValidationTest {
 
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes()
-          .get(
-              "/users/{id:[0-9]+}",
-              (ignored3, ignored4) -> {},
-              e -> e.with(docs).parameter(parameter));
-      assertThrows(IllegalArgumentException.class, app::start);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup2 = app::close) {
+        app.routes()
+            .get(
+                "/users/{id:[0-9]+}",
+                (ignored3, ignored4) -> {},
+                e -> e.withExtension(docs).parameter(parameter));
+        assertThrows(IllegalArgumentException.class, app::start);
+      }
     }
   }
 
@@ -106,14 +120,20 @@ class OpenApiValidationTest {
     var docs = new OpenApi("API", "1");
     var parameter = new Parameter().name("page").in("query");
 
-    try (var app = new Shoostr()) {
-      app.extensions(docs);
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.get(
-                  "/users", (ignored5, ignored6) -> {}, e -> e.with(docs).parameter(parameter)));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup3 = app::close) {
+
+        var routes = app.routes();
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.get(
+                    "/users",
+                    (ignored5, ignored6) -> {},
+                    e -> e.withExtension(docs).parameter(parameter)));
+      }
     }
   }
 
@@ -121,18 +141,21 @@ class OpenApiValidationTest {
   void rejectsPublishedCatchAllRoutesInsteadOfApproximatingTheirMeaning() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes ->
-                  routes.get(
-                      "/files/{*tail}",
-                      (ignored7, ignored8) -> {},
-                      e -> e.with(docs).summary("Files")));
-      assertThrows(IllegalArgumentException.class, app::start);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup4 = app::close) {
+        app.routes(
+            routes ->
+                routes.get(
+                    "/files/{*tail}",
+                    (ignored7, ignored8) -> {},
+                    e -> e.withExtension(docs).summary("Files")));
+        assertThrows(IllegalArgumentException.class, app::start);
+      }
     }
   }
 
@@ -140,18 +163,21 @@ class OpenApiValidationTest {
   void rejectsPathParametersThatDoNotBelongToTheActualTemplate() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes ->
-                  routes.get(
-                      "/users/{id}",
-                      (ignored9, ignored10) -> {},
-                      e -> e.with(docs).pathParameter("other", "Wrong parameter")));
-      assertThrows(IllegalArgumentException.class, app::start);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup5 = app::close) {
+        app.routes(
+            routes ->
+                routes.get(
+                    "/users/{id}",
+                    (ignored9, ignored10) -> {},
+                    e -> e.withExtension(docs).pathParameter("other", "Wrong parameter")));
+        assertThrows(IllegalArgumentException.class, app::start);
+      }
     }
   }
 
@@ -159,19 +185,22 @@ class OpenApiValidationTest {
   void rejectsHttpMethodsThatOpenApiCannotRepresent() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes ->
-                  routes.route(
-                      "CONNECT",
-                      "/tunnel",
-                      (ignored11, ignored12) -> {},
-                      e -> e.with(docs).summary("Tunnel")));
-      assertThrows(IllegalArgumentException.class, app::start);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup6 = app::close) {
+        app.routes(
+            routes ->
+                routes.route(
+                    "CONNECT",
+                    "/tunnel",
+                    (ignored11, ignored12) -> {},
+                    e -> e.withExtension(docs).summary("Tunnel")));
+        assertThrows(IllegalArgumentException.class, app::start);
+      }
     }
   }
 
@@ -188,16 +217,20 @@ class OpenApiValidationTest {
     var docs = new OpenApi("API", "1");
     var response = new ApiResponse();
 
-    try (var app = new Shoostr()) {
-      app.extensions(docs);
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.get(
-                  "/users",
-                  (ignored13, ignored14) -> {},
-                  e -> e.with(docs).response(200, response)));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup7 = app::close) {
+
+        var routes = app.routes();
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.get(
+                    "/users",
+                    (ignored13, ignored14) -> {},
+                    e -> e.withExtension(docs).response(200, response)));
+      }
     }
   }
 
@@ -206,18 +239,21 @@ class OpenApiValidationTest {
     var docs = new OpenApi("API", "1");
     Handler shared = (ignored15, ignored16) -> {};
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes -> {
-                routes.get("/first", shared, e -> e.with(docs).operationId("read"));
-                routes.get("/second", shared, e -> e.with(docs).operationId("read"));
-              });
-      var failure = assertThrows(IllegalArgumentException.class, app::start);
-      assertEquals("Duplicate OpenAPI operationId: read", failure.getMessage());
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup8 = app::close) {
+        app.routes(
+            routes -> {
+              routes.get("/first", shared, e -> e.withExtension(docs).operationId("read"));
+              routes.get("/second", shared, e -> e.withExtension(docs).operationId("read"));
+            });
+        var failure = assertThrows(IllegalArgumentException.class, app::start);
+        assertEquals("Duplicate OpenAPI operationId: read", failure.getMessage());
+      }
     }
   }
 
@@ -225,26 +261,29 @@ class OpenApiValidationTest {
   void rejectsUnknownLocalSchemaReferencesBeforeListening() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes ->
-                  routes.get(
-                      "/users",
-                      (ignored17, ignored18) -> {},
-                      e ->
-                          e.with(docs)
-                              .response(
-                                  200,
-                                  "User",
-                                  MediaType.APPLICATION_JSON,
-                                  new JsonSchema().$ref("#/components/schemas/Missing"))));
-      var failure = assertThrows(IllegalArgumentException.class, app::start);
-      assertEquals(
-          "Unknown local OpenAPI reference: #/components/schemas/Missing", failure.getMessage());
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup9 = app::close) {
+        app.routes(
+            routes ->
+                routes.get(
+                    "/users",
+                    (ignored17, ignored18) -> {},
+                    e ->
+                        e.withExtension(docs)
+                            .response(
+                                200,
+                                "User",
+                                MediaType.APPLICATION_JSON,
+                                new JsonSchema().$ref("#/components/schemas/Missing"))));
+        var failure = assertThrows(IllegalArgumentException.class, app::start);
+        assertEquals(
+            "Unknown local OpenAPI reference: #/components/schemas/Missing", failure.getMessage());
+      }
     }
   }
 
@@ -252,19 +291,22 @@ class OpenApiValidationTest {
   void rejectsUnknownSecuritySchemesBeforeListening() throws Exception {
     var docs = new OpenApi("API", "1");
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.extensions(docs)
-          .routes(
-              routes ->
-                  routes.get(
-                      "/users",
-                      (ignored19, ignored20) -> {},
-                      e -> e.with(docs).security("missing")));
-      var failure = assertThrows(IllegalArgumentException.class, app::start);
-      assertEquals("Unknown OpenAPI security scheme: missing", failure.getMessage());
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup10 = app::close) {
+        app.routes(
+            routes ->
+                routes.get(
+                    "/users",
+                    (ignored19, ignored20) -> {},
+                    e -> e.withExtension(docs).security("missing")));
+        var failure = assertThrows(IllegalArgumentException.class, app::start);
+        assertEquals("Unknown OpenAPI security scheme: missing", failure.getMessage());
+      }
     }
   }
 

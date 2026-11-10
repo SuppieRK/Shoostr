@@ -36,8 +36,6 @@ public final class AuthenticationExample {
     // It creates a Pac4j authentication extension from Shoostr's separate pac4j module.
     var auth = DemoAuthentication.create();
     return new Shoostr()
-        // Install the instance; authentication is required only where routes select it below.
-        .authentication(auth)
         .routes(
             routes -> {
               routes.get("/public", (ignored, response) -> response.text("public"));
@@ -52,7 +50,7 @@ public final class AuthenticationExample {
                     group.get(
                         "/admin", (ignored2, response) -> response.text("admin operation allowed"));
                   },
-                  extensions -> extensions.with(auth));
+                  lifecycle -> lifecycle.withExtension(auth));
             });
   }
 }

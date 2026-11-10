@@ -39,7 +39,6 @@ public final class OpenApiDocumentExample {
     var mapper =
         Json31.mapper().rebuild().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
     return new Shoostr()
-        .extensions(docs, internal)
         .routes(
             routes -> {
               // Serving a document is separate from selecting operations to describe in it.
@@ -49,9 +48,9 @@ public final class OpenApiDocumentExample {
                   .get(
                       "/operations/status",
                       (ignored, response) -> response.text("ready"),
-                      extensions ->
-                          extensions
-                              .with(internal)
+                      lifecycle ->
+                          lifecycle
+                              .withExtension(internal)
                               .summary("Operational status")
                               .response(200, "Ready", MediaType.TEXT_PLAIN))
                   .post(
@@ -63,9 +62,9 @@ public final class OpenApiDocumentExample {
                                   MediaType.APPLICATION_JSON,
                                   mapper.writeValueAsBytes(
                                       Map.of("name", itemName(mapper, request.bodyText())))),
-                      extensions ->
-                          extensions
-                              .with(docs)
+                      lifecycle ->
+                          lifecycle
+                              .withExtension(docs)
                               .summary("Create an item")
                               .operationId("createItem")
                               .tag(ITEMS_TAG)
@@ -83,9 +82,9 @@ public final class OpenApiDocumentExample {
                                           Map.of(
                                               "name",
                                               "Item " + request.pathParam("id").orElseThrow()))),
-                              extensions ->
-                                  extensions
-                                      .with(docs)
+                              lifecycle ->
+                                  lifecycle
+                                      .withExtension(docs)
                                       .summary("Find an item")
                                       .operationId("findItem")
                                       // Document the parameter explicitly, independently of the
@@ -93,7 +92,7 @@ public final class OpenApiDocumentExample {
                                       .pathParameter("id", "Numeric item identifier")
                                       .response(
                                           200, "Item found", MediaType.APPLICATION_JSON, item)),
-                      extensions -> extensions.with(docs).tag(ITEMS_TAG));
+                      lifecycle -> lifecycle.withExtension(docs).tag(ITEMS_TAG));
             });
   }
 

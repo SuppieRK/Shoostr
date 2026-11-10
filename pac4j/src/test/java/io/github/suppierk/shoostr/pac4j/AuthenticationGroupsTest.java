@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.Optional;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -20,17 +21,21 @@ class AuthenticationGroupsTest {
   @CsvSource({"/rest, Basic YWxpY2U6Y29ycmVjdA==, alice", "/mcp, Bearer correct, bob"})
   void establishesTheIdentityFromTheSelectedAuthenticationScheme(
       String path, String credentials, String identity) throws Exception {
-    try (var app = new Shoostr()) {
-      registerAuthenticationGroups(app);
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request -> request.path(path).header("Authorization", credentials),
-                HttpResponse.BodyHandlers.ofString());
+      try (Closeable appCleanup = app::close) {
+        registerAuthenticationGroups(app);
 
-        assertEquals(200, result.statusCode());
-        assertEquals(identity, result.body());
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path(path).header("Authorization", credentials),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals(identity, result.body());
+        }
       }
     }
   }
@@ -39,14 +44,19 @@ class AuthenticationGroupsTest {
   @CsvSource({"/rest, Bearer correct, Basic", "/mcp, Basic YWxpY2U6Y29ycmVjdA==, Bearer"})
   void rejectsTheOtherGroupsCredentialSchemeWithTheSelectedChallenge(
       String path, String credentials, String challenge) throws Exception {
-    try (var app = new Shoostr()) {
-      registerAuthenticationGroups(app);
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result = test.send(request -> request.path(path).header("Authorization", credentials));
+      try (Closeable appCleanup1 = app::close) {
+        registerAuthenticationGroups(app);
 
-        assertEquals(401, result.statusCode());
-        assertEquals(challenge, result.headers().firstValue("WWW-Authenticate").orElseThrow());
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path(path).header("Authorization", credentials));
+
+          assertEquals(401, result.statusCode());
+          assertEquals(challenge, result.headers().firstValue("WWW-Authenticate").orElseThrow());
+        }
       }
     }
   }
@@ -82,23 +92,22 @@ class AuthenticationGroupsTest {
         };
     var bearer = new Pac4j(new DirectBearerAuthClient(bearerAuthenticator), "Bearer");
 
-    app.authentication(basic, bearer)
-        .routes(
-            routes -> {
-              routes.path(
-                  "/rest",
-                  child ->
-                      child.get(
-                          (request, response) ->
-                              response.text(request.principal().orElseThrow().getName())),
-                  extensions -> extensions.with(basic));
-              routes.path(
-                  "/mcp",
-                  child ->
-                      child.get(
-                          (request, response) ->
-                              response.text(request.principal().orElseThrow().getName())),
-                  extensions -> extensions.with(bearer));
-            });
+    app.routes(
+        routes -> {
+          routes.path(
+              "/rest",
+              child ->
+                  child.get(
+                      (request, response) ->
+                          response.text(request.principal().orElseThrow().getName())),
+              extensions -> extensions.withExtension(basic));
+          routes.path(
+              "/mcp",
+              child ->
+                  child.get(
+                      (request, response) ->
+                          response.text(request.principal().orElseThrow().getName())),
+              extensions -> extensions.withExtension(bearer));
+        });
   }
 }

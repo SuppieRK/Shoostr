@@ -4,11 +4,12 @@ import com.fasterxml.jackson.core.StreamReadFeature;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import io.github.suppierk.shoostr.ApplicationCallbacks;
-import io.github.suppierk.shoostr.Extension;
-import io.github.suppierk.shoostr.Extensions;
+import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
+import io.github.suppierk.shoostr.RouteExtension;
 import io.github.suppierk.shoostr.Routes;
+import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
@@ -64,7 +65,7 @@ import reactor.core.scheduler.Schedulers;
  *
  * @param <S> native SDK server type
  */
-public final class Mcp<S> implements Extension<Void> {
+public final class Mcp<S> implements RouteExtension<Mcp<S>> {
   private static final MediaType EVENT_STREAM = MediaType.of("text/event-stream");
   private static final String FIELD_METHOD = "method";
   private static final String FIELD_RESULT = "result";
@@ -251,6 +252,26 @@ public final class Mcp<S> implements Extension<Void> {
   }
 
   /**
+   * Supplies mount metadata for the protocol routes registered by {@link #routes(Routes)}.
+   * Selection establishes shared infrastructure but does not create protocol handlers. One instance
+   * supports one literal mount; only the POST registration binds that mount.
+   *
+   * @param lifecycle protocol endpoint configuration
+   * @param inherited parent provider, or null
+   * @return this transport instance
+   */
+  @Override
+  public Mcp<S> configure(Lifecycle lifecycle, @Nullable Mcp<S> inherited) {
+    lifecycle.onRoute(
+        info -> {
+          if (info.method() == HttpMethods.POST) {
+            bind(info.pathTemplate());
+          }
+        });
+    return this;
+  }
+
+  /**
    * Mounts this instance at the current literal group endpoint. Select managed authentication on
    * the enclosing group when required; installation alone never protects the endpoint.
    *
@@ -280,9 +301,8 @@ public final class Mcp<S> implements Extension<Void> {
    */
   private void register(Routes routes, @Nullable ExecutorService executor) {
     Objects.requireNonNull(routes);
-    Consumer<Extensions> configuration =
-        extensions -> extensions.requireInstalled(this).onRoute((ignored3, path) -> bind(path));
-    Consumer<Extensions> installed = extensions -> extensions.requireInstalled(this);
+    Consumer<Lifecycle> configuration = lifecycle -> lifecycle.withExtension(this);
+    Consumer<Lifecycle> installed = lifecycle -> lifecycle.withExtension(this);
     if (executor == null) {
       routes.post("", this::post, configuration);
       routes.get("", this::get, installed);

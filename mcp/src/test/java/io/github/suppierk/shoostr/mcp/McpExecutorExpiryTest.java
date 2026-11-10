@@ -52,19 +52,18 @@ class McpExecutorExpiryTest {
                 (ignored, ignored2) -> {}),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp)
-        .routes(
-            routes -> {
-              routes.path("/mcp", group -> mcp.routes(group, selected));
-              routes.get(
-                  "/probe",
-                  selected,
-                  (ignored3, response) ->
-                      response.text(
-                          (Thread.currentThread() == owner.get())
-                              + ":"
-                              + Thread.currentThread().isInterrupted()));
-            });
+    app.routes(
+        routes -> {
+          routes.path("/mcp", group -> mcp.routes(group, selected));
+          routes.get(
+              "/probe",
+              selected,
+              (ignored3, response) ->
+                  response.text(
+                      (Thread.currentThread() == owner.get())
+                          + ":"
+                          + Thread.currentThread().isInterrupted()));
+        });
 
     try (selected;
         var readers = Executors.newVirtualThreadPerTaskExecutor();

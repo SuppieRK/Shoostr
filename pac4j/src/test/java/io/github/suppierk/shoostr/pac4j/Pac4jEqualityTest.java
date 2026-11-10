@@ -9,6 +9,7 @@ import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -57,37 +58,41 @@ class Pac4jEqualityTest {
     values.add(second);
     assertEquals(1, values.size());
 
-    try (var app = new Shoostr().authentication(first, second)) {
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.get(
-                  "/conflict",
-                  (request, response) -> {},
-                  e -> {
-                    e.with(first);
-                    e.with(second);
-                  }));
-      routes
-          .get(
-              "/first",
-              (request, response) -> response.text(request.principal().orElseThrow().getName()),
-              e -> e.with(first))
-          .get(
-              "/second",
-              (request, response) -> response.text(request.principal().orElseThrow().getName()),
-              e -> e.with(second));
+    {
+      var app = new Shoostr();
 
-      try (var server = TestServer.start(app)) {
-        for (var path : new String[] {"/first", "/second"}) {
-          var response =
-              server.send(
-                  request ->
-                      request.path(path).header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
-                  HttpResponse.BodyHandlers.ofString());
-          assertEquals(200, response.statusCode());
-          assertEquals("alice", response.body());
+      try (Closeable appCleanup = app::close) {
+        var routes = app.routes();
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.get(
+                    "/conflict",
+                    (request, response) -> {},
+                    e -> {
+                      e.withExtension(first);
+                      e.withExtension(second);
+                    }));
+        routes
+            .get(
+                "/first",
+                (request, response) -> response.text(request.principal().orElseThrow().getName()),
+                e -> e.withExtension(first))
+            .get(
+                "/second",
+                (request, response) -> response.text(request.principal().orElseThrow().getName()),
+                e -> e.withExtension(second));
+
+        try (var server = TestServer.start(app)) {
+          for (var path : new String[] {"/first", "/second"}) {
+            var response =
+                server.send(
+                    request ->
+                        request.path(path).header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode());
+            assertEquals("alice", response.body());
+          }
         }
       }
     }
@@ -100,42 +105,46 @@ class Pac4jEqualityTest {
     var hashes = new ArrayList<Integer>();
     var retained = new HashSet<Pac4jContext>();
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .post(
-              "/context",
-              (request, response) -> {
-                var context = new Pac4jContext(request, response);
-                assertNotEquals(context, new Pac4jContext(request, response));
-                contexts.add(context);
-                exchanges.add(Map.entry(request, response));
-                hashes.add(context.hashCode());
-                retained.add(context);
-                context.setRequestAttribute("processed", true);
-                context.setResponseHeader("X-Checked", "yes");
-                response.text(request.bodyText());
-              });
+    {
+      var app = new Shoostr();
 
-      try (var server = TestServer.start(app)) {
-        for (int index = 0; index < 2; index++) {
-          var response =
-              server.send(
-                  request ->
-                      request
-                          .path("/context")
-                          .method("POST")
-                          .body("same".getBytes(StandardCharsets.UTF_8)),
-                  HttpResponse.BodyHandlers.ofString());
-          assertEquals(200, response.statusCode());
-          assertEquals("same", response.body());
-          assertEquals("yes", response.headers().firstValue("X-Checked").orElseThrow());
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .post(
+                "/context",
+                (request, response) -> {
+                  var context = new Pac4jContext(request, response);
+                  assertNotEquals(context, new Pac4jContext(request, response));
+                  contexts.add(context);
+                  exchanges.add(Map.entry(request, response));
+                  hashes.add(context.hashCode());
+                  retained.add(context);
+                  context.setRequestAttribute("processed", true);
+                  context.setResponseHeader("X-Checked", "yes");
+                  response.text(request.bodyText());
+                });
+
+        try (var server = TestServer.start(app)) {
+          for (int index = 0; index < 2; index++) {
+            var response =
+                server.send(
+                    request ->
+                        request
+                            .path("/context")
+                            .method("POST")
+                            .body("same".getBytes(StandardCharsets.UTF_8)),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, response.statusCode());
+            assertEquals("same", response.body());
+            assertEquals("yes", response.headers().firstValue("X-Checked").orElseThrow());
+          }
+          EqualsVerifier.forClass(Pac4jContext.class)
+              .withPrefabValues(Request.class, exchanges.get(0).getKey(), exchanges.get(1).getKey())
+              .withPrefabValues(
+                  Response.class, exchanges.get(0).getValue(), exchanges.get(1).getValue())
+              .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED)
+              .verify();
         }
-        EqualsVerifier.forClass(Pac4jContext.class)
-            .withPrefabValues(Request.class, exchanges.get(0).getKey(), exchanges.get(1).getKey())
-            .withPrefabValues(
-                Response.class, exchanges.get(0).getValue(), exchanges.get(1).getValue())
-            .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED)
-            .verify();
       }
     }
 

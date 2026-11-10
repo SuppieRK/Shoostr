@@ -4,8 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.ApplicationCallbacks;
+import io.github.suppierk.shoostr.ApplicationExtension;
 import io.github.suppierk.shoostr.AuthenticationExtension;
-import io.github.suppierk.shoostr.Extension;
+import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Shoostr;
@@ -21,7 +22,12 @@ class ApplicationCompatibilityTest {
   void preservesInstalledExtensionAndInheritedAuthenticationBehavior() throws Exception {
     @SuppressWarnings("java:S9357") // Extension has no abstract method: it cannot be a lambda.
     var extension =
-        new Extension<>() {
+        new ApplicationExtension<Object>() {
+          @Override
+          public Object configure(Lifecycle lifecycle, Object inherited) {
+            return this;
+          }
+
           @Override
           public void install(ApplicationCallbacks callbacks) {
             callbacks.beforeRouteHandler(
@@ -35,12 +41,12 @@ class ApplicationCompatibilityTest {
             response.setHeader("X-Route-Extension", "selected");
           }
         };
-    var app = new Shoostr().extensions(extension).authentication(authentication);
+    var app = new Shoostr().withExtension(extension);
     app.routes()
         .path(
             "/api",
             routes -> routes.get("/value", (ignored2, response) -> response.text("existing")),
-            extensions -> extensions.with(authentication));
+            extensions -> extensions.withExtension(authentication));
     app.routes().get("/plain", (ignored3, response) -> response.text("plain"));
 
     try (var test = TestServer.start(app)) {

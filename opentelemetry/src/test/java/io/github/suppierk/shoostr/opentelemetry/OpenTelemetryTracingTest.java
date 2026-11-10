@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr.opentelemetry;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.Options;
@@ -23,6 +22,7 @@ import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.data.SpanData;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
@@ -39,33 +39,42 @@ import org.junit.jupiter.params.provider.ValueSource;
 class OpenTelemetryTracingTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void bareInstallationDoesNotCreateSpansOrOwnTheProvider(boolean virtualApplication)
+  void routeSelectionDoesNotTraceOtherEndpointsOrOwnTheProvider(boolean virtualApplication)
       throws Exception {
     var exporter = InMemorySpanExporter.create();
 
     try (var provider =
-            SdkTracerProvider.builder()
-                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
-                .build();
-        var app = withExecutionMode(new Options(), virtualApplication)) {
-      var tracing =
-          new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build());
-      app.extensions(tracing);
-      assertThrows(IllegalStateException.class, tracing::allRequests);
-      app.routes()
-          .get(
-              "/",
-              (ignored, response) ->
-                  response.text(Boolean.toString(Span.current().getSpanContext().isValid())));
+        SdkTracerProvider.builder()
+            .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+            .build()) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-      try (var test = TestServer.start(app)) {
-        var result = test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString());
-        assertEquals("false", result.body());
-        assertTrue(exporter.getFinishedSpanItems().isEmpty());
-        test.close();
-        var span = provider.get("borrowed").spanBuilder("still usable").startSpan();
-        span.end();
-        assertEquals(1, exporter.getFinishedSpanItems().size());
+      try (Closeable appCleanup = app::close) {
+        var tracing =
+            new OpenTelemetryTracing(
+                OpenTelemetrySdk.builder().setTracerProvider(provider).build());
+        app.routes()
+            .get(
+                "/selected",
+                (request, response) -> response.text("selected"),
+                lifecycle -> lifecycle.withExtension(tracing));
+
+        app.routes()
+            .get(
+                "/",
+                (ignored, response) ->
+                    response.text(Boolean.toString(Span.current().getSpanContext().isValid())));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString());
+          assertEquals("false", result.body());
+          assertTrue(exporter.getFinishedSpanItems().isEmpty());
+          test.close();
+          var span = provider.get("borrowed").spanBuilder("still usable").startSpan();
+          span.end();
+          assertEquals(1, exporter.getFinishedSpanItems().size());
+        }
       }
     }
   }
@@ -78,25 +87,30 @@ class OpenTelemetryTracingTest {
     var completed = new CompletableFuture<Void>();
 
     try (var provider =
-            SdkTracerProvider.builder()
-                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
-                .build();
-        var app = withExecutionMode(new Options(), virtualApplication)) {
-      app.extensions(
-          new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build())
-              .allRequests());
-      app.afterRequest(ignored2 -> completed.complete(null));
-      app.routes().get("/explicit", (ignored3, response) -> response.status(500).text("explicit"));
+        SdkTracerProvider.builder()
+            .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+            .build()) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/explicit"), HttpResponse.BodyHandlers.discarding());
-        assertEquals(500, result.statusCode());
-        completed.get(5, TimeUnit.SECONDS);
-        assertEquals(1, exporter.getFinishedSpanItems().size());
-        var span = exporter.getFinishedSpanItems().getFirst();
-        assertEquals(StatusCode.ERROR, span.getStatus().getStatusCode());
-        assertEquals("500", span.getAttributes().get(AttributeKey.stringKey("error.type")));
+      try (Closeable appCleanup1 = app::close) {
+        app.withExtension(
+            new OpenTelemetryTracing(
+                OpenTelemetrySdk.builder().setTracerProvider(provider).build()));
+        app.afterRequest(ignored2 -> completed.complete(null));
+        app.routes()
+            .get("/explicit", (ignored3, response) -> response.status(500).text("explicit"));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/explicit"), HttpResponse.BodyHandlers.discarding());
+          assertEquals(500, result.statusCode());
+          completed.get(5, TimeUnit.SECONDS);
+          assertEquals(1, exporter.getFinishedSpanItems().size());
+          var span = exporter.getFinishedSpanItems().getFirst();
+          assertEquals(StatusCode.ERROR, span.getStatus().getStatusCode());
+          assertEquals("500", span.getAttributes().get(AttributeKey.stringKey("error.type")));
+        }
       }
     }
   }
@@ -105,86 +119,89 @@ class OpenTelemetryTracingTest {
   @ValueSource(booleans = {false, true})
   void noOpTracingDoesNotChangeRequestHandlingOrInstallCurrentSpans(boolean virtualApplication)
       throws Exception {
-    try (var app = withExecutionMode(new Options(), virtualApplication)) {
-      app.extensions(new OpenTelemetryTracing(OpenTelemetry.noop()).allRequests());
-      app.routes()
-          .get(
-              "/ok",
-              (ignored4, response) ->
-                  response.text(Boolean.toString(Span.current().getSpanContext().isValid())));
+    {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/ok"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("false", result.body());
+      try (Closeable appCleanup2 = app::close) {
+        app.withExtension(new OpenTelemetryTracing(OpenTelemetry.noop()));
+        app.routes()
+            .get(
+                "/ok",
+                (ignored4, response) ->
+                    response.text(Boolean.toString(Span.current().getSpanContext().isValid())));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/ok"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("false", result.body());
+        }
       }
     }
   }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void recordsMissesAndTerminalFailuresWithoutSensitiveAttributesAndRestoresContext(
-      boolean virtualApplication) throws Exception {
+  void applicationDefaultsTraceMatchedFailuresAndLeaveMissesUntraced(boolean virtualApplication)
+      throws Exception {
     var exporter = InMemorySpanExporter.create();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
     try (var provider =
-            SdkTracerProvider.builder()
-                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
-                .build();
-        var app = withExecutionMode(new Options(), virtualApplication)) {
-      var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
-      app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
-      app.afterRequest(
-          outcome -> {
-            assertFalse(Span.current().getSpanContext().isValid());
-            outcomes.add(outcome);
-          });
-      app.routes()
-          .get(
-              "/failure",
-              (ignored5, ignored6) -> {
-                throw new IllegalStateException("private");
-              });
-      app.routes().get("/transport", (ignored7, response) -> response.text("ok"));
-      app.afterResponseFlush(
-          (request, ignored8) -> {
-            if (request.routePattern().filter("/transport"::equals).isPresent()) {
-              throw new IOException("private");
-            }
-          });
+        SdkTracerProvider.builder()
+            .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+            .build()) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-      try (var test = TestServer.start(app)) {
-        for (String path : new String[] {"/missing?secret=value", "/failure", "/transport"}) {
-          test.send(
-              request -> request.path(path).header("Authorization", "Bearer private"),
-              HttpResponse.BodyHandlers.discarding());
-          assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
-        }
-        var spans = exporter.getFinishedSpanItems();
-        assertEquals(3, spans.size());
-        var missing =
-            spans.stream().filter(span -> "GET".equals(span.getName())).findFirst().orElseThrow();
-        assertEquals(StatusCode.UNSET, missing.getStatus().getStatusCode());
-        assertEquals(
-            404L, missing.getAttributes().get(AttributeKey.longKey("http.response.status_code")));
-        assertEquals(
-            2,
-            spans.stream()
-                .filter(span -> span.getStatus().getStatusCode() == StatusCode.ERROR)
-                .count());
-        var transport =
-            spans.stream()
-                .filter(span -> "GET /transport".equals(span.getName()))
-                .findFirst()
-                .orElseThrow();
-        assertEquals(
-            "transport", transport.getAttributes().get(AttributeKey.stringKey("error.type")));
-        for (var span : spans) {
-          assertFalse(span.getAttributes().toString().contains("private"));
-          assertFalse(span.getAttributes().toString().contains("secret"));
-          assertTrue(span.getEvents().isEmpty());
+      try (Closeable appCleanup3 = app::close) {
+        var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
+        app.withExtension(new OpenTelemetryTracing(telemetry));
+        app.afterRequest(
+            outcome -> {
+              assertFalse(Span.current().getSpanContext().isValid());
+              outcomes.add(outcome);
+            });
+        app.routes()
+            .get(
+                "/failure",
+                (ignored5, ignored6) -> {
+                  throw new IllegalStateException("private");
+                });
+        app.routes().get("/transport", (ignored7, response) -> response.text("ok"));
+        app.afterResponseFlush(
+            (request, ignored8) -> {
+              if (request.routePattern().filter("/transport"::equals).isPresent()) {
+                throw new IOException("private");
+              }
+            });
+
+        try (var test = TestServer.start(app)) {
+          for (String path : new String[] {"/missing?secret=value", "/failure", "/transport"}) {
+            test.send(
+                request -> request.path(path).header("Authorization", "Bearer private"),
+                HttpResponse.BodyHandlers.discarding());
+            assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
+          }
+          var spans = exporter.getFinishedSpanItems();
+          assertEquals(2, spans.size());
+          assertTrue(spans.stream().allMatch(span -> span.getName().startsWith("GET /")));
+          assertEquals(
+              2,
+              spans.stream()
+                  .filter(span -> span.getStatus().getStatusCode() == StatusCode.ERROR)
+                  .count());
+          var transport =
+              spans.stream()
+                  .filter(span -> "GET /transport".equals(span.getName()))
+                  .findFirst()
+                  .orElseThrow();
+          assertEquals(
+              "transport", transport.getAttributes().get(AttributeKey.stringKey("error.type")));
+          for (var span : spans) {
+            assertFalse(span.getAttributes().toString().contains("private"));
+            assertFalse(span.getAttributes().toString().contains("secret"));
+            assertTrue(span.getEvents().isEmpty());
+          }
         }
       }
     }
@@ -198,64 +215,71 @@ class OpenTelemetryTracingTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
 
     try (var provider =
-            SdkTracerProvider.builder()
-                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
-                .build();
-        var app = withExecutionMode(new Options(), virtualApplication);
-        var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
-      var telemetry =
-          OpenTelemetrySdk.builder()
-              .setTracerProvider(provider)
-              .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
-              .build();
-      app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
-      app.afterRequest(outcomes::add);
-      app.routes()
-          .get(
-              "/context",
-              (ignored9, response) -> {
-                var headers = new HashMap<String, String>();
-                telemetry
-                    .getPropagators()
-                    .getTextMapPropagator()
-                    .inject(
-                        Context.current(),
-                        headers,
-                        (carrier, key, value) -> {
-                          if (carrier != null) {
-                            carrier.put(key, value);
-                          }
-                        });
-                response.text(Objects.requireNonNull(headers.get("traceparent")));
-              });
+        SdkTracerProvider.builder()
+            .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+            .build()) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-      try (var test = TestServer.start(app)) {
-        var requests = new ArrayList<Future<HttpResponse<String>>>();
-        for (int index = 1; index <= 20; index++) {
-          String traceId = "%032x".formatted(index);
-          requests.add(
-              testRequests.submit(
-                  () ->
-                      test.send(
-                          request ->
-                              request
-                                  .path("/context")
-                                  .header("traceparent", "00-" + traceId + "-0123456789abcdef-01"),
-                          HttpResponse.BodyHandlers.ofString())));
+      try (Closeable appCleanup4 = app::close;
+          var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
+        var telemetry =
+            OpenTelemetrySdk.builder()
+                .setTracerProvider(provider)
+                .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+                .build();
+        app.withExtension(new OpenTelemetryTracing(telemetry));
+        app.afterRequest(outcomes::add);
+        app.routes()
+            .get(
+                "/context",
+                (ignored9, response) -> {
+                  var headers = new HashMap<String, String>();
+                  telemetry
+                      .getPropagators()
+                      .getTextMapPropagator()
+                      .inject(
+                          Context.current(),
+                          headers,
+                          (carrier, key, value) -> {
+                            if (carrier != null) {
+                              carrier.put(key, value);
+                            }
+                          });
+                  response.text(Objects.requireNonNull(headers.get("traceparent")));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var requests = new ArrayList<Future<HttpResponse<String>>>();
+          for (int index = 1; index <= 20; index++) {
+            String traceId = "%032x".formatted(index);
+            requests.add(
+                testRequests.submit(
+                    () ->
+                        test.send(
+                            request ->
+                                request
+                                    .path("/context")
+                                    .header(
+                                        "traceparent", "00-" + traceId + "-0123456789abcdef-01"),
+                            HttpResponse.BodyHandlers.ofString())));
+          }
+          for (int index = 1; index <= 20; index++) {
+            assertTrue(
+                requests
+                    .get(index - 1)
+                    .get(5, TimeUnit.SECONDS)
+                    .body()
+                    .startsWith("00-%032x-".formatted(index)));
+            assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
+          }
+          assertEquals(20, exporter.getFinishedSpanItems().size());
+          assertEquals(
+              20,
+              exporter.getFinishedSpanItems().stream()
+                  .map(SpanData::getTraceId)
+                  .distinct()
+                  .count());
         }
-        for (int index = 1; index <= 20; index++) {
-          assertTrue(
-              requests
-                  .get(index - 1)
-                  .get(5, TimeUnit.SECONDS)
-                  .body()
-                  .startsWith("00-%032x-".formatted(index)));
-          assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
-        }
-        assertEquals(20, exporter.getFinishedSpanItems().size());
-        assertEquals(
-            20,
-            exporter.getFinishedSpanItems().stream().map(SpanData::getTraceId).distinct().count());
       }
     }
   }
@@ -268,52 +292,58 @@ class OpenTelemetryTracingTest {
     var completed = new CompletableFuture<Void>();
 
     try (var provider =
-            SdkTracerProvider.builder()
-                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
-                .build();
-        var app = withExecutionMode(new Options(), virtualApplication)) {
-      var telemetry =
-          OpenTelemetrySdk.builder()
-              .setTracerProvider(provider)
-              .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
-              .build();
-      app.extensions(new OpenTelemetryTracing(telemetry).allRequests());
-      app.afterRequest(ignored10 -> completed.complete(null));
-      app.routes()
-          .get(
-              "/orders/{id}",
-              (ignored11, response) -> {
-                assertTrue(Span.current().getSpanContext().isValid());
-                var child = telemetry.getTracer("test").spanBuilder("child").startSpan();
-                child.end();
-                response.text(Span.current().getSpanContext().getSpanId());
-              });
+        SdkTracerProvider.builder()
+            .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+            .build()) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request ->
-                    request
-                        .path("/orders/secret")
-                        .header(
-                            "traceparent",
-                            "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"),
-                HttpResponse.BodyHandlers.ofString());
-        completed.get(5, TimeUnit.SECONDS);
-        var spans = exporter.getFinishedSpanItems();
-        assertEquals(2, spans.size());
-        var server =
-            spans.stream()
-                .filter(span -> span.getKind() == SpanKind.SERVER)
-                .findFirst()
-                .orElseThrow();
-        var child =
-            spans.stream().filter(span -> "child".equals(span.getName())).findFirst().orElseThrow();
-        assertEquals("GET /orders/{id}", server.getName());
-        assertEquals("0123456789abcdef0123456789abcdef", server.getTraceId());
-        assertEquals("0123456789abcdef", server.getParentSpanId());
-        assertEquals(server.getSpanId(), child.getParentSpanId());
-        assertEquals(server.getSpanId(), response.body());
+      try (Closeable appCleanup5 = app::close) {
+        var telemetry =
+            OpenTelemetrySdk.builder()
+                .setTracerProvider(provider)
+                .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+                .build();
+        app.withExtension(new OpenTelemetryTracing(telemetry));
+        app.afterRequest(ignored10 -> completed.complete(null));
+        app.routes()
+            .get(
+                "/orders/{id}",
+                (ignored11, response) -> {
+                  assertTrue(Span.current().getSpanContext().isValid());
+                  var child = telemetry.getTracer("test").spanBuilder("child").startSpan();
+                  child.end();
+                  response.text(Span.current().getSpanContext().getSpanId());
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(
+                  request ->
+                      request
+                          .path("/orders/secret")
+                          .header(
+                              "traceparent",
+                              "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"),
+                  HttpResponse.BodyHandlers.ofString());
+          completed.get(5, TimeUnit.SECONDS);
+          var spans = exporter.getFinishedSpanItems();
+          assertEquals(2, spans.size());
+          var server =
+              spans.stream()
+                  .filter(span -> span.getKind() == SpanKind.SERVER)
+                  .findFirst()
+                  .orElseThrow();
+          var child =
+              spans.stream()
+                  .filter(span -> "child".equals(span.getName()))
+                  .findFirst()
+                  .orElseThrow();
+          assertEquals("GET /orders/{id}", server.getName());
+          assertEquals("0123456789abcdef0123456789abcdef", server.getTraceId());
+          assertEquals("0123456789abcdef", server.getParentSpanId());
+          assertEquals(server.getSpanId(), child.getParentSpanId());
+          assertEquals(server.getSpanId(), response.body());
+        }
       }
     }
   }

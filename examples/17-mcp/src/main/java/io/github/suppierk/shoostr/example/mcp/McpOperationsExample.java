@@ -83,9 +83,6 @@ public final class McpOperationsExample {
     configuredOptions.setVirtualThreads(true);
 
     return new Shoostr(configuredOptions)
-        // Idle HTTP streams release virtual-thread carriers; callback execution is independent.
-
-        .extensions(mcp)
         .routes(
             routes ->
                 routes

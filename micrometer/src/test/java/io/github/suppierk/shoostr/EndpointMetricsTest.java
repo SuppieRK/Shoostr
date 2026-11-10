@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.micrometer.MicrometerMetrics;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.io.Closeable;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -27,29 +28,33 @@ class EndpointMetricsTest {
     var finished = new CompletableFuture<Void>();
     var registry = new SimpleMeterRegistry();
 
-    try (var workers = executor(executorType, owned);
-        var app = new Shoostr()) {
-      var metrics = new MicrometerMetrics(registry);
-      metrics.allRequests();
-      app.extensions(metrics).afterRequest(ignored -> finished.complete(null));
-      app.routes()
-          .get(
-              "/metrics/{id}",
-              workers,
-              (ignored2, response) -> {
-                handled.complete(Thread.currentThread());
-                response.text("ok");
-              });
+    try (var workers = executor(executorType, owned)) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/metrics/42")).statusCode());
-        assertTrue(owned.contains(handled.get(5, TimeUnit.SECONDS)));
-        finished.get(5, TimeUnit.SECONDS);
-        assertEquals(
-            1, registry.get("http.server.requests").tag("route", "/metrics/{id}").timer().count());
+      try (Closeable appCleanup = app::close) {
+        var metrics = new MicrometerMetrics(registry);
+
+        app.withExtension(metrics).afterRequest(ignored -> finished.complete(null));
+        app.routes()
+            .get(
+                "/metrics/{id}",
+                workers,
+                (ignored2, response) -> {
+                  handled.complete(Thread.currentThread());
+                  response.text("ok");
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/metrics/42")).statusCode());
+          assertTrue(owned.contains(handled.get(5, TimeUnit.SECONDS)));
+          finished.get(5, TimeUnit.SECONDS);
+          assertEquals(
+              1,
+              registry.get("http.server.requests").tag("route", "/metrics/{id}").timer().count());
+        }
+
+        assertFalse(workers.isShutdown());
       }
-
-      assertFalse(workers.isShutdown());
     } finally {
       registry.close();
     }

@@ -18,8 +18,6 @@ public final class RequestMetricsExample {
   public static Shoostr application(MeterRegistry registry) {
     var metrics = new MicrometerMetrics(registry);
     return new Shoostr()
-        // Installation makes metrics selectable; only the /api group enables observation below.
-        .extensions(metrics)
         .routes(
             routes ->
                 routes
@@ -31,6 +29,6 @@ public final class RequestMetricsExample {
                                 "/items/{id}",
                                 (request, response) ->
                                     response.text("item " + request.pathParam("id").orElseThrow())),
-                        extensions -> extensions.lifecycle().observe(metrics)));
+                        lifecycle -> lifecycle.withExtension(metrics)));
   }
 }

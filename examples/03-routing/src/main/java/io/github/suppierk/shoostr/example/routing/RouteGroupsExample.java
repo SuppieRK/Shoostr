@@ -28,11 +28,9 @@ public final class RouteGroupsExample {
                                   "/v2/notes",
                                   RouteGroupsExample::notes,
                                   configuration ->
-                                      configuration
-                                          .lifecycle()
-                                          .beforeRouteHandler(
-                                              (ignored, response) ->
-                                                  response.setHeader("X-Version", "2")))
+                                      configuration.beforeRouteHandler(
+                                          (ignored, response) ->
+                                              response.setHeader("X-Version", "2")))
                               // The final handler can read captures from both levels of the group.
                               .path(
                                   "/accounts/{accountId}",
@@ -52,21 +50,16 @@ public final class RouteGroupsExample {
                                                                   .orElseThrow()))));
                         },
                         configuration ->
-                            configuration
-                                .lifecycle()
-                                .beforeRouteHandler(
-                                    (ignored2, response) -> response.setHeader("X-API", "yes")))
+                            configuration.beforeRouteHandler(
+                                (ignored2, response) -> response.setHeader("X-API", "yes")))
                     // A pathless group adds inherited settings without adding a URL prefix.
                     .path(
                         "",
                         status ->
                             status.get("/status", (ignored3, response) -> response.text("ready")),
                         configuration ->
-                            configuration
-                                .lifecycle()
-                                .beforeRouteHandler(
-                                    (ignored4, response) ->
-                                        response.setHeader("X-Group", "status")))
+                            configuration.beforeRouteHandler(
+                                (ignored4, response) -> response.setHeader("X-Group", "status")))
                     // path(...) returns the parent scope, so this endpoint stays outside /api.
                     .get("/public", (ignored5, response) -> response.text("public")));
   }

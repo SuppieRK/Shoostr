@@ -22,6 +22,7 @@ class SessionExampleTest {
   @Test
   void createsASecurePreferenceCookieAndKeepsStateOnlyForItsSession(@TempDir Path directory)
       throws Exception {
+
     try (var test =
         TestServer.start(
             SessionExample.application(directory),
@@ -58,6 +59,7 @@ class SessionExampleTest {
   @Test
   void renewsTheSessionIdWithoutLosingStateOrAcceptingTheOldCookie(@TempDir Path directory)
       throws Exception {
+
     try (var test =
         TestServer.start(
             SessionExample.application(directory),
@@ -113,6 +115,7 @@ class SessionExampleTest {
   @Test
   void invalidatesTheSessionWithoutAllowingTheOldCookieToRestoreItsState(@TempDir Path directory)
       throws Exception {
+
     try (var test =
         TestServer.start(
             SessionExample.application(directory),
@@ -134,6 +137,7 @@ class SessionExampleTest {
 
   @Test
   void rejectsRenewalWithoutCreatingANewSession(@TempDir Path directory) throws Exception {
+
     try (var test =
         TestServer.start(
             SessionExample.application(directory),

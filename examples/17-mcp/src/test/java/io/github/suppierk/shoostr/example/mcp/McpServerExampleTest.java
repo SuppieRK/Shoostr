@@ -17,6 +17,7 @@ import org.junit.jupiter.api.Timeout;
 class McpServerExampleTest {
   @Test
   void discoversAndCallsANativeToolOverStreamableHttp() throws Exception {
+
     try (var test = TestServer.start(McpServerExample.application());
         var client =
             McpClient.sync(
@@ -43,6 +44,7 @@ class McpServerExampleTest {
 
   @Test
   void readsAResourceByItsMcpUriRatherThanAnHttpPath() throws Exception {
+
     try (var test = TestServer.start(McpServerExample.application());
         var client =
             McpClient.sync(
@@ -72,6 +74,7 @@ class McpServerExampleTest {
 
   @Test
   void retrievesAPromptTemplateWithoutRunningAModel() throws Exception {
+
     try (var test = TestServer.start(McpServerExample.application());
         var client =
             McpClient.sync(

@@ -19,6 +19,7 @@ import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.InetAddress;
@@ -107,112 +108,109 @@ public class WebSocketRoutesTest {
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
 
-    try (var app =
-            new Shoostr(configuredOptions)
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var http = HttpClient.newHttpClient();
-        var client = new HTTP2Client()) {
-      app.sessions()
-          .authentication(authentication)
-          .extensions(csrf)
-          .configureExtensionsDefaults(
-              e -> {
-                e.with(authentication);
-                e.with(csrf);
-              });
-      app.routes()
-          .get(
-              "/session",
-              (request, response) -> {
-                request.getOrCreateSession().setAttribute("marker", "native");
-                response.text("session");
-              },
-              e -> e.without(authentication))
-          .post(
-              "/socket",
-              (request, response) -> {
-                writes.incrementAndGet();
-                response.text("written");
-              });
-      if (managed) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup = app::close;
+          var http = HttpClient.newHttpClient();
+          var client = new HTTP2Client()) {
+        app.sessions().withExtension(authentication).withExtension(csrf);
         app.routes()
-            .websocket(
-                "/socket",
-                socket ->
-                    socket
-                        .beforeUpgrade((request, response) -> admit.accept(request))
-                        .onText(WebSocketConnection::send));
-      } else {
-        app.routes()
-            .websocket(
+            .get(
+                "/session",
+                (request, response) -> {
+                  request.getOrCreateSession().setAttribute("marker", "native");
+                  response.text("session");
+                },
+                e -> e.withoutExtension(authentication))
+            .post(
                 "/socket",
                 (request, response) -> {
-                  admit.accept(request);
-                  return new EchoListener();
+                  writes.incrementAndGet();
+                  response.text("written");
                 });
+        if (managed) {
+          app.routes()
+              .websocket(
+                  "/socket",
+                  socket ->
+                      socket
+                          .beforeUpgrade((request, response) -> admit.accept(request))
+                          .onText(WebSocketConnection::send));
+        } else {
+          app.routes()
+              .websocket(
+                  "/socket",
+                  (request, response) -> {
+                    admit.accept(request);
+                    return new EchoListener();
+                  });
+        }
+
+        app.start();
+        var base = "http://127.0.0.1:" + app.port();
+        var created =
+            http.send(
+                HttpRequest.newBuilder(URI.create(base + "/session")).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, created.statusCode());
+        var cookie = created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+        var message = new CompletableFuture<String>();
+        var socket =
+            http.newWebSocketBuilder()
+                .header("Origin", "https://socket.example")
+                .header("Cookie", cookie)
+                .header("Authorization", "Bearer secret")
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/socket"), receiving(message))
+                .get(3, TimeUnit.SECONDS);
+
+        try {
+          socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
+          assertEquals("ping", message.get(3, TimeUnit.SECONDS));
+        } finally {
+          socket.abort();
+        }
+
+        var connection = connectHttp2(client, app);
+        var response =
+            http2ConnectResponse(
+                connection,
+                app,
+                "/socket",
+                "websocket",
+                HttpFields.build()
+                    .put("Sec-WebSocket-Version", "13")
+                    .put("Origin", "https://socket.example")
+                    .put("Authorization", "Bearer secret")
+                    .put("Cookie", cookie)
+                    .asImmutable());
+        assertEquals(200, response.getStatus());
+        assertEquals(2, factories.get());
+
+        try (var peer = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port());
+            var reader =
+                new BufferedReader(
+                    new InputStreamReader(peer.getInputStream(), StandardCharsets.US_ASCII))) {
+          peer.setSoTimeout(3000);
+          var request =
+              "POST /socket HTTP/1.1\r\nHost: 127.0.0.1:"
+                  + app.port()
+                  + "\r\nOrigin: "
+                  + base
+                  + "\r\nAuthorization: Bearer secret\r\nCookie: "
+                  + cookie
+                  + "\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nContent-Length: 0\r\n\r\n";
+          peer.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+          var status = Objects.requireNonNull(reader.readLine());
+          assertTrue(status.startsWith("HTTP/1.1 403"), status);
+        }
+
+        assertEquals(0, writes.get());
+        assertEquals(2, factories.get());
       }
-
-      app.start();
-      var base = "http://127.0.0.1:" + app.port();
-      var created =
-          http.send(
-              HttpRequest.newBuilder(URI.create(base + "/session")).build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, created.statusCode());
-      var cookie = created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-      var message = new CompletableFuture<String>();
-      var socket =
-          http.newWebSocketBuilder()
-              .header("Origin", "https://socket.example")
-              .header("Cookie", cookie)
-              .header("Authorization", "Bearer secret")
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/socket"), receiving(message))
-              .get(3, TimeUnit.SECONDS);
-
-      try {
-        socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
-        assertEquals("ping", message.get(3, TimeUnit.SECONDS));
-      } finally {
-        socket.abort();
-      }
-
-      var connection = connectHttp2(client, app);
-      var response =
-          http2ConnectResponse(
-              connection,
-              app,
-              "/socket",
-              "websocket",
-              HttpFields.build()
-                  .put("Sec-WebSocket-Version", "13")
-                  .put("Origin", "https://socket.example")
-                  .put("Authorization", "Bearer secret")
-                  .put("Cookie", cookie)
-                  .asImmutable());
-      assertEquals(200, response.getStatus());
-      assertEquals(2, factories.get());
-
-      try (var peer = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port());
-          var reader =
-              new BufferedReader(
-                  new InputStreamReader(peer.getInputStream(), StandardCharsets.US_ASCII))) {
-        peer.setSoTimeout(3000);
-        var request =
-            "POST /socket HTTP/1.1\r\nHost: 127.0.0.1:"
-                + app.port()
-                + "\r\nOrigin: "
-                + base
-                + "\r\nAuthorization: Bearer secret\r\nCookie: "
-                + cookie
-                + "\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nContent-Length: 0\r\n\r\n";
-        peer.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-        var status = Objects.requireNonNull(reader.readLine());
-        assertTrue(status.startsWith("HTTP/1.1 403"), status);
-      }
-
-      assertEquals(0, writes.get());
-      assertEquals(2, factories.get());
     }
   }
 
@@ -239,126 +237,124 @@ public class WebSocketRoutesTest {
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
 
-    try (var app =
-            new Shoostr(configuredOptions)
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var http = HttpClient.newHttpClient();
-        var client = new HTTP2Client()) {
-      app.authentication(authentication)
-          .extensions(cors)
-          .configureExtensionsDefaults(
-              e -> {
-                e.with(authentication);
-                e.with(cors);
-              });
-      if (managed) {
-        app.routes()
-            .websocket(
-                "/socket",
-                socket ->
-                    socket
-                        .beforeUpgrade((request, response) -> admit.accept(request))
-                        .onText(WebSocketConnection::send));
-      } else {
-        app.routes()
-            .websocket(
-                "/socket",
-                (request, response) -> {
-                  admit.accept(request);
-                  return new EchoListener();
-                });
-      }
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      app.start();
-      var address = URI.create("ws://127.0.0.1:" + app.port() + "/socket");
-      var message = new CompletableFuture<String>();
-      var socket =
-          http.newWebSocketBuilder()
-              .header("Origin", "https://socket.example")
-              .header("Authorization", "Bearer secret")
-              .buildAsync(address, receiving(message))
-              .get(3, TimeUnit.SECONDS);
-
-      try {
-        socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
-        assertEquals("ping", message.get(3, TimeUnit.SECONDS));
-      } finally {
-        socket.abort();
-      }
-
-      assertEquals(1, factories.get());
-      for (var origin : List.of("https://http.example", "")) {
-        var builder = http.newWebSocketBuilder().header("Authorization", "Bearer secret");
-        if (!origin.isEmpty()) {
-          builder.header("Origin", origin);
+      try (Closeable appCleanup1 = app::close;
+          var http = HttpClient.newHttpClient();
+          var client = new HTTP2Client()) {
+        app.withExtension(authentication).withExtension(cors);
+        if (managed) {
+          app.routes()
+              .websocket(
+                  "/socket",
+                  socket ->
+                      socket
+                          .beforeUpgrade((request, response) -> admit.accept(request))
+                          .onText(WebSocketConnection::send));
+        } else {
+          app.routes()
+              .websocket(
+                  "/socket",
+                  (request, response) -> {
+                    admit.accept(request);
+                    return new EchoListener();
+                  });
         }
 
-        var failure =
+        app.start();
+        var address = URI.create("ws://127.0.0.1:" + app.port() + "/socket");
+        var message = new CompletableFuture<String>();
+        var socket =
+            http.newWebSocketBuilder()
+                .header("Origin", "https://socket.example")
+                .header("Authorization", "Bearer secret")
+                .buildAsync(address, receiving(message))
+                .get(3, TimeUnit.SECONDS);
+
+        try {
+          socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
+          assertEquals("ping", message.get(3, TimeUnit.SECONDS));
+        } finally {
+          socket.abort();
+        }
+
+        assertEquals(1, factories.get());
+        for (var origin : List.of("https://http.example", "")) {
+          var builder = http.newWebSocketBuilder().header("Authorization", "Bearer secret");
+          if (!origin.isEmpty()) {
+            builder.header("Origin", origin);
+          }
+
+          var failure =
+              assertThrows(
+                  ExecutionException.class,
+                  () ->
+                      builder
+                          .buildAsync(address, new WebSocket.Listener() {})
+                          .get(3, TimeUnit.SECONDS));
+          assertEquals(
+              403,
+              assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
+                  .getResponse()
+                  .statusCode());
+        }
+        var unauthenticated =
             assertThrows(
                 ExecutionException.class,
                 () ->
-                    builder
+                    http.newWebSocketBuilder()
+                        .header("Origin", "https://socket.example")
                         .buildAsync(address, new WebSocket.Listener() {})
                         .get(3, TimeUnit.SECONDS));
         assertEquals(
-            403,
-            assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
+            401,
+            assertInstanceOf(WebSocketHandshakeException.class, unauthenticated.getCause())
                 .getResponse()
                 .statusCode());
-      }
-      var unauthenticated =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  http.newWebSocketBuilder()
-                      .header("Origin", "https://socket.example")
-                      .buildAsync(address, new WebSocket.Listener() {})
-                      .get(3, TimeUnit.SECONDS));
-      assertEquals(
-          401,
-          assertInstanceOf(WebSocketHandshakeException.class, unauthenticated.getCause())
-              .getResponse()
-              .statusCode());
-      assertEquals(1, factories.get());
+        assertEquals(1, factories.get());
 
-      var connection = connectHttp2(client, app);
-      var allowed =
-          HttpFields.build()
-              .put("Sec-WebSocket-Version", "13")
-              .put("Origin", "https://socket.example")
-              .put("Authorization", "Bearer secret");
-      var accepted =
-          http2ConnectResponse(connection, app, "/socket", "websocket", allowed.asImmutable());
-      assertEquals(200, accepted.getStatus());
-      assertNull(accepted.getHttpFields().get("Access-Control-Allow-Origin"));
-      assertEquals(2, factories.get());
-      for (var origin : List.of("https://http.example", "")) {
-        var fields =
+        var connection = connectHttp2(client, app);
+        var allowed =
             HttpFields.build()
                 .put("Sec-WebSocket-Version", "13")
+                .put("Origin", "https://socket.example")
                 .put("Authorization", "Bearer secret");
-        if (!origin.isEmpty()) {
-          fields.put("Origin", origin);
-        }
+        var accepted =
+            http2ConnectResponse(connection, app, "/socket", "websocket", allowed.asImmutable());
+        assertEquals(200, accepted.getStatus());
+        assertNull(accepted.getHttpFields().get("Access-Control-Allow-Origin"));
+        assertEquals(2, factories.get());
+        for (var origin : List.of("https://http.example", "")) {
+          var fields =
+              HttpFields.build()
+                  .put("Sec-WebSocket-Version", "13")
+                  .put("Authorization", "Bearer secret");
+          if (!origin.isEmpty()) {
+            fields.put("Origin", origin);
+          }
 
+          assertEquals(
+              403,
+              http2ConnectResponse(connection, app, "/socket", "websocket", fields.asImmutable())
+                  .getStatus());
+        }
         assertEquals(
-            403,
-            http2ConnectResponse(connection, app, "/socket", "websocket", fields.asImmutable())
+            401,
+            http2ConnectResponse(
+                    connection,
+                    app,
+                    "/socket",
+                    "websocket",
+                    HttpFields.build()
+                        .put("Sec-WebSocket-Version", "13")
+                        .put("Origin", "https://socket.example")
+                        .asImmutable())
                 .getStatus());
+        assertEquals(2, factories.get());
       }
-      assertEquals(
-          401,
-          http2ConnectResponse(
-                  connection,
-                  app,
-                  "/socket",
-                  "websocket",
-                  HttpFields.build()
-                      .put("Sec-WebSocket-Version", "13")
-                      .put("Origin", "https://socket.example")
-                      .asImmutable())
-              .getStatus());
-      assertEquals(2, factories.get());
     }
   }
 
@@ -386,115 +382,119 @@ public class WebSocketRoutesTest {
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
 
-    try (var app =
-            new Shoostr(configuredOptions)
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var http =
-            HttpClient.newBuilder()
-                .sslContext(context)
-                .connectTimeout(Duration.ofSeconds(3))
-                .build();
-        var client = new HTTP2Client()) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      if (secure) {
-        app.tls(
-            tls -> {
-              tls.setKeyStore(keyStore);
-              tls.setKeyStorePassword("changeit");
-            });
-      }
+      try (Closeable appCleanup2 = app::close;
+          var http =
+              HttpClient.newBuilder()
+                  .sslContext(context)
+                  .connectTimeout(Duration.ofSeconds(3))
+                  .build();
+          var client = new HTTP2Client()) {
 
-      app.routes()
-          .websocket(
-              "/connect",
-              (request, ignored) -> {
-                factories.incrementAndGet();
-                assertEquals(secure, request.isSecure());
-                return new EchoListener();
+        if (secure) {
+          app.tls(
+              tls -> {
+                tls.setKeyStore(keyStore);
+                tls.setKeyStorePassword("changeit");
               });
-      app.start();
-      var firstMessage = new CompletableFuture<String>();
-      var firstSocket =
-          http.newWebSocketBuilder()
-              .connectTimeout(Duration.ofSeconds(3))
-              .buildAsync(
-                  URI.create((secure ? "wss" : "ws") + "://localhost:" + app.port() + "/connect"),
-                  receiving(firstMessage))
-              .get(3, TimeUnit.SECONDS);
+        }
 
-      try {
-        firstSocket.sendText("ping", true).get(3, TimeUnit.SECONDS);
-        assertEquals("ping", firstMessage.get(3, TimeUnit.SECONDS));
-      } finally {
-        firstSocket.abort();
-      }
+        app.routes()
+            .websocket(
+                "/connect",
+                (request, ignored) -> {
+                  factories.incrementAndGet();
+                  assertEquals(secure, request.isSecure());
+                  return new EchoListener();
+                });
+        app.start();
+        var firstMessage = new CompletableFuture<String>();
+        var firstSocket =
+            http.newWebSocketBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .buildAsync(
+                    URI.create((secure ? "wss" : "ws") + "://localhost:" + app.port() + "/connect"),
+                    receiving(firstMessage))
+                .get(3, TimeUnit.SECONDS);
 
-      assertEquals(1, factories.get());
+        try {
+          firstSocket.sendText("ping", true).get(3, TimeUnit.SECONDS);
+          assertEquals("ping", firstMessage.get(3, TimeUnit.SECONDS));
+        } finally {
+          firstSocket.abort();
+        }
 
-      var ssl = new SslContextFactory.Client();
-      ssl.setTrustStore(keyStore);
-      client.getClientConnector().setSslContextFactory(ssl);
-      var connection = connectHttp2(client, app, secure);
+        assertEquals(1, factories.get());
 
-      var request =
-          new MetaData.ConnectRequest(
-              secure ? "https" : "http",
-              new HostPortHttpField("127.0.0.1:" + app.port()),
-              "/connect",
-              HttpFields.build().put("Sec-WebSocket-Version", "13").asImmutable(),
-              "websocket");
-      var stream =
-          connection
-              .newStream(
-                  new HeadersFrame(request, null, false),
-                  new Stream.Listener() {
-                    @Override
-                    public void onHeaders(Stream stream, HeadersFrame frame) {
-                      headers.complete(
-                          assertInstanceOf(MetaData.Response.class, frame.getMetaData()));
-                      if (!frame.isEndStream()) {
-                        stream.demand();
-                      }
-                    }
+        var ssl = new SslContextFactory.Client();
+        ssl.setTrustStore(keyStore);
+        client.getClientConnector().setSslContextFactory(ssl);
+        var connection = connectHttp2(client, app, secure);
 
-                    @Override
-                    public void onDataAvailable(Stream stream) {
-                      var data = stream.readData();
-                      if (data == null) {
-                        stream.demand();
-                        return;
-                      }
-
-                      try {
-                        var buffer = data.frame().getByteBuffer();
-                        var bytes = new byte[buffer.remaining()];
-                        buffer.get(bytes);
-                        content.writeBytes(bytes);
-                        if (content.size() >= 6 || data.frame().isEndStream()) {
-                          received.complete(content.toByteArray());
-                        } else {
+        var request =
+            new MetaData.ConnectRequest(
+                secure ? "https" : "http",
+                new HostPortHttpField("127.0.0.1:" + app.port()),
+                "/connect",
+                HttpFields.build().put("Sec-WebSocket-Version", "13").asImmutable(),
+                "websocket");
+        var stream =
+            connection
+                .newStream(
+                    new HeadersFrame(request, null, false),
+                    new Stream.Listener() {
+                      @Override
+                      public void onHeaders(Stream stream, HeadersFrame frame) {
+                        headers.complete(
+                            assertInstanceOf(MetaData.Response.class, frame.getMetaData()));
+                        if (!frame.isEndStream()) {
                           stream.demand();
                         }
-                      } finally {
-                        data.release();
                       }
-                    }
-                  })
-              .get(3, TimeUnit.SECONDS);
-      var result = headers.get(3, TimeUnit.SECONDS);
-      assertEquals(HttpVersion.HTTP_2, result.getHttpVersion());
-      assertEquals(200, result.getStatus(), "WebSocket factory calls: " + factories.get());
-      assertEquals(2, factories.get());
-      stream
-          .data(
-              new DataFrame(
-                  stream.getId(),
-                  ByteBuffer.wrap(
-                      new byte[] {(byte) 0x81, (byte) 0x84, 0, 0, 0, 0, 'p', 'i', 'n', 'g'}),
-                  false))
-          .get(3, TimeUnit.SECONDS);
-      assertArrayEquals(
-          new byte[] {(byte) 0x81, 4, 'p', 'i', 'n', 'g'}, received.get(3, TimeUnit.SECONDS));
+
+                      @Override
+                      public void onDataAvailable(Stream stream) {
+                        var data = stream.readData();
+                        if (data == null) {
+                          stream.demand();
+                          return;
+                        }
+
+                        try {
+                          var buffer = data.frame().getByteBuffer();
+                          var bytes = new byte[buffer.remaining()];
+                          buffer.get(bytes);
+                          content.writeBytes(bytes);
+                          if (content.size() >= 6 || data.frame().isEndStream()) {
+                            received.complete(content.toByteArray());
+                          } else {
+                            stream.demand();
+                          }
+                        } finally {
+                          data.release();
+                        }
+                      }
+                    })
+                .get(3, TimeUnit.SECONDS);
+        var result = headers.get(3, TimeUnit.SECONDS);
+        assertEquals(HttpVersion.HTTP_2, result.getHttpVersion());
+        assertEquals(200, result.getStatus(), "WebSocket factory calls: " + factories.get());
+        assertEquals(2, factories.get());
+        stream
+            .data(
+                new DataFrame(
+                    stream.getId(),
+                    ByteBuffer.wrap(
+                        new byte[] {(byte) 0x81, (byte) 0x84, 0, 0, 0, 0, 'p', 'i', 'n', 'g'}),
+                    false))
+            .get(3, TimeUnit.SECONDS);
+        assertArrayEquals(
+            new byte[] {(byte) 0x81, 4, 'p', 'i', 'n', 'g'}, received.get(3, TimeUnit.SECONDS));
+      }
     }
   }
 
@@ -507,39 +507,43 @@ public class WebSocketRoutesTest {
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
 
-    try (var app =
-            new Shoostr(configuredOptions)
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = new HTTP2Client()) {
-      app.authentication(authentication);
-      app.routes()
-          .websocket(
-              "/authenticated",
-              (request, ignored2) -> {
-                assertEquals("alice", request.principal().orElseThrow().getName());
-                factories.incrementAndGet();
-                return new EchoListener();
-              },
-              extensions -> extensions.with(authentication));
-      app.start();
-      var connection = connectHttp2(client, app);
-      var fields = HttpFields.build().put("Sec-WebSocket-Version", "13");
-      var accepted =
-          http2ConnectResponse(
-              connection,
-              app,
-              "/authenticated",
-              "websocket",
-              HttpFields.build(fields).put("Authorization", "Bearer secret").asImmutable());
-      assertEquals(200, accepted.getStatus());
-      assertEquals(1, factories.get());
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      var rejected =
-          http2ConnectResponse(
-              connection, app, "/authenticated", "websocket", fields.asImmutable());
-      assertEquals(401, rejected.getStatus());
-      assertEquals("Bearer realm=\"chat\"", rejected.getHttpFields().get("WWW-Authenticate"));
-      assertEquals(1, factories.get());
+      try (Closeable appCleanup3 = app::close;
+          var client = new HTTP2Client()) {
+
+        app.routes()
+            .websocket(
+                "/authenticated",
+                (request, ignored2) -> {
+                  assertEquals("alice", request.principal().orElseThrow().getName());
+                  factories.incrementAndGet();
+                  return new EchoListener();
+                },
+                extensions -> extensions.withExtension(authentication));
+        app.start();
+        var connection = connectHttp2(client, app);
+        var fields = HttpFields.build().put("Sec-WebSocket-Version", "13");
+        var accepted =
+            http2ConnectResponse(
+                connection,
+                app,
+                "/authenticated",
+                "websocket",
+                HttpFields.build(fields).put("Authorization", "Bearer secret").asImmutable());
+        assertEquals(200, accepted.getStatus());
+        assertEquals(1, factories.get());
+
+        var rejected =
+            http2ConnectResponse(
+                connection, app, "/authenticated", "websocket", fields.asImmutable());
+        assertEquals(401, rejected.getStatus());
+        assertEquals("Bearer realm=\"chat\"", rejected.getHttpFields().get("WWW-Authenticate"));
+        assertEquals(1, factories.get());
+      }
     }
   }
 
@@ -551,25 +555,29 @@ public class WebSocketRoutesTest {
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
 
-    try (var app =
-            new Shoostr(configuredOptions)
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = new HTTP2Client()) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      app.routes()
-          .websocket(
-              "/connect",
-              (ignored3, ignored4) -> {
-                factories.incrementAndGet();
-                return new EchoListener();
-              });
-      app.routes()
-          .route(HttpMethods.CONNECT, "/connect", (ignored5, response) -> response.status(204));
-      app.start();
-      var connection = connectHttp2(client, app);
-      var result = http2ConnectResponse(connection, app, "/connect", "other", HttpFields.EMPTY);
-      assertEquals(204, result.getStatus());
-      assertEquals(0, factories.get());
+      try (Closeable appCleanup4 = app::close;
+          var client = new HTTP2Client()) {
+
+        app.routes()
+            .websocket(
+                "/connect",
+                (ignored3, ignored4) -> {
+                  factories.incrementAndGet();
+                  return new EchoListener();
+                });
+        app.routes()
+            .route(HttpMethods.CONNECT, "/connect", (ignored5, response) -> response.status(204));
+        app.start();
+        var connection = connectHttp2(client, app);
+        var result = http2ConnectResponse(connection, app, "/connect", "other", HttpFields.EMPTY);
+        assertEquals(204, result.getStatus());
+        assertEquals(0, factories.get());
+      }
     }
   }
 
@@ -581,31 +589,35 @@ public class WebSocketRoutesTest {
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
 
-    try (var app =
-            new Shoostr(configuredOptions)
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = new HTTP2Client()) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      app.routes()
-          .websocket(
-              "/version",
-              (ignored6, ignored7) -> {
-                factories.incrementAndGet();
-                return new EchoListener();
-              });
-      app.start();
-      var connection = connectHttp2(client, app);
-      var result =
-          http2ConnectResponse(
-              connection,
-              app,
-              "/version",
-              "websocket",
-              HttpFields.build().put("Sec-WebSocket-Version", "12").asImmutable());
-      assertEquals(426, result.getStatus());
-      assertEquals("13", result.getHttpFields().get("Sec-WebSocket-Version"));
-      assertNull(result.getHttpFields().get("Upgrade"));
-      assertEquals(0, factories.get());
+      try (Closeable appCleanup5 = app::close;
+          var client = new HTTP2Client()) {
+
+        app.routes()
+            .websocket(
+                "/version",
+                (ignored6, ignored7) -> {
+                  factories.incrementAndGet();
+                  return new EchoListener();
+                });
+        app.start();
+        var connection = connectHttp2(client, app);
+        var result =
+            http2ConnectResponse(
+                connection,
+                app,
+                "/version",
+                "websocket",
+                HttpFields.build().put("Sec-WebSocket-Version", "12").asImmutable());
+        assertEquals(426, result.getStatus());
+        assertEquals("13", result.getHttpFields().get("Sec-WebSocket-Version"));
+        assertNull(result.getHttpFields().get("Upgrade"));
+        assertEquals(0, factories.get());
+      }
     }
   }
 
@@ -615,40 +627,42 @@ public class WebSocketRoutesTest {
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
 
-    try (var app =
-            new Shoostr(configuredOptions)
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = new HTTP2Client()) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      app.routes()
-          .websocket(
-              "/rooms/{room}",
-              (request, upgrade) -> {
-                assertEquals("€", request.attribute("matched-room").orElseThrow());
-                upgrade.getHeaders().put("X-Matched-Room", "ready");
-                return new EchoListener();
-              },
-              extensions ->
-                  extensions
-                      .lifecycle()
-                      .onRouteMatched(
-                          (request, ignored8) -> {
-                            assertEquals("CONNECT", request.method());
-                            assertEquals("/rooms/{room}", request.routePattern().orElseThrow());
-                            request.attribute(
-                                "matched-room", request.pathParam("room").orElseThrow());
-                          }));
-      app.start();
-      var connection = connectHttp2(client, app);
-      var result =
-          http2ConnectResponse(
-              connection,
-              app,
-              "/rooms/%E2%82%AC",
-              "websocket",
-              HttpFields.build().put("Sec-WebSocket-Version", "13").asImmutable());
-      assertEquals(200, result.getStatus());
-      assertEquals("ready", result.getHttpFields().get("X-Matched-Room"));
+      try (Closeable appCleanup6 = app::close;
+          var client = new HTTP2Client()) {
+
+        app.routes()
+            .websocket(
+                "/rooms/{room}",
+                (request, upgrade) -> {
+                  assertEquals("€", request.attribute("matched-room").orElseThrow());
+                  upgrade.getHeaders().put("X-Matched-Room", "ready");
+                  return new EchoListener();
+                },
+                extensions ->
+                    extensions.onRouteMatched(
+                        (request, ignored8) -> {
+                          assertEquals("CONNECT", request.method());
+                          assertEquals("/rooms/{room}", request.routePattern().orElseThrow());
+                          request.attribute(
+                              "matched-room", request.pathParam("room").orElseThrow());
+                        }));
+        app.start();
+        var connection = connectHttp2(client, app);
+        var result =
+            http2ConnectResponse(
+                connection,
+                app,
+                "/rooms/%E2%82%AC",
+                "websocket",
+                HttpFields.build().put("Sec-WebSocket-Version", "13").asImmutable());
+        assertEquals(200, result.getStatus());
+        assertEquals("ready", result.getHttpFields().get("X-Matched-Room"));
+      }
     }
   }
 
@@ -661,34 +675,38 @@ public class WebSocketRoutesTest {
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
 
-    try (var app =
-            new Shoostr(configuredOptions)
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = new HTTP2Client()) {
+    {
+      var app =
+          new Shoostr(configuredOptions)
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      app.routes()
-          .when(
-              available::get,
-              routes ->
-                  routes.websocket(
-                      "/available",
-                      (ignored9, ignored10) -> {
-                        factories.incrementAndGet();
-                        return new EchoListener();
-                      }));
-      app.start();
-      var connection = connectHttp2(client, app);
-      var fields = HttpFields.build().put("Sec-WebSocket-Version", "13").asImmutable();
-      assertEquals(
-          200,
-          http2ConnectResponse(connection, app, "/available", "websocket", fields).getStatus());
-      assertEquals(1, factories.get());
+      try (Closeable appCleanup7 = app::close;
+          var client = new HTTP2Client()) {
 
-      available.set(false);
-      var result = http2ConnectResponse(connection, app, "/available", "websocket", fields);
-      assertEquals(404, result.getStatus());
-      assertEquals("no-store", result.getHttpFields().get("Cache-Control"));
-      assertEquals(1, factories.get());
+        app.routes()
+            .when(
+                available::get,
+                routes ->
+                    routes.websocket(
+                        "/available",
+                        (ignored9, ignored10) -> {
+                          factories.incrementAndGet();
+                          return new EchoListener();
+                        }));
+        app.start();
+        var connection = connectHttp2(client, app);
+        var fields = HttpFields.build().put("Sec-WebSocket-Version", "13").asImmutable();
+        assertEquals(
+            200,
+            http2ConnectResponse(connection, app, "/available", "websocket", fields).getStatus());
+        assertEquals(1, factories.get());
+
+        available.set(false);
+        var result = http2ConnectResponse(connection, app, "/available", "websocket", fields);
+        assertEquals(404, result.getStatus());
+        assertEquals("no-store", result.getHttpFields().get("Cache-Control"));
+        assertEquals(1, factories.get());
+      }
     }
   }
 
@@ -700,46 +718,50 @@ public class WebSocketRoutesTest {
     var received = new LinkedBlockingQueue<String>(2);
     var pending = new StringBuilder();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
-      app.routes()
-          .websocket(
-              "/greeting", (ignored11, ignored12) -> new GreetingListener(firstSent, replySent));
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .connectTimeout(Duration.ofSeconds(3))
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/greeting"),
-                  new WebSocket.Listener() {
-                    @Override
-                    public CompletionStage<?> onText(
-                        WebSocket webSocket, CharSequence data, boolean last) {
-                      pending.append(data);
-                      if (last) {
-                        received.add(pending.toString());
-                        pending.setLength(0);
+      try (Closeable appCleanup8 = app::close;
+          var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
+        app.routes()
+            .websocket(
+                "/greeting", (ignored11, ignored12) -> new GreetingListener(firstSent, replySent));
+        app.start();
+
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/greeting"),
+                    new WebSocket.Listener() {
+                      @Override
+                      public CompletionStage<?> onText(
+                          WebSocket webSocket, CharSequence data, boolean last) {
+                        pending.append(data);
+                        if (last) {
+                          received.add(pending.toString());
+                          pending.setLength(0);
+                        }
+
+                        webSocket.request(1);
+                        return CompletableFuture.completedFuture(null);
                       }
+                    })
+                .get(3, TimeUnit.SECONDS);
 
-                      webSocket.request(1);
-                      return CompletableFuture.completedFuture(null);
-                    }
-                  })
-              .get(3, TimeUnit.SECONDS);
-
-      try {
-        assertEquals("server-first", received.poll(3, TimeUnit.SECONDS));
-        firstSent.get(3, TimeUnit.SECONDS);
-        socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
-        assertEquals("reply:ping", received.poll(3, TimeUnit.SECONDS));
-        replySent.get(3, TimeUnit.SECONDS);
-        assertTrue(received.isEmpty());
-      } finally {
-        socket.abort();
+        try {
+          assertEquals("server-first", received.poll(3, TimeUnit.SECONDS));
+          firstSent.get(3, TimeUnit.SECONDS);
+          socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
+          assertEquals("reply:ping", received.poll(3, TimeUnit.SECONDS));
+          replySent.get(3, TimeUnit.SECONDS);
+          assertTrue(received.isEmpty());
+        } finally {
+          socket.abort();
+        }
       }
     }
   }
@@ -753,51 +775,55 @@ public class WebSocketRoutesTest {
     var messages = new ArrayList<String>();
     var partial = new StringBuilder();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes().websocket("/burst", (ignored13, ignored14) -> new EchoListener());
-      app.start();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .connectTimeout(Duration.ofSeconds(3))
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/burst"),
-                  new WebSocket.Listener() {
-                    @Override
-                    public CompletionStage<?> onText(
-                        WebSocket webSocket, CharSequence data, boolean last) {
-                      partial.append(data);
-                      if (last) {
-                        messages.add(partial.toString());
-                        partial.setLength(0);
-                        if (messages.size() == expected.size()) {
-                          received.complete(List.copyOf(messages));
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup9 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes().websocket("/burst", (ignored13, ignored14) -> new EchoListener());
+        app.start();
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/burst"),
+                    new WebSocket.Listener() {
+                      @Override
+                      public CompletionStage<?> onText(
+                          WebSocket webSocket, CharSequence data, boolean last) {
+                        partial.append(data);
+                        if (last) {
+                          messages.add(partial.toString());
+                          partial.setLength(0);
+                          if (messages.size() == expected.size()) {
+                            received.complete(List.copyOf(messages));
+                          }
                         }
+
+                        webSocket.request(1);
+                        return CompletableFuture.completedFuture(null);
                       }
 
-                      webSocket.request(1);
-                      return CompletableFuture.completedFuture(null);
-                    }
+                      @Override
+                      public void onError(WebSocket webSocket, Throwable error) {
+                        received.completeExceptionally(error);
+                      }
+                    })
+                .get(3, TimeUnit.SECONDS);
 
-                    @Override
-                    public void onError(WebSocket webSocket, Throwable error) {
-                      received.completeExceptionally(error);
-                    }
-                  })
-              .get(3, TimeUnit.SECONDS);
-
-      try {
-        var sends = CompletableFuture.completedFuture(socket);
-        for (var message : expected) {
-          sends = sends.thenCompose(webSocket -> webSocket.sendText(message, true));
+        try {
+          var sends = CompletableFuture.completedFuture(socket);
+          for (var message : expected) {
+            sends = sends.thenCompose(webSocket -> webSocket.sendText(message, true));
+          }
+          sends.get(3, TimeUnit.SECONDS);
+          assertEquals(expected, received.get(3, TimeUnit.SECONDS));
+        } finally {
+          socket.abort();
         }
-        sends.get(3, TimeUnit.SECONDS);
-        assertEquals(expected, received.get(3, TimeUnit.SECONDS));
-      } finally {
-        socket.abort();
       }
     }
   }
@@ -810,53 +836,57 @@ public class WebSocketRoutesTest {
     var completedSends = new CountDownLatch(3);
     var sendFailure = new AtomicReference<Throwable>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes().get("/echo", (ignored15, response) -> response.text("ordinary"));
-      app.routes()
-          .websocket(
-              "/echo",
-              (ignored16, ignored17) -> {
-                factoryCalls.incrementAndGet();
-                return new EchoListener("", completedSends, sendFailure);
-              });
-      app.start();
-      var ordinary =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/echo"))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals("ordinary", ordinary.body());
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/echo"),
-                  new WebSocket.Listener() {
-                    @Override
-                    public CompletionStage<?> onText(
-                        WebSocket webSocket, CharSequence data, boolean last) {
-                      received.add(data.toString());
-                      webSocket.request(1);
-                      return CompletableFuture.completedFuture(null);
-                    }
-                  })
-              .get(3, TimeUnit.SECONDS);
+      try (Closeable appCleanup10 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes().get("/echo", (ignored15, response) -> response.text("ordinary"));
+        app.routes()
+            .websocket(
+                "/echo",
+                (ignored16, ignored17) -> {
+                  factoryCalls.incrementAndGet();
+                  return new EchoListener("", completedSends, sendFailure);
+                });
+        app.start();
+        var ordinary =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/echo"))
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals("ordinary", ordinary.body());
 
-      socket.sendText("hel", false).get(3, TimeUnit.SECONDS);
-      socket.sendText("lo", true).get(3, TimeUnit.SECONDS);
-      socket.sendText("second", true).get(3, TimeUnit.SECONDS);
-      socket.sendText("third", true).get(3, TimeUnit.SECONDS);
-      assertEquals("hello", received.poll(3, TimeUnit.SECONDS));
-      assertEquals("second", received.poll(3, TimeUnit.SECONDS));
-      assertEquals("third", received.poll(3, TimeUnit.SECONDS));
-      assertTrue(completedSends.await(3, TimeUnit.SECONDS));
-      assertNull(sendFailure.get());
-      assertEquals(1, factoryCalls.get());
-      socket.abort();
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/echo"),
+                    new WebSocket.Listener() {
+                      @Override
+                      public CompletionStage<?> onText(
+                          WebSocket webSocket, CharSequence data, boolean last) {
+                        received.add(data.toString());
+                        webSocket.request(1);
+                        return CompletableFuture.completedFuture(null);
+                      }
+                    })
+                .get(3, TimeUnit.SECONDS);
+
+        socket.sendText("hel", false).get(3, TimeUnit.SECONDS);
+        socket.sendText("lo", true).get(3, TimeUnit.SECONDS);
+        socket.sendText("second", true).get(3, TimeUnit.SECONDS);
+        socket.sendText("third", true).get(3, TimeUnit.SECONDS);
+        assertEquals("hello", received.poll(3, TimeUnit.SECONDS));
+        assertEquals("second", received.poll(3, TimeUnit.SECONDS));
+        assertEquals("third", received.poll(3, TimeUnit.SECONDS));
+        assertTrue(completedSends.await(3, TimeUnit.SECONDS));
+        assertNull(sendFailure.get());
+        assertEquals(1, factoryCalls.get());
+        socket.abort();
+      }
     }
   }
 
@@ -883,44 +913,48 @@ public class WebSocketRoutesTest {
 
     var received = new LinkedBlockingQueue<String>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newBuilder().sslContext(context).build()) {
-      app.tls(
-          tls -> {
-            tls.setKeyStorePath(keyStorePath.toString());
-            tls.setKeyStorePassword("changeit");
-          });
-      app.routes()
-          .websocket(
-              "/secure",
-              (request, ignored18) -> {
-                assertTrue(request.isSecure());
-                assertEquals("https", request.scheme().orElseThrow());
-                return new EchoListener("secure:");
-              });
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  URI.create("wss://localhost:" + app.port() + "/secure"),
-                  new WebSocket.Listener() {
-                    @Override
-                    public CompletionStage<?> onText(
-                        WebSocket webSocket, CharSequence data, boolean last) {
-                      received.add(data.toString());
-                      webSocket.request(1);
-                      return CompletableFuture.completedFuture(null);
-                    }
-                  })
-              .get(3, TimeUnit.SECONDS);
+      try (Closeable appCleanup11 = app::close;
+          var client = HttpClient.newBuilder().sslContext(context).build()) {
+        app.tls(
+            tls -> {
+              tls.setKeyStorePath(keyStorePath.toString());
+              tls.setKeyStorePassword("changeit");
+            });
+        app.routes()
+            .websocket(
+                "/secure",
+                (request, ignored18) -> {
+                  assertTrue(request.isSecure());
+                  assertEquals("https", request.scheme().orElseThrow());
+                  return new EchoListener("secure:");
+                });
+        app.start();
 
-      socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
-      assertEquals("secure:hello", received.poll(3, TimeUnit.SECONDS));
-      socket.abort();
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .buildAsync(
+                    URI.create("wss://localhost:" + app.port() + "/secure"),
+                    new WebSocket.Listener() {
+                      @Override
+                      public CompletionStage<?> onText(
+                          WebSocket webSocket, CharSequence data, boolean last) {
+                        received.add(data.toString());
+                        webSocket.request(1);
+                        return CompletableFuture.completedFuture(null);
+                      }
+                    })
+                .get(3, TimeUnit.SECONDS);
+
+        socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
+        assertEquals("secure:hello", received.poll(3, TimeUnit.SECONDS));
+        socket.abort();
+      }
     }
   }
 
@@ -930,34 +964,39 @@ public class WebSocketRoutesTest {
     var factoryCalls = new AtomicInteger();
     var received = new CompletableFuture<String>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .websocket(
-              "/rooms/{id}",
-              (request, ignored19) -> {
-                factoryCalls.incrementAndGet();
-                return new EchoListener(request.pathParam("id").orElseThrow() + ":");
-              });
-      app.start();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .connectTimeout(Duration.ofSeconds(3))
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/rooms/lobby"), receiving(received))
-              .get(3, TimeUnit.SECONDS);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      try {
-        socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
-        assertEquals("lobby:hello", received.get(3, TimeUnit.SECONDS));
-        assertEquals(1, factoryCalls.get());
-        assertEquals(404, failedHandshakeStatus(client, app, "/Rooms/lobby"));
-        assertEquals(1, factoryCalls.get());
-      } finally {
-        socket.abort();
+      try (Closeable appCleanup12 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes()
+            .websocket(
+                "/rooms/{id}",
+                (request, ignored19) -> {
+                  factoryCalls.incrementAndGet();
+                  return new EchoListener(request.pathParam("id").orElseThrow() + ":");
+                });
+        app.start();
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/rooms/lobby"),
+                    receiving(received))
+                .get(3, TimeUnit.SECONDS);
+
+        try {
+          socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
+          assertEquals("lobby:hello", received.get(3, TimeUnit.SECONDS));
+          assertEquals(1, factoryCalls.get());
+          assertEquals(404, failedHandshakeStatus(client, app, "/Rooms/lobby"));
+          assertEquals(1, factoryCalls.get());
+        } finally {
+          socket.abort();
+        }
       }
     }
   }
@@ -967,76 +1006,80 @@ public class WebSocketRoutesTest {
   void passesHandshakeMetadataAndExistingSessionToTheListenerFactory() throws Exception {
     var received = new CompletableFuture<String>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      app.sessions();
-      app.routes()
-          .path(
-              "/",
-              scoped ->
-                  scoped.get(
-                      "/session",
-                      (request, response) -> {
-                        var session = request.getOrCreateSession();
-                        session.setAttribute("name", "alice");
-                        response.text(session.getId());
-                      }));
-      app.routes()
-          .path(
-              "/",
-              scoped ->
-                  scoped.websocket(
-                      "/metadata",
-                      (request, ignored20) -> {
-                        var session = request.getSession().orElseThrow();
-                        var prefix =
-                            String.join(
-                                "|",
-                                request.queryParam("city").orElseThrow(),
-                                request.cookie("theme").orElseThrow(),
-                                Objects.toString(session.getAttribute("name")),
-                                session.getId(),
-                                request.header("X-Handshake").orElseThrow(),
-                                request.authority().orElseThrow());
-                        return new EchoListener(prefix + "|");
-                      }));
-      app.start();
+      try (Closeable appCleanup13 = app::close;
+          var client = HttpClient.newHttpClient()) {
 
-      var created =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/session"))
-                  .timeout(Duration.ofSeconds(3))
-                  .GET()
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, created.statusCode());
-      assertFalse(created.body().isBlank());
-      var cookie = created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .connectTimeout(Duration.ofSeconds(3))
-              .header("Cookie", cookie + "; theme=dark")
-              .header("X-Handshake", "present")
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/metadata?city=M%C3%BCnchen+city"),
-                  receiving(received))
-              .get(3, TimeUnit.SECONDS);
+        app.sessions();
+        app.routes()
+            .path(
+                "/",
+                scoped ->
+                    scoped.get(
+                        "/session",
+                        (request, response) -> {
+                          var session = request.getOrCreateSession();
+                          session.setAttribute("name", "alice");
+                          response.text(session.getId());
+                        }));
+        app.routes()
+            .path(
+                "/",
+                scoped ->
+                    scoped.websocket(
+                        "/metadata",
+                        (request, ignored20) -> {
+                          var session = request.getSession().orElseThrow();
+                          var prefix =
+                              String.join(
+                                  "|",
+                                  request.queryParam("city").orElseThrow(),
+                                  request.cookie("theme").orElseThrow(),
+                                  Objects.toString(session.getAttribute("name")),
+                                  session.getId(),
+                                  request.header("X-Handshake").orElseThrow(),
+                                  request.authority().orElseThrow());
+                          return new EchoListener(prefix + "|");
+                        }));
+        app.start();
 
-      try {
-        socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
-        assertEquals(
-            "München city|dark|alice|"
-                + created.body()
-                + "|present|127.0.0.1:"
-                + app.port()
-                + "|hello",
-            received.get(3, TimeUnit.SECONDS));
-      } finally {
-        socket.abort();
+        var created =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/session"))
+                    .timeout(Duration.ofSeconds(3))
+                    .GET()
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, created.statusCode());
+        assertFalse(created.body().isBlank());
+        var cookie = created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .header("Cookie", cookie + "; theme=dark")
+                .header("X-Handshake", "present")
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/metadata?city=M%C3%BCnchen+city"),
+                    receiving(received))
+                .get(3, TimeUnit.SECONDS);
+
+        try {
+          socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
+          assertEquals(
+              "München city|dark|alice|"
+                  + created.body()
+                  + "|present|127.0.0.1:"
+                  + app.port()
+                  + "|hello",
+              received.get(3, TimeUnit.SECONDS));
+        } finally {
+          socket.abort();
+        }
       }
     }
   }
@@ -1049,50 +1092,54 @@ public class WebSocketRoutesTest {
     var firstMessage = new CompletableFuture<String>();
     var secondMessage = new CompletableFuture<String>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .path(
-              "/rooms",
-              routes ->
-                  routes.websocket(
-                      "/{id}",
-                      (request, upgrade) -> {
-                        assertEquals(List.of("chat.v1", "chat.v2"), request.webSocketProtocols());
-                        upgrade.setAcceptedSubProtocol("chat.v2");
-                        factoryCalls.incrementAndGet();
-                        return new EchoListener(request.pathParam("id").orElseThrow() + ":");
-                      }));
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      var first =
-          client
-              .newWebSocketBuilder()
-              .subprotocols("chat.v1", "chat.v2")
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/rooms/first"),
-                  receiving(firstMessage))
-              .get(3, TimeUnit.SECONDS);
-      var second =
-          client
-              .newWebSocketBuilder()
-              .subprotocols("chat.v1", "chat.v2")
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/rooms/second"),
-                  receiving(secondMessage))
-              .get(3, TimeUnit.SECONDS);
+      try (Closeable appCleanup14 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes()
+            .path(
+                "/rooms",
+                routes ->
+                    routes.websocket(
+                        "/{id}",
+                        (request, upgrade) -> {
+                          assertEquals(List.of("chat.v1", "chat.v2"), request.webSocketProtocols());
+                          upgrade.setAcceptedSubProtocol("chat.v2");
+                          factoryCalls.incrementAndGet();
+                          return new EchoListener(request.pathParam("id").orElseThrow() + ":");
+                        }));
+        app.start();
 
-      assertEquals("chat.v2", first.getSubprotocol());
-      assertEquals("chat.v2", second.getSubprotocol());
-      first.sendText("hello", true).get(3, TimeUnit.SECONDS);
-      second.sendText("hello", true).get(3, TimeUnit.SECONDS);
-      assertEquals("first:hello", firstMessage.get(3, TimeUnit.SECONDS));
-      assertEquals("second:hello", secondMessage.get(3, TimeUnit.SECONDS));
-      assertEquals(2, factoryCalls.get());
-      first.abort();
-      second.abort();
+        var first =
+            client
+                .newWebSocketBuilder()
+                .subprotocols("chat.v1", "chat.v2")
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/rooms/first"),
+                    receiving(firstMessage))
+                .get(3, TimeUnit.SECONDS);
+        var second =
+            client
+                .newWebSocketBuilder()
+                .subprotocols("chat.v1", "chat.v2")
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/rooms/second"),
+                    receiving(secondMessage))
+                .get(3, TimeUnit.SECONDS);
+
+        assertEquals("chat.v2", first.getSubprotocol());
+        assertEquals("chat.v2", second.getSubprotocol());
+        first.sendText("hello", true).get(3, TimeUnit.SECONDS);
+        second.sendText("hello", true).get(3, TimeUnit.SECONDS);
+        assertEquals("first:hello", firstMessage.get(3, TimeUnit.SECONDS));
+        assertEquals("second:hello", secondMessage.get(3, TimeUnit.SECONDS));
+        assertEquals(2, factoryCalls.get());
+        first.abort();
+        second.abort();
+      }
     }
   }
 
@@ -1101,90 +1148,108 @@ public class WebSocketRoutesTest {
   @Timeout(10)
   void prefersLiteralWebSocketRoutesAndFallsBackAfterSuffixMismatch(boolean literalFirst)
       throws Exception {
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      BiFunction<Request, ServerUpgradeResponse, Session.Listener> literal =
-          (ignored21, ignored22) -> new EchoListener("literal:");
-      BiFunction<Request, ServerUpgradeResponse, Session.Listener> parameter =
-          (request, ignored23) ->
-              new EchoListener("parameter:" + request.pathParam("id").orElseThrow() + ":");
-      if (literalFirst) {
-        app.routes().websocket("/rooms/latest", literal);
-        app.routes().websocket("/rooms/{id}", parameter);
-      } else {
-        app.routes().websocket("/rooms/{id}", parameter);
-        app.routes().websocket("/rooms/latest", literal);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup15 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        BiFunction<Request, ServerUpgradeResponse, Session.Listener> literal =
+            (ignored21, ignored22) -> new EchoListener("literal:");
+        BiFunction<Request, ServerUpgradeResponse, Session.Listener> parameter =
+            (request, ignored23) ->
+                new EchoListener("parameter:" + request.pathParam("id").orElseThrow() + ":");
+        if (literalFirst) {
+          app.routes().websocket("/rooms/latest", literal);
+          app.routes().websocket("/rooms/{id}", parameter);
+        } else {
+          app.routes().websocket("/rooms/{id}", parameter);
+          app.routes().websocket("/rooms/latest", literal);
+        }
+
+        app.routes()
+            .websocket("/fallback/fixed/x", (ignored24, ignored25) -> new EchoListener("x:"));
+        app.routes()
+            .websocket(
+                "/fallback/{name}/y",
+                (request, ignored26) ->
+                    new EchoListener(request.pathParam("name").orElseThrow() + ":"));
+        app.start();
+
+        assertEquals("literal:ping", sendAndReceive(client, app, "/rooms/latest"));
+        assertEquals("parameter:42:ping", sendAndReceive(client, app, "/rooms/42"));
+        assertEquals("fixed:ping", sendAndReceive(client, app, "/fallback/fixed/y"));
       }
-
-      app.routes().websocket("/fallback/fixed/x", (ignored24, ignored25) -> new EchoListener("x:"));
-      app.routes()
-          .websocket(
-              "/fallback/{name}/y",
-              (request, ignored26) ->
-                  new EchoListener(request.pathParam("name").orElseThrow() + ":"));
-      app.start();
-
-      assertEquals("literal:ping", sendAndReceive(client, app, "/rooms/latest"));
-      assertEquals("parameter:42:ping", sendAndReceive(client, app, "/rooms/42"));
-      assertEquals("fixed:ping", sendAndReceive(client, app, "/fallback/fixed/y"));
     }
   }
 
   @Test
   @Timeout(10)
   void upgradesCatchAllWebSocketRoutesWithoutChangingSingleSegmentPrecedence() throws Exception {
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .path(
-              "/rooms",
-              rooms -> {
-                rooms.websocket(
-                    "/{*path}",
-                    (request, ignored27) ->
-                        new EchoListener("tail:" + request.pathParam("path").orElseThrow() + ":"));
-                rooms.websocket(
-                    "/{id}",
-                    (request, ignored28) ->
-                        new EchoListener("single:" + request.pathParam("id").orElseThrow() + ":"));
-                rooms.websocket("/latest", (ignored29, ignored30) -> new EchoListener("literal:"));
-              });
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      assertEquals("literal:ping", sendAndReceive(client, app, "/rooms/latest"));
-      assertEquals("single:a:ping", sendAndReceive(client, app, "/rooms/a"));
-      assertEquals("tail:a/b:ping", sendAndReceive(client, app, "/rooms/a/b"));
+      try (Closeable appCleanup16 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes()
+            .path(
+                "/rooms",
+                rooms -> {
+                  rooms.websocket(
+                      "/{*path}",
+                      (request, ignored27) ->
+                          new EchoListener(
+                              "tail:" + request.pathParam("path").orElseThrow() + ":"));
+                  rooms.websocket(
+                      "/{id}",
+                      (request, ignored28) ->
+                          new EchoListener(
+                              "single:" + request.pathParam("id").orElseThrow() + ":"));
+                  rooms.websocket(
+                      "/latest", (ignored29, ignored30) -> new EchoListener("literal:"));
+                });
+        app.start();
+
+        assertEquals("literal:ping", sendAndReceive(client, app, "/rooms/latest"));
+        assertEquals("single:a:ping", sendAndReceive(client, app, "/rooms/a"));
+        assertEquals("tail:a/b:ping", sendAndReceive(client, app, "/rooms/a/b"));
+      }
     }
   }
 
   @Test
   @Timeout(10)
   void upgradesConstrainedWebSocketRoutesAndFallsBackToPlainParameters() throws Exception {
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .path(
-              "/rooms",
-              rooms -> {
-                rooms.websocket(
-                    "/{name}",
-                    (request, ignored31) ->
-                        new EchoListener("plain:" + request.pathParam("name").orElseThrow() + ":"));
-                rooms.websocket(
-                    "/{id:[0-9]+}",
-                    (request, ignored32) ->
-                        new EchoListener("digits:" + request.pathParam("id").orElseThrow() + ":"));
-              });
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      assertEquals("digits:42:ping", sendAndReceive(client, app, "/rooms/42"));
-      assertEquals("plain:alpha:ping", sendAndReceive(client, app, "/rooms/alpha"));
+      try (Closeable appCleanup17 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes()
+            .path(
+                "/rooms",
+                rooms -> {
+                  rooms.websocket(
+                      "/{name}",
+                      (request, ignored31) ->
+                          new EchoListener(
+                              "plain:" + request.pathParam("name").orElseThrow() + ":"));
+                  rooms.websocket(
+                      "/{id:[0-9]+}",
+                      (request, ignored32) ->
+                          new EchoListener(
+                              "digits:" + request.pathParam("id").orElseThrow() + ":"));
+                });
+        app.start();
+
+        assertEquals("digits:42:ping", sendAndReceive(client, app, "/rooms/42"));
+        assertEquals("plain:alpha:ping", sendAndReceive(client, app, "/rooms/alpha"));
+      }
     }
   }
 
@@ -1193,48 +1258,54 @@ public class WebSocketRoutesTest {
   void rejectsAnOriginInRouteAdmissionBeforeCallingTheListenerFactory() throws Exception {
     var factoryCalls = new AtomicInteger();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      var admission =
-          new AdmissionExtension(
-              (request, ignored33) -> {
-                if (request.header("Origin").filter("https://allowed.example"::equals).isEmpty()) {
-                  throw new ForbiddenException();
-                }
-              });
-      app.extensions(admission)
-          .routes()
-          .path(
-              "/",
-              routes ->
-                  routes.websocket(
-                      "/private",
-                      (ignored34, ignored35) -> {
-                        factoryCalls.incrementAndGet();
-                        return new EchoListener();
-                      }),
-              e -> e.with(admission));
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      var failure =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  client
-                      .newWebSocketBuilder()
-                      .header("Origin", "https://denied.example")
-                      .buildAsync(
-                          URI.create("ws://127.0.0.1:" + app.port() + "/private"),
-                          new WebSocket.Listener() {})
-                      .get(3, TimeUnit.SECONDS));
-      assertEquals(
-          403,
-          assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
-              .getResponse()
-              .statusCode());
-      assertEquals(0, factoryCalls.get());
+      try (Closeable appCleanup18 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        var admission =
+            new AdmissionExtension(
+                (request, ignored33) -> {
+                  if (request
+                      .header("Origin")
+                      .filter("https://allowed.example"::equals)
+                      .isEmpty()) {
+                    throw new ForbiddenException();
+                  }
+                });
+        app.routes()
+            .path(
+                "/",
+                routes ->
+                    routes.websocket(
+                        "/private",
+                        (ignored34, ignored35) -> {
+                          factoryCalls.incrementAndGet();
+                          return new EchoListener();
+                        }),
+                e -> e.withExtension(admission));
+        app.start();
+
+        var failure =
+            assertThrows(
+                ExecutionException.class,
+                () ->
+                    client
+                        .newWebSocketBuilder()
+                        .header("Origin", "https://denied.example")
+                        .buildAsync(
+                            URI.create("ws://127.0.0.1:" + app.port() + "/private"),
+                            new WebSocket.Listener() {})
+                        .get(3, TimeUnit.SECONDS));
+        assertEquals(
+            403,
+            assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
+                .getResponse()
+                .statusCode());
+        assertEquals(0, factoryCalls.get());
+      }
     }
   }
 
@@ -1243,51 +1314,54 @@ public class WebSocketRoutesTest {
   void authenticatesBeforeUpgradeAndPassesThePrincipalToTheNewListener() throws Exception {
     var accepted = new CompletableFuture<String>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      var admission = chatAuthentication();
-      app.authentication(admission)
-          .routes()
-          .path(
-              "/",
-              routes ->
-                  routes.websocket(
-                      "/authenticated",
-                      (request, ignored36) ->
-                          new EchoListener(request.principal().orElseThrow().getName() + ":")),
-              e -> e.with(admission));
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      var rejected =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  client
-                      .newWebSocketBuilder()
-                      .buildAsync(
-                          URI.create("ws://127.0.0.1:" + app.port() + "/authenticated"),
-                          new WebSocket.Listener() {})
-                      .get(3, TimeUnit.SECONDS));
-      var challenge =
-          assertInstanceOf(WebSocketHandshakeException.class, rejected.getCause()).getResponse();
-      assertEquals(401, challenge.statusCode());
-      assertEquals(
-          "Bearer realm=\"chat\"",
-          challenge.headers().firstValue("WWW-Authenticate").orElseThrow());
+      try (Closeable appCleanup19 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        var admission = chatAuthentication();
+        app.routes()
+            .path(
+                "/",
+                routes ->
+                    routes.websocket(
+                        "/authenticated",
+                        (request, ignored36) ->
+                            new EchoListener(request.principal().orElseThrow().getName() + ":")),
+                e -> e.withExtension(admission));
+        app.start();
 
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .header("Authorization", "Bearer secret")
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/authenticated"),
-                  receiving(accepted))
-              .get(3, TimeUnit.SECONDS);
-      socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
-      assertEquals("alice:hello", accepted.get(3, TimeUnit.SECONDS));
-      socket.abort();
+        var rejected =
+            assertThrows(
+                ExecutionException.class,
+                () ->
+                    client
+                        .newWebSocketBuilder()
+                        .buildAsync(
+                            URI.create("ws://127.0.0.1:" + app.port() + "/authenticated"),
+                            new WebSocket.Listener() {})
+                        .get(3, TimeUnit.SECONDS));
+        var challenge =
+            assertInstanceOf(WebSocketHandshakeException.class, rejected.getCause()).getResponse();
+        assertEquals(401, challenge.statusCode());
+        assertEquals(
+            "Bearer realm=\"chat\"",
+            challenge.headers().firstValue("WWW-Authenticate").orElseThrow());
+
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .header("Authorization", "Bearer secret")
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/authenticated"),
+                    receiving(accepted))
+                .get(3, TimeUnit.SECONDS);
+        socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
+        assertEquals("alice:hello", accepted.get(3, TimeUnit.SECONDS));
+        socket.abort();
+      }
     }
   }
 
@@ -1296,29 +1370,33 @@ public class WebSocketRoutesTest {
   void completesInvalidUpgradeWith426AndAllowsAFactoryHandshakeHeader() throws Exception {
     var factoryCalls = new AtomicInteger();
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0))) {
-      app.routes()
-          .websocket(
-              "/wire",
-              (ignored37, upgrade) -> {
-                factoryCalls.incrementAndGet();
-                upgrade.getHeaders().put("X-Handshake", "accepted");
-                return new EchoListener();
-              });
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      var invalid = handshake(app, 12);
-      assertTrue(invalid.getFirst().contains(" 426 "), invalid.toString());
-      assertEquals(0, factoryCalls.get());
-      assertTrue(invalid.stream().anyMatch("Upgrade: websocket"::equalsIgnoreCase));
-      assertTrue(invalid.stream().anyMatch("Sec-WebSocket-Version: 13"::equalsIgnoreCase));
+      try (Closeable appCleanup20 = app::close) {
+        app.routes()
+            .websocket(
+                "/wire",
+                (ignored37, upgrade) -> {
+                  factoryCalls.incrementAndGet();
+                  upgrade.getHeaders().put("X-Handshake", "accepted");
+                  return new EchoListener();
+                });
+        app.start();
 
-      var valid = handshake(app, 13);
-      assertTrue(valid.getFirst().contains(" 101 "));
-      assertTrue(valid.stream().anyMatch("X-Handshake: accepted"::equalsIgnoreCase));
-      assertEquals(1, factoryCalls.get());
+        var invalid = handshake(app, 12);
+        assertTrue(invalid.getFirst().contains(" 426 "), invalid.toString());
+        assertEquals(0, factoryCalls.get());
+        assertTrue(invalid.stream().anyMatch("Upgrade: websocket"::equalsIgnoreCase));
+        assertTrue(invalid.stream().anyMatch("Sec-WebSocket-Version: 13"::equalsIgnoreCase));
+
+        var valid = handshake(app, 13);
+        assertTrue(valid.getFirst().contains(" 101 "));
+        assertTrue(valid.stream().anyMatch("X-Handshake: accepted"::equalsIgnoreCase));
+        assertEquals(1, factoryCalls.get());
+      }
     }
   }
 
@@ -1328,44 +1406,48 @@ public class WebSocketRoutesTest {
     var outcome = new CompletableFuture<RequestOutcome>();
     var notifications = new AtomicInteger();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.exception(
-          BadRequestException.class,
-          (ignored38, ignored39, response) ->
-              response.status(422).setHeader("X-Error-Mapped", "yes").text("mapped"));
-      app.afterRequest(
-          result -> {
-            notifications.incrementAndGet();
-            outcome.complete(result);
-          });
-      app.routes()
-          .websocket(
-              "/reject",
-              (ignored40, ignored41) -> {
-                throw new BadRequestException();
-              });
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      var failure =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  client
-                      .newWebSocketBuilder()
-                      .buildAsync(
-                          URI.create("ws://127.0.0.1:" + app.port() + "/reject"),
-                          new WebSocket.Listener() {})
-                      .get(3, TimeUnit.SECONDS));
-      var handshake =
-          assertInstanceOf(WebSocketHandshakeException.class, failure.getCause()).getResponse();
-      assertEquals(422, handshake.statusCode());
-      assertEquals("yes", handshake.headers().firstValue("X-Error-Mapped").orElseThrow());
-      assertEquals(422, outcome.get(3, TimeUnit.SECONDS).statusCode());
-      assertInstanceOf(BadRequestException.class, outcome.getNow(null).applicationFailure());
-      assertEquals(1, notifications.get());
+      try (Closeable appCleanup21 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.exception(
+            BadRequestException.class,
+            (ignored38, ignored39, response) ->
+                response.status(422).setHeader("X-Error-Mapped", "yes").text("mapped"));
+        app.afterRequest(
+            result -> {
+              notifications.incrementAndGet();
+              outcome.complete(result);
+            });
+        app.routes()
+            .websocket(
+                "/reject",
+                (ignored40, ignored41) -> {
+                  throw new BadRequestException();
+                });
+        app.start();
+
+        var failure =
+            assertThrows(
+                ExecutionException.class,
+                () ->
+                    client
+                        .newWebSocketBuilder()
+                        .buildAsync(
+                            URI.create("ws://127.0.0.1:" + app.port() + "/reject"),
+                            new WebSocket.Listener() {})
+                        .get(3, TimeUnit.SECONDS));
+        var handshake =
+            assertInstanceOf(WebSocketHandshakeException.class, failure.getCause()).getResponse();
+        assertEquals(422, handshake.statusCode());
+        assertEquals("yes", handshake.headers().firstValue("X-Error-Mapped").orElseThrow());
+        assertEquals(422, outcome.get(3, TimeUnit.SECONDS).statusCode());
+        assertInstanceOf(BadRequestException.class, outcome.getNow(null).applicationFailure());
+        assertEquals(1, notifications.get());
+      }
     }
   }
 
@@ -1377,76 +1459,84 @@ public class WebSocketRoutesTest {
     var outcome = new CompletableFuture<RequestOutcome>();
     var notifications = new AtomicInteger();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.afterRequest(
-          result -> {
-            notifications.incrementAndGet();
-            outcome.complete(result);
-          });
-      app.afterResponseFlush(
-          (ignored42, ignored43) -> {
-            throw postFlush;
-          });
-      app.exception(
-          BadRequestException.class, (ignored44, ignored45, response) -> response.text("mapped"));
-      app.routes()
-          .websocket(
-              "/flush-failure",
-              (ignored46, ignored47) -> {
-                throw original;
-              });
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      var failure =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  client
-                      .newWebSocketBuilder()
-                      .buildAsync(
-                          URI.create("ws://127.0.0.1:" + app.port() + "/flush-failure"),
-                          new WebSocket.Listener() {})
-                      .get(3, TimeUnit.SECONDS));
-      assertEquals(
-          400,
-          assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
-              .getResponse()
-              .statusCode());
-      assertSame(original, outcome.get(3, TimeUnit.SECONDS).applicationFailure());
-      assertArrayEquals(new Throwable[] {postFlush}, original.getSuppressed());
-      assertEquals(1, notifications.get());
+      try (Closeable appCleanup22 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.afterRequest(
+            result -> {
+              notifications.incrementAndGet();
+              outcome.complete(result);
+            });
+        app.afterResponseFlush(
+            (ignored42, ignored43) -> {
+              throw postFlush;
+            });
+        app.exception(
+            BadRequestException.class, (ignored44, ignored45, response) -> response.text("mapped"));
+        app.routes()
+            .websocket(
+                "/flush-failure",
+                (ignored46, ignored47) -> {
+                  throw original;
+                });
+        app.start();
+
+        var failure =
+            assertThrows(
+                ExecutionException.class,
+                () ->
+                    client
+                        .newWebSocketBuilder()
+                        .buildAsync(
+                            URI.create("ws://127.0.0.1:" + app.port() + "/flush-failure"),
+                            new WebSocket.Listener() {})
+                        .get(3, TimeUnit.SECONDS));
+        assertEquals(
+            400,
+            assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
+                .getResponse()
+                .statusCode());
+        assertSame(original, outcome.get(3, TimeUnit.SECONDS).applicationFailure());
+        assertArrayEquals(new Throwable[] {postFlush}, original.getSuppressed());
+        assertEquals(1, notifications.get());
+      }
     }
   }
 
   @Test
   @Timeout(10)
   void doesNotAcceptUnexpectedFailuresNullListenersOrUnofferedProtocols() throws Exception {
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .websocket(
-              "/failure",
-              (ignored48, ignored49) -> {
-                throw new IllegalStateException("broken factory");
-              });
-      app.routes().websocket("/null", (ignored50, ignored51) -> null);
-      app.routes()
-          .websocket(
-              "/protocol",
-              (ignored52, upgrade) -> {
-                upgrade.setAcceptedSubProtocol("not-offered");
-                return new EchoListener();
-              });
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      assertEquals(500, failedHandshakeStatus(client, app, "/failure"));
-      assertEquals(500, failedHandshakeStatus(client, app, "/null"));
-      assertNotEquals(101, failedHandshakeStatus(client, app, "/protocol"));
+      try (Closeable appCleanup23 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes()
+            .websocket(
+                "/failure",
+                (ignored48, ignored49) -> {
+                  throw new IllegalStateException("broken factory");
+                });
+        app.routes().websocket("/null", (ignored50, ignored51) -> null);
+        app.routes()
+            .websocket(
+                "/protocol",
+                (ignored52, upgrade) -> {
+                  upgrade.setAcceptedSubProtocol("not-offered");
+                  return new EchoListener();
+                });
+        app.start();
+
+        assertEquals(500, failedHandshakeStatus(client, app, "/failure"));
+        assertEquals(500, failedHandshakeStatus(client, app, "/null"));
+        assertNotEquals(101, failedHandshakeStatus(client, app, "/protocol"));
+      }
     }
   }
 
@@ -1457,53 +1547,57 @@ public class WebSocketRoutesTest {
     var pong = new CompletableFuture<byte[]>();
     var closed = new CompletableFuture<Integer>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes().websocket("/binary", (ignored53, ignored54) -> new BinaryEchoListener());
-      app.start();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/binary"),
-                  new WebSocket.Listener() {
-                    @Override
-                    public CompletionStage<?> onBinary(
-                        WebSocket webSocket, ByteBuffer data, boolean last) {
-                      var payload = new byte[data.remaining()];
-                      data.get(payload);
-                      binary.complete(payload);
-                      webSocket.request(1);
-                      return CompletableFuture.completedFuture(null);
-                    }
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-                    @Override
-                    public CompletionStage<?> onPong(WebSocket webSocket, ByteBuffer data) {
-                      var payload = new byte[data.remaining()];
-                      data.get(payload);
-                      pong.complete(payload);
-                      webSocket.request(1);
-                      return CompletableFuture.completedFuture(null);
-                    }
+      try (Closeable appCleanup24 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes().websocket("/binary", (ignored53, ignored54) -> new BinaryEchoListener());
+        app.start();
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/binary"),
+                    new WebSocket.Listener() {
+                      @Override
+                      public CompletionStage<?> onBinary(
+                          WebSocket webSocket, ByteBuffer data, boolean last) {
+                        var payload = new byte[data.remaining()];
+                        data.get(payload);
+                        binary.complete(payload);
+                        webSocket.request(1);
+                        return CompletableFuture.completedFuture(null);
+                      }
 
-                    @Override
-                    public CompletionStage<?> onClose(
-                        WebSocket webSocket, int statusCode, String reason) {
-                      closed.complete(statusCode);
-                      return CompletableFuture.completedFuture(null);
-                    }
-                  })
-              .get(3, TimeUnit.SECONDS);
+                      @Override
+                      public CompletionStage<?> onPong(WebSocket webSocket, ByteBuffer data) {
+                        var payload = new byte[data.remaining()];
+                        data.get(payload);
+                        pong.complete(payload);
+                        webSocket.request(1);
+                        return CompletableFuture.completedFuture(null);
+                      }
 
-      var payload = new byte[] {1, 2, 3};
-      socket.sendBinary(ByteBuffer.wrap(payload), true).get(3, TimeUnit.SECONDS);
-      assertArrayEquals(payload, binary.get(3, TimeUnit.SECONDS));
-      socket.sendPing(ByteBuffer.wrap(payload)).get(3, TimeUnit.SECONDS);
-      assertArrayEquals(payload, pong.get(3, TimeUnit.SECONDS));
-      socket.sendClose(1000, "done").get(3, TimeUnit.SECONDS);
-      assertEquals(1000, closed.get(3, TimeUnit.SECONDS));
+                      @Override
+                      public CompletionStage<?> onClose(
+                          WebSocket webSocket, int statusCode, String reason) {
+                        closed.complete(statusCode);
+                        return CompletableFuture.completedFuture(null);
+                      }
+                    })
+                .get(3, TimeUnit.SECONDS);
+
+        var payload = new byte[] {1, 2, 3};
+        socket.sendBinary(ByteBuffer.wrap(payload), true).get(3, TimeUnit.SECONDS);
+        assertArrayEquals(payload, binary.get(3, TimeUnit.SECONDS));
+        socket.sendPing(ByteBuffer.wrap(payload)).get(3, TimeUnit.SECONDS);
+        assertArrayEquals(payload, pong.get(3, TimeUnit.SECONDS));
+        socket.sendClose(1000, "done").get(3, TimeUnit.SECONDS);
+        assertEquals(1000, closed.get(3, TimeUnit.SECONDS));
+      }
     }
   }
 
@@ -1512,36 +1606,40 @@ public class WebSocketRoutesTest {
   void closesAnActiveWebSocketWhenTheAppStops() throws Exception {
     var terminated = new CompletableFuture<Void>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes().websocket("/live", (ignored55, ignored56) -> new EchoListener());
-      app.start();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/live"),
-                  new WebSocket.Listener() {
-                    @Override
-                    public CompletionStage<?> onClose(
-                        WebSocket webSocket, int statusCode, String reason) {
-                      terminated.complete(null);
-                      return CompletableFuture.completedFuture(null);
-                    }
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-                    @Override
-                    public void onError(WebSocket webSocket, Throwable error) {
-                      terminated.complete(null);
-                    }
-                  })
-              .get(3, TimeUnit.SECONDS);
+      try (Closeable appCleanup25 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes().websocket("/live", (ignored55, ignored56) -> new EchoListener());
+        app.start();
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/live"),
+                    new WebSocket.Listener() {
+                      @Override
+                      public CompletionStage<?> onClose(
+                          WebSocket webSocket, int statusCode, String reason) {
+                        terminated.complete(null);
+                        return CompletableFuture.completedFuture(null);
+                      }
 
-      app.close();
-      terminated.get(3, TimeUnit.SECONDS);
-      await().atMost(Duration.ofSeconds(3)).until(socket::isOutputClosed);
-      socket.abort();
+                      @Override
+                      public void onError(WebSocket webSocket, Throwable error) {
+                        terminated.complete(null);
+                      }
+                    })
+                .get(3, TimeUnit.SECONDS);
+
+        app.close();
+        terminated.get(3, TimeUnit.SECONDS);
+        await().atMost(Duration.ofSeconds(3)).until(socket::isOutputClosed);
+        socket.abort();
+      }
     }
   }
 
@@ -1553,42 +1651,46 @@ public class WebSocketRoutesTest {
     var accepted = new CompletableFuture<String>();
     var closed = new CompletableFuture<Integer>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes()
-          .websocket(
-              "/bounded",
-              (ignored57, ignored58) ->
-                  new LimitedListener(defaultOutgoing, configuredOutgoing, accepted));
-      app.start();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/bounded"),
-                  new WebSocket.Listener() {
-                    @Override
-                    public CompletionStage<?> onClose(
-                        WebSocket webSocket, int statusCode, String reason) {
-                      closed.complete(statusCode);
-                      return CompletableFuture.completedFuture(null);
-                    }
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-                    @Override
-                    public void onError(WebSocket webSocket, Throwable error) {
-                      closed.completeExceptionally(error);
-                    }
-                  })
-              .get(3, TimeUnit.SECONDS);
+      try (Closeable appCleanup26 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes()
+            .websocket(
+                "/bounded",
+                (ignored57, ignored58) ->
+                    new LimitedListener(defaultOutgoing, configuredOutgoing, accepted));
+        app.start();
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/bounded"),
+                    new WebSocket.Listener() {
+                      @Override
+                      public CompletionStage<?> onClose(
+                          WebSocket webSocket, int statusCode, String reason) {
+                        closed.complete(statusCode);
+                        return CompletableFuture.completedFuture(null);
+                      }
 
-      assertEquals(32, defaultOutgoing.get(3, TimeUnit.SECONDS));
-      assertEquals(2, configuredOutgoing.get(3, TimeUnit.SECONDS));
-      socket.sendText("four", true).get(3, TimeUnit.SECONDS);
-      assertEquals("four", accepted.get(3, TimeUnit.SECONDS));
-      socket.sendText("five!", true).get(3, TimeUnit.SECONDS);
-      assertEquals(1009, closed.get(3, TimeUnit.SECONDS));
+                      @Override
+                      public void onError(WebSocket webSocket, Throwable error) {
+                        closed.completeExceptionally(error);
+                      }
+                    })
+                .get(3, TimeUnit.SECONDS);
+
+        assertEquals(32, defaultOutgoing.get(3, TimeUnit.SECONDS));
+        assertEquals(2, configuredOutgoing.get(3, TimeUnit.SECONDS));
+        socket.sendText("four", true).get(3, TimeUnit.SECONDS);
+        assertEquals("four", accepted.get(3, TimeUnit.SECONDS));
+        socket.sendText("five!", true).get(3, TimeUnit.SECONDS);
+        assertEquals(1009, closed.get(3, TimeUnit.SECONDS));
+      }
     }
   }
 
@@ -1600,44 +1702,47 @@ public class WebSocketRoutesTest {
     var sendFailure = new CompletableFuture<Throwable>();
     var server = new AtomicReference<Server>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServerConfiguration ->
-                        ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                            .setPort(0));
-        var peer = new Socket()) {
-      app.modifyServer(server::set);
-      app.routes()
-          .websocket("/slow", (ignored59, ignored60) -> new SlowPeerListener(opened, terminal));
-      app.start();
-      var container =
-          server.get().getContainedBeans(ServerWebSocketContainer.class).iterator().next();
-      upgradeUnreadPeer(peer, app.port(), "/slow");
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServerConfiguration ->
+                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
-      var session = opened.get(3, TimeUnit.SECONDS);
-      var completed = new CountDownLatch(4);
-      var payload = new byte[4 * 1024 * 1024];
-      for (int index = 0; index < 4; index++) {
-        session.sendBinary(
-            ByteBuffer.wrap(payload),
-            Callback.from(
-                completed::countDown,
-                failure -> {
-                  sendFailure.complete(failure);
-                  completed.countDown();
-                }));
+      try (Closeable appCleanup27 = app::close;
+          var peer = new Socket()) {
+        app.modifyServer(server::set);
+        app.routes()
+            .websocket("/slow", (ignored59, ignored60) -> new SlowPeerListener(opened, terminal));
+        app.start();
+        var container =
+            server.get().getContainedBeans(ServerWebSocketContainer.class).iterator().next();
+        upgradeUnreadPeer(peer, app.port(), "/slow");
+
+        var session = opened.get(3, TimeUnit.SECONDS);
+        var completed = new CountDownLatch(4);
+        var payload = new byte[4 * 1024 * 1024];
+        for (int index = 0; index < 4; index++) {
+          session.sendBinary(
+              ByteBuffer.wrap(payload),
+              Callback.from(
+                  completed::countDown,
+                  failure -> {
+                    sendFailure.complete(failure);
+                    completed.countDown();
+                  }));
+        }
+
+        assertInstanceOf(WritePendingException.class, sendFailure.get(3, TimeUnit.SECONDS));
+        peer.close();
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        terminal.get(5, TimeUnit.SECONDS);
+        assertFalse(session.isOpen());
+        await()
+            .pollInterval(Duration.ofMillis(20))
+            .atMost(Duration.ofSeconds(1))
+            .until(() -> !container.getOpenSessions().contains(session));
       }
-
-      assertInstanceOf(WritePendingException.class, sendFailure.get(3, TimeUnit.SECONDS));
-      peer.close();
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      terminal.get(5, TimeUnit.SECONDS);
-      assertFalse(session.isOpen());
-      await()
-          .pollInterval(Duration.ofMillis(20))
-          .atMost(Duration.ofSeconds(1))
-          .until(() -> !container.getOpenSessions().contains(session));
     }
   }
 
@@ -1648,30 +1753,34 @@ public class WebSocketRoutesTest {
     var completed = new CountDownLatch(1);
     var sendFailure = new AtomicReference<Throwable>();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var peer = new Socket()) {
-      app.routes()
-          .websocket(
-              "/producer",
-              (ignored61, ignored62) ->
-                  new SerializedProducerListener(opened, completed, sendFailure, 2));
-      app.start();
-      upgradeUnreadPeer(peer, app.port(), "/producer");
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
 
-      var listener = opened.get(3, TimeUnit.SECONDS);
-      listener.submit("x".repeat(4 * 1024 * 1024));
-      listener.submit("queued-one");
-      listener.submit("queued-two");
-      assertThrows(IllegalStateException.class, () -> listener.submit("overflow"));
-      assertEquals(2, listener.pendingCount());
+      try (Closeable appCleanup28 = app::close;
+          var peer = new Socket()) {
+        app.routes()
+            .websocket(
+                "/producer",
+                (ignored61, ignored62) ->
+                    new SerializedProducerListener(opened, completed, sendFailure, 2));
+        app.start();
+        upgradeUnreadPeer(peer, app.port(), "/producer");
 
-      peer.close();
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertNotNull(sendFailure.get());
-      assertEquals(0, listener.pendingCount());
-      assertThrows(IllegalStateException.class, () -> listener.submit("after-disconnect"));
+        var listener = opened.get(3, TimeUnit.SECONDS);
+        listener.submit("x".repeat(4 * 1024 * 1024));
+        listener.submit("queued-one");
+        listener.submit("queued-two");
+        assertThrows(IllegalStateException.class, () -> listener.submit("overflow"));
+        assertEquals(2, listener.pendingCount());
+
+        peer.close();
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertNotNull(sendFailure.get());
+        assertEquals(0, listener.pendingCount());
+        assertThrows(IllegalStateException.class, () -> listener.submit("after-disconnect"));
+      }
     }
   }
 
@@ -1684,68 +1793,72 @@ public class WebSocketRoutesTest {
     var received = new LinkedBlockingQueue<String>();
     var current = new StringBuilder();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient();
-        var producers = Executors.newFixedThreadPool(4)) {
-      app.routes()
-          .websocket(
-              "/ordered",
-              (ignored63, ignored64) ->
-                  new SerializedProducerListener(opened, completed, sendFailure));
-      app.start();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  URI.create("ws://127.0.0.1:" + app.port() + "/ordered"),
-                  new WebSocket.Listener() {
-                    @Override
-                    public CompletionStage<?> onText(
-                        WebSocket webSocket, CharSequence data, boolean last) {
-                      current.append(data);
-                      if (last) {
-                        received.add(current.toString());
-                        current.setLength(0);
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup29 = app::close;
+          var client = HttpClient.newHttpClient();
+          var producers = Executors.newFixedThreadPool(4)) {
+        app.routes()
+            .websocket(
+                "/ordered",
+                (ignored63, ignored64) ->
+                    new SerializedProducerListener(opened, completed, sendFailure));
+        app.start();
+        var socket =
+            client
+                .newWebSocketBuilder()
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + "/ordered"),
+                    new WebSocket.Listener() {
+                      @Override
+                      public CompletionStage<?> onText(
+                          WebSocket webSocket, CharSequence data, boolean last) {
+                        current.append(data);
+                        if (last) {
+                          received.add(current.toString());
+                          current.setLength(0);
+                        }
+
+                        webSocket.request(1);
+                        return CompletableFuture.completedFuture(null);
                       }
-
-                      webSocket.request(1);
-                      return CompletableFuture.completedFuture(null);
+                    })
+                .get(3, TimeUnit.SECONDS);
+        var listener = opened.get(3, TimeUnit.SECONDS);
+        var begin = new CountDownLatch(1);
+        var tasks = new ArrayList<Future<?>>();
+        for (int producer = 0; producer < 4; producer++) {
+          final int id = producer;
+          tasks.add(
+              producers.submit(
+                  () -> {
+                    begin.await();
+                    for (int message = 0; message < 5; message++) {
+                      listener.submit(id + ":" + message);
                     }
-                  })
-              .get(3, TimeUnit.SECONDS);
-      var listener = opened.get(3, TimeUnit.SECONDS);
-      var begin = new CountDownLatch(1);
-      var tasks = new ArrayList<Future<?>>();
-      for (int producer = 0; producer < 4; producer++) {
-        final int id = producer;
-        tasks.add(
-            producers.submit(
-                () -> {
-                  begin.await();
-                  for (int message = 0; message < 5; message++) {
-                    listener.submit(id + ":" + message);
-                  }
 
-                  return null;
-                }));
+                    return null;
+                  }));
+        }
+
+        begin.countDown();
+        for (var task : tasks) {
+          task.get(5, TimeUnit.SECONDS);
+        }
+
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertNull(sendFailure.get());
+        var delivered = new ArrayList<String>();
+        for (int index = 0; index < 20; index++) {
+          delivered.add(received.poll(3, TimeUnit.SECONDS));
+        }
+
+        assertEquals(listener.accepted(), delivered);
+        socket.abort();
       }
-
-      begin.countDown();
-      for (var task : tasks) {
-        task.get(5, TimeUnit.SECONDS);
-      }
-
-      assertTrue(completed.await(5, TimeUnit.SECONDS));
-      assertNull(sendFailure.get());
-      var delivered = new ArrayList<String>();
-      for (int index = 0; index < 20; index++) {
-        delivered.add(received.poll(3, TimeUnit.SECONDS));
-      }
-
-      assertEquals(listener.accepted(), delivered);
-      socket.abort();
     }
   }
 

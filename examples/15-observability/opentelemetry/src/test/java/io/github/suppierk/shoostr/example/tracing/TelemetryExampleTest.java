@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 class TelemetryExampleTest {
   @Test
   void servesTheGreetingWithoutADiagnosticTraceHeader() throws Exception {
+
     try (var test = TestServer.start(TelemetryExample.application())) {
       var response =
           test.send(

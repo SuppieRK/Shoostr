@@ -20,8 +20,6 @@ public final class CsrfProtectionExample {
     var csrf = new Csrf();
     return new Shoostr()
         .sessions(handler -> handler.setSecureCookies(true))
-        // Installation is separate from selection on the two protected writes below.
-        .extensions(csrf)
         .routes(
             routes ->
                 routes
@@ -52,7 +50,7 @@ public final class CsrfProtectionExample {
                           request.getSession().orElseThrow().setAttribute(THEME_ATTRIBUTE, theme);
                           response.text(theme);
                         },
-                        extensions -> extensions.with(csrf))
+                        lifecycle -> lifecycle.withExtension(csrf))
                     .post(
                         "/session/renew",
                         (request, response) -> {
@@ -60,6 +58,6 @@ public final class CsrfProtectionExample {
                           // Return the token for the renewed session binding, not the previous ID.
                           response.setHeader("Cache-Control", "no-store").text(csrf.token(request));
                         },
-                        extensions -> extensions.with(csrf)));
+                        lifecycle -> lifecycle.withExtension(csrf)));
   }
 }

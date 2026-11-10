@@ -176,11 +176,10 @@ public final class McpSecurityExample {
                             .build())
                     .build());
     return new Shoostr()
-        .authentication(authentication)
-        .extensions(mcp)
         .routes(
             routes ->
-                routes.path("/mcp", mcp::routes, extensions -> extensions.with(authentication)));
+                routes.path(
+                    "/mcp", mcp::routes, lifecycle -> lifecycle.withExtension(authentication)));
   }
 
   /** Verified claims from the local demonstration registry, never request-owned objects. */

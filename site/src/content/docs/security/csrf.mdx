@@ -14,11 +14,11 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 Cross-Site Request Forgery (CSRF) protection checks that a browser's state-changing request carries proof associated with its session. This is relevant when the browser sends authentication cookies automatically; the session cookie alone is not that proof.
 
-A native HTTP session stores state across requests. The installed `Csrf` provider adds the proof check to selected routes, using the built-in `Extensions` scope-configuration object to choose that provider. This task establishes the session dependency before protecting cookie-backed writes.
+A native HTTP session stores state across requests. The `Csrf` provider adds the proof check to selected routes, using the built-in `Lifecycle` scope-configuration object to choose that instance. This task establishes the session dependency before protecting cookie-backed writes.
 
 The example uses `BadRequestException` for application input that must receive `400`; the CSRF provider separately decides whether the proof permits a write.
 
-Enable [native sessions](../sessions/), register one `Csrf` provider and select it with `extensions.with(csrf)` on the relevant browser routes. Application defaults must be selected before routes are registered. Use `without(csrf)` only for deliberate exclusions. Inheritance deduplicates the selected owner; even after exclusion, a child cannot replace it with a different instance. Startup fails for a protected endpoint without sessions instead of silently enabling session management.
+Enable [native sessions](../sessions/), create one `Csrf` provider and select it with `lifecycle.withExtension(csrf)` on the relevant browser routes. Shared setup is automatic. For application defaults, use `app.withExtension(csrf)` before routes are registered. Use `lifecycle.withoutExtension(csrf)` only for deliberate exclusions. Inheritance deduplicates the selected owner; even after exclusion, a child cannot replace it with a different instance. Startup fails for a protected endpoint without sessions instead of silently enabling session management.
 
 Deliver `csrf.token(request)` in a response body or page, then submit that value through exactly one `X-CSRF-Token` header or `_csrf` form field on unsafe requests.
 The expected random token stays in the native session, bound to its current identifier; Shoostr does not issue a separate CSRF cookie.

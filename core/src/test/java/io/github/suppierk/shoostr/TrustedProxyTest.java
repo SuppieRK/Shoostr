@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.ForwardedHeaders;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
@@ -277,15 +278,19 @@ class TrustedProxyTest {
         IllegalStateException.class,
         () -> app.trustedProxies(InetAddress::isLoopbackAddress, ForwardedHeaders.X_FORWARDED));
 
-    try (var started =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      started.routes().get("/frozen", (ignored7, response) -> response.text("ok"));
-      started.start();
-      assertThrows(
-          IllegalStateException.class,
-          () -> started.trustedProxies(InetAddress::isLoopbackAddress));
+    {
+      var started =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable startedCleanup = started::close) {
+        started.routes().get("/frozen", (ignored7, response) -> response.text("ok"));
+        started.start();
+        assertThrows(
+            IllegalStateException.class,
+            () -> started.trustedProxies(InetAddress::isLoopbackAddress));
+      }
     }
   }
 

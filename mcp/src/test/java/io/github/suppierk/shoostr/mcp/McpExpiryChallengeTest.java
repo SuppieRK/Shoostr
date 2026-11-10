@@ -80,7 +80,7 @@ class McpExpiryChallengeTest {
             URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
+    app.routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
 
     try (selected;
         var test = TestServer.start(app)) {
@@ -152,30 +152,26 @@ class McpExpiryChallengeTest {
                 URI.create("https://example.com/.well-known/oauth-protected-resource/mcp")),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp)
-        .routes(
-            routes ->
-                routes.path(
-                    "/mcp",
-                    group -> mcp.routes(group, selected),
-                    extensions ->
-                        extensions
-                            .lifecycle()
-                            .beforeResponseFlush(
-                                (request, ignored4) -> {
-                                  if (request.header("X-Expiring").isPresent()) {
-                                    try {
-                                      // Only the verified deadline may release this first flush.
-                                      if (!new CountDownLatch(1).await(10, TimeUnit.SECONDS)) {
-                                        fail(
-                                            "The token deadline must interrupt the held first flush");
-                                      }
-                                    } catch (InterruptedException ignored5) {
-                                      // Let the following MCP flush guard render the expired token.
-                                      interruptedAt.set(Instant.now());
-                                    }
-                                  }
-                                })));
+    app.routes(
+        routes ->
+            routes.path(
+                "/mcp",
+                group -> mcp.routes(group, selected),
+                extensions ->
+                    extensions.beforeResponseFlush(
+                        (request, ignored4) -> {
+                          if (request.header("X-Expiring").isPresent()) {
+                            try {
+                              // Only the verified deadline may release this first flush.
+                              if (!new CountDownLatch(1).await(10, TimeUnit.SECONDS)) {
+                                fail("The token deadline must interrupt the held first flush");
+                              }
+                            } catch (InterruptedException ignored5) {
+                              // Let the following MCP flush guard render the expired token.
+                              interruptedAt.set(Instant.now());
+                            }
+                          }
+                        })));
 
     try (selected;
         var test = TestServer.start(app)) {
@@ -243,22 +239,21 @@ class McpExpiryChallengeTest {
                 URI.create("https://example.com/.well-known/oauth-protected-resource/mcp")),
             transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp)
-        .routes(
-            routes ->
-                routes.path(
-                    "/mcp",
-                    group -> {
-                      group.exception(
-                          AuthenticationRequiredException.class,
-                          (ignored9, ignored10, response) ->
-                              response
-                                  .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Basic")
-                                  .body(
-                                      MediaType.TEXT_PLAIN,
-                                      "Please authenticate".getBytes(StandardCharsets.UTF_8)));
-                      mcp.routes(group);
-                    }));
+    app.routes(
+        routes ->
+            routes.path(
+                "/mcp",
+                group -> {
+                  group.exception(
+                      AuthenticationRequiredException.class,
+                      (ignored9, ignored10, response) ->
+                          response
+                              .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Basic")
+                              .body(
+                                  MediaType.TEXT_PLAIN,
+                                  "Please authenticate".getBytes(StandardCharsets.UTF_8)));
+                  mcp.routes(group);
+                }));
 
     try (var test = TestServer.start(app)) {
       var rejected =
@@ -288,7 +283,7 @@ class McpExpiryChallengeTest {
             : new McpHttpSecurity(Set.of(), identity, (ignored14, ignored15) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var rejected =

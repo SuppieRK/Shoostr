@@ -6,7 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.suppierk.shoostr.Extension;
+import io.github.suppierk.shoostr.Lifecycle;
+import io.github.suppierk.shoostr.RouteExtension;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -55,7 +56,7 @@ class McpInitializationCleanupTest {
     var sessionId = new AtomicReference<String>();
     var mcp = trackedMcp(closes, closed, sessionId);
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
     var fail = new AtomicBoolean(true);
     app.beforeResponseFlush(
         (ignored, ignored2) -> {
@@ -96,7 +97,7 @@ class McpInitializationCleanupTest {
     var sessionId = new AtomicReference<String>();
     var mcp = trackedMcp(closes, closed, sessionId);
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
     var prepared = new CountDownLatch(1);
     var release = new CountDownLatch(1);
     var completed = new CountDownLatch(1);
@@ -153,7 +154,7 @@ class McpInitializationCleanupTest {
             sessionId,
             ignored5 -> Mono.error(new IOException("Native initialization failed")));
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var response =
@@ -194,7 +195,7 @@ class McpInitializationCleanupTest {
                         null,
                         Map.of("unsupported", new Object()))));
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var response =
@@ -225,13 +226,25 @@ class McpInitializationCleanupTest {
     var mcp = trackedMcp(closes, closed, sessionId, Mono::just, release::asMono);
     var app = new Shoostr();
     var closingExtensions = new CountDownLatch(1);
-    class ClosingSignal implements Extension<Void> {
+    class ClosingSignal implements RouteExtension<Object> {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
       @Override
       public void close() {
         closingExtensions.countDown();
       }
     }
-    app.extensions(mcp, new ClosingSignal()).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(
+        routes ->
+            routes
+                .path("/mcp", mcp::routes)
+                .get(
+                    "/cleanup-witness",
+                    (request, response) -> response.status(204),
+                    lifecycle -> lifecycle.withExtension(new ClosingSignal())));
     var fail = new AtomicBoolean(true);
     app.beforeResponseFlush(
         (ignored6, ignored7) -> {
@@ -308,8 +321,7 @@ class McpInitializationCleanupTest {
 
     try (var selected = Executors.newSingleThreadExecutor();
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-      app.extensions(mcp)
-          .routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
+      app.routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
 
       try (var test = TestServer.start(app)) {
         var pending =
@@ -377,7 +389,7 @@ class McpInitializationCleanupTest {
                     ? Mono.<McpSchema.InitializeResult>never().doOnCancel(canceled::countDown)
                     : Mono.just(result));
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var expired =
@@ -422,7 +434,7 @@ class McpInitializationCleanupTest {
     var interrupted = new CountDownLatch(1);
     var mcp = trackedMcp(closes, closed, new AtomicReference<>());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.afterRouteHandler(
         (request, ignored10) -> {
           if (request.header("X-Expiring").isPresent()) {
@@ -508,8 +520,7 @@ class McpInitializationCleanupTest {
 
     try (var selected = Executors.newSingleThreadExecutor();
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {
-      app.extensions(mcp)
-          .routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
+      app.routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
 
       try (var test = TestServer.start(app)) {
         var pending =
@@ -592,7 +603,7 @@ class McpInitializationCleanupTest {
               }
             });
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.afterRequest(
         outcome -> {
           var failure = outcome.applicationFailure();

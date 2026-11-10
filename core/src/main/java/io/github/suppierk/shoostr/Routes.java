@@ -3,7 +3,6 @@ package io.github.suppierk.shoostr;
 import io.github.suppierk.shoostr.http.HttpCharacters;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.HttpStatusCodes;
-import java.io.Closeable;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -27,7 +26,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * Thread-safe route registration with shared path scopes closed when the app starts. Concurrent
  * registrations are serialized by the shared lock; literal segments take matching precedence.
- * Closing any scope ends registration for the entire app; it does not stop the running server.
+ * Registration resources belong to the application; scopes have no separate cleanup operation.
  * Endpoint overloads accept caller-owned executors for the matched lifecycle. Executors must run
  * accepted tasks asynchronously or throw on rejection, never silently discard or run on the caller.
  * Registration rejects shutdown executors and inspectable thread pools using the standard
@@ -39,18 +38,19 @@ import org.jspecify.annotations.Nullable;
  * execution. Request observation context is explicitly attached; arbitrary thread-local state and
  * application-created child tasks are not propagated.
  */
-public final class Routes implements Closeable {
+public final class Routes {
   static final String EMPTY_PATH = "";
   private static final String UNRECOGNIZED_HTTP_METHOD = "Unrecognized HTTP method: ";
   private final Routes root;
+  private final Consumer<Extension> initialize;
   private final @Nullable Routes parent;
   private final Object lock;
   private final String prefix;
   private final int scopeDepth;
   private final ThreadLocal<Integer> activeGroupDepth;
   private final List<Predicate<Request>> conditions;
-  private @Nullable Extensions configuration;
-  private final Set<Extension<?>> installed;
+  private @Nullable Lifecycle configuration;
+  private final Set<Extension> installed;
   private final List<Runnable> notifications;
   private boolean localObservers;
   private final List<RadixRoutes.Endpoint> registrations;
@@ -67,8 +67,13 @@ public final class Routes implements Closeable {
   private boolean configuringDefaults;
   private boolean closed;
 
-  /** Creates the root scope, which owns registration state and the lock shared by all scopes. */
-  Routes() {
+  /**
+   * Creates the root scope with application-owned extension setup and shared registration state.
+   *
+   * @param initialize eagerly establishes an exact extension instance's infrastructure
+   */
+  Routes(Consumer<Extension> initialize) {
+    this.initialize = Objects.requireNonNull(initialize);
     root = this;
     parent = null;
     lock = new Object();
@@ -102,9 +107,10 @@ public final class Routes implements Closeable {
       Routes parent,
       String prefix,
       List<Predicate<Request>> conditions,
-      @Nullable Extensions configuration,
+      @Nullable Lifecycle configuration,
       int scopeDepth) {
     this.parent = parent;
+    initialize = parent.initialize;
     this.root = parent.root;
     lock = root.lock;
     this.prefix = prefix;
@@ -146,36 +152,33 @@ public final class Routes implements Closeable {
   }
 
   /**
-   * Publishes one frozen default scope before registration begins.
+   * Activates one typed application default before endpoint registration.
    *
-   * @param configure application defaults callback
-   * @throws IllegalStateException if defaults or registration have begun, or registration has
-   *     closed
+   * @param extension exact application instance
+   * @param configure typed customization callback
+   * @param <C> provider configuration
+   * @throws IllegalStateException if route registration or another defaults callback has begun
    */
-  void configureDefaults(Consumer<Extensions> configure) {
-    Objects.requireNonNull(configure);
-    Extensions defaults;
+  <C> void activate(ApplicationExtension<C> extension, Consumer<? super C> configure) {
+    Lifecycle defaults;
     synchronized (lock) {
       requireMutable();
-      if (root.configuringDefaults || root.registrationStarted || configuration != null) {
-        throw new IllegalStateException(
-            "Configure extension defaults once before registering routes");
+      if (root.configuringDefaults || root.registrationStarted) {
+        throw new IllegalStateException("Configure application defaults before registering routes");
       }
 
       root.configuringDefaults = true;
       root.activeRegistrations++;
-      defaults = new Extensions(installed, null);
+      defaults = configuration == null ? new Lifecycle(installed, initialize, null) : configuration;
     }
 
     try {
-      configure.accept(defaults);
-      defaults.freeze();
+      defaults.activate(extension, configure);
       synchronized (lock) {
         requireMutable();
         configuration = defaults;
       }
     } finally {
-      defaults.freeze();
       synchronized (lock) {
         root.configuringDefaults = false;
         root.activeRegistrations--;
@@ -232,7 +235,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes path(
-      String path, Consumer<Routes> registration, Consumer<Extensions> configuration) {
+      String path, Consumer<Routes> registration, Consumer<Lifecycle> configuration) {
     return pathScope(path, registration, Objects.requireNonNull(configuration));
   }
 
@@ -247,7 +250,7 @@ public final class Routes implements Closeable {
   @SuppressWarnings(
       "java:S2093") // Closing a borrowed scope would close the root's shared registration.
   private Routes pathScope(
-      String path, Consumer<Routes> registration, @Nullable Consumer<Extensions> configure) {
+      String path, Consumer<Routes> registration, @Nullable Consumer<Lifecycle> configure) {
     String group;
     int previousDepth = groupDepth();
     int nextDepth = nextGroupDepth(previousDepth);
@@ -263,13 +266,13 @@ public final class Routes implements Closeable {
       root.activeRegistrations++;
     }
     activeGroupDepth.set(nextDepth);
-    Extensions local = null;
+    Lifecycle local = null;
 
     try {
       local =
           configuration == null && configure == null
               ? null
-              : new Extensions(installed, configuration);
+              : new Lifecycle(installed, initialize, configuration);
       if (local != null) {
         synchronized (lock) {
           requireMutable();
@@ -367,7 +370,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes get(
-      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+      String path, ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.GET,
         path,
@@ -396,7 +399,7 @@ public final class Routes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public Routes get(ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+  public Routes get(ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.GET,
         EMPTY_PATH,
@@ -427,7 +430,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes post(
-      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+      String path, ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.POST,
         path,
@@ -456,8 +459,7 @@ public final class Routes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public Routes post(
-      ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+  public Routes post(ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.POST,
         EMPTY_PATH,
@@ -488,7 +490,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes put(
-      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+      String path, ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.PUT,
         path,
@@ -517,7 +519,7 @@ public final class Routes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public Routes put(ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+  public Routes put(ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.PUT,
         EMPTY_PATH,
@@ -548,7 +550,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes patch(
-      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+      String path, ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.PATCH,
         path,
@@ -578,7 +580,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes patch(
-      ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+      ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.PATCH,
         EMPTY_PATH,
@@ -609,7 +611,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes delete(
-      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+      String path, ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.DELETE,
         path,
@@ -639,7 +641,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes delete(
-      ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+      ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.DELETE,
         EMPTY_PATH,
@@ -670,7 +672,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes head(
-      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+      String path, ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.HEAD,
         path,
@@ -699,8 +701,7 @@ public final class Routes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public Routes head(
-      ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+  public Routes head(ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.HEAD,
         EMPTY_PATH,
@@ -732,7 +733,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes options(
-      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+      String path, ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.OPTIONS,
         path,
@@ -762,7 +763,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes options(
-      ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+      ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(
         HttpMethods.OPTIONS,
         EMPTY_PATH,
@@ -793,7 +794,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes sse(
-      String path, ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+      String path, ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerSse(
         path, Objects.requireNonNull(executor), handler, Objects.requireNonNull(configuration));
   }
@@ -817,7 +818,7 @@ public final class Routes implements Closeable {
    * @param configuration local extension configuration
    * @return this scope
    */
-  public Routes sse(ExecutorService executor, Handler handler, Consumer<Extensions> configuration) {
+  public Routes sse(ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return registerSse(
         EMPTY_PATH,
         Objects.requireNonNull(executor),
@@ -855,7 +856,7 @@ public final class Routes implements Closeable {
       String path,
       ExecutorService executor,
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     return registerWebsocket(
         path,
         Objects.requireNonNull(executor),
@@ -889,7 +890,7 @@ public final class Routes implements Closeable {
   public Routes websocket(
       ExecutorService executor,
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     return registerWebsocket(
         EMPTY_PATH,
         Objects.requireNonNull(executor),
@@ -925,7 +926,7 @@ public final class Routes implements Closeable {
       String path,
       ExecutorService executor,
       Handler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     return registerRoute(
         method,
         path,
@@ -959,7 +960,7 @@ public final class Routes implements Closeable {
       HttpMethods method,
       ExecutorService executor,
       Handler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     return registerRoute(
         method,
         EMPTY_PATH,
@@ -1001,7 +1002,7 @@ public final class Routes implements Closeable {
       String path,
       ExecutorService executor,
       Handler handler,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     return route(
         HttpMethods.httpMethod(Objects.requireNonNull(method))
             .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method)),
@@ -1038,10 +1039,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes route(
-      String method,
-      ExecutorService executor,
-      Handler handler,
-      Consumer<Extensions> configuration) {
+      String method, ExecutorService executor, Handler handler, Consumer<Lifecycle> configuration) {
     return route(
         HttpMethods.httpMethod(Objects.requireNonNull(method))
             .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method)),
@@ -1058,7 +1056,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes get(Handler handler, Consumer<Extensions> configuration) {
+  public Routes get(Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.GET, EMPTY_PATH, handler, configuration);
   }
 
@@ -1070,7 +1068,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes get(String path, Handler handler, Consumer<Extensions> configuration) {
+  public Routes get(String path, Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.GET, path, handler, configuration);
   }
 
@@ -1081,7 +1079,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes post(Handler handler, Consumer<Extensions> configuration) {
+  public Routes post(Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.POST, EMPTY_PATH, handler, configuration);
   }
 
@@ -1093,7 +1091,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes post(String path, Handler handler, Consumer<Extensions> configuration) {
+  public Routes post(String path, Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.POST, path, handler, configuration);
   }
 
@@ -1104,7 +1102,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes put(Handler handler, Consumer<Extensions> configuration) {
+  public Routes put(Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.PUT, EMPTY_PATH, handler, configuration);
   }
 
@@ -1116,7 +1114,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes put(String path, Handler handler, Consumer<Extensions> configuration) {
+  public Routes put(String path, Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.PUT, path, handler, configuration);
   }
 
@@ -1127,7 +1125,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes patch(Handler handler, Consumer<Extensions> configuration) {
+  public Routes patch(Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.PATCH, EMPTY_PATH, handler, configuration);
   }
 
@@ -1139,7 +1137,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes patch(String path, Handler handler, Consumer<Extensions> configuration) {
+  public Routes patch(String path, Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.PATCH, path, handler, configuration);
   }
 
@@ -1150,7 +1148,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes delete(Handler handler, Consumer<Extensions> configuration) {
+  public Routes delete(Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.DELETE, EMPTY_PATH, handler, configuration);
   }
 
@@ -1162,7 +1160,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes delete(String path, Handler handler, Consumer<Extensions> configuration) {
+  public Routes delete(String path, Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.DELETE, path, handler, configuration);
   }
 
@@ -1173,7 +1171,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes head(Handler handler, Consumer<Extensions> configuration) {
+  public Routes head(Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.HEAD, EMPTY_PATH, handler, configuration);
   }
 
@@ -1185,7 +1183,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes head(String path, Handler handler, Consumer<Extensions> configuration) {
+  public Routes head(String path, Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.HEAD, path, handler, configuration);
   }
 
@@ -1196,7 +1194,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes options(Handler handler, Consumer<Extensions> configuration) {
+  public Routes options(Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.OPTIONS, EMPTY_PATH, handler, configuration);
   }
 
@@ -1208,7 +1206,7 @@ public final class Routes implements Closeable {
    * @param configuration typed local configuration
    * @return this scope
    */
-  public Routes options(String path, Handler handler, Consumer<Extensions> configuration) {
+  public Routes options(String path, Handler handler, Consumer<Lifecycle> configuration) {
     return route(HttpMethods.OPTIONS, path, handler, configuration);
   }
 
@@ -1309,7 +1307,7 @@ public final class Routes implements Closeable {
    * @param configuration endpoint configuration
    * @return this scope
    */
-  public Routes sse(String path, Handler handler, Consumer<Extensions> configuration) {
+  public Routes sse(String path, Handler handler, Consumer<Lifecycle> configuration) {
     return registerSse(path, null, handler, Objects.requireNonNull(configuration));
   }
 
@@ -1320,7 +1318,7 @@ public final class Routes implements Closeable {
    * @param configuration endpoint configuration
    * @return this scope
    */
-  public Routes sse(Handler handler, Consumer<Extensions> configuration) {
+  public Routes sse(Handler handler, Consumer<Lifecycle> configuration) {
     return sse(EMPTY_PATH, handler, configuration);
   }
 
@@ -1337,7 +1335,7 @@ public final class Routes implements Closeable {
       String path,
       @Nullable ExecutorService executor,
       Handler handler,
-      @Nullable Consumer<Extensions> configure) {
+      @Nullable Consumer<Lifecycle> configure) {
     Objects.requireNonNull(handler);
     return registerRoute(
         HttpMethods.GET,
@@ -1390,7 +1388,7 @@ public final class Routes implements Closeable {
   public Routes websocket(
       String path,
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     return registerWebsocket(path, null, listenerFactory, Objects.requireNonNull(configuration));
   }
 
@@ -1403,7 +1401,7 @@ public final class Routes implements Closeable {
    */
   public Routes websocket(
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
-      Consumer<Extensions> configuration) {
+      Consumer<Lifecycle> configuration) {
     return websocket(EMPTY_PATH, listenerFactory, configuration);
   }
 
@@ -1421,7 +1419,7 @@ public final class Routes implements Closeable {
       String path,
       @Nullable ExecutorService executor,
       BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
-      @Nullable Consumer<Extensions> configure) {
+      @Nullable Consumer<Lifecycle> configure) {
     Objects.requireNonNull(listenerFactory);
     RadixRoutes.Endpoint endpoint;
     synchronized (lock) {
@@ -1469,7 +1467,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes websocket(
-      String path, Consumer<WebSocket> configuration, Consumer<Extensions> extensions) {
+      String path, Consumer<WebSocket> configuration, Consumer<Lifecycle> extensions) {
     return registerManagedWebsocket(path, null, configuration, Objects.requireNonNull(extensions));
   }
 
@@ -1480,7 +1478,7 @@ public final class Routes implements Closeable {
    * @param extensions local handshake extension configuration
    * @return this scope
    */
-  public Routes websocket(Consumer<WebSocket> configuration, Consumer<Extensions> extensions) {
+  public Routes websocket(Consumer<WebSocket> configuration, Consumer<Lifecycle> extensions) {
     return websocket(EMPTY_PATH, configuration, extensions);
   }
 
@@ -1512,7 +1510,7 @@ public final class Routes implements Closeable {
       String path,
       ExecutorService executor,
       Consumer<WebSocket> configuration,
-      Consumer<Extensions> extensions) {
+      Consumer<Lifecycle> extensions) {
     return registerManagedWebsocket(
         path, Objects.requireNonNull(executor), configuration, Objects.requireNonNull(extensions));
   }
@@ -1539,9 +1537,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes websocket(
-      ExecutorService executor,
-      Consumer<WebSocket> configuration,
-      Consumer<Extensions> extensions) {
+      ExecutorService executor, Consumer<WebSocket> configuration, Consumer<Lifecycle> extensions) {
     return websocket(EMPTY_PATH, executor, configuration, extensions);
   }
 
@@ -1558,7 +1554,7 @@ public final class Routes implements Closeable {
       String path,
       @Nullable ExecutorService executor,
       Consumer<WebSocket> configuration,
-      @Nullable Consumer<Extensions> extensions) {
+      @Nullable Consumer<Lifecycle> extensions) {
     return registerManagedWebsocket(path, executor, new WebSocket(), configuration, extensions);
   }
 
@@ -1577,7 +1573,7 @@ public final class Routes implements Closeable {
       @Nullable ExecutorService executor,
       WebSocket callbacks,
       Consumer<WebSocket> configuration,
-      @Nullable Consumer<Extensions> extensions) {
+      @Nullable Consumer<Lifecycle> extensions) {
     Objects.requireNonNull(configuration);
     Objects.requireNonNull(callbacks);
     RadixRoutes.Endpoint endpoint;
@@ -1758,7 +1754,7 @@ public final class Routes implements Closeable {
    * @return this scope
    */
   public Routes route(
-      HttpMethods method, String path, Handler handler, Consumer<Extensions> configuration) {
+      HttpMethods method, String path, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(method, path, null, handler, Objects.requireNonNull(configuration));
   }
 
@@ -1778,7 +1774,7 @@ public final class Routes implements Closeable {
       String path,
       @Nullable ExecutorService executor,
       Handler handler,
-      @Nullable Consumer<Extensions> configure) {
+      @Nullable Consumer<Lifecycle> configure) {
     RadixRoutes.Endpoint endpoint;
     synchronized (lock) {
       requireMutable();
@@ -1802,7 +1798,7 @@ public final class Routes implements Closeable {
   @SuppressWarnings(
       "java:S1181") // Roll back the reserved shape even when configuration throws Error.
   private Routes registerEndpoint(
-      RadixRoutes.Endpoint endpoint, @Nullable Consumer<Extensions> configure, boolean websocket) {
+      RadixRoutes.Endpoint endpoint, @Nullable Consumer<Lifecycle> configure, boolean websocket) {
     var keys = websocket ? websocketRouteKeys : routeKeys;
     var entries = websocket ? websocketRegistrations : registrations;
     String key = websocket ? endpoint.pattern() : endpoint.method() + " " + endpoint.pattern();
@@ -1881,7 +1877,7 @@ public final class Routes implements Closeable {
    * @throws IllegalArgumentException if the method is unrecognized
    */
   public Routes route(
-      String method, String path, Handler handler, Consumer<Extensions> configuration) {
+      String method, String path, Handler handler, Consumer<Lifecycle> configuration) {
     Objects.requireNonNull(method);
     return route(
         HttpMethods.httpMethod(method)
@@ -1899,7 +1895,7 @@ public final class Routes implements Closeable {
    * @param configuration local configuration
    * @return this scope
    */
-  public Routes route(HttpMethods method, Handler handler, Consumer<Extensions> configuration) {
+  public Routes route(HttpMethods method, Handler handler, Consumer<Lifecycle> configuration) {
     return route(method, EMPTY_PATH, handler, configuration);
   }
 
@@ -1911,7 +1907,7 @@ public final class Routes implements Closeable {
    * @param configuration local configuration
    * @return this scope
    */
-  public Routes route(String method, Handler handler, Consumer<Extensions> configuration) {
+  public Routes route(String method, Handler handler, Consumer<Lifecycle> configuration) {
     return route(method, EMPTY_PATH, handler, configuration);
   }
 
@@ -2162,16 +2158,15 @@ public final class Routes implements Closeable {
 
   /**
    * Permanently ends registration for the root and every child scope and releases pending endpoint
-   * entries and duplicate-detection keys. Repeated calls are harmless, including calls through
-   * different scopes. Closing before startup prevents the app from compiling its routes; closing
-   * after startup leaves the compiled router and running server intact.
+   * entries and duplicate-detection keys. The application calls this during cleanup, after ending
+   * registration or transferring static resources to the compiled router. Repeated disposal is
+   * harmless.
    *
    * <p>Active callbacks are not awaited. Their subsequent registration attempts fail, and their
    * finally blocks still update the callback count. Clearing entries releases references but does
    * not shrink the collections' backing capacity.
    */
-  @Override
-  public void close() {
+  void disposeRegistration() {
     synchronized (lock) {
       root.closed = true;
       registrations.clear();
@@ -2213,34 +2208,41 @@ public final class Routes implements Closeable {
   }
 
   /**
-   * Validates a batch without publishing it or invoking provider code.
+   * Reads completed infrastructure state by exact identity.
    *
-   * @param extensions capabilities to install
-   * @throws IllegalArgumentException if an instance occurs twice or is already installed
+   * @param extension selected instance
+   * @return whether setup completed
    */
-  void validateInstallation(List<Extension<?>> extensions) {
+  boolean installed(Extension extension) {
+    synchronized (lock) {
+      return installed.contains(extension);
+    }
+  }
+
+  /**
+   * Checks registration before invoking ownership or setup callbacks.
+   *
+   * @param extension exact capability
+   * @throws IllegalArgumentException if the instance is already installed
+   */
+  void validateInstallation(Extension extension) {
     synchronized (lock) {
       requireMutable();
-      var unique = Collections.newSetFromMap(new IdentityHashMap<Extension<?>, Boolean>());
-      for (var extension : extensions) {
-        if (!unique.add(extension) || installed.contains(extension)) {
-          throw new IllegalArgumentException("An extension instance can only be installed once");
-        }
+      if (installed.contains(extension)) {
+        throw new IllegalArgumentException("An extension instance can only be installed once");
       }
     }
   }
 
   /**
-   * Publishes a claimed batch, rechecking registration after provider ownership callbacks.
+   * Publishes completed infrastructure after rechecking registration.
    *
-   * @param extensions claimed capabilities to install
-   * @throws IllegalArgumentException if an instance occurs twice or is already installed
-   * @throws IllegalStateException if route registration has ended
+   * @param extension claimed and configured capability
    */
-  void install(List<Extension<?>> extensions) {
+  void install(Extension extension) {
     synchronized (lock) {
-      validateInstallation(extensions);
-      installed.addAll(extensions);
+      validateInstallation(extension);
+      installed.add(extension);
     }
   }
 
@@ -2273,13 +2275,13 @@ public final class Routes implements Closeable {
   private @Nullable EndpointBehavior behavior(
       @Nullable HttpMethods method,
       String template,
-      @Nullable Consumer<Extensions> configure,
+      @Nullable Consumer<Lifecycle> configure,
       List<Runnable> facts) {
     if (configuration == null && configure == null && conditions.isEmpty()) {
       return null;
     }
 
-    var local = new Extensions(installed, configuration);
+    var local = new Lifecycle(installed, initialize, configuration);
 
     try {
       if (configure != null) {

@@ -62,7 +62,8 @@ app unstarted for live tests. Pass a listening port to `application(int)` to con
 the native listener and local public origin.
 
 Configuration stays native: `Mcp.sync(security, transport -> McpServer.sync(transport)
-...build())`, then `app.extensions(mcp)` and `routes.path("/mcp", mcp::routes)`.
+...build())`, then mount it with `routes.path("/mcp", mcp::routes)`.
+Route selection establishes shared setup automatically.
 The app owns the native server; `mcp.server()` is borrowed management access, not an
 independently closeable resource. `McpExample` defines HTTP routes inline;
 `McpConfiguration` owns extension setup, and `CompatibilityFixtures` contains native

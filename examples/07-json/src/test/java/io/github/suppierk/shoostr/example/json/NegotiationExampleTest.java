@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.stream.Stream;
@@ -21,6 +22,7 @@ class NegotiationExampleTest {
   @MethodSource("acceptedRepresentations")
   void sendsBytesMatchingTheSelectedRepresentation(String accept, String mediaType, String body)
       throws Exception {
+
     try (var test = TestServer.start(NegotiationExample.application())) {
       var response = test.send(request -> request.path("/greeting").header("Accept", accept));
       assertEquals(200, response.statusCode());
@@ -33,6 +35,7 @@ class NegotiationExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"application/xml", "", "application/json;q=0, text/plain;q=0"})
   void rejectsAnExplicitPreferenceThatAcceptsNeitherRepresentation(String accept) throws Exception {
+
     try (var test = TestServer.start(NegotiationExample.application())) {
       var response = test.send(request -> request.path("/greeting").header("Accept", accept));
       assertEquals(406, response.statusCode());
@@ -43,6 +46,7 @@ class NegotiationExampleTest {
 
   @Test
   void rejectsMalformedAcceptBeforeAddingVary() throws Exception {
+
     try (var test = TestServer.start(NegotiationExample.application())) {
       var response =
           test.send(request -> request.path("/greeting").header("Accept", "text/plain;q=broken"));
@@ -56,19 +60,24 @@ class NegotiationExampleTest {
   @CsvSource({"application/json, 200", "application/xml, 406"})
   void preservesAnExistingVaryFieldOnSuccessAndRejection(String accept, int status)
       throws Exception {
-    try (var app = NegotiationExample.application()) {
-      app.onRequestHeaders((ignored, response) -> response.addHeader("Vary", "Origin"));
+    {
+      var app = NegotiationExample.application();
 
-      try (var test = TestServer.start(app)) {
-        var response = test.send(request -> request.path("/greeting").header("Accept", accept));
-        assertEquals(status, response.statusCode());
-        assertEquals(List.of("Origin", "Accept"), response.headers().allValues("Vary"));
+      try (Closeable appCleanup = app::close) {
+        app.onRequestHeaders((ignored, response) -> response.addHeader("Vary", "Origin"));
+
+        try (var test = TestServer.start(app)) {
+          var response = test.send(request -> request.path("/greeting").header("Accept", accept));
+          assertEquals(status, response.statusCode());
+          assertEquals(List.of("Origin", "Accept"), response.headers().allValues("Vary"));
+        }
       }
     }
   }
 
   @Test
   void selectsTheFirstRepresentationWhenAcceptIsAbsent() throws Exception {
+
     try (var test = TestServer.start(NegotiationExample.application())) {
       var response = test.send(request -> request.path("/greeting"));
       assertEquals(200, response.statusCode());

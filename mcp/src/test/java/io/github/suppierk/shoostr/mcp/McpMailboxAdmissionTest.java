@@ -210,7 +210,7 @@ class McpMailboxAdmissionTest {
   private static HttpResponse<String> withStream(Consumer<McpStreamableServerTransport> exercise)
       throws Exception {
     var mcp = applicationTransport(exercise);
-    var app = new Shoostr().extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    var app = new Shoostr().routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var initialized =

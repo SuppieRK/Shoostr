@@ -17,6 +17,7 @@ import io.github.suppierk.shoostr.http.exceptions.ContentTooLargeException;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
@@ -73,37 +74,41 @@ class BufferedRequestLifecycleTest {
   })
   void advertisesConnectionClosureWhenFiniteOutputLeavesRequestBytesUnavailable(
       int status, boolean afterFlush, String protocol) throws Exception {
-    try (var app = new Shoostr()) {
-      if (afterFlush) {
-        app.afterResponseFlush((request, response) -> {});
-      }
+    {
+      var app = new Shoostr();
 
-      app.routes()
-          .post(
-              "/finite",
-              (request, response) -> {
-                if (status == 307) {
-                  response.redirect("/next", HttpStatusCodes.TEMPORARY_REDIRECT);
-                } else {
-                  response.text("ok");
-                }
-              });
+      try (Closeable appCleanup = app::close) {
+        if (afterFlush) {
+          app.afterResponseFlush((request, response) -> {});
+        }
 
-      try (var test = TestServer.start(app);
-          var socket = new Socket()) {
-        connect(socket, test.baseUri().getPort());
-        socket
-            .getOutputStream()
-            .write(
-                ("POST /finite "
-                        + protocol
-                        + "\r\nHost: localhost\r\nContent-Length: 32\r\nConnection: keep-alive\r\n\r\n")
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var result = receive(HttpTester.from(socket.getInputStream()));
-        assertEquals(status, result.getStatus());
-        assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
-        assertEquals(-1, socket.getInputStream().read());
+        app.routes()
+            .post(
+                "/finite",
+                (request, response) -> {
+                  if (status == 307) {
+                    response.redirect("/next", HttpStatusCodes.TEMPORARY_REDIRECT);
+                  } else {
+                    response.text("ok");
+                  }
+                });
+
+        try (var test = TestServer.start(app);
+            var socket = new Socket()) {
+          connect(socket, test.baseUri().getPort());
+          socket
+              .getOutputStream()
+              .write(
+                  ("POST /finite "
+                          + protocol
+                          + "\r\nHost: localhost\r\nContent-Length: 32\r\nConnection: keep-alive\r\n\r\n")
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var result = receive(HttpTester.from(socket.getInputStream()));
+          assertEquals(status, result.getStatus());
+          assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
+          assertEquals(-1, socket.getInputStream().read());
+        }
       }
     }
   }
@@ -115,27 +120,31 @@ class BufferedRequestLifecycleTest {
     var file = temporaryDirectory.resolve("finite.txt");
     Files.writeString(file, "file content");
 
-    try (var app = new Shoostr()) {
-      if (afterFlush) {
-        app.afterResponseFlush((request, response) -> {});
-      }
+    {
+      var app = new Shoostr();
 
-      app.routes().post("/file", (request, response) -> response.file(file, "text/plain"));
+      try (Closeable appCleanup1 = app::close) {
+        if (afterFlush) {
+          app.afterResponseFlush((request, response) -> {});
+        }
 
-      try (var test = TestServer.start(app);
-          var socket = new Socket()) {
-        connect(socket, test.baseUri().getPort());
-        socket
-            .getOutputStream()
-            .write(
-                "POST /file HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n"
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var result = receive(HttpTester.from(socket.getInputStream()));
-        assertEquals(200, result.getStatus());
-        assertEquals("file content", result.getContent());
-        assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
-        assertEquals(-1, socket.getInputStream().read());
+        app.routes().post("/file", (request, response) -> response.file(file, "text/plain"));
+
+        try (var test = TestServer.start(app);
+            var socket = new Socket()) {
+          connect(socket, test.baseUri().getPort());
+          socket
+              .getOutputStream()
+              .write(
+                  "POST /file HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n"
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var result = receive(HttpTester.from(socket.getInputStream()));
+          assertEquals(200, result.getStatus());
+          assertEquals("file content", result.getContent());
+          assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
+          assertEquals(-1, socket.getInputStream().read());
+        }
       }
     }
   }
@@ -146,37 +155,41 @@ class BufferedRequestLifecycleTest {
       throws Exception {
     var observed = new CompletableFuture<String>();
 
-    try (var app = new Shoostr()) {
-      app.afterResponseFlush(
-          (request, response) -> {
-            if (streamed) {
-              try (var input = request.input()) {
-                observed.complete(new String(input.readAllBytes(), StandardCharsets.US_ASCII));
-              }
-            } else {
-              observed.complete(request.bodyText());
-            }
-          });
-      app.routes().post("/body", (request, response) -> response.text("ok"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app);
-          var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
-        var bytes = PAYLOAD.getBytes(StandardCharsets.US_ASCII);
-        var publisher =
-            chunked
-                ? HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))
-                : HttpRequest.BodyPublishers.ofByteArray(bytes);
-        var result =
-            client.send(
-                HttpRequest.newBuilder(test.baseUri().resolve("body"))
-                    .timeout(Duration.ofSeconds(3))
-                    .POST(publisher)
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("ok", result.body());
-        assertEquals("close", result.headers().firstValue("Connection").orElseThrow());
-        assertEquals(PAYLOAD, observed.get(3, TimeUnit.SECONDS));
+      try (Closeable appCleanup2 = app::close) {
+        app.afterResponseFlush(
+            (request, response) -> {
+              if (streamed) {
+                try (var input = request.input()) {
+                  observed.complete(new String(input.readAllBytes(), StandardCharsets.US_ASCII));
+                }
+              } else {
+                observed.complete(request.bodyText());
+              }
+            });
+        app.routes().post("/body", (request, response) -> response.text("ok"));
+
+        try (var test = TestServer.start(app);
+            var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+          var bytes = PAYLOAD.getBytes(StandardCharsets.US_ASCII);
+          var publisher =
+              chunked
+                  ? HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))
+                  : HttpRequest.BodyPublishers.ofByteArray(bytes);
+          var result =
+              client.send(
+                  HttpRequest.newBuilder(test.baseUri().resolve("body"))
+                      .timeout(Duration.ofSeconds(3))
+                      .POST(publisher)
+                      .build(),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("ok", result.body());
+          assertEquals("close", result.headers().firstValue("Connection").orElseThrow());
+          assertEquals(PAYLOAD, observed.get(3, TimeUnit.SECONDS));
+        }
       }
     }
   }
@@ -188,45 +201,50 @@ class BufferedRequestLifecycleTest {
     var before = new CompletableFuture<String>();
     var after = new CompletableFuture<String>();
 
-    try (var app = new Shoostr()) {
-      app.beforeResponseFlush((request, response) -> before.complete(request.bodyText()));
-      if (afterFlush) {
-        app.afterResponseFlush((request, response) -> after.complete(request.bodyText()));
-      }
+    {
+      var app = new Shoostr();
 
-      app.routes()
-          .post("/first", (request, response) -> response.text(peerPort(request)))
-          .get("/first", (request, response) -> response.text(peerPort(request)))
-          .get("/next", (request, response) -> response.text(peerPort(request)));
-
-      try (var test = TestServer.start(app);
-          var socket = new Socket()) {
-        connect(socket, test.baseUri().getPort());
-        var input = HttpTester.from(socket.getInputStream());
-        var outgoing =
-            post
-                ? "POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n" + PAYLOAD
-                : "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n";
-        socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var first = receive(input);
-        assertEquals(200, first.getStatus());
-        assertNull(first.get(HttpHeaders.CONNECTION.value()));
-        assertEquals(post ? PAYLOAD : "", before.get(3, TimeUnit.SECONDS));
+      try (Closeable appCleanup3 = app::close) {
+        app.beforeResponseFlush((request, response) -> before.complete(request.bodyText()));
         if (afterFlush) {
-          assertEquals(post ? PAYLOAD : "", after.get(3, TimeUnit.SECONDS));
+          app.afterResponseFlush((request, response) -> after.complete(request.bodyText()));
         }
 
-        socket
-            .getOutputStream()
-            .write(
-                "GET /next HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var next = receive(input);
-        assertEquals(200, next.getStatus());
-        assertEquals(first.getContent(), next.getContent());
-        assertEquals(Integer.toString(socket.getLocalPort()), next.getContent());
+        app.routes()
+            .post("/first", (request, response) -> response.text(peerPort(request)))
+            .get("/first", (request, response) -> response.text(peerPort(request)))
+            .get("/next", (request, response) -> response.text(peerPort(request)));
+
+        try (var test = TestServer.start(app);
+            var socket = new Socket()) {
+          connect(socket, test.baseUri().getPort());
+          var input = HttpTester.from(socket.getInputStream());
+          var outgoing =
+              post
+                  ? "POST /first HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n"
+                      + PAYLOAD
+                  : "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\n";
+          socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var first = receive(input);
+          assertEquals(200, first.getStatus());
+          assertNull(first.get(HttpHeaders.CONNECTION.value()));
+          assertEquals(post ? PAYLOAD : "", before.get(3, TimeUnit.SECONDS));
+          if (afterFlush) {
+            assertEquals(post ? PAYLOAD : "", after.get(3, TimeUnit.SECONDS));
+          }
+
+          socket
+              .getOutputStream()
+              .write(
+                  "GET /next HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var next = receive(input);
+          assertEquals(200, next.getStatus());
+          assertEquals(first.getContent(), next.getContent());
+          assertEquals(Integer.toString(socket.getLocalPort()), next.getContent());
+        }
       }
     }
   }
@@ -235,29 +253,33 @@ class BufferedRequestLifecycleTest {
   void closesConsumedChunkedInputWhenPostFlushCallbacksRetainRequestAccess() throws Exception {
     var observed = new CompletableFuture<String>();
 
-    try (var app = new Shoostr()) {
-      app.beforeResponseFlush((request, response) -> request.bodyText());
-      app.afterResponseFlush((request, response) -> observed.complete(request.bodyText()));
-      app.routes().post("/body", (request, response) -> response.text("ok"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app);
-          var socket = new Socket()) {
-        connect(socket, test.baseUri().getPort());
-        socket
-            .getOutputStream()
-            .write(
-                ("POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
-                        + "20\r\n"
-                        + PAYLOAD
-                        + "\r\n0\r\n\r\n")
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var result = receive(HttpTester.from(socket.getInputStream()));
-        assertEquals(200, result.getStatus());
-        assertEquals("ok", result.getContent());
-        assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
-        assertEquals(PAYLOAD, observed.get(3, TimeUnit.SECONDS));
-        assertEquals(-1, socket.getInputStream().read());
+      try (Closeable appCleanup4 = app::close) {
+        app.beforeResponseFlush((request, response) -> request.bodyText());
+        app.afterResponseFlush((request, response) -> observed.complete(request.bodyText()));
+        app.routes().post("/body", (request, response) -> response.text("ok"));
+
+        try (var test = TestServer.start(app);
+            var socket = new Socket()) {
+          connect(socket, test.baseUri().getPort());
+          socket
+              .getOutputStream()
+              .write(
+                  ("POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
+                          + "20\r\n"
+                          + PAYLOAD
+                          + "\r\n0\r\n\r\n")
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var result = receive(HttpTester.from(socket.getInputStream()));
+          assertEquals(200, result.getStatus());
+          assertEquals("ok", result.getContent());
+          assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
+          assertEquals(PAYLOAD, observed.get(3, TimeUnit.SECONDS));
+          assertEquals(-1, socket.getInputStream().read());
+        }
       }
     }
   }
@@ -267,40 +289,44 @@ class BufferedRequestLifecycleTest {
   void leavesRequestInputReadableAfterAnEarlyStreamingFlush(boolean afterFlush) throws Exception {
     var flushed = new CompletableFuture<Void>();
 
-    try (var app = new Shoostr()) {
-      if (afterFlush) {
-        app.afterResponseFlush((request, response) -> {});
-      }
+    {
+      var app = new Shoostr();
 
-      app.routes()
-          .post(
-              "/stream",
-              (request, response) -> {
-                var output = response.startStream("text/plain");
-                output.write("A");
-                output.flush();
-                flushed.complete(null);
+      try (Closeable appCleanup5 = app::close) {
+        if (afterFlush) {
+          app.afterResponseFlush((request, response) -> {});
+        }
 
-                try (var input = request.input()) {
-                  output.write(input.readAllBytes());
-                }
-              });
+        app.routes()
+            .post(
+                "/stream",
+                (request, response) -> {
+                  var output = response.startStream("text/plain");
+                  output.write("A");
+                  output.flush();
+                  flushed.complete(null);
 
-      try (var test = TestServer.start(app);
-          var socket = new Socket()) {
-        connect(socket, test.baseUri().getPort());
-        socket
-            .getOutputStream()
-            .write(
-                "POST /stream HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n"
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        flushed.get(3, TimeUnit.SECONDS);
-        socket.getOutputStream().write("1\r\ny\r\n0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var result = receive(HttpTester.from(socket.getInputStream()));
-        assertEquals(200, result.getStatus());
-        assertEquals("Axy", result.getContent());
+                  try (var input = request.input()) {
+                    output.write(input.readAllBytes());
+                  }
+                });
+
+        try (var test = TestServer.start(app);
+            var socket = new Socket()) {
+          connect(socket, test.baseUri().getPort());
+          socket
+              .getOutputStream()
+              .write(
+                  "POST /stream HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n"
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          flushed.get(3, TimeUnit.SECONDS);
+          socket.getOutputStream().write("1\r\ny\r\n0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var result = receive(HttpTester.from(socket.getInputStream()));
+          assertEquals(200, result.getStatus());
+          assertEquals("Axy", result.getContent());
+        }
       }
     }
   }
@@ -312,51 +338,55 @@ class BufferedRequestLifecycleTest {
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
 
-    try (var app = new Shoostr(configuredOptions);
-        var client = new HTTP2Client()) {
+    {
+      var app = new Shoostr(configuredOptions);
 
-      if (afterFlush) {
-        app.afterResponseFlush((request, response) -> {});
-      }
+      try (Closeable appCleanup6 = app::close;
+          var client = new HTTP2Client()) {
 
-      app.routes()
-          .post(
-              "/early",
-              (request, response) ->
-                  response.setHeader("X-Peer-Port", peerPort(request)).text("ok"))
-          .get("/next", (request, response) -> response.text(peerPort(request)));
+        if (afterFlush) {
+          app.afterResponseFlush((request, response) -> {});
+        }
 
-      try (var test = TestServer.start(app)) {
-        client.setConnectTimeout(3000);
-        client.setIdleTimeout(3000);
-        client.start();
-        var connection =
-            client
-                .connect(
-                    null,
-                    new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
-                    new Session.Listener() {})
-                .get(3, TimeUnit.SECONDS);
-        var response = new Http2Response();
-        var request =
-            new MetaData.Request(
-                "POST",
-                HttpURI.from(test.baseUri().resolve("early").toString()),
-                HttpVersion.HTTP_2,
-                HttpFields.build().put(HttpHeaders.CONTENT_LENGTH.value(), "32"));
-        connection
-            .newStream(new HeadersFrame(request, null, false), response)
-            .get(3, TimeUnit.SECONDS);
-        var headers = response.headers.get(3, TimeUnit.SECONDS);
-        assertEquals(200, headers.getStatus());
-        assertEquals(HttpVersion.HTTP_2, headers.getHttpVersion());
-        assertNull(headers.getHttpFields().get(HttpHeaders.CONNECTION.value()));
-        assertEquals("ok", response.body.get(3, TimeUnit.SECONDS));
+        app.routes()
+            .post(
+                "/early",
+                (request, response) ->
+                    response.setHeader("X-Peer-Port", peerPort(request)).text("ok"))
+            .get("/next", (request, response) -> response.text(peerPort(request)));
 
-        var next = http2Request(connection, app, "GET", "/next", new byte[0]);
-        assertEquals(200, next.headers.get(3, TimeUnit.SECONDS).getStatus());
-        assertEquals(
-            headers.getHttpFields().get("X-Peer-Port"), next.body.get(3, TimeUnit.SECONDS));
+        try (var test = TestServer.start(app)) {
+          client.setConnectTimeout(3000);
+          client.setIdleTimeout(3000);
+          client.start();
+          var connection =
+              client
+                  .connect(
+                      null,
+                      new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
+                      new Session.Listener() {})
+                  .get(3, TimeUnit.SECONDS);
+          var response = new Http2Response();
+          var request =
+              new MetaData.Request(
+                  "POST",
+                  HttpURI.from(test.baseUri().resolve("early").toString()),
+                  HttpVersion.HTTP_2,
+                  HttpFields.build().put(HttpHeaders.CONTENT_LENGTH.value(), "32"));
+          connection
+              .newStream(new HeadersFrame(request, null, false), response)
+              .get(3, TimeUnit.SECONDS);
+          var headers = response.headers.get(3, TimeUnit.SECONDS);
+          assertEquals(200, headers.getStatus());
+          assertEquals(HttpVersion.HTTP_2, headers.getHttpVersion());
+          assertNull(headers.getHttpFields().get(HttpHeaders.CONNECTION.value()));
+          assertEquals("ok", response.body.get(3, TimeUnit.SECONDS));
+
+          var next = http2Request(connection, app, "GET", "/next", new byte[0]);
+          assertEquals(200, next.headers.get(3, TimeUnit.SECONDS).getStatus());
+          assertEquals(
+              headers.getHttpFields().get("X-Peer-Port"), next.body.get(3, TimeUnit.SECONDS));
+        }
       }
     }
   }
@@ -364,26 +394,30 @@ class BufferedRequestLifecycleTest {
   @ParameterizedTest
   @ValueSource(ints = {404, 405})
   void advertisesConnectionClosureWhenRoutingRejectsAnUnavailableBody(int status) throws Exception {
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.routes().get("/get-only", (ignored, response) -> response.text("unexpected"));
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      try (var socket = new Socket()) {
-        connect(socket, app.port());
-        var path = status == 404 ? "/missing" : "/get-only";
-        socket
-            .getOutputStream()
-            .write(
-                ("POST " + path + " HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n")
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var rejected = receive(HttpTester.from(socket.getInputStream()));
-        assertEquals(status, rejected.getStatus());
-        assertEquals("close", rejected.get(HttpHeaders.CONNECTION.value()));
-        assertEquals(-1, socket.getInputStream().read());
+      try (Closeable appCleanup7 = app::close) {
+        app.routes().get("/get-only", (ignored, response) -> response.text("unexpected"));
+        app.start();
+
+        try (var socket = new Socket()) {
+          connect(socket, app.port());
+          var path = status == 404 ? "/missing" : "/get-only";
+          socket
+              .getOutputStream()
+              .write(
+                  ("POST " + path + " HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n")
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var rejected = receive(HttpTester.from(socket.getInputStream()));
+          assertEquals(status, rejected.getStatus());
+          assertEquals("close", rejected.get(HttpHeaders.CONNECTION.value()));
+          assertEquals(-1, socket.getInputStream().read());
+        }
       }
     }
   }
@@ -399,25 +433,28 @@ class BufferedRequestLifecycleTest {
           }
         };
 
-    try (var app = new Shoostr()) {
-      app.authentication(authentication)
-          .beforeResponseFlush((request, ignored2) -> observedBody.set(request.bodyText()))
-          .routes()
-          .post(
-              "/body",
-              (ignored3, response) -> response.text("unexpected"),
-              extensions -> extensions.with(authentication));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/body")
-                        .method("POST")
-                        .body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)));
-        assertEquals(401, result.statusCode());
-        assertEquals(PAYLOAD, observedBody.get());
+      try (Closeable appCleanup8 = app::close) {
+        app.beforeResponseFlush((request, ignored2) -> observedBody.set(request.bodyText()))
+            .routes()
+            .post(
+                "/body",
+                (ignored3, response) -> response.text("unexpected"),
+                extensions -> extensions.withExtension(authentication));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request ->
+                      request
+                          .path("/body")
+                          .method("POST")
+                          .body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)));
+          assertEquals(401, result.statusCode());
+          assertEquals(PAYLOAD, observedBody.get());
+        }
       }
     }
   }
@@ -432,28 +469,31 @@ class BufferedRequestLifecycleTest {
           }
         };
 
-    try (var app = new Shoostr()) {
-      app.authentication(authentication)
-          .exception(
-              AuthenticationRequiredException.class,
-              (ignored4, request, response) -> response.text(request.bodyText()))
-          .routes()
-          .post(
-              "/body",
-              (ignored5, response) -> response.text("unexpected"),
-              extensions -> extensions.with(authentication));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/body")
-                        .method("POST")
-                        .body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(401, result.statusCode());
-        assertEquals(PAYLOAD, result.body());
+      try (Closeable appCleanup9 = app::close) {
+        app.exception(
+                AuthenticationRequiredException.class,
+                (ignored4, request, response) -> response.text(request.bodyText()))
+            .routes()
+            .post(
+                "/body",
+                (ignored5, response) -> response.text("unexpected"),
+                extensions -> extensions.withExtension(authentication));
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request ->
+                      request
+                          .path("/body")
+                          .method("POST")
+                          .body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(401, result.statusCode());
+          assertEquals(PAYLOAD, result.body());
+        }
       }
     }
   }
@@ -470,41 +510,44 @@ class BufferedRequestLifecycleTest {
           }
         };
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.authentication(authentication)
-          .routes()
-          .post(
-              "/body",
-              (request, response) -> response.text(request.bodyText()),
-              extensions -> extensions.with(authentication));
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      try (var socket = new Socket()) {
-        connect(socket, app.port());
-        var input = HttpTester.from(socket.getInputStream());
-        socket
-            .getOutputStream()
-            .write(
-                ("POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n" + PAYLOAD)
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var rejected = receive(input);
-        assertEquals(401, rejected.getStatus());
-        assertNull(rejected.get(HttpHeaders.CONNECTION.value()));
-        socket
-            .getOutputStream()
-            .write(
-                ("POST /body HTTP/1.1\r\nHost: localhost\r\nAuthorization: present\r\n"
-                        + "Content-Length: 32\r\n\r\n"
-                        + PAYLOAD)
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var accepted = receive(input);
-        assertEquals(200, accepted.getStatus());
-        assertEquals(PAYLOAD, accepted.getContent());
+      try (Closeable appCleanup10 = app::close) {
+        app.routes()
+            .post(
+                "/body",
+                (request, response) -> response.text(request.bodyText()),
+                extensions -> extensions.withExtension(authentication));
+        app.start();
+
+        try (var socket = new Socket()) {
+          connect(socket, app.port());
+          var input = HttpTester.from(socket.getInputStream());
+          socket
+              .getOutputStream()
+              .write(
+                  ("POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n" + PAYLOAD)
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var rejected = receive(input);
+          assertEquals(401, rejected.getStatus());
+          assertNull(rejected.get(HttpHeaders.CONNECTION.value()));
+          socket
+              .getOutputStream()
+              .write(
+                  ("POST /body HTTP/1.1\r\nHost: localhost\r\nAuthorization: present\r\n"
+                          + "Content-Length: 32\r\n\r\n"
+                          + PAYLOAD)
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var accepted = receive(input);
+          assertEquals(200, accepted.getStatus());
+          assertEquals(PAYLOAD, accepted.getContent());
+        }
       }
     }
   }
@@ -521,40 +564,43 @@ class BufferedRequestLifecycleTest {
           }
         };
 
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      if (streamingRenderer) {
-        app.exception(
-            AuthenticationRequiredException.class,
-            (ignored6, ignored7, response) ->
-                response
-                    .startStream(MediaType.TEXT_PLAIN)
-                    .write("rejected".getBytes(StandardCharsets.US_ASCII)));
-      }
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      app.authentication(authentication)
-          .routes()
-          .post(
-              "/body",
-              (ignored8, response) -> response.text("unexpected"),
-              extensions -> extensions.with(authentication));
-      app.start();
+      try (Closeable appCleanup11 = app::close) {
+        if (streamingRenderer) {
+          app.exception(
+              AuthenticationRequiredException.class,
+              (ignored6, ignored7, response) ->
+                  response
+                      .startStream(MediaType.TEXT_PLAIN)
+                      .write("rejected".getBytes(StandardCharsets.US_ASCII)));
+        }
 
-      try (var socket = new Socket()) {
-        connect(socket, app.port());
-        socket
-            .getOutputStream()
-            .write(
-                "POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n"
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var rejected = receive(HttpTester.from(socket.getInputStream()));
-        assertEquals(401, rejected.getStatus());
-        assertEquals("Basic realm=\"test\"", rejected.get("WWW-Authenticate"));
-        assertEquals("close", rejected.get(HttpHeaders.CONNECTION.value()));
-        assertEquals(-1, socket.getInputStream().read());
+        app.routes()
+            .post(
+                "/body",
+                (ignored8, response) -> response.text("unexpected"),
+                extensions -> extensions.withExtension(authentication));
+        app.start();
+
+        try (var socket = new Socket()) {
+          connect(socket, app.port());
+          socket
+              .getOutputStream()
+              .write(
+                  "POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n"
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var rejected = receive(HttpTester.from(socket.getInputStream()));
+          assertEquals(401, rejected.getStatus());
+          assertEquals("Basic realm=\"test\"", rejected.get("WWW-Authenticate"));
+          assertEquals("close", rejected.get(HttpHeaders.CONNECTION.value()));
+          assertEquals(-1, socket.getInputStream().read());
+        }
       }
     }
   }
@@ -565,33 +611,36 @@ class BufferedRequestLifecycleTest {
     var payload = new byte[1_048_576];
     Arrays.fill(payload, (byte) 0x5A);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
-      app.routes()
-          .post(
-              "/body",
-              (request, response) -> {
-                assertArrayEquals(payload, request.bodyBytes());
-                response.text("accepted");
-              });
-      app.start();
-      var publisher =
-          knownLength
-              ? HttpRequest.BodyPublishers.ofByteArray(payload)
-              : HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(payload));
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
-                  .timeout(Duration.ofSeconds(3))
-                  .POST(publisher)
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, result.statusCode());
-      assertEquals("accepted", result.body());
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup12 = app::close;
+          var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+        app.routes()
+            .post(
+                "/body",
+                (request, response) -> {
+                  assertArrayEquals(payload, request.bodyBytes());
+                  response.text("accepted");
+                });
+        app.start();
+        var publisher =
+            knownLength
+                ? HttpRequest.BodyPublishers.ofByteArray(payload)
+                : HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(payload));
+        var result =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
+                    .timeout(Duration.ofSeconds(3))
+                    .POST(publisher)
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, result.statusCode());
+        assertEquals("accepted", result.body());
+      }
     }
   }
 
@@ -601,52 +650,59 @@ class BufferedRequestLifecycleTest {
     var payload = new byte[1_048_577];
     Arrays.fill(payload, (byte) 0x5A);
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
-      app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
-      app.start();
-      var publisher =
-          knownLength
-              ? HttpRequest.BodyPublishers.ofByteArray(payload)
-              : HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(payload));
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
-                  .timeout(Duration.ofSeconds(3))
-                  // Await header-based rejection instead of racing it with the upload.
-                  .expectContinue(knownLength)
-                  .POST(publisher)
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
-      assertEquals(413, result.statusCode());
-      assertEquals("Content Too Large", result.body());
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup13 = app::close;
+          var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
+        app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
+        app.start();
+        var publisher =
+            knownLength
+                ? HttpRequest.BodyPublishers.ofByteArray(payload)
+                : HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(payload));
+        var result =
+            client.send(
+                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
+                    .timeout(Duration.ofSeconds(3))
+                    // Await header-based rejection instead of racing it with the upload.
+                    .expectContinue(knownLength)
+                    .POST(publisher)
+                    .build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertEquals(413, result.statusCode());
+        assertEquals("Content Too Large", result.body());
+      }
     }
   }
 
   @Test
   void rejectsAnOversizedContentLengthWithoutWaitingForTheBody() throws Exception {
-    try (var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
-      app.start();
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      try (var socket = new Socket()) {
-        connect(socket, app.port());
-        socket
-            .getOutputStream()
-            .write(
-                "POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1048577\r\n\r\n"
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var rejected = receive(HttpTester.from(socket.getInputStream()));
-        assertEquals(413, rejected.getStatus());
-        assertEquals("Content Too Large", rejected.getContent());
+      try (Closeable appCleanup14 = app::close) {
+        app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
+        app.start();
+
+        try (var socket = new Socket()) {
+          connect(socket, app.port());
+          socket
+              .getOutputStream()
+              .write(
+                  "POST /body HTTP/1.1\r\nHost: localhost\r\nContent-Length: 1048577\r\n\r\n"
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var rejected = receive(HttpTester.from(socket.getInputStream()));
+          assertEquals(413, rejected.getStatus());
+          assertEquals("Content Too Large", rejected.getContent());
+        }
       }
     }
   }
@@ -656,41 +712,46 @@ class BufferedRequestLifecycleTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var rejections = new LinkedBlockingQueue<ContentTooLargeException>();
 
-    try (var app = app()) {
-      routes(app, outcomes, rejections);
-      app.start();
+    {
+      var app = app();
 
-      try (var socket = new Socket()) {
-        connect(socket, app.port());
-        var input = HttpTester.from(socket.getInputStream());
-        socket
-            .getOutputStream()
-            .write(
-                ("POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
-                        + "20\r\n"
-                        + PAYLOAD
-                        + "\r\n0\r\n\r\n")
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var rejected = receive(input);
-        assertEquals(413, rejected.getStatus());
-        assertEquals("too large", rejected.getContent());
-        var outcome = completed(outcomes);
-        assertEquals(413, outcome.statusCode());
-        assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
-        assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
-        assertNull(outcome.transportFailure());
+      try (Closeable appCleanup15 = app::close) {
+        routes(app, outcomes, rejections);
+        app.start();
 
-        socket
-            .getOutputStream()
-            .write(
-                "GET /ok HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var accepted = receive(input);
-        assertEquals(200, accepted.getStatus());
-        assertEquals(Integer.toString(socket.getLocalPort()), accepted.getContent());
-        assertSuccessfulCompletion(outcomes);
-        assertNull(outcomes.poll());
+        try (var socket = new Socket()) {
+          connect(socket, app.port());
+          var input = HttpTester.from(socket.getInputStream());
+          socket
+              .getOutputStream()
+              .write(
+                  ("POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
+                          + "20\r\n"
+                          + PAYLOAD
+                          + "\r\n0\r\n\r\n")
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var rejected = receive(input);
+          assertEquals(413, rejected.getStatus());
+          assertEquals("too large", rejected.getContent());
+          var outcome = completed(outcomes);
+          assertEquals(413, outcome.statusCode());
+          assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
+          assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
+          assertNull(outcome.transportFailure());
+
+          socket
+              .getOutputStream()
+              .write(
+                  "GET /ok HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var accepted = receive(input);
+          assertEquals(200, accepted.getStatus());
+          assertEquals(Integer.toString(socket.getLocalPort()), accepted.getContent());
+          assertSuccessfulCompletion(outcomes);
+          assertNull(outcomes.poll());
+        }
       }
     }
   }
@@ -700,32 +761,36 @@ class BufferedRequestLifecycleTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var rejections = new LinkedBlockingQueue<ContentTooLargeException>();
 
-    try (var app = app()) {
-      routes(app, outcomes, rejections);
-      app.start();
+    {
+      var app = app();
 
-      try (var socket = new Socket()) {
-        connect(socket, app.port());
-        socket
-            .getOutputStream()
-            .write(
-                ("POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
-                        + "11\r\n"
-                        + PAYLOAD.substring(0, 17)
-                        + "\r\n")
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var rejected = receive(HttpTester.from(socket.getInputStream()));
-        assertEquals(413, rejected.getStatus());
-        assertEquals("too large", rejected.getContent());
-        assertEquals("close", rejected.get(HttpHeaders.CONNECTION.value()));
-        var outcome = completed(outcomes);
-        assertEquals(413, outcome.statusCode());
-        assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
-        assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
-        assertNotNull(outcome.transportFailure());
-        assertEquals(-1, socket.getInputStream().read());
-        assertNull(outcomes.poll());
+      try (Closeable appCleanup16 = app::close) {
+        routes(app, outcomes, rejections);
+        app.start();
+
+        try (var socket = new Socket()) {
+          connect(socket, app.port());
+          socket
+              .getOutputStream()
+              .write(
+                  ("POST /body HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n"
+                          + "11\r\n"
+                          + PAYLOAD.substring(0, 17)
+                          + "\r\n")
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var rejected = receive(HttpTester.from(socket.getInputStream()));
+          assertEquals(413, rejected.getStatus());
+          assertEquals("too large", rejected.getContent());
+          assertEquals("close", rejected.get(HttpHeaders.CONNECTION.value()));
+          var outcome = completed(outcomes);
+          assertEquals(413, outcome.statusCode());
+          assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
+          assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
+          assertNotNull(outcome.transportFailure());
+          assertEquals(-1, socket.getInputStream().read());
+          assertNull(outcomes.poll());
+        }
       }
     }
   }
@@ -735,59 +800,64 @@ class BufferedRequestLifecycleTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var rejections = new LinkedBlockingQueue<BadRequestException>();
 
-    try (var app = app()) {
-      app.modifyHttpConfiguration(
-          configuration ->
-              configuration.addCustomizer(
-                  (nativeRequest, ignored9) -> {
-                    if (!"/bad".equals(nativeRequest.getHttpURI().getPath())) {
-                      return nativeRequest;
-                    }
+    {
+      var app = app();
 
-                    return new Wrapper(nativeRequest) {
-                      @Override
-                      public long getLength() {
-                        return 3;
+      try (Closeable appCleanup17 = app::close) {
+        app.modifyHttpConfiguration(
+            configuration ->
+                configuration.addCustomizer(
+                    (nativeRequest, ignored9) -> {
+                      if (!"/bad".equals(nativeRequest.getHttpURI().getPath())) {
+                        return nativeRequest;
                       }
-                    };
-                  }));
-      app.afterRequest(outcomes::add);
-      app.exception(
-          BadRequestException.class,
-          (failure, ignored10, response) -> {
-            rejections.add(failure);
-            response.text("bad length");
-          });
-      app.routes().post("/bad", (request, response) -> response.text(request.bodyText()));
-      app.routes().get("/ok", (request, response) -> response.text(peerPort(request)));
-      app.start();
 
-      try (var socket = new Socket()) {
-        connect(socket, app.port());
-        var input = HttpTester.from(socket.getInputStream());
-        socket
-            .getOutputStream()
-            .write(
-                ("POST /bad HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n" + PAYLOAD)
-                    .getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        var rejected = receive(input);
-        assertEquals(400, rejected.getStatus());
-        assertEquals("bad length", rejected.getContent());
-        var outcome = completed(outcomes);
-        assertEquals(400, outcome.statusCode());
-        assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
-        assertInstanceOf(BadRequestException.class, outcome.applicationFailure());
-        assertNull(outcome.transportFailure());
+                      return new Wrapper(nativeRequest) {
+                        @Override
+                        public long getLength() {
+                          return 3;
+                        }
+                      };
+                    }));
+        app.afterRequest(outcomes::add);
+        app.exception(
+            BadRequestException.class,
+            (failure, ignored10, response) -> {
+              rejections.add(failure);
+              response.text("bad length");
+            });
+        app.routes().post("/bad", (request, response) -> response.text(request.bodyText()));
+        app.routes().get("/ok", (request, response) -> response.text(peerPort(request)));
+        app.start();
 
-        socket
-            .getOutputStream()
-            .write(
-                "GET /ok HTTP/1.1\r\nHost: localhost\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
-        socket.getOutputStream().flush();
-        assertEquals(200, receive(input).getStatus());
-        assertSuccessfulCompletion(outcomes);
-        assertNull(outcomes.poll());
+        try (var socket = new Socket()) {
+          connect(socket, app.port());
+          var input = HttpTester.from(socket.getInputStream());
+          socket
+              .getOutputStream()
+              .write(
+                  ("POST /bad HTTP/1.1\r\nHost: localhost\r\nContent-Length: 32\r\n\r\n" + PAYLOAD)
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          var rejected = receive(input);
+          assertEquals(400, rejected.getStatus());
+          assertEquals("bad length", rejected.getContent());
+          var outcome = completed(outcomes);
+          assertEquals(400, outcome.statusCode());
+          assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
+          assertInstanceOf(BadRequestException.class, outcome.applicationFailure());
+          assertNull(outcome.transportFailure());
+
+          socket
+              .getOutputStream()
+              .write(
+                  "GET /ok HTTP/1.1\r\nHost: localhost\r\n\r\n"
+                      .getBytes(StandardCharsets.US_ASCII));
+          socket.getOutputStream().flush();
+          assertEquals(200, receive(input).getStatus());
+          assertSuccessfulCompletion(outcomes);
+          assertNull(outcomes.poll());
+        }
       }
     }
   }
@@ -797,56 +867,62 @@ class BufferedRequestLifecycleTest {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     var rejections = new LinkedBlockingQueue<ContentTooLargeException>();
 
-    try (var app = app(true);
-        var client = new HTTP2Client()) {
-      routes(app, outcomes, rejections);
-      app.start();
-      client.setConnectTimeout(3000);
-      client.setIdleTimeout(3000);
-      client.start();
-      var connection =
-          client
-              .connect(
-                  null,
-                  new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
-                  new Session.Listener() {})
-              .get(3, TimeUnit.SECONDS);
-      var warmup = http2Request(connection, app, "GET", "/ok", new byte[0]);
-      var warmupHeaders = warmup.headers.get(3, TimeUnit.SECONDS);
-      var peer = warmup.body.get(3, TimeUnit.SECONDS);
-      assertEquals(200, warmupHeaders.getStatus());
-      assertEquals(HttpVersion.HTTP_2, warmupHeaders.getHttpVersion());
-      assertSuccessfulCompletion(outcomes);
+    {
+      var app = app(true);
 
-      // No Content-Length: exercise consumed-byte rejection, with END_STREAM on the payload frame.
-      // An unfinished JDK publisher can instead lose the response to a native stream cancellation.
-      var rejected =
-          http2Request(
-              connection, app, "POST", "/body", PAYLOAD.getBytes(StandardCharsets.US_ASCII));
-      var rejectedHeaders = rejected.headers.get(3, TimeUnit.SECONDS);
-      assertEquals(413, rejectedHeaders.getStatus());
-      assertEquals(HttpVersion.HTTP_2, rejectedHeaders.getHttpVersion());
-      assertEquals("too large", rejected.body.get(3, TimeUnit.SECONDS));
-      assertEquals(peer, rejectedHeaders.getHttpFields().get("X-Peer-Port"));
-      var outcome = completed(outcomes);
-      assertEquals(413, outcome.statusCode());
-      assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
-      assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
-      // Native unread-content cleanup must not close the shared HTTP/2 connection.
-      var transportFailure = outcome.transportFailure();
-      if (transportFailure != null) {
-        assertSame(
-            HttpStream.CONTENT_NOT_CONSUMED,
-            assertInstanceOf(QuietException.RuntimeException.class, transportFailure).getCause());
+      try (Closeable appCleanup18 = app::close;
+          var client = new HTTP2Client()) {
+        routes(app, outcomes, rejections);
+        app.start();
+        client.setConnectTimeout(3000);
+        client.setIdleTimeout(3000);
+        client.start();
+        var connection =
+            client
+                .connect(
+                    null,
+                    new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
+                    new Session.Listener() {})
+                .get(3, TimeUnit.SECONDS);
+        var warmup = http2Request(connection, app, "GET", "/ok", new byte[0]);
+        var warmupHeaders = warmup.headers.get(3, TimeUnit.SECONDS);
+        var peer = warmup.body.get(3, TimeUnit.SECONDS);
+        assertEquals(200, warmupHeaders.getStatus());
+        assertEquals(HttpVersion.HTTP_2, warmupHeaders.getHttpVersion());
+        assertSuccessfulCompletion(outcomes);
+
+        // No Content-Length: exercise consumed-byte rejection, with END_STREAM on the payload
+        // frame.
+        // An unfinished JDK publisher can instead lose the response to a native stream
+        // cancellation.
+        var rejected =
+            http2Request(
+                connection, app, "POST", "/body", PAYLOAD.getBytes(StandardCharsets.US_ASCII));
+        var rejectedHeaders = rejected.headers.get(3, TimeUnit.SECONDS);
+        assertEquals(413, rejectedHeaders.getStatus());
+        assertEquals(HttpVersion.HTTP_2, rejectedHeaders.getHttpVersion());
+        assertEquals("too large", rejected.body.get(3, TimeUnit.SECONDS));
+        assertEquals(peer, rejectedHeaders.getHttpFields().get("X-Peer-Port"));
+        var outcome = completed(outcomes);
+        assertEquals(413, outcome.statusCode());
+        assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
+        assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
+        // Native unread-content cleanup must not close the shared HTTP/2 connection.
+        var transportFailure = outcome.transportFailure();
+        if (transportFailure != null) {
+          assertSame(
+              HttpStream.CONTENT_NOT_CONSUMED,
+              assertInstanceOf(QuietException.RuntimeException.class, transportFailure).getCause());
+        }
+
+        var accepted = http2Request(connection, app, "GET", "/ok", new byte[0]);
+        var acceptedHeaders = accepted.headers.get(3, TimeUnit.SECONDS);
+        assertEquals(200, acceptedHeaders.getStatus());
+        assertEquals(HttpVersion.HTTP_2, acceptedHeaders.getHttpVersion());
+        assertEquals(peer, accepted.body.get(3, TimeUnit.SECONDS));
+        assertSuccessfulCompletion(outcomes);
+        assertNull(outcomes.poll());
       }
-
-      var accepted = http2Request(connection, app, "GET", "/ok", new byte[0]);
-      var acceptedHeaders = accepted.headers.get(3, TimeUnit.SECONDS);
-      assertEquals(200, acceptedHeaders.getStatus());
-      assertEquals(HttpVersion.HTTP_2, acceptedHeaders.getHttpVersion());
-      assertEquals(peer, accepted.body.get(3, TimeUnit.SECONDS));
-      assertSuccessfulCompletion(outcomes);
-      assertNull(outcomes.poll());
     }
   }
 

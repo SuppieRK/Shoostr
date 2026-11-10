@@ -44,7 +44,7 @@ One Shoostr app exports its own `/metrics`; no second metrics server or DI conta
 needed. [MetricsExample](src/main/java/io/github/suppierk/shoostr/example/metrics/MetricsExample.java)
 defines its routes inline and constructs the Prometheus registry explicitly.
 `MicrometerMetrics` borrows that caller-configured registry and enables observation
-with `allRequests()`. The example registers `app.afterClose(registry::close)` to
+with `app.withExtension(metrics)` before route registration. The example registers `app.afterClose(registry::close)` to
 release the registry after request drain and extension cleanup; the registry is
 not itself an extension. Core handles listener startup failures and JVM shutdown.
 

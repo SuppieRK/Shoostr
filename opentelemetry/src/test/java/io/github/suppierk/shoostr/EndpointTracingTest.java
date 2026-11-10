@@ -17,6 +17,7 @@ import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.time.Duration;
@@ -92,45 +93,51 @@ class EndpointTracingTest {
             response.text(Span.current().getSpanContext().getTraceId());
           };
 
-      try (workers;
-          var app = withExecutionMode(new Options(), virtualApplication)) {
-        var tracing = new OpenTelemetryTracing(telemetry);
-        app.extensions(appWide ? tracing.allRequests() : tracing);
-        app.afterRequest(ignored2 -> completed.complete(null));
-        app.routes().get("/trace", workers, endpoint, e -> e.with(tracing));
+      try (workers) {
+        var app = withExecutionMode(new Options(), virtualApplication);
 
-        try (var test = TestServer.start(app)) {
-          var response =
-              test.send(
-                  request ->
-                      request
-                          .path("/trace")
-                          .header(
-                              "traceparent",
-                              "00-12345678901234567890123456789012-0123456789012345-01"),
-                  HttpResponse.BodyHandlers.ofString());
-          assertEquals("12345678901234567890123456789012", response.body());
-          assertTrue(owned.contains(handled.get(5, TimeUnit.SECONDS)), executorType);
-          completed.get(5, TimeUnit.SECONDS);
-          var spans = exporter.getFinishedSpanItems();
-          assertEquals(2, spans.size());
-          var server =
-              spans.stream()
-                  .filter(span -> span.getKind() == SpanKind.SERVER)
-                  .findFirst()
-                  .orElseThrow();
-          var child =
-              spans.stream()
-                  .filter(span -> "child".equals(span.getName()))
-                  .findFirst()
-                  .orElseThrow();
-          assertEquals("0123456789012345", server.getParentSpanId());
-          assertEquals(server.getSpanId(), child.getParentSpanId());
-          assertEquals(server.getTraceId(), child.getTraceId());
-          assertFalse(
-              workers
-                  .submit(() -> Span.current().getSpanContext().isValid())
-                  .get(5, TimeUnit.SECONDS));
+        try (Closeable appCleanup = app::close) {
+          var tracing = new OpenTelemetryTracing(telemetry);
+          if (appWide) {
+            app.withExtension(tracing);
+          }
+
+          app.afterRequest(ignored2 -> completed.complete(null));
+          app.routes().get("/trace", workers, endpoint, e -> e.withExtension(tracing));
+
+          try (var test = TestServer.start(app)) {
+            var response =
+                test.send(
+                    request ->
+                        request
+                            .path("/trace")
+                            .header(
+                                "traceparent",
+                                "00-12345678901234567890123456789012-0123456789012345-01"),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals("12345678901234567890123456789012", response.body());
+            assertTrue(owned.contains(handled.get(5, TimeUnit.SECONDS)), executorType);
+            completed.get(5, TimeUnit.SECONDS);
+            var spans = exporter.getFinishedSpanItems();
+            assertEquals(2, spans.size());
+            var server =
+                spans.stream()
+                    .filter(span -> span.getKind() == SpanKind.SERVER)
+                    .findFirst()
+                    .orElseThrow();
+            var child =
+                spans.stream()
+                    .filter(span -> "child".equals(span.getName()))
+                    .findFirst()
+                    .orElseThrow();
+            assertEquals("0123456789012345", server.getParentSpanId());
+            assertEquals(server.getSpanId(), child.getParentSpanId());
+            assertEquals(server.getTraceId(), child.getTraceId());
+            assertFalse(
+                workers
+                    .submit(() -> Span.current().getSpanContext().isValid())
+                    .get(5, TimeUnit.SECONDS));
+          }
         }
       }
     }
@@ -157,49 +164,55 @@ class EndpointTracingTest {
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
         var workers = new ForkJoinPool(parallelism);
-        var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var app = withExecutionMode(new Options(), virtualApplication)) {
-      var telemetry =
-          OpenTelemetrySdk.builder()
-              .setTracerProvider(provider)
-              .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
-              .build();
-      var tracing = new OpenTelemetryTracing(telemetry);
-      app.extensions(appWide ? tracing.allRequests() : tracing)
-          .afterRequest(ignored3 -> completed.countDown());
-      app.routes()
-          .get(
-              "/trace",
-              workers,
-              (ignored4, response) -> response.text(Span.current().getSpanContext().getTraceId()),
-              e -> e.with(tracing));
+        var drivers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-      try (var test = TestServer.start(app)) {
-        var sent = new ArrayList<Future<HttpResponse<String>>>();
-        for (int index = 0; index < 20; index++) {
-          var trace =
-              index % 2 == 0
-                  ? "11111111111111111111111111111111"
-                  : "22222222222222222222222222222222";
-          sent.add(
-              drivers.submit(
-                  () ->
-                      test.send(
-                          request ->
-                              request
-                                  .path("/trace")
-                                  .header("traceparent", "00-" + trace + "-0123456789012345-01"),
-                          HttpResponse.BodyHandlers.ofString())));
+      try (Closeable appCleanup1 = app::close) {
+        var telemetry =
+            OpenTelemetrySdk.builder()
+                .setTracerProvider(provider)
+                .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+                .build();
+        var tracing = new OpenTelemetryTracing(telemetry);
+        if (appWide) {
+          app.withExtension(tracing);
         }
-        for (int index = 0; index < sent.size(); index++) {
-          assertEquals(
-              index % 2 == 0
-                  ? "11111111111111111111111111111111"
-                  : "22222222222222222222222222222222",
-              sent.get(index).get(5, TimeUnit.SECONDS).body());
+
+        app.afterRequest(ignored3 -> completed.countDown());
+        app.routes()
+            .get(
+                "/trace",
+                workers,
+                (ignored4, response) -> response.text(Span.current().getSpanContext().getTraceId()),
+                e -> e.withExtension(tracing));
+
+        try (var test = TestServer.start(app)) {
+          var sent = new ArrayList<Future<HttpResponse<String>>>();
+          for (int index = 0; index < 20; index++) {
+            var trace =
+                index % 2 == 0
+                    ? "11111111111111111111111111111111"
+                    : "22222222222222222222222222222222";
+            sent.add(
+                drivers.submit(
+                    () ->
+                        test.send(
+                            request ->
+                                request
+                                    .path("/trace")
+                                    .header("traceparent", "00-" + trace + "-0123456789012345-01"),
+                            HttpResponse.BodyHandlers.ofString())));
+          }
+          for (int index = 0; index < sent.size(); index++) {
+            assertEquals(
+                index % 2 == 0
+                    ? "11111111111111111111111111111111"
+                    : "22222222222222222222222222222222",
+                sent.get(index).get(5, TimeUnit.SECONDS).body());
+          }
+          assertTrue(completed.await(5, TimeUnit.SECONDS));
+          assertEquals(20, exporter.getFinishedSpanItems().size());
         }
-        assertTrue(completed.await(5, TimeUnit.SECONDS));
-        assertEquals(20, exporter.getFinishedSpanItems().size());
       }
     }
   }
@@ -218,74 +231,82 @@ class EndpointTracingTest {
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
         var workers = new ForkJoinPool(1);
-        var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var app = withExecutionMode(new Options(), virtualApplication)) {
-      var telemetry =
-          OpenTelemetrySdk.builder()
-              .setTracerProvider(provider)
-              .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
-              .build();
-      var tracing = new OpenTelemetryTracing(telemetry);
-      app.extensions(appWide ? tracing.allRequests() : tracing)
-          .afterRequest(ignored5 -> completed.countDown());
-      app.routes()
-          .get(
-              "/outer",
-              workers,
-              (ignored6, response) -> {
-                entered.countDown();
-                if (!allowHelping.await(5, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Helping was not enabled");
-                }
+        var drivers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-                assertTrue(workers.awaitQuiescence(5, TimeUnit.SECONDS));
-                response.text(Span.current().getSpanContext().getTraceId());
-              },
-              e -> e.with(tracing))
-          .get(
-              "/inner",
-              workers,
-              (ignored7, response) -> response.text(Span.current().getSpanContext().getTraceId()),
-              e -> e.with(tracing));
+      try (Closeable appCleanup2 = app::close) {
+        var telemetry =
+            OpenTelemetrySdk.builder()
+                .setTracerProvider(provider)
+                .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+                .build();
+        var tracing = new OpenTelemetryTracing(telemetry);
+        if (appWide) {
+          app.withExtension(tracing);
+        }
 
-      try (var test = TestServer.start(app)) {
-        var outer =
-            drivers.submit(
-                () ->
-                    test.send(
-                        request ->
-                            request
-                                .path("/outer")
-                                .header(
-                                    "traceparent",
-                                    "00-11111111111111111111111111111111-0123456789012345-01"),
-                        HttpResponse.BodyHandlers.ofString()));
+        app.afterRequest(ignored5 -> completed.countDown());
+        app.routes()
+            .get(
+                "/outer",
+                workers,
+                (ignored6, response) -> {
+                  entered.countDown();
+                  if (!allowHelping.await(5, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Helping was not enabled");
+                  }
 
-        try {
-          assertTrue(entered.await(5, TimeUnit.SECONDS));
-          var inner =
+                  assertTrue(workers.awaitQuiescence(5, TimeUnit.SECONDS));
+                  response.text(Span.current().getSpanContext().getTraceId());
+                },
+                e -> e.withExtension(tracing))
+            .get(
+                "/inner",
+                workers,
+                (ignored7, response) -> response.text(Span.current().getSpanContext().getTraceId()),
+                e -> e.withExtension(tracing));
+
+        try (var test = TestServer.start(app)) {
+          var outer =
               drivers.submit(
                   () ->
                       test.send(
                           request ->
                               request
-                                  .path("/inner")
+                                  .path("/outer")
                                   .header(
                                       "traceparent",
-                                      "00-22222222222222222222222222222222-0123456789012345-01"),
+                                      "00-11111111111111111111111111111111-0123456789012345-01"),
                           HttpResponse.BodyHandlers.ofString()));
-          await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueuedSubmissionCount() > 0);
-          allowHelping.countDown();
-          assertEquals("22222222222222222222222222222222", inner.get(5, TimeUnit.SECONDS).body());
-          assertEquals("11111111111111111111111111111111", outer.get(5, TimeUnit.SECONDS).body());
-          assertTrue(completed.await(5, TimeUnit.SECONDS));
-          assertEquals(2, exporter.getFinishedSpanItems().size());
-          assertFalse(
-              workers
-                  .submit(() -> Span.current().getSpanContext().isValid())
-                  .get(5, TimeUnit.SECONDS));
-        } finally {
-          allowHelping.countDown();
+
+          try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            var inner =
+                drivers.submit(
+                    () ->
+                        test.send(
+                            request ->
+                                request
+                                    .path("/inner")
+                                    .header(
+                                        "traceparent",
+                                        "00-22222222222222222222222222222222-0123456789012345-01"),
+                            HttpResponse.BodyHandlers.ofString()));
+            await()
+                .atMost(Duration.ofSeconds(5))
+                .until(() -> workers.getQueuedSubmissionCount() > 0);
+            allowHelping.countDown();
+            assertEquals("22222222222222222222222222222222", inner.get(5, TimeUnit.SECONDS).body());
+            assertEquals("11111111111111111111111111111111", outer.get(5, TimeUnit.SECONDS).body());
+            assertTrue(completed.await(5, TimeUnit.SECONDS));
+            assertEquals(2, exporter.getFinishedSpanItems().size());
+            assertFalse(
+                workers
+                    .submit(() -> Span.current().getSpanContext().isValid())
+                    .get(5, TimeUnit.SECONDS));
+          } finally {
+            allowHelping.countDown();
+          }
         }
       }
     }
@@ -302,51 +323,58 @@ class EndpointTracingTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var workers = new ForkJoinPool(1);
-        var app = withExecutionMode(new Options(), virtualApplication)) {
-      var telemetry =
-          OpenTelemetrySdk.builder()
-              .setTracerProvider(provider)
-              .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
-              .build();
-      var tracing = new OpenTelemetryTracing(telemetry);
-      app.extensions(appWide ? tracing.allRequests() : tracing).afterRequest(completed::complete);
-      app.routes()
-          .path(
-              "/failure",
-              routes -> {
-                routes.exception(
-                    IllegalArgumentException.class,
-                    (ignored8, ignored9, response) ->
-                        response.status(422).text(Span.current().getSpanContext().getTraceId()));
-                routes.get(
-                    workers,
-                    (ignored10, ignored11) -> {
-                      throw new IllegalArgumentException("failed");
-                    });
-              },
-              e -> e.with(tracing));
+        var workers = new ForkJoinPool(1)) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request ->
-                    request
-                        .path("/failure")
-                        .header(
-                            "traceparent",
-                            "00-11111111111111111111111111111111-0123456789012345-01"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(422, response.statusCode());
-        assertEquals("11111111111111111111111111111111", response.body());
-        assertInstanceOf(
-            IllegalArgumentException.class,
-            completed.get(5, TimeUnit.SECONDS).applicationFailure());
-        assertEquals(1, exporter.getFinishedSpanItems().size());
-        assertFalse(
-            workers
-                .submit(() -> Span.current().getSpanContext().isValid())
-                .get(5, TimeUnit.SECONDS));
+      try (Closeable appCleanup3 = app::close) {
+        var telemetry =
+            OpenTelemetrySdk.builder()
+                .setTracerProvider(provider)
+                .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+                .build();
+        var tracing = new OpenTelemetryTracing(telemetry);
+        if (appWide) {
+          app.withExtension(tracing);
+        }
+
+        app.afterRequest(completed::complete);
+        app.routes()
+            .path(
+                "/failure",
+                routes -> {
+                  routes.exception(
+                      IllegalArgumentException.class,
+                      (ignored8, ignored9, response) ->
+                          response.status(422).text(Span.current().getSpanContext().getTraceId()));
+                  routes.get(
+                      workers,
+                      (ignored10, ignored11) -> {
+                        throw new IllegalArgumentException("failed");
+                      });
+                },
+                e -> e.withExtension(tracing));
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(
+                  request ->
+                      request
+                          .path("/failure")
+                          .header(
+                              "traceparent",
+                              "00-11111111111111111111111111111111-0123456789012345-01"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(422, response.statusCode());
+          assertEquals("11111111111111111111111111111111", response.body());
+          assertInstanceOf(
+              IllegalArgumentException.class,
+              completed.get(5, TimeUnit.SECONDS).applicationFailure());
+          assertEquals(1, exporter.getFinishedSpanItems().size());
+          assertFalse(
+              workers
+                  .submit(() -> Span.current().getSpanContext().isValid())
+                  .get(5, TimeUnit.SECONDS));
+        }
       }
     }
   }
@@ -363,48 +391,55 @@ class EndpointTracingTest {
             SdkTracerProvider.builder()
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
-        var workers = new ForkJoinPool(1);
-        var app = withExecutionMode(new Options(), virtualApplication)) {
-      var telemetry =
-          OpenTelemetrySdk.builder()
-              .setTracerProvider(provider)
-              .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
-              .build();
-      var tracing = new OpenTelemetryTracing(telemetry);
-      app.extensions(appWide ? tracing.allRequests() : tracing).afterRequest(completed::complete);
-      app.routes()
-          .path(
-              "/rejected",
-              routes -> {
-                routes.exception(
-                    RejectedExecutionException.class,
-                    (ignored12, ignored13, response) ->
-                        response.status(503).text(Span.current().getSpanContext().getTraceId()));
-                routes.get(workers, (ignored14, ignored15) -> invoked.set(true));
-              },
-              e -> e.with(tracing));
+        var workers = new ForkJoinPool(1)) {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-      try (var test = TestServer.start(app)) {
-        workers.shutdown();
-        var response =
-            test.send(
-                request ->
-                    request
-                        .path("/rejected")
-                        .header(
-                            "traceparent",
-                            "00-11111111111111111111111111111111-0123456789012345-01"),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(503, response.statusCode());
-        assertEquals("11111111111111111111111111111111", response.body());
-        assertInstanceOf(
-            RejectedExecutionException.class,
-            completed.get(5, TimeUnit.SECONDS).applicationFailure());
-        assertFalse(invoked.get());
-        var spans = exporter.getFinishedSpanItems();
-        assertEquals(1, spans.size());
-        assertEquals("0123456789012345", spans.getFirst().getParentSpanId());
-        assertEquals(SpanKind.SERVER, spans.getFirst().getKind());
+      try (Closeable appCleanup4 = app::close) {
+        var telemetry =
+            OpenTelemetrySdk.builder()
+                .setTracerProvider(provider)
+                .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+                .build();
+        var tracing = new OpenTelemetryTracing(telemetry);
+        if (appWide) {
+          app.withExtension(tracing);
+        }
+
+        app.afterRequest(completed::complete);
+        app.routes()
+            .path(
+                "/rejected",
+                routes -> {
+                  routes.exception(
+                      RejectedExecutionException.class,
+                      (ignored12, ignored13, response) ->
+                          response.status(503).text(Span.current().getSpanContext().getTraceId()));
+                  routes.get(workers, (ignored14, ignored15) -> invoked.set(true));
+                },
+                e -> e.withExtension(tracing));
+
+        try (var test = TestServer.start(app)) {
+          workers.shutdown();
+          var response =
+              test.send(
+                  request ->
+                      request
+                          .path("/rejected")
+                          .header(
+                              "traceparent",
+                              "00-11111111111111111111111111111111-0123456789012345-01"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(503, response.statusCode());
+          assertEquals("11111111111111111111111111111111", response.body());
+          assertInstanceOf(
+              RejectedExecutionException.class,
+              completed.get(5, TimeUnit.SECONDS).applicationFailure());
+          assertFalse(invoked.get());
+          var spans = exporter.getFinishedSpanItems();
+          assertEquals(1, spans.size());
+          assertEquals("0123456789012345", spans.getFirst().getParentSpanId());
+          assertEquals(SpanKind.SERVER, spans.getFirst().getKind());
+        }
       }
     }
   }
@@ -436,110 +471,116 @@ class EndpointTracingTest {
                 .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                 .build();
         var workers = new ForkJoinPool(1);
-        var drivers = Executors.newVirtualThreadPerTaskExecutor();
-        var app =
-            withExecutionMode(new Options(), virtualApplication)
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0))) {
-      var telemetry =
-          OpenTelemetrySdk.builder()
-              .setTracerProvider(provider)
-              .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
-              .build();
-      app.modifyServer(server -> server.setStopTimeout(0));
-      var tracing = new OpenTelemetryTracing(telemetry);
-      app.extensions(appWide ? tracing.allRequests() : tracing)
-          .afterRequest(
-              outcome -> {
-                completions.incrementAndGet();
-                completed.complete(outcome);
-              });
-      app.routes()
-          .get(
-              "/closing",
-              workers,
-              (ignored16, ignored17) -> {
-                invoked.set(true);
-                entered.countDown();
-                if (!release.await(10, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("Handler was not released");
-                }
+        var drivers = Executors.newVirtualThreadPerTaskExecutor()) {
+      var app =
+          withExecutionMode(new Options(), virtualApplication)
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-                restoredTrace.complete(Span.current().getSpanContext().getTraceId());
-              },
-              e -> e.with(tracing));
-      Future<Boolean> blocker = null;
-      if (queued) {
-        blocker =
-            workers.submit(
-                () -> {
-                  blocked.countDown();
-                  return release.await(10, TimeUnit.SECONDS);
-                });
-        assertTrue(blocked.await(5, TimeUnit.SECONDS));
-      }
+      try (Closeable appCleanup5 = app::close) {
+        var telemetry =
+            OpenTelemetrySdk.builder()
+                .setTracerProvider(provider)
+                .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+                .build();
+        app.modifyServer(server -> server.setStopTimeout(0));
+        var tracing = new OpenTelemetryTracing(telemetry);
+        if (appWide) {
+          app.withExtension(tracing);
+        }
 
-      try (var test = TestServer.start(app)) {
-        var sent =
-            drivers.submit(
-                () ->
-                    test.send(
-                        request ->
-                            request
-                                .path("/closing")
-                                .header(
-                                    "traceparent",
-                                    "00-11111111111111111111111111111111-0123456789012345-01")));
+        app.afterRequest(
+            outcome -> {
+              completions.incrementAndGet();
+              completed.complete(outcome);
+            });
+        app.routes()
+            .get(
+                "/closing",
+                workers,
+                (ignored16, ignored17) -> {
+                  invoked.set(true);
+                  entered.countDown();
+                  if (!release.await(10, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Handler was not released");
+                  }
 
-        try {
-          if (queued) {
-            await()
-                .atMost(Duration.ofSeconds(5))
-                .until(() -> workers.getQueuedSubmissionCount() > 0);
-          } else {
-            assertTrue(entered.await(5, TimeUnit.SECONDS));
+                  restoredTrace.complete(Span.current().getSpanContext().getTraceId());
+                },
+                e -> e.withExtension(tracing));
+        Future<Boolean> blocker = null;
+        if (queued) {
+          blocker =
+              workers.submit(
+                  () -> {
+                    blocked.countDown();
+                    return release.await(10, TimeUnit.SECONDS);
+                  });
+          assertTrue(blocked.await(5, TimeUnit.SECONDS));
+        }
+
+        try (var test = TestServer.start(app)) {
+          var sent =
+              drivers.submit(
+                  () ->
+                      test.send(
+                          request ->
+                              request
+                                  .path("/closing")
+                                  .header(
+                                      "traceparent",
+                                      "00-11111111111111111111111111111111-0123456789012345-01")));
+
+          try {
+            if (queued) {
+              await()
+                  .atMost(Duration.ofSeconds(5))
+                  .until(() -> workers.getQueuedSubmissionCount() > 0);
+            } else {
+              assertTrue(entered.await(5, TimeUnit.SECONDS));
+            }
+
+            app.close();
+            if (queued) {
+              assertInstanceOf(
+                  RejectedExecutionException.class,
+                  completed.get(5, TimeUnit.SECONDS).applicationFailure());
+              assertFalse(invoked.get());
+            } else {
+              assertTrue(exporter.getFinishedSpanItems().isEmpty());
+              assertFalse(completed.isDone());
+            }
+          } finally {
+            release.countDown();
           }
 
-          app.close();
-          if (queued) {
-            assertInstanceOf(
-                RejectedExecutionException.class,
-                completed.get(5, TimeUnit.SECONDS).applicationFailure());
-            assertFalse(invoked.get());
+          if (blocker != null) {
+            assertTrue(blocker.get(5, TimeUnit.SECONDS));
           } else {
-            assertTrue(exporter.getFinishedSpanItems().isEmpty());
-            assertFalse(completed.isDone());
+            assertEquals(
+                "11111111111111111111111111111111", restoredTrace.get(5, TimeUnit.SECONDS));
+          }
+
+          completed.get(5, TimeUnit.SECONDS);
+          assertEquals(1, completions.get());
+          var spans = exporter.getFinishedSpanItems();
+          assertEquals(1, spans.size());
+          assertEquals("0123456789012345", spans.getFirst().getParentSpanId());
+          assertEquals(SpanKind.SERVER, spans.getFirst().getKind());
+          assertFalse(
+              workers
+                  .submit(() -> Span.current().getSpanContext().isValid())
+                  .get(5, TimeUnit.SECONDS));
+          assertEquals(!queued, invoked.get());
+
+          try {
+            sent.get(5, TimeUnit.SECONDS);
+          } catch (ExecutionException failure) {
+            assertInstanceOf(IOException.class, failure.getCause());
           }
         } finally {
           release.countDown();
         }
-
-        if (blocker != null) {
-          assertTrue(blocker.get(5, TimeUnit.SECONDS));
-        } else {
-          assertEquals("11111111111111111111111111111111", restoredTrace.get(5, TimeUnit.SECONDS));
-        }
-
-        completed.get(5, TimeUnit.SECONDS);
-        assertEquals(1, completions.get());
-        var spans = exporter.getFinishedSpanItems();
-        assertEquals(1, spans.size());
-        assertEquals("0123456789012345", spans.getFirst().getParentSpanId());
-        assertEquals(SpanKind.SERVER, spans.getFirst().getKind());
-        assertFalse(
-            workers
-                .submit(() -> Span.current().getSpanContext().isValid())
-                .get(5, TimeUnit.SECONDS));
-        assertEquals(!queued, invoked.get());
-
-        try {
-          sent.get(5, TimeUnit.SECONDS);
-        } catch (ExecutionException failure) {
-          assertInstanceOf(IOException.class, failure.getCause());
-        }
-      } finally {
-        release.countDown();
       }
     }
   }

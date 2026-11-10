@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import io.github.suppierk.shoostr.Shoostr;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -121,19 +122,23 @@ class FixtureLifecycleTest {
 
   @Test
   void closesAppAndClientWhenAnAssertionFailsInsideTheFixtureScope() throws Exception {
-    try (var app = new Shoostr();
-        var test = TestServer.start(app)) {
-      var client = test.httpClient();
-      var status = test.send(request -> request.path("/missing")).statusCode();
-      assertThrows(
-          AssertionError.class,
-          () -> {
-            try (test) {
-              assertEquals(200, status);
-            }
-          });
-      assertTrue(client.isTerminated());
-      assertThrows(IllegalStateException.class, app::port);
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close;
+          var test = TestServer.start(app)) {
+        var client = test.httpClient();
+        var status = test.send(request -> request.path("/missing")).statusCode();
+        assertThrows(
+            AssertionError.class,
+            () -> {
+              try (test) {
+                assertEquals(200, status);
+              }
+            });
+        assertTrue(client.isTerminated());
+        assertThrows(IllegalStateException.class, app::port);
+      }
     }
   }
 
@@ -142,19 +147,23 @@ class FixtureLifecycleTest {
     var client = new AtomicReference<HttpClient>();
     var expected = new IOException("caller fixture failure");
 
-    try (var app = new Shoostr()) {
-      var actual =
-          assertThrows(
-              IOException.class,
-              () -> {
-                try (var test = TestServer.start(app)) {
-                  client.set(test.httpClient());
-                  throw expected;
-                }
-              });
-      assertSame(expected, actual);
-      assertTrue(client.get().isTerminated());
-      assertThrows(IllegalStateException.class, app::port);
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup1 = app::close) {
+        var actual =
+            assertThrows(
+                IOException.class,
+                () -> {
+                  try (var test = TestServer.start(app)) {
+                    client.set(test.httpClient());
+                    throw expected;
+                  }
+                });
+        assertSame(expected, actual);
+        assertTrue(client.get().isTerminated());
+        assertThrows(IllegalStateException.class, app::port);
+      }
     }
   }
 
@@ -162,36 +171,44 @@ class FixtureLifecycleTest {
   @NullSource
   void rejectsANullClientConfiguratorBeforeTakingOwnership(
       Consumer<HttpClient.Builder> configureClient) throws Exception {
-    try (var app = new Shoostr()) {
-      assertThrows(NullPointerException.class, () -> TestServer.start(app, configureClient));
-      app.routes().get("/value", (ignored3, response) -> response.text("not closed"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/value")).statusCode());
+      try (Closeable appCleanup2 = app::close) {
+        assertThrows(NullPointerException.class, () -> TestServer.start(app, configureClient));
+        app.routes().get("/value", (ignored3, response) -> response.text("not closed"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/value")).statusCode());
+        }
       }
     }
   }
 
   @Test
   void rejectsARunningAppBeforeClientConfigurationWithoutStoppingIt() throws Exception {
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var client = HttpClient.newHttpClient()) {
-      app.routes().get("/value", (ignored4, response) -> response.text("still running"));
-      app.start();
-      assertThrows(
-          IllegalStateException.class,
-          () ->
-              TestServer.start(app, ignored5 -> fail("Rejected apps must not configure a client")));
-      var target = URI.create("http://127.0.0.1:" + app.port() + "/value");
-      assertEquals(
-          "still running",
-          client
-              .send(HttpRequest.newBuilder(target).build(), HttpResponse.BodyHandlers.ofString())
-              .body());
+    {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup3 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.routes().get("/value", (ignored4, response) -> response.text("still running"));
+        app.start();
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                TestServer.start(
+                    app, ignored5 -> fail("Rejected apps must not configure a client")));
+        var target = URI.create("http://127.0.0.1:" + app.port() + "/value");
+        assertEquals(
+            "still running",
+            client
+                .send(HttpRequest.newBuilder(target).build(), HttpResponse.BodyHandlers.ofString())
+                .body());
+      }
     }
   }
 }

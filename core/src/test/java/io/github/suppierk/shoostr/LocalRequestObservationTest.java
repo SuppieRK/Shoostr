@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
@@ -40,22 +41,26 @@ class LocalRequestObservationTest {
           };
         };
 
-    try (var app = withExecutionMode(new Options(), virtualApplication)) {
-      app.routes()
-          .path(
-              "/api",
-              routes ->
-                  routes.get(
-                      "/ok",
-                      (ignored, response) -> response.text("ok"),
-                      e -> e.lifecycle().observe(factory).observe(factory)),
-              e -> e.lifecycle().observe(factory));
+    {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/api/ok")).statusCode());
-        assertEquals(200, completed.get(5, TimeUnit.SECONDS).statusCode());
-        assertEquals(1, started.get());
-        assertEquals(1, closed.get());
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .path(
+                "/api",
+                routes ->
+                    routes.get(
+                        "/ok",
+                        (ignored, response) -> response.text("ok"),
+                        e -> e.observe(factory).observe(factory)),
+                e -> e.observe(factory));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/api/ok")).statusCode());
+          assertEquals(200, completed.get(5, TimeUnit.SECONDS).statusCode());
+          assertEquals(1, started.get());
+          assertEquals(1, closed.get());
+        }
       }
     }
   }
@@ -67,78 +72,85 @@ class LocalRequestObservationTest {
     var completed = new CompletableFuture<RequestOutcome>();
     var current = new ThreadLocal<String>();
 
-    try (var app = withExecutionMode(new Options(), virtualApplication)) {
-      app.routes()
-          .get(
-              "/ok",
-              (ignored2, response) -> response.text(current.get()),
-              e -> {
-                e.lifecycle()
-                    .observe(
-                        ignored3 -> {
-                          throw new IllegalStateException("factory");
-                        });
-                e.lifecycle()
-                    .observe(
-                        ignored4 ->
-                            new RequestObservation() {
-                              @Override
-                              public void close() {
-                                throw new IllegalStateException("scope");
-                              }
+    {
+      var app = withExecutionMode(new Options(), virtualApplication);
 
-                              @Override
-                              public void complete(RequestOutcome outcome) {
-                                throw new IllegalStateException("completion");
-                              }
-                            });
-                e.lifecycle()
-                    .observe(
-                        ignored5 -> {
-                          current.set("observed");
-                          return new RequestObservation() {
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .get(
+                "/ok",
+                (ignored2, response) -> response.text(current.get()),
+                e -> {
+                  e.observe(
+                      ignored3 -> {
+                        throw new IllegalStateException("factory");
+                      });
+                  e.observe(
+                      ignored4 ->
+                          new RequestObservation() {
                             @Override
                             public void close() {
-                              current.remove();
+                              throw new IllegalStateException("scope");
                             }
 
                             @Override
                             public void complete(RequestOutcome outcome) {
-                              completed.complete(outcome);
+                              throw new IllegalStateException("completion");
                             }
-                          };
-                        });
-              });
+                          });
+                  e.observe(
+                      ignored5 -> {
+                        current.set("observed");
+                        return new RequestObservation() {
+                          @Override
+                          public void close() {
+                            current.remove();
+                          }
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(request -> request.path("/ok"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, result.statusCode());
-        assertEquals("observed", result.body());
-        assertNull(completed.get(5, TimeUnit.SECONDS).applicationFailure());
+                          @Override
+                          public void complete(RequestOutcome outcome) {
+                            completed.complete(outcome);
+                          }
+                        };
+                      });
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path("/ok"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, result.statusCode());
+          assertEquals("observed", result.body());
+          assertNull(completed.get(5, TimeUnit.SECONDS).applicationFailure());
+        }
       }
     }
   }
 
   @Test
   void rejectsObservationRegistrationAfterTheCallbackReturns() throws Exception {
-    var retained = new AtomicReference<Extensions>();
+    var retained = new AtomicReference<Lifecycle>();
     var retainedLifecycle = new AtomicReference<Lifecycle>();
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/ok",
-              (ignored6, ignored7) -> {},
-              extensions -> {
-                retained.set(extensions);
-                retainedLifecycle.set(extensions.lifecycle());
-              });
-      var configuration = retained.get();
-      var lifecycle = retainedLifecycle.get();
-      assertThrows(IllegalStateException.class, configuration::lifecycle);
-      assertThrows(
-          IllegalStateException.class, () -> lifecycle.observe(ignored8 -> ignored9 -> {}));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup2 = app::close) {
+        app.routes()
+            .get(
+                "/ok",
+                (ignored6, ignored7) -> {},
+                extensions -> {
+                  retained.set(extensions);
+                  retainedLifecycle.set(extensions);
+                });
+        var configuration = retained.get();
+        var lifecycle = retainedLifecycle.get();
+        assertThrows(
+            IllegalStateException.class,
+            () -> configuration.beforeRouteHandler((request, response) -> {}));
+        assertThrows(
+            IllegalStateException.class, () -> lifecycle.observe(ignored8 -> ignored9 -> {}));
+      }
     }
   }
 

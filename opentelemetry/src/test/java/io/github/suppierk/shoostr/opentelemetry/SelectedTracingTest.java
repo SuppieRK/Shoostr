@@ -8,7 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.AuthenticationExtension;
-import io.github.suppierk.shoostr.Extensions;
+import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Request;
 import io.github.suppierk.shoostr.RequestOutcome;
@@ -68,13 +68,13 @@ class SelectedTracingTest {
   @ValueSource(booleans = {false, true})
   void createsServerSpansOnlyForSelectedRoutes(boolean virtualApplication) throws Exception {
     withExecutionMode(virtualApplication);
-    app.extensions(tracing);
+
     app.routes()
         .get(
             "/selected",
             (ignored, response) ->
                 response.text(Boolean.toString(Span.current().getSpanContext().isValid())),
-            extensions -> extensions.with(tracing));
+            extensions -> extensions.withExtension(tracing));
     app.routes()
         .get(
             "/plain",
@@ -100,12 +100,12 @@ class SelectedTracingTest {
   @ValueSource(booleans = {false, true})
   void excludingDefaultTracingLeavesTheRouteUntraced(boolean virtualApplication) throws Exception {
     withExecutionMode(virtualApplication);
-    app.extensions(tracing).configureExtensionsDefaults(e -> e.with(tracing));
+    app.withExtension(tracing);
     app.routes()
         .get(
             "/inert",
             (ignored3, response) -> response.text("ok"),
-            extensions -> extensions.without(tracing));
+            extensions -> extensions.withoutExtension(tracing));
 
     try (var test = TestServer.start(app)) {
       assertEquals(200, test.send(request -> request.path("/inert")).statusCode());
@@ -119,7 +119,7 @@ class SelectedTracingTest {
   void inheritedAndRepeatedActivationCreatesOneServerSpan(boolean virtualApplication)
       throws Exception {
     withExecutionMode(virtualApplication);
-    app.extensions(tracing);
+
     app.routes()
         .path(
             "/api",
@@ -131,10 +131,10 @@ class SelectedTracingTest {
                             "/orders",
                             (ignored4, response) -> response.text("ok"),
                             extensions -> {
-                              var configuration = extensions.with(tracing);
-                              assertSame(configuration, extensions.with(tracing));
+                              var configuration = extensions.withExtension(tracing);
+                              assertSame(configuration, extensions.withExtension(tracing));
                             })),
-            extensions -> extensions.with(tracing));
+            extensions -> extensions.withExtension(tracing));
 
     try (var test = TestServer.start(app)) {
       assertEquals(200, test.send(request -> request.path("/api/v1/orders")).statusCode());
@@ -148,13 +148,15 @@ class SelectedTracingTest {
   @ValueSource(booleans = {false, true})
   void enablingOneChildDoesNotEnableItsSibling(boolean virtualApplication) throws Exception {
     withExecutionMode(virtualApplication);
-    app.extensions(tracing);
+
     app.routes()
         .path(
             "/api",
             group -> {
               group.get(
-                  "/selected", (ignored5, response) -> response.text("ok"), e -> e.with(tracing));
+                  "/selected",
+                  (ignored5, response) -> response.text("ok"),
+                  e -> e.withExtension(tracing));
               group.get("/plain", (ignored6, response) -> response.text("ok"));
             });
 
@@ -170,50 +172,62 @@ class SelectedTracingTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void appWideTracingSurvivesScopedExclusionWithoutCreatingDuplicateSpans(
-      boolean virtualApplication) throws Exception {
+  void applicationDefaultsAllowScopedExclusionAndLeaveMissesUntraced(boolean virtualApplication)
+      throws Exception {
     withExecutionMode(virtualApplication);
-    app.extensions(tracing.allRequests());
+    app.withExtension(tracing);
     app.routes()
         .get(
             "/selected",
             (ignored7, response) -> response.text("ok"),
             e -> {
-              e.with(tracing);
-              e.without(tracing);
+              e.withExtension(tracing);
+              e.withoutExtension(tracing);
             });
 
     try (var test = TestServer.start(app)) {
       assertEquals(200, test.send(request -> request.path("/selected")).statusCode());
       assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
-      assertEquals(1, exporter.getFinishedSpanItems().size());
+      assertEquals(404, test.send(request -> request.path("/missing")).statusCode());
+      assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
+      assertTrue(exporter.getFinishedSpanItems().isEmpty());
     }
   }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void rejectsSelectionAfterTheRegistrationCallbackHasFinished(boolean appWide) {
-    app.extensions(appWide ? tracing.allRequests() : tracing);
-    var retained = new AtomicReference<Extensions>();
+    if (appWide) {
+      app.withExtension(tracing);
+    }
+
+    var retained = new AtomicReference<Lifecycle>();
     app.routes()
         .get(
             "/selected",
             (ignored8, ignored9) -> {},
             e -> {
-              e.with(tracing);
+              e.withExtension(tracing);
               retained.set(e);
             });
     var configuration = retained.get();
-    assertThrows(IllegalStateException.class, () -> configuration.with(tracing));
+    assertThrows(IllegalStateException.class, () -> configuration.withExtension(tracing));
   }
 
   @Test
-  void rejectsSelectionOfAnUninstalledInstance() {
+  void selectingAnInstanceNeedsNoPriorApplicationRegistration() throws Exception {
     app.routes()
         .get(
             "/selected",
-            (ignored10, ignored11) -> {},
-            e -> assertThrows(IllegalArgumentException.class, () -> e.with(tracing)));
+            (request, response) -> response.text("ready"),
+            lifecycle -> lifecycle.withExtension(tracing));
+
+    try (var server = TestServer.start(app)) {
+      assertEquals(200, server.send(request -> request.path("/selected")).statusCode());
+      assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
+      assertEquals(1, exporter.getFinishedSpanItems().size());
+      assertEquals("GET /selected", exporter.getFinishedSpanItems().getFirst().getName());
+    }
   }
 
   @ParameterizedTest
@@ -221,8 +235,8 @@ class SelectedTracingTest {
   void leavesApplicationSpansOnUnselectedRoutesControlledByTheSdk(boolean virtualApplication)
       throws Exception {
     withExecutionMode(virtualApplication);
-    app.extensions(tracing);
-    app.routes().get("/selected", (ignored12, ignored13) -> {}, e -> e.with(tracing));
+
+    app.routes().get("/selected", (ignored12, ignored13) -> {}, e -> e.withExtension(tracing));
     app.routes()
         .get(
             "/business",
@@ -253,7 +267,7 @@ class SelectedTracingTest {
       throws Exception {
     withExecutionMode(virtualApplication);
     var authentication = new ContextAuthentication();
-    app.extensions(tracing).authentication(authentication);
+
     app.onRouteMatched(
         (ignored16, response) ->
             response.setHeader(
@@ -263,8 +277,8 @@ class SelectedTracingTest {
             "/selected",
             (request, response) -> response.text(request.principal().orElseThrow().getName()),
             e -> {
-              e.with(authentication);
-              e.with(tracing);
+              e.withExtension(authentication);
+              e.withExtension(tracing);
             });
 
     try (var test = TestServer.start(app)) {
@@ -280,8 +294,8 @@ class SelectedTracingTest {
   void doesNotObserveUnmatchedPathsOrMethodMismatches(String path, boolean virtualApplication)
       throws Exception {
     withExecutionMode(virtualApplication);
-    app.extensions(tracing);
-    app.routes().get("/selected", (ignored17, ignored18) -> {}, e -> e.with(tracing));
+
+    app.routes().get("/selected", (ignored17, ignored18) -> {}, e -> e.withExtension(tracing));
 
     try (var test = TestServer.start(app)) {
       var result = test.send(request -> request.path(path).method("DELETE"));
@@ -295,12 +309,12 @@ class SelectedTracingTest {
   @ValueSource(booleans = {false, true})
   void doesNotObserveARequestRejectedBeforeMatching(boolean virtualApplication) throws Exception {
     withExecutionMode(virtualApplication);
-    app.extensions(tracing);
+
     app.onRequestHeaders(
         (ignored19, ignored20) -> {
           throw new IllegalArgumentException("rejected");
         });
-    app.routes().get("/selected", (ignored21, ignored22) -> {}, e -> e.with(tracing));
+    app.routes().get("/selected", (ignored21, ignored22) -> {}, e -> e.withExtension(tracing));
 
     try (var test = TestServer.start(app)) {
       assertEquals(500, test.send(request -> request.path("/selected")).statusCode());
@@ -315,14 +329,14 @@ class SelectedTracingTest {
       throws Exception {
     withExecutionMode(virtualApplication);
     var second = new OpenTelemetryTracing(telemetry);
-    app.extensions(tracing, second);
+
     app.routes()
         .get(
             "/selected",
             (ignored23, response) -> response.text("ok"),
             e -> {
-              e.with(tracing);
-              e.with(second);
+              e.withExtension(tracing);
+              e.withExtension(second);
             });
 
     try (var test = TestServer.start(app)) {
@@ -339,11 +353,13 @@ class SelectedTracingTest {
   void recordsTheGenerated404WhenAvailabilityRejectsAMatchedEndpoint(boolean virtualApplication)
       throws Exception {
     withExecutionMode(virtualApplication);
-    app.extensions(tracing);
+
     app.routes()
         .when(
             () -> false,
-            routes -> routes.get("/selected", (ignored24, ignored25) -> {}, e -> e.with(tracing)));
+            routes ->
+                routes.get(
+                    "/selected", (ignored24, ignored25) -> {}, e -> e.withExtension(tracing)));
 
     try (var test = TestServer.start(app)) {
       assertEquals(404, test.send(request -> request.path("/selected")).statusCode());

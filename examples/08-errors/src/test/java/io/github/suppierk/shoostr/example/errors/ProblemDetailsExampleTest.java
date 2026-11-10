@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Timeout;
 class ProblemDetailsExampleTest {
   @Test
   void returnsProblemJsonWithMatchingStatusAndSafePublicMembers() throws Exception {
+
     try (var test = TestServer.start(ProblemDetailsExample.application())) {
       var response =
           test.send(request -> request.path("/items/42"), HttpResponse.BodyHandlers.ofString());

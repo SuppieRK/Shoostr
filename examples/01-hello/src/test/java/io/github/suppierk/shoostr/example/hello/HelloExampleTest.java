@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 class HelloExampleTest {
   @Test
   void servesTheDocumentedHelloResponse() throws Exception {
+
     try (var test = TestServer.start(HelloExample.application())) {
       var response =
           test.send(request -> request.path("/hello"), HttpResponse.BodyHandlers.ofString());

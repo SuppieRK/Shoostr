@@ -1,5 +1,7 @@
 package io.github.suppierk.consumer;
 
+import java.io.Closeable;
+
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import java.net.URI;
@@ -19,8 +21,7 @@ public final class Main {
     configuredOptions.setMaxParameters(1000);
     configuredOptions.setMultipart(MultipartOptions.defaults());
 
-    try (var app = new Shoostr(configuredOptions).modifyServer(nativeServer -> { var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0]; nativeConnector.setHost("127.0.0.1"); nativeConnector.setPort(0); nativeConnector.setIdleTimeout(30000); });
-        var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()) {
+    { var app = new Shoostr(configuredOptions).modifyServer(nativeServer -> { var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0]; nativeConnector.setHost("127.0.0.1"); nativeConnector.setPort(0); nativeConnector.setIdleTimeout(30000); }); try (Closeable appCleanup = app::close; var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()) {
       app.routes().get("/published", (request, response) -> response.text("published"));
       app.start();
       var request =
@@ -33,6 +34,6 @@ public final class Main {
       }
 
       System.out.println("PUBLISHED_HTTP_OK");
-    }
+    } }
   }
 }

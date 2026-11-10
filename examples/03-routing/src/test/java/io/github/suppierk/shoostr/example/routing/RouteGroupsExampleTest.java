@@ -21,6 +21,7 @@ class RouteGroupsExampleTest {
     "/public, public"
   })
   void reusesDefinitionsWithoutLosingParentPrefixes(String path, String body) throws Exception {
+
     try (var test = TestServer.start(RouteGroupsExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
 
@@ -39,6 +40,7 @@ class RouteGroupsExampleTest {
   })
   void inheritsConfigurationWithoutLeakingItToSiblings(
       String path, String apiHeader, String versionHeader, String groupHeader) throws Exception {
+
     try (var test = TestServer.start(RouteGroupsExample.application())) {
       var response = test.send(request -> request.path(path));
 
@@ -52,6 +54,7 @@ class RouteGroupsExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"/notes", "/v1/notes", "/v2/notes", "/api/status"})
   void keepsLeadingSlashesWithinTheirParentGroup(String path) throws Exception {
+
     try (var test = TestServer.start(RouteGroupsExample.application())) {
       assertEquals(404, test.send(request -> request.path(path)).statusCode());
     }

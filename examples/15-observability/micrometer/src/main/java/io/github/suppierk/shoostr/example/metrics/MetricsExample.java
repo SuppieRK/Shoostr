@@ -41,8 +41,8 @@ public final class MetricsExample {
     var registry = new PrometheusMeterRegistry(PrometheusConfig.DEFAULT);
     // Core's afterClose callback releases it after request drain and extension cleanup.
     app.afterClose(registry::close);
-    // Shoostr's micrometer module provides this adapter; allRequests enables instrumentation.
-    app.extensions(new MicrometerMetrics(registry).allRequests());
+    // Application activation measures all registered endpoints with this borrowed registry.
+    app.withExtension(new MicrometerMetrics(registry));
     app.routes(
         routes -> {
           routes.get(

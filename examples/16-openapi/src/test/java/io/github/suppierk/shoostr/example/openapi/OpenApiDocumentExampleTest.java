@@ -12,6 +12,7 @@ import io.github.suppierk.shoostr.openapi.OpenApiOperation;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.swagger.v3.core.util.Json31;
 import io.swagger.v3.oas.models.media.JsonSchema;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
@@ -24,6 +25,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class OpenApiDocumentExampleTest {
   @Test
   void servesAnExplicitSchemaAndComposedOperationWithoutScanningClasses() throws Exception {
+
     try (var test = TestServer.start(OpenApiDocumentExample.application())) {
       var response = test.send(request -> request.path("/openapi.json"));
       assertEquals(200, response.statusCode());
@@ -63,6 +65,7 @@ class OpenApiDocumentExampleTest {
 
   @Test
   void documentsAndHandlesAnExplicitJsonRequestBody() throws Exception {
+
     try (var test = TestServer.start(OpenApiDocumentExample.application())) {
       var response =
           test.send(
@@ -104,6 +107,7 @@ class OpenApiDocumentExampleTest {
         "{\"name\":\"first\"}{\"name\":\"second\"}"
       })
   void validatesIncomingDataInTheHandlerRatherThanRelyingOnItsSchema(String body) throws Exception {
+
     try (var test = TestServer.start(OpenApiDocumentExample.application())) {
       assertEquals(
           400,
@@ -120,6 +124,7 @@ class OpenApiDocumentExampleTest {
 
   @Test
   void keepsSelectedOperationsInTheirOwnDocument() throws Exception {
+
     try (var test = TestServer.start(OpenApiDocumentExample.application())) {
       var response = test.send(request -> request.path("/internal-openapi.json"));
       assertEquals(200, response.statusCode());
@@ -145,40 +150,46 @@ class OpenApiDocumentExampleTest {
     var invocations = new AtomicInteger();
     var retained = new AtomicReference<OpenApiOperation>();
 
-    try (var app = new Shoostr().extensions(docs)) {
-      app.routes().get("/openapi.json", docs.handler());
-      app.routes()
-          .when(
-              () -> {
-                checks.incrementAndGet();
-                return false;
-              },
-              preview ->
-                  preview.get(
-                      "/preview",
-                      (ignored, response) -> {
-                        invocations.incrementAndGet();
-                        response.text("preview");
-                      },
-                      extensions -> retained.set(extensions.with(docs).summary("Preview"))));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var first = test.send(request -> request.path("/openapi.json"));
-        assertEquals(200, first.statusCode());
-        var document = Json31.mapper().readTree(first.body());
-        assertTrue(document.path("paths").has("/preview"));
-        assertEquals(
-            "object",
-            document.path("components").path("schemas").path("Snapshot").path("type").asString());
-        assertEquals(0, checks.get());
-        assertEquals(0, invocations.get());
-        var configuration = retained.get();
-        assertThrows(IllegalStateException.class, () -> configuration.summary("Late change"));
-        assertArrayEquals(first.body(), test.send(request -> request.path("/openapi.json")).body());
-        assertEquals(0, checks.get());
-        assertEquals(404, test.send(request -> request.path("/preview")).statusCode());
-        assertEquals(1, checks.get());
-        assertEquals(0, invocations.get());
+      try (Closeable appCleanup = app::close) {
+        app.routes().get("/openapi.json", docs.handler());
+        app.routes()
+            .when(
+                () -> {
+                  checks.incrementAndGet();
+                  return false;
+                },
+                preview ->
+                    preview.get(
+                        "/preview",
+                        (ignored, response) -> {
+                          invocations.incrementAndGet();
+                          response.text("preview");
+                        },
+                        lifecycle ->
+                            retained.set(lifecycle.withExtension(docs).summary("Preview"))));
+
+        try (var test = TestServer.start(app)) {
+          var first = test.send(request -> request.path("/openapi.json"));
+          assertEquals(200, first.statusCode());
+          var document = Json31.mapper().readTree(first.body());
+          assertTrue(document.path("paths").has("/preview"));
+          assertEquals(
+              "object",
+              document.path("components").path("schemas").path("Snapshot").path("type").asString());
+          assertEquals(0, checks.get());
+          assertEquals(0, invocations.get());
+          var configuration = retained.get();
+          assertThrows(IllegalStateException.class, () -> configuration.summary("Late change"));
+          assertArrayEquals(
+              first.body(), test.send(request -> request.path("/openapi.json")).body());
+          assertEquals(0, checks.get());
+          assertEquals(404, test.send(request -> request.path("/preview")).statusCode());
+          assertEquals(1, checks.get());
+          assertEquals(0, invocations.get());
+        }
       }
     }
   }

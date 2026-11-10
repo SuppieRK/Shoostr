@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -15,35 +16,40 @@ import org.junit.jupiter.api.Test;
 class ServerOptionsExampleTest {
   @Test
   void servesTheConfiguredLoopbackListenerAndRejectsOversizedHeaders() throws Exception {
-    try (var app = ServerOptionsExample.application("127.0.0.1", 0);
-        var client = HttpClient.newHttpClient()) {
-      app.start();
-      assertTrue(app.port() > 0);
-      var target = URI.create("http://127.0.0.1:" + app.port() + "/echo");
-      var request =
-          HttpRequest.newBuilder(target)
-              .timeout(Duration.ofSeconds(3))
-              .POST(HttpRequest.BodyPublishers.ofString("configured"))
-              .build();
-      var response = client.send(request, HttpResponse.BodyHandlers.ofString());
-      assertEquals(200, response.statusCode());
-      assertEquals("configured", response.body());
-      assertEquals(
-          431,
-          client
-              .send(
-                  HttpRequest.newBuilder(target)
-                      .timeout(Duration.ofSeconds(3))
-                      .header("X-Large", "x".repeat(2048))
-                      .POST(HttpRequest.BodyPublishers.noBody())
-                      .build(),
-                  HttpResponse.BodyHandlers.discarding())
-              .statusCode());
+    {
+      var app = ServerOptionsExample.application("127.0.0.1", 0);
+
+      try (Closeable appCleanup = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.start();
+        assertTrue(app.port() > 0);
+        var target = URI.create("http://127.0.0.1:" + app.port() + "/echo");
+        var request =
+            HttpRequest.newBuilder(target)
+                .timeout(Duration.ofSeconds(3))
+                .POST(HttpRequest.BodyPublishers.ofString("configured"))
+                .build();
+        var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, response.statusCode());
+        assertEquals("configured", response.body());
+        assertEquals(
+            431,
+            client
+                .send(
+                    HttpRequest.newBuilder(target)
+                        .timeout(Duration.ofSeconds(3))
+                        .header("X-Large", "x".repeat(2048))
+                        .POST(HttpRequest.BodyPublishers.noBody())
+                        .build(),
+                    HttpResponse.BodyHandlers.discarding())
+                .statusCode());
+      }
     }
   }
 
   @Test
   void echoesBodiesWithinTheConfiguredLimits() throws Exception {
+
     try (var test = TestServer.start(ServerOptionsExample.application("127.0.0.1", 0))) {
       var response =
           test.send(
@@ -61,6 +67,7 @@ class ServerOptionsExampleTest {
 
   @Test
   void rejectsBodiesAboveTheConfiguredRequestLimit() throws Exception {
+
     try (var test = TestServer.start(ServerOptionsExample.application("127.0.0.1", 0))) {
       var response =
           test.send(

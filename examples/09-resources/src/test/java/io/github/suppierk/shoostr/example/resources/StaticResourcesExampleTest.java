@@ -46,6 +46,7 @@ class StaticResourcesExampleTest {
         assertEquals("public notes", response.body());
         assertEquals("text/plain", response.headers().firstValue("Content-Type").orElseThrow());
       }
+
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -72,6 +73,7 @@ class StaticResourcesExampleTest {
         assertEquals(404, test.send(request -> request.path("/bundled/private.txt")).statusCode());
         assertEquals(404, test.send(request -> request.path("/private.txt")).statusCode());
       }
+
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -104,6 +106,7 @@ class StaticResourcesExampleTest {
         assertEquals(expected, response.body());
         assertEquals(404, test.send(request -> request.path("/files/")).statusCode());
       }
+
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -132,6 +135,7 @@ class StaticResourcesExampleTest {
             "application/octet-stream", binary.headers().firstValue("Content-Type").orElseThrow());
         assertArrayEquals(new byte[] {0, -1, 3}, binary.body());
       }
+
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
@@ -164,6 +168,7 @@ class StaticResourcesExampleTest {
         assertEquals(200, fallback.statusCode());
         assertEquals("shell", fallback.body());
       }
+
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }

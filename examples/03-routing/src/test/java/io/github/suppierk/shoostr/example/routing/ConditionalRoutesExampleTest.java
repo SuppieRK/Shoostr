@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -37,6 +38,7 @@ class ConditionalRoutesExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"/preview/latest", "/preview/latest?preview=false"})
   void requiresTheRequestConditionEvenWhenTheFlagIsEnabled(String path) throws Exception {
+
     try (var test = TestServer.start(ConditionalRoutesExample.application(() -> true))) {
       var response = test.send(request -> request.path(path));
 
@@ -63,6 +65,7 @@ class ConditionalRoutesExampleTest {
 
   @Test
   void doesNotRetryTheCatchAllAfterAConditionFails() throws Exception {
+
     try (var test = TestServer.start(ConditionalRoutesExample.application(() -> false))) {
       var unavailable = test.send(request -> request.path("/preview/latest?preview=true"));
       assertEquals(404, unavailable.statusCode());
@@ -78,21 +81,25 @@ class ConditionalRoutesExampleTest {
 
   @Test
   void retainsMethodDiscoveryWhileTheRouteIsUnavailable() throws Exception {
-    try (var app = ConditionalRoutesExample.application(() -> false)) {
-      app.routes()
-          .when(
-              () -> false,
-              unavailable ->
-                  unavailable.post(
-                      "/preview/latest", (ignored, response) -> response.text("unused")));
+    {
+      var app = ConditionalRoutesExample.application(() -> false);
 
-      try (var test = TestServer.start(app)) {
-        var response = test.send(request -> request.path("/preview/latest").method("PUT"));
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .when(
+                () -> false,
+                unavailable ->
+                    unavailable.post(
+                        "/preview/latest", (ignored, response) -> response.text("unused")));
 
-        assertEquals(405, response.statusCode());
-        assertEquals(
-            Set.of("GET", "POST"),
-            Set.of(response.headers().firstValue("Allow").orElseThrow().split(",\\s*")));
+        try (var test = TestServer.start(app)) {
+          var response = test.send(request -> request.path("/preview/latest").method("PUT"));
+
+          assertEquals(405, response.statusCode());
+          assertEquals(
+              Set.of("GET", "POST"),
+              Set.of(response.headers().firstValue("Allow").orElseThrow().split(",\\s*")));
+        }
       }
     }
   }

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -33,11 +34,15 @@ class ServingOptionsTest {
     options.setHost("127.0.0.1");
     options.setPort(port);
 
-    try (var app = application(options);
-        var client = HttpClient.newHttpClient()) {
-      app.start();
-      assertEquals(port, app.port());
-      assertEquals("ready", get(client, app.port(), "").body());
+    {
+      var app = application(options);
+
+      try (Closeable appCleanup = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.start();
+        assertEquals(port, app.port());
+        assertEquals("ready", get(client, app.port(), "").body());
+      }
     }
   }
 
@@ -47,16 +52,23 @@ class ServingOptionsTest {
     options.setHost("127.0.0.1");
     options.setPort(0);
 
-    try (var first = application(options);
+    {
+      var first = application(options);
+
+      try (Closeable firstCleanup = first::close) {
         var second = application(options);
-        var client = HttpClient.newHttpClient()) {
-      first.start();
-      second.start();
-      assertTrue(first.port() > 0);
-      assertNotEquals(first.port(), second.port());
-      assertEquals("ready", get(client, first.port(), "").body());
-      assertEquals("ready", get(client, second.port(), "").body());
-      assertEquals(0, options.getPort());
+
+        try (Closeable secondCleanup = second::close;
+            var client = HttpClient.newHttpClient()) {
+          first.start();
+          second.start();
+          assertTrue(first.port() > 0);
+          assertNotEquals(first.port(), second.port());
+          assertEquals("ready", get(client, first.port(), "").body());
+          assertEquals("ready", get(client, second.port(), "").body());
+          assertEquals(0, options.getPort());
+        }
+      }
     }
   }
 
@@ -68,32 +80,41 @@ class ServingOptionsTest {
     options.setPort(0);
     options.setMaxRequestBytes(4);
 
-    try (var first = application(options);
-        var client = HttpClient.newHttpClient()) {
-      options.setMaxRequestBytes(2);
+    {
+      var first = application(options);
 
-      try (var second = application(options)) {
-        options.setHost("unresolved.invalid");
-        options.setPort(65535);
-        first.start();
-        second.start();
-        var firstResponse =
-            client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + first.port() + "/echo"))
-                    .timeout(Duration.ofSeconds(3))
-                    .POST(HttpRequest.BodyPublishers.ofString("four"))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, firstResponse.statusCode());
-        assertEquals("four", firstResponse.body());
-        var secondResponse =
-            client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + second.port() + "/echo"))
-                    .timeout(Duration.ofSeconds(3))
-                    .POST(HttpRequest.BodyPublishers.ofString("four"))
-                    .build(),
-                HttpResponse.BodyHandlers.discarding());
-        assertEquals(413, secondResponse.statusCode());
+      try (Closeable firstCleanup1 = first::close;
+          var client = HttpClient.newHttpClient()) {
+        options.setMaxRequestBytes(2);
+
+        {
+          var second = application(options);
+
+          try (Closeable secondCleanup1 = second::close) {
+            options.setHost("unresolved.invalid");
+            options.setPort(65535);
+            first.start();
+            second.start();
+            var firstResponse =
+                client.send(
+                    HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + first.port() + "/echo"))
+                        .timeout(Duration.ofSeconds(3))
+                        .POST(HttpRequest.BodyPublishers.ofString("four"))
+                        .build(),
+                    HttpResponse.BodyHandlers.ofString());
+            assertEquals(200, firstResponse.statusCode());
+            assertEquals("four", firstResponse.body());
+            var secondResponse =
+                client.send(
+                    HttpRequest.newBuilder(
+                            URI.create("http://127.0.0.1:" + second.port() + "/echo"))
+                        .timeout(Duration.ofSeconds(3))
+                        .POST(HttpRequest.BodyPublishers.ofString("four"))
+                        .build(),
+                    HttpResponse.BodyHandlers.discarding());
+            assertEquals(413, secondResponse.statusCode());
+          }
+        }
       }
     }
   }
@@ -106,14 +127,18 @@ class ServingOptionsTest {
     options.setPort(0);
     options.setMaxRequestHeaderBytes(512);
 
-    try (var app = application(options);
-        var client = HttpClient.newHttpClient()) {
-      app.beforeRouteHandler((request, response) -> handled.incrementAndGet());
-      app.start();
-      assertEquals(431, get(client, app.port(), "x".repeat(2048)).statusCode());
-      assertEquals(0, handled.get());
-      assertEquals(200, get(client, app.port(), "small").statusCode());
-      assertEquals(1, handled.get());
+    {
+      var app = application(options);
+
+      try (Closeable appCleanup1 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.beforeRouteHandler((request, response) -> handled.incrementAndGet());
+        app.start();
+        assertEquals(431, get(client, app.port(), "x".repeat(2048)).statusCode());
+        assertEquals(0, handled.get());
+        assertEquals(200, get(client, app.port(), "small").statusCode());
+        assertEquals(1, handled.get());
+      }
     }
   }
 
@@ -126,33 +151,37 @@ class ServingOptionsTest {
     options.setShutdownTimeout(Duration.ofSeconds(2));
     options.setMaxRequestHeaderBytes(256);
 
-    try (var app = application(options);
-        var client = HttpClient.newHttpClient()) {
-      app.modifyHttpConfiguration(
-          http -> {
-            assertEquals(256, http.getRequestHeaderSize());
-            http.setRequestHeaderSize(4096);
-          });
-      app.modifyServer(
-          server -> {
-            var connector = (ServerConnector) server.getConnectors()[0];
-            assertEquals("localhost", connector.getHost());
-            assertEquals(9090, connector.getPort());
-            assertEquals(12_000, connector.getIdleTimeout());
-            assertEquals(2000, server.getStopTimeout());
-            connector.setHost("127.0.0.1");
-            connector.setPort(0);
-            connector.setIdleTimeout(15_000);
-            server.setStopTimeout(3000);
-          });
-      app.modifyServer(
-          server -> {
-            var connector = (ServerConnector) server.getConnectors()[0];
-            assertEquals(15_000, connector.getIdleTimeout());
-            assertEquals(3000, server.getStopTimeout());
-          });
-      app.start();
-      assertEquals(200, get(client, app.port(), "x".repeat(1024)).statusCode());
+    {
+      var app = application(options);
+
+      try (Closeable appCleanup2 = app::close;
+          var client = HttpClient.newHttpClient()) {
+        app.modifyHttpConfiguration(
+            http -> {
+              assertEquals(256, http.getRequestHeaderSize());
+              http.setRequestHeaderSize(4096);
+            });
+        app.modifyServer(
+            server -> {
+              var connector = (ServerConnector) server.getConnectors()[0];
+              assertEquals("localhost", connector.getHost());
+              assertEquals(9090, connector.getPort());
+              assertEquals(12_000, connector.getIdleTimeout());
+              assertEquals(2000, server.getStopTimeout());
+              connector.setHost("127.0.0.1");
+              connector.setPort(0);
+              connector.setIdleTimeout(15_000);
+              server.setStopTimeout(3000);
+            });
+        app.modifyServer(
+            server -> {
+              var connector = (ServerConnector) server.getConnectors()[0];
+              assertEquals(15_000, connector.getIdleTimeout());
+              assertEquals(3000, server.getStopTimeout());
+            });
+        app.start();
+        assertEquals(200, get(client, app.port(), "x".repeat(1024)).statusCode());
+      }
     }
   }
 

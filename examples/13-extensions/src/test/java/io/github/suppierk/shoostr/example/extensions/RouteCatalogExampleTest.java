@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.Test;
 class RouteCatalogExampleTest {
   @Test
   void publishesComposedRouteFactsWithIndependentInheritedDescriptions() throws Exception {
+
     try (var test = TestServer.start(RouteCatalogExample.application(() -> false))) {
       var response =
           test.send(request -> request.path("/catalog"), HttpResponse.BodyHandlers.ofString());
@@ -30,14 +32,14 @@ class RouteCatalogExampleTest {
   }
 
   @Test
-  void excludesHealthFromDefaultCatalogFactsWhileRetainingItsInstalledApplicationHook()
-      throws Exception {
+  void excludesHealthFromDefaultCatalogFactsAndDiscoveryHeader() throws Exception {
+
     try (var test = TestServer.start(RouteCatalogExample.application(() -> false))) {
       var health =
           test.send(request -> request.path("/health"), HttpResponse.BodyHandlers.ofString());
       assertEquals(200, health.statusCode());
       assertEquals("ok", health.body());
-      assertEquals("/catalog", health.headers().firstValue("X-Route-Catalog").orElse("absent"));
+      assertEquals("absent", health.headers().firstValue("X-Route-Catalog").orElse("absent"));
       var catalog =
           test.send(request -> request.path("/catalog"), HttpResponse.BodyHandlers.ofString());
       assertFalse(catalog.body().contains("/health"));
@@ -48,23 +50,31 @@ class RouteCatalogExampleTest {
   void rejectsReuseWithoutDisruptingTheOwnerAndClearsItsCatalogAfterClosure() throws Exception {
     var catalog = new RouteCatalogExample.RouteCatalog();
 
-    try (var first = new Shoostr();
-        var second = new Shoostr()) {
-      first.extensions(catalog);
-      assertThrows(IllegalStateException.class, () -> second.extensions(catalog));
-      first
-          .routes()
-          .get(
-              "/kept",
-              (ignored, response) -> response.text("kept"),
-              extensions -> extensions.with(catalog).summary("Kept"));
+    {
+      var first = new Shoostr();
 
-      try (var test = TestServer.start(first)) {
-        assertEquals(200, test.send(request -> request.path("/kept")).statusCode());
-        assertEquals("GET /kept — Kept", catalog.document());
+      try (Closeable firstCleanup = first::close) {
+        var second = new Shoostr();
+
+        try (Closeable secondCleanup = second::close) {
+
+          first.withExtension(catalog);
+          assertThrows(IllegalStateException.class, () -> second.withExtension(catalog));
+          first
+              .routes()
+              .get(
+                  "/kept",
+                  (ignored, response) -> response.text("kept"),
+                  lifecycle -> lifecycle.withExtension(catalog).summary("Kept"));
+
+          try (var test = TestServer.start(first)) {
+            assertEquals(200, test.send(request -> request.path("/kept")).statusCode());
+            assertEquals("GET /kept — Kept", catalog.document());
+          }
+
+          assertEquals("", catalog.document());
+        }
       }
-
-      assertEquals("", catalog.document());
     }
   }
 
@@ -102,21 +112,25 @@ class RouteCatalogExampleTest {
     var catalog = new RouteCatalogExample.RouteCatalog();
     var retained = new AtomicReference<RouteCatalogExample.Description>();
 
-    try (var app = new Shoostr().extensions(catalog)) {
-      app.routes()
-          .get(
-              "/snapshot",
-              (ignored2, response) -> response.text("ok"),
-              extensions -> {
-                var description = extensions.with(catalog);
-                assertThrows(IllegalArgumentException.class, () -> description.summary(" "));
-                retained.set(description.summary("Original"));
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        retained.get().summary("Later change");
-        assertEquals(200, test.send(request -> request.path("/snapshot")).statusCode());
-        assertEquals("GET /snapshot — Original", catalog.document());
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .get(
+                "/snapshot",
+                (ignored2, response) -> response.text("ok"),
+                lifecycle -> {
+                  var description = lifecycle.withExtension(catalog);
+                  assertThrows(IllegalArgumentException.class, () -> description.summary(" "));
+                  retained.set(description.summary("Original"));
+                });
+
+        try (var test = TestServer.start(app)) {
+          retained.get().summary("Later change");
+          assertEquals(200, test.send(request -> request.path("/snapshot")).statusCode());
+          assertEquals("GET /snapshot — Original", catalog.document());
+        }
       }
     }
   }

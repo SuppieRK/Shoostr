@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -90,6 +91,7 @@ class PersistUploadExampleTest {
 
   @Test
   void rejectsMissingUploadsWithoutCreatingADestination() throws Exception {
+
     try (var test = TestServer.start(PersistUploadExample.application(directory))) {
       var response =
           test.send(
@@ -107,8 +109,12 @@ class PersistUploadExampleTest {
   void createsTheStorageDirectoryBeforeStartupAndRejectsInvalidPaths() throws Exception {
     var storage = directory.resolve("nested/files");
 
-    try (var app = PersistUploadExample.application(storage)) {
-      assertTrue(Files.isDirectory(storage));
+    {
+      var app = PersistUploadExample.application(storage);
+
+      try (Closeable appCleanup = app::close) {
+        assertTrue(Files.isDirectory(storage));
+      }
     }
 
     var file = Files.createFile(directory.resolve("not-a-directory"));

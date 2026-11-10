@@ -7,8 +7,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-import io.github.suppierk.shoostr.Extension;
+import io.github.suppierk.shoostr.ApplicationExtension;
+import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Shoostr;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.BindException;
 import java.net.InetAddress;
@@ -82,8 +84,12 @@ class PortSelectionTest {
       first.close();
       second.close();
 
-      try (var test = TestServer.startOnPortRange(new Shoostr(), minimum, maximum)) {
-        assertEquals(minimum, test.baseUri().getPort());
+      {
+        var test = TestServer.startOnPortRange(new Shoostr(), minimum, maximum);
+
+        try (test) {
+          assertEquals(minimum, test.baseUri().getPort());
+        }
       }
     }
   }
@@ -116,14 +122,17 @@ class PortSelectionTest {
 
   @Test
   void failsAnOccupiedFixedPortWithoutSelectingAnotherPort() throws Exception {
-    try (var occupied = bind(0);
-        var app = new Shoostr()) {
-      var failure =
-          assertThrows(
-              IOException.class, () -> TestServer.startOnPort(app, occupied.getLocalPort()));
-      assertInstanceOf(BindException.class, failure.getCause());
-      assertThrows(IllegalStateException.class, app::port);
-      assertThrows(IllegalStateException.class, app::start);
+    try (var occupied = bind(0)) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        var failure =
+            assertThrows(
+                IOException.class, () -> TestServer.startOnPort(app, occupied.getLocalPort()));
+        assertInstanceOf(BindException.class, failure.getCause());
+        assertThrows(IllegalStateException.class, app::port);
+        assertThrows(IllegalStateException.class, app::start);
+      }
     }
   }
 
@@ -132,16 +141,21 @@ class PortSelectionTest {
     var ports = adjacentPorts();
 
     try (var first = ports.get(0);
-        var second = ports.get(1);
-        var app = new Shoostr()) {
-      var failure =
-          assertThrows(
-              IOException.class,
-              () -> TestServer.startOnPortRange(app, first.getLocalPort(), second.getLocalPort()));
-      assertInstanceOf(BindException.class, failure.getCause());
-      assertTrue(Objects.requireNonNull(failure.getMessage()).contains(":" + first.getLocalPort()));
-      assertThrows(IllegalStateException.class, app::port);
-      assertThrows(IllegalStateException.class, app::start);
+        var second = ports.get(1)) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup1 = app::close) {
+        var failure =
+            assertThrows(
+                IOException.class,
+                () ->
+                    TestServer.startOnPortRange(app, first.getLocalPort(), second.getLocalPort()));
+        assertInstanceOf(BindException.class, failure.getCause());
+        assertTrue(
+            Objects.requireNonNull(failure.getMessage()).contains(":" + first.getLocalPort()));
+        assertThrows(IllegalStateException.class, app::port);
+        assertThrows(IllegalStateException.class, app::start);
+      }
     }
   }
 
@@ -149,21 +163,29 @@ class PortSelectionTest {
   void keepsCleanupFailuresSuppressedOnTheCheckedBindFailure() throws Exception {
     var expected = new IOException("forced extension cleanup failure");
     var extension =
-        new Extension<>() {
+        new ApplicationExtension<Object>() {
+          @Override
+          public Object configure(Lifecycle lifecycle, Object inherited) {
+            return this;
+          }
+
           @Override
           public void close() throws IOException {
             throw expected;
           }
         };
 
-    try (var occupied = bind(0);
-        var app = new Shoostr().extensions(extension)) {
-      var failure =
-          assertThrows(
-              IOException.class, () -> TestServer.startOnPort(app, occupied.getLocalPort()));
-      assertInstanceOf(BindException.class, failure.getCause());
-      assertEquals(1, failure.getSuppressed().length);
-      assertSame(expected, failure.getSuppressed()[0].getCause());
+    try (var occupied = bind(0)) {
+      var app = new Shoostr().withExtension(extension);
+
+      try (Closeable appCleanup2 = app::close) {
+        var failure =
+            assertThrows(
+                IOException.class, () -> TestServer.startOnPort(app, occupied.getLocalPort()));
+        assertInstanceOf(BindException.class, failure.getCause());
+        assertEquals(1, failure.getSuppressed().length);
+        assertSame(expected, failure.getSuppressed()[0].getCause());
+      }
     }
   }
 
@@ -176,18 +198,22 @@ class PortSelectionTest {
       port = socket.getLocalPort();
     }
 
-    try (var test =
-        range
-            ? TestServer.startOnPortRange(new Shoostr(), port, port)
-            : TestServer.startOnPort(new Shoostr(), port)) {
-      assertEquals(port, test.baseUri().getPort());
-      assertThrows(
-          BindException.class,
-          () -> {
-            try (var ignored5 = bind(port)) {
-              // A successful bind makes assertThrows fail after closing the unexpected socket.
-            }
-          });
+    {
+      var test =
+          range
+              ? TestServer.startOnPortRange(new Shoostr(), port, port)
+              : TestServer.startOnPort(new Shoostr(), port);
+
+      try (test) {
+        assertEquals(port, test.baseUri().getPort());
+        assertThrows(
+            BindException.class,
+            () -> {
+              try (var ignored5 = bind(port)) {
+                // A successful bind makes assertThrows fail after closing the unexpected socket.
+              }
+            });
+      }
     }
 
     try (var rebound = bind(port)) {
@@ -198,16 +224,20 @@ class PortSelectionTest {
   @ParameterizedTest
   @ValueSource(ints = {-1, 0, 65536})
   void rejectsInvalidFixedPortsBeforeTakingOwnership(int port) throws Exception {
-    try (var app = new Shoostr()) {
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              TestServer.startOnPort(
-                  app, port, ignored6 -> fail("must reject before client setup")));
-      app.routes().get("/value", (ignored7, response) -> response.text("not closed"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/value")).statusCode());
+      try (Closeable appCleanup3 = app::close) {
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                TestServer.startOnPort(
+                    app, port, ignored6 -> fail("must reject before client setup")));
+        app.routes().get("/value", (ignored7, response) -> response.text("not closed"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/value")).statusCode());
+        }
       }
     }
   }
@@ -215,16 +245,20 @@ class PortSelectionTest {
   @ParameterizedTest
   @CsvSource({"-1,10", "0,10", "20,19", "1,65536", "65536,65536"})
   void rejectsInvalidRangesBeforeTakingOwnership(int minimum, int maximum) throws Exception {
-    try (var app = new Shoostr()) {
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              TestServer.startOnPortRange(
-                  app, minimum, maximum, ignored8 -> fail("must reject before client setup")));
-      app.routes().get("/value", (ignored9, response) -> response.text("not closed"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/value")).statusCode());
+      try (Closeable appCleanup4 = app::close) {
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                TestServer.startOnPortRange(
+                    app, minimum, maximum, ignored8 -> fail("must reject before client setup")));
+        app.routes().get("/value", (ignored9, response) -> response.text("not closed"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/value")).statusCode());
+        }
       }
     }
   }
@@ -239,33 +273,37 @@ class PortSelectionTest {
 
     var expected = new IllegalStateException("forced startup failure");
 
-    try (var app = new Shoostr()) {
-      app.modifyServer(
-          server ->
-              server.addEventListener(
-                  new LifeCycle.Listener() {
-                    @Override
-                    public void lifeCycleStarting(LifeCycle event) {
-                      var listener = (ServerConnector) server.getConnectors()[0];
-                      assertEquals(port, listener.getLocalPort());
-                      assertThrows(
-                          BindException.class,
-                          () -> {
-                            try (var ignored10 = bind(port)) {
-                              // A successful bind makes assertThrows fail after socket cleanup.
-                            }
-                          });
-                      throw expected;
-                    }
-                  }));
-      assertSame(
-          expected,
-          assertThrows(
-              IllegalStateException.class, () -> TestServer.startOnPortRange(app, port, port)));
-      assertThrows(IllegalStateException.class, app::start);
+    {
+      var app = new Shoostr();
 
-      try (var rebound = bind(port)) {
-        assertEquals(port, rebound.getLocalPort());
+      try (Closeable appCleanup5 = app::close) {
+        app.modifyServer(
+            server ->
+                server.addEventListener(
+                    new LifeCycle.Listener() {
+                      @Override
+                      public void lifeCycleStarting(LifeCycle event) {
+                        var listener = (ServerConnector) server.getConnectors()[0];
+                        assertEquals(port, listener.getLocalPort());
+                        assertThrows(
+                            BindException.class,
+                            () -> {
+                              try (var ignored10 = bind(port)) {
+                                // A successful bind makes assertThrows fail after socket cleanup.
+                              }
+                            });
+                        throw expected;
+                      }
+                    }));
+        assertSame(
+            expected,
+            assertThrows(
+                IllegalStateException.class, () -> TestServer.startOnPortRange(app, port, port)));
+        assertThrows(IllegalStateException.class, app::start);
+
+        try (var rebound = bind(port)) {
+          assertEquals(port, rebound.getLocalPort());
+        }
       }
     }
   }

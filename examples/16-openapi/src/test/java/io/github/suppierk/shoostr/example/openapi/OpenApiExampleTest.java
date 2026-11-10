@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 class OpenApiExampleTest {
   @Test
   void acceptsAuthenticatedTypedPostAfterRejectingUnreadBody() throws Exception {
+
     try (var test = TestServer.start(OpenApiExample.application())) {
       assertEquals(
           "healthy",
@@ -83,6 +84,7 @@ class OpenApiExampleTest {
 
   @Test
   void documentsConditionalEndpointsOnlyInTheirSelectedInternalDocument() throws Exception {
+
     try (var test = TestServer.start(OpenApiExample.application())) {
       var authorization =
           "Basic "
@@ -116,6 +118,7 @@ class OpenApiExampleTest {
 
   @Test
   void requiresAuthenticationForEveryDocumentationBootstrapResource() throws Exception {
+
     try (var test = TestServer.start(OpenApiExample.application())) {
       for (var path :
           List.of(

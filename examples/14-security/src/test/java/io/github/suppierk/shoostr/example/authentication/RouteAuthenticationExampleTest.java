@@ -18,6 +18,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class RouteAuthenticationExampleTest {
   @Test
   void challengesAMissingIdentityBeforeTheProtectedHandlerRuns() throws Exception {
+
     try (var test = TestServer.start(RouteAuthenticationExample.application())) {
       var response = test.send(request -> request.path("/private/me"));
       assertEquals(401, response.statusCode());
@@ -31,6 +32,7 @@ class RouteAuthenticationExampleTest {
   @CsvSource({"reader-demo-token, reader", "admin-demo-token, admin"})
   void exposesOnlyTheIdentityEstablishedByTheSelectedAuthenticator(String token, String name)
       throws Exception {
+
     try (var test = TestServer.start(RouteAuthenticationExample.application())) {
       var response =
           test.send(
@@ -43,6 +45,7 @@ class RouteAuthenticationExampleTest {
 
   @Test
   void leavesAnUnselectedRoutePublicEvenWhenCredentialsAreInvalid() throws Exception {
+
     try (var test = TestServer.start(RouteAuthenticationExample.application())) {
       var response =
           test.send(
@@ -61,6 +64,7 @@ class RouteAuthenticationExampleTest {
   })
   void distinguishesAnAuthenticatedPermissionDenialFromAnAllowedAdministrator(
       String token, int status, String body) throws Exception {
+
     try (var test = TestServer.start(RouteAuthenticationExample.application())) {
       var response =
           test.send(
@@ -76,6 +80,7 @@ class RouteAuthenticationExampleTest {
   @MethodSource("rejectedCredentials")
   void rejectsInvalidOrAmbiguousCredentialsOnEveryProtectedRoute(List<String> values)
       throws Exception {
+
     try (var test = TestServer.start(RouteAuthenticationExample.application())) {
       for (var path : List.of("/private/me", "/private/admin")) {
         var response =
@@ -97,6 +102,7 @@ class RouteAuthenticationExampleTest {
   @ValueSource(strings = {"bEaReR reader-demo-token", "Bearer   reader-demo-token"})
   void acceptsCaseInsensitiveBearerSchemesAndMultipleSeparatingSpaces(String authorization)
       throws Exception {
+
     try (var test = TestServer.start(RouteAuthenticationExample.application())) {
       var response =
           test.send(

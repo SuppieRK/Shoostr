@@ -64,6 +64,7 @@ class McpExampleTest {
   @Test
   @Timeout(20)
   void servesTheExampleWelcomeMessageThroughTheRunnableApplication() throws Exception {
+
     try (var test = TestServer.start(McpExample.application());
         var client = client(test)) {
       client.initialize();
@@ -80,6 +81,7 @@ class McpExampleTest {
   @Test
   @Timeout(20)
   void servesTheGeneratedCheckerboardThroughTheImageTool() throws Exception {
+
     try (var test = TestServer.start(McpExample.application());
         var client = client(test)) {
       client.initialize();
@@ -103,6 +105,7 @@ class McpExampleTest {
   @Test
   @Timeout(20)
   void servesTheGeneratedPcmPulseThroughTheAudioTool() throws Exception {
+
     try (var test = TestServer.start(McpExample.application());
         var client = client(test)) {
       client.initialize();
@@ -131,6 +134,7 @@ class McpExampleTest {
   @Test
   @Timeout(20)
   void publishesTheParcelDeliverySchemaWithoutLosingItsConditionsOrReferences() throws Exception {
+
     try (var test = TestServer.start(McpExample.application());
         var client = client(test)) {
       client.initialize();

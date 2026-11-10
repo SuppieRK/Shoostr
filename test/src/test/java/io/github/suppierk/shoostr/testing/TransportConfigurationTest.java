@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.MultipartOptions;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
+import java.io.Closeable;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -74,30 +75,34 @@ class TransportConfigurationTest {
   void rejectsMultipleListenersBeforeChangingTheirAddresses(boolean range) throws Exception {
     var listeners = new AtomicReference<List<ServerConnector>>();
 
-    try (var app = new Shoostr()) {
-      app.modifyServer(
-          server -> {
-            var primary = (ServerConnector) server.getConnectors()[0];
-            var extra = new ServerConnector(server, new HttpConnectionFactory());
-            primary.setHost("0.0.0.0");
-            primary.setPort(19001);
-            extra.setHost("0.0.0.0");
-            extra.setPort(19002);
-            server.addConnector(extra);
-            listeners.set(List.of(primary, extra));
-          });
-      if (range) {
-        assertThrows(
-            IllegalArgumentException.class, () -> TestServer.startOnPortRange(app, 19003, 19004));
-      } else {
-        assertThrows(IllegalArgumentException.class, () -> TestServer.startOnPort(app, 19003));
-      }
+    {
+      var app = new Shoostr();
 
-      assertEquals(19001, listeners.get().getFirst().getPort());
-      assertEquals(19002, listeners.get().getLast().getPort());
-      for (var listener : listeners.get()) {
-        assertEquals("0.0.0.0", listener.getHost());
-        assertEquals(-1, listener.getLocalPort());
+      try (Closeable appCleanup = app::close) {
+        app.modifyServer(
+            server -> {
+              var primary = (ServerConnector) server.getConnectors()[0];
+              var extra = new ServerConnector(server, new HttpConnectionFactory());
+              primary.setHost("0.0.0.0");
+              primary.setPort(19001);
+              extra.setHost("0.0.0.0");
+              extra.setPort(19002);
+              server.addConnector(extra);
+              listeners.set(List.of(primary, extra));
+            });
+        if (range) {
+          assertThrows(
+              IllegalArgumentException.class, () -> TestServer.startOnPortRange(app, 19003, 19004));
+        } else {
+          assertThrows(IllegalArgumentException.class, () -> TestServer.startOnPort(app, 19003));
+        }
+
+        assertEquals(19001, listeners.get().getFirst().getPort());
+        assertEquals(19002, listeners.get().getLast().getPort());
+        for (var listener : listeners.get()) {
+          assertEquals("0.0.0.0", listener.getHost());
+          assertEquals(-1, listener.getLocalPort());
+        }
       }
     }
   }

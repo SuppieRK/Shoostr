@@ -42,11 +42,10 @@ class McpOriginTest {
             (ignored2, ignored3) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.authentication(authentication)
-        .extensions(mcp)
-        .routes(
-            routes ->
-                routes.path("/mcp", mcp::routes, extensions -> extensions.with(authentication)));
+    app.routes(
+        routes ->
+            routes.path(
+                "/mcp", mcp::routes, extensions -> extensions.withExtension(authentication)));
 
     try (var test = TestServer.start(app)) {
       assertEquals(
@@ -68,11 +67,10 @@ class McpOriginTest {
             (ignored5, ignored6) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.authentication(authentication)
-        .extensions(mcp)
-        .routes(
-            routes ->
-                routes.path("/mcp", mcp::routes, extensions -> extensions.with(authentication)));
+    app.routes(
+        routes ->
+            routes.path(
+                "/mcp", mcp::routes, extensions -> extensions.withExtension(authentication)));
 
     try (var test = TestServer.start(app)) {
       assertEquals(
@@ -99,11 +97,10 @@ class McpOriginTest {
             (ignored8, ignored9) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.authentication(authentication)
-        .extensions(mcp)
-        .routes(
-            routes ->
-                routes.path("/mcp", mcp::routes, extensions -> extensions.with(authentication)));
+    app.routes(
+        routes ->
+            routes.path(
+                "/mcp", mcp::routes, extensions -> extensions.withExtension(authentication)));
 
     try (var test = TestServer.start(app)) {
       assertEquals(
@@ -124,11 +121,10 @@ class McpOriginTest {
             (ignored11, ignored12) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.authentication(authentication)
-        .extensions(mcp)
-        .routes(
-            routes ->
-                routes.path("/mcp", mcp::routes, extensions -> extensions.with(authentication)));
+    app.routes(
+        routes ->
+            routes.path(
+                "/mcp", mcp::routes, extensions -> extensions.withExtension(authentication)));
 
     try (var test = TestServer.start(app)) {
       assertEquals(401, test.send(request -> request.path("/mcp").method("POST")).statusCode());
@@ -146,11 +142,10 @@ class McpOriginTest {
             (ignored14, ignored15) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.authentication(authentication)
-        .extensions(mcp)
-        .routes(
-            routes ->
-                routes.path("/mcp", mcp::routes, extensions -> extensions.with(authentication)));
+    app.routes(
+        routes ->
+            routes.path(
+                "/mcp", mcp::routes, extensions -> extensions.withExtension(authentication)));
 
     try (var test = TestServer.start(app)) {
       assertEquals(
@@ -176,12 +171,11 @@ class McpOriginTest {
             (ignored17, ignored18) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp)
-        .routes(
-            routes -> {
-              routes.path("/mcp", mcp::routes);
-              routes.get("/public", (ignored19, response) -> response.text("public"));
-            });
+    app.routes(
+        routes -> {
+          routes.path("/mcp", mcp::routes);
+          routes.get("/public", (ignored19, response) -> response.text("public"));
+        });
 
     try (var test = TestServer.start(app)) {
       assertEquals(
@@ -211,18 +205,16 @@ class McpOriginTest {
                 false,
                 Set.of(),
                 5));
-    app.extensions(cors);
-    app.authentication(authentication)
-        .extensions(mcp)
-        .routes(
-            routes ->
-                routes.path(
-                    "/mcp",
-                    mcp::routes,
-                    extensions -> {
-                      extensions.with(authentication);
-                      extensions.with(cors);
-                    }));
+
+    app.routes(
+        routes ->
+            routes.path(
+                "/mcp",
+                mcp::routes,
+                extensions -> {
+                  extensions.withExtension(authentication);
+                  extensions.withExtension(cors);
+                }));
 
     try (var test = TestServer.start(app)) {
       assertEquals(

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 import io.github.suppierk.shoostr.Shoostr;
+import java.io.Closeable;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.time.Duration;
@@ -74,19 +75,23 @@ class ClientConfigurationTest {
 
   @Test
   void closesTheOwnedApplicationWhenClientConfigurationThrows() throws Exception {
-    try (var app = new Shoostr()) {
-      var expected = new IllegalArgumentException("invalid client configuration");
-      var actual =
-          assertThrows(
-              IllegalArgumentException.class,
-              () ->
-                  TestServer.start(
-                      app,
-                      ignored4 -> {
-                        throw expected;
-                      }));
-      assertSame(expected, actual);
-      assertThrows(IllegalStateException.class, app::start);
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        var expected = new IllegalArgumentException("invalid client configuration");
+        var actual =
+            assertThrows(
+                IllegalArgumentException.class,
+                () ->
+                    TestServer.start(
+                        app,
+                        ignored4 -> {
+                          throw expected;
+                        }));
+        assertSame(expected, actual);
+        assertThrows(IllegalStateException.class, app::start);
+      }
     }
   }
 

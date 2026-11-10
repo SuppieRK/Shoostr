@@ -27,12 +27,10 @@ class TypedProtocolRoutesTest {
   void carriesCodecThroughGroupsConditionsExecutorsAndAllManagedOverloads() throws Exception {
     try (var executor = Executors.newSingleThreadExecutor()) {
       var owner = executor.submit(Thread::currentThread).get(3, TimeUnit.SECONDS);
-      Consumer<Extensions> local =
+      Consumer<Lifecycle> local =
           extensions ->
-              extensions
-                  .lifecycle()
-                  .beforeRouteHandler(
-                      (ignored, response) -> response.setHeader("X-Local", "present"));
+              extensions.beforeRouteHandler(
+                  (ignored, response) -> response.setHeader("X-Local", "present"));
       Consumer<TypedWebSocket> callbacks =
           socket ->
               socket
@@ -108,11 +106,8 @@ class TypedProtocolRoutesTest {
                                                       child ->
                                                           child.sse(executor, events, local)))),
                           extensions ->
-                              extensions
-                                  .lifecycle()
-                                  .beforeRouteHandler(
-                                      (ignored3, response) ->
-                                          response.setHeader("X-Scope", "group"))));
+                              extensions.beforeRouteHandler(
+                                  (ignored3, response) -> response.setHeader("X-Scope", "group"))));
 
       try (var server = TestServer.start(app);
           var client = HttpClient.newHttpClient()) {

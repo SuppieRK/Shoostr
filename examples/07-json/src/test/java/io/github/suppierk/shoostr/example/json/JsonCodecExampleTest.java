@@ -14,6 +14,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class JsonCodecExampleTest {
   @Test
   void leavesMediaEnforcementToTheHandlerRatherThanTheCodec() throws Exception {
+
     try (var test = TestServer.start(JsonCodecExample.application())) {
       var response =
           test.send(
@@ -33,6 +34,7 @@ class JsonCodecExampleTest {
 
   @Test
   void keepsOrdinaryTextAvailableWithATypedApplication() throws Exception {
+
     try (var test = TestServer.start(JsonCodecExample.application())) {
       var response =
           test.send(request -> request.path("/help"), HttpResponse.BodyHandlers.ofString());
@@ -58,6 +60,7 @@ class JsonCodecExampleTest {
         "{\"name\":\"Ada\"}{}"
       })
   void rejectsMalformedJsonAndInvalidNamesWithASafeJsonError(String body) throws Exception {
+
     try (var test = TestServer.start(JsonCodecExample.application())) {
       var response =
           test.send(
@@ -76,6 +79,7 @@ class JsonCodecExampleTest {
 
   @Test
   void returnsAValidatedUserAsJsonWithUnicodeAndEscapedCharacters() throws Exception {
+
     try (var test = TestServer.start(JsonCodecExample.application())) {
       var response =
           test.send(

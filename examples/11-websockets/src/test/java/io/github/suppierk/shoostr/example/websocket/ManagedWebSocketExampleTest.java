@@ -30,6 +30,7 @@ class ManagedWebSocketExampleTest {
   @Timeout(15)
   void handlesCompleteTextMessagesInOrderWithAnIndependentCounterForEachConnection()
       throws Exception {
+
     try (var test = TestServer.start(ManagedWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var firstMessages = new Messages();
@@ -62,6 +63,7 @@ class ManagedWebSocketExampleTest {
   @Timeout(10)
   void rejectsMissingForeignOrAmbiguousOriginsBeforeUpgrading(List<String> origins)
       throws Exception {
+
     try (var test = TestServer.start(ManagedWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var builder = client.newWebSocketBuilder();
@@ -91,6 +93,7 @@ class ManagedWebSocketExampleTest {
   @Test
   @Timeout(10)
   void echoesCompleteBinaryBytesAndAcknowledgesNormalClosure() throws Exception {
+
     try (var test = TestServer.start(ManagedWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var messages = new Messages();
@@ -112,6 +115,7 @@ class ManagedWebSocketExampleTest {
   @Test
   @Timeout(10)
   void reportsAnEmptyMessageWithoutClosingOrIncrementingItsCounter() throws Exception {
+
     try (var test = TestServer.start(ManagedWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var messages = new Messages();

@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.lang.reflect.Modifier;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -20,30 +21,35 @@ class TypedCodecTest {
   void decodesConcreteRequestAndEncodesFiniteResponse() throws Exception {
     var codec = new GreetingCodec();
 
-    try (var app = new Shoostr()) {
-      app.codec(codec)
-          .routes()
-          .post(
-              "/greeting",
-              (request, response) -> {
-                var greeting = request.body(Greeting.class);
-                response
-                    .status(201)
-                    .body(MediaType.APPLICATION_JSON, new Greeting("Hello " + greeting.name()));
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var result =
-            test.send(
-                request ->
-                    request
-                        .path("/greeting")
-                        .method("POST")
-                        .body("Alice".getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
-        assertEquals(201, result.statusCode());
-        assertEquals("{\"name\":\"Hello Alice\"}", result.body());
-        assertEquals("application/json", result.headers().firstValue("Content-Type").orElseThrow());
+      try (Closeable appCleanup = app::close) {
+        app.codec(codec)
+            .routes()
+            .post(
+                "/greeting",
+                (request, response) -> {
+                  var greeting = request.body(Greeting.class);
+                  response
+                      .status(201)
+                      .body(MediaType.APPLICATION_JSON, new Greeting("Hello " + greeting.name()));
+                });
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request ->
+                      request
+                          .path("/greeting")
+                          .method("POST")
+                          .body("Alice".getBytes(StandardCharsets.UTF_8)),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(201, result.statusCode());
+          assertEquals("{\"name\":\"Hello Alice\"}", result.body());
+          assertEquals(
+              "application/json", result.headers().firstValue("Content-Type").orElseThrow());
+        }
       }
     }
   }
@@ -68,38 +74,50 @@ class TypedCodecTest {
         NoSuchMethodException.class,
         () -> Response.class.getMethod("body", MediaType.class, Object.class));
 
-    try (var app = new Shoostr()) {
-      app.routes()
-          .get(
-              "/ordinary",
-              (request, response) -> {
-                assertEquals(Request.class, request.getClass());
-                assertEquals(Response.class, response.getClass());
-                response.text("ordinary");
-              });
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/ordinary")).statusCode());
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .get(
+                "/ordinary",
+                (request, response) -> {
+                  assertEquals(Request.class, request.getClass());
+                  assertEquals(Response.class, response.getClass());
+                  response.text("ordinary");
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/ordinary")).statusCode());
+        }
       }
     }
   }
 
   @Test
   void rejectsSecondCodecConfiguration() throws Exception {
-    try (var app = new Shoostr()) {
-      app.codec(new TestCodec());
-      var second = new TestCodec();
-      assertThrows(IllegalStateException.class, () -> app.codec(second));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup2 = app::close) {
+        app.codec(new TestCodec());
+        var second = new TestCodec();
+        assertThrows(IllegalStateException.class, () -> app.codec(second));
+      }
     }
   }
 
   @Test
   void rejectsCodecConfigurationAfterStartup() throws Exception {
-    try (var app = new Shoostr();
-        var test = TestServer.start(app)) {
-      var codec = new TestCodec();
-      assertThrows(IllegalStateException.class, () -> app.codec(codec));
-      assertEquals(404, test.send(request -> request.path("/missing")).statusCode());
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup3 = app::close;
+          var test = TestServer.start(app)) {
+        var codec = new TestCodec();
+        assertThrows(IllegalStateException.class, () -> app.codec(codec));
+        assertEquals(404, test.send(request -> request.path("/missing")).statusCode());
+      }
     }
   }
 
@@ -114,14 +132,18 @@ class TypedCodecTest {
   @Test
   @SuppressWarnings("NullAway") // Deliberate invalid input at the public configuration interface.
   void rejectsNullCodecWithoutConsumingConfiguration() throws Exception {
-    try (var app = new Shoostr()) {
-      assertThrows(NullPointerException.class, () -> app.codec(null));
-      app.codec(new TestCodec())
-          .routes()
-          .get("/valid", (ignored, response) -> response.text("valid"));
+    {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(200, test.send(request -> request.path("/valid")).statusCode());
+      try (Closeable appCleanup4 = app::close) {
+        assertThrows(NullPointerException.class, () -> app.codec(null));
+        app.codec(new TestCodec())
+            .routes()
+            .get("/valid", (ignored, response) -> response.text("valid"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/valid")).statusCode());
+        }
       }
     }
   }

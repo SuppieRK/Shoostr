@@ -183,6 +183,7 @@ class TestClientTest {
         "/value#fragment"
       })
   void rejectsPathsThatCannotStayWithinTheFixtureOrigin(String path) throws Exception {
+
     try (var test = TestServer.start(new Shoostr())) {
       assertThrows(IllegalArgumentException.class, () -> test.send(request -> request.path(path)));
     }
@@ -248,6 +249,7 @@ class TestClientTest {
   @ParameterizedTest
   @ValueSource(strings = {"bad method", "GET\n", ""})
   void rejectsInvalidMethodTokensDuringConfiguration(String method) throws Exception {
+
     try (var test = TestServer.start(new Shoostr())) {
       assertThrows(
           IllegalArgumentException.class,
@@ -257,6 +259,7 @@ class TestClientTest {
 
   @Test
   void rejectsNonpositiveTimeoutsDuringConfiguration() throws Exception {
+
     try (var test = TestServer.start(new Shoostr())) {
       assertThrows(
           IllegalArgumentException.class,
@@ -266,6 +269,7 @@ class TestClientTest {
 
   @Test
   void rejectsInvalidHeadersDuringConfiguration() throws Exception {
+
     try (var test = TestServer.start(new Shoostr())) {
       assertThrows(
           IllegalArgumentException.class,

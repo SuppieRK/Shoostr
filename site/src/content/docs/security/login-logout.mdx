@@ -14,7 +14,7 @@ import test from '../../../../../examples/14-security/src/test/java/io/github/su
 
 A browser login joins several responsibilities: verify credentials, establish authenticated session state and protect cookie-backed writes. Logout ends that state. Your application coordinates those steps rather than asking one callback to stand in for the entire policy.
 
-An HTTP session retains state across requests. `AuthenticationExtension` verifies the request's session identity, while the installed `Csrf` provider checks a session-associated proof for writes. The route's `Extensions` configuration selects the required provider. `Cookie` and `HttpHeaders` describe the protocol metadata exchanged with the browser.
+An HTTP session retains state across requests. `AuthenticationExtension` verifies the request's session identity, while the `Csrf` provider checks a session-associated proof for writes. The route's `Lifecycle` configuration selects the required provider with `withExtension(...)`. `Cookie` and `HttpHeaders` describe the protocol metadata exchanged with the browser.
 
 The handlers receive the incoming `Request` and outgoing `Response`. `BadRequestException` rejects malformed input with `400`, `UnauthorizedException` rejects failed credentials with `401`, and `ConflictException` returns `409` when login would replace an existing account.
 

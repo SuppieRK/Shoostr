@@ -12,27 +12,27 @@ import test from '../../../../../examples/13-extensions/src/test/java/io/github/
 
 ## Description
 
-An installed provider adds reusable behavior or configuration to a Shoostr application. The provider implements `Extension<C>`, where `C` is the type of settings it exposes to a route or group. This is the provider model used when you create an integration of your own.
+An extension adds reusable behavior or configuration to a Shoostr application. Implement `ApplicationExtension<C>` to support application defaults, `RouteExtension<C>` to support route and group selection, or both with the same settings type `C`. The common sealed `Extension` owns shared setup, startup and shutdown methods.
 
-It is distinct from `Extensions`, the built-in configuration object supplied to a route or group callback. That object selects installed providers and also exposes local request hooks through `lifecycle()`. A request hook is a callback at a named processing phase; local hooks do not require a custom provider.
+Route and group callbacks receive `Lifecycle`, the built-in configuration object for extension selection, route metadata and local request hooks. A request hook is a callback at a named processing phase; local hooks do not require a custom provider.
 
 This task builds a route catalog: the provider collects descriptions during registration and publishes a fixed snapshot before serving requests. `ApplicationCallbacks` is the collector used by a provider to register application-wide behavior during installation.
 
 Use an extension when that behavior needs its own configuration or lifecycle.
 For a few request callbacks, register [request hooks](../../lifecycle/hooks/) directly.
 
-### Install one provider instance
+### Select one provider instance
 
-Implement `Extension<C>`, create one extension instance, and pass it to `app.extensions(instance)` before registering routes.
-Reuse that same instance in every `extensions.with(instance)` call.
-Shoostr selects extensions by object identity: another instance of the same class does not refer to the installed extension.
-In the example, `catalog` is the instance shared by `.extensions(catalog)` and `extensions.with(catalog)`.
+Create one extension instance and select it with `lifecycle.withExtension(instance)` in a route or group callback.
+No prior application registration is required. Shoostr selects extensions by object identity: different instances of the same class remain independent.
+Pass the intended instance explicitly to reusable route-registration code.
 
-Calling `app.extensions(instance)` immediately invokes that instance's `install(...)` method, where it can register application-wide behavior.
-Selecting it with `extensions.with(instance)` includes its behavior and returns the current scope's typed settings.
-Use `app.configureExtensionsDefaults(...)` once, before registering routes or groups, to select defaults across the application without a root group.
-A route or group inherits those defaults and can use `extensions.without(instance)` to exclude that instance's scoped behavior.
-A deeper `with(instance)` includes it again with the retained settings; repeated selection does not duplicate its contributions.
+The first selection immediately claims ownership and invokes `install(...)` once to establish shared infrastructure.
+Selecting it with `lifecycle.withExtension(instance)` includes its behavior and returns the current scope's typed settings.
+For a provider that supports application defaults, use `app.withExtension(instance)` before route registration, or `app.withExtension(instance, settings -> ...)` to customize those defaults.
+Application selection activates behavior for all registered endpoints; selecting the same instance twice at application level is rejected.
+A route or group inherits those defaults and can use `lifecycle.withoutExtension(instance)` to exclude that instance's contribution.
+A deeper `withExtension(instance)` includes it again with the retained settings; repeated scoped selection returns the same settings without duplicating contributions.
 Exclusion does not undo installation callbacks or release resources owned by the application.
 
 ### Follow the provider lifetime
@@ -42,7 +42,7 @@ Each extension method has a specific role:
 | Method                               | Purpose and timing                                                                                                                                                                                                             |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | <code>claim<wbr />Ownership()</code> | Accept ownership before installation. Override it to reject reuse when the extension owns application-specific state or resources; a successful claim makes the application responsible for cleanup even if later setup fails. |
-| `install(callbacks)`                 | Register application-wide request hooks and observations as soon as the instance is installed. The supplied registration object stops accepting callbacks when this method finishes.                                           |
+| `install(callbacks)`                 | Establish required shared infrastructure at first selection. These callbacks can run for unselected requests, so keep the selected feature's behavior in `configure(...)`. The collector closes when this method finishes. |
 | `configure(endpoint, inherited)`     | Create the extension's own typed settings and register behavior for a selected route or group. Shoostr also calls it when a child inherits the selection.                                                                      |
 | <code>before<wbr />Start()</code>    | Finalize collected route facts and prepare owned resources after route metadata arrives, before the listener accepts traffic.                                                                                                  |
 | <code>before<wbr />Stop()</code>     | Promptly signal owned work to finish before native graceful shutdown, including cleanup after incomplete installation or startup. Final disposal belongs in `close()`.                                                         |
@@ -51,23 +51,23 @@ Each extension method has a specific role:
 ### Configure inherited settings
 
 Implement `configure(...)` to contribute behavior for selected routes and groups and, when needed, expose their settings.
-Its return type `C` defines those settings: the catalog returns a `Description`, and `extensions.with(catalog).summary(...)` changes that scope's description.
-An extension that only contributes application-wide behavior can leave `configure(...)` unimplemented.
+Its return type `C` defines those settings: the catalog returns a `Description`, and `lifecycle.withExtension(catalog).summary(...)` changes that scope's description.
+Both activation interfaces require `configure(...)`; their role describes where callers can select the provider, rather than which setup callbacks it implements.
 
 The `inherited` argument contains the parent scope's settings, or null for the first selection.
 Return independent mutable settings rather than mutate the parent; a provider without scope-local settings may return itself, while registering its behavior on the supplied collector.
 Shoostr calls it again for inherited selections without replaying the user's group callback, allowing child routes to change the settings defined by that extension without affecting siblings.
 Authentication, CSRF and [CORS](../../security/cors/) retain their selected owner through inheritance, including after exclusion: a child cannot substitute a different instance.
-CORS provides local policy settings: `extensions.with(cors).policy(replacement)` replaces the complete inherited policy without changing its owner or a sibling's settings.
+CORS provides local policy settings: `lifecycle.withExtension(cors).policy(replacement)` replaces the complete inherited policy without changing its owner or a sibling's settings.
 [Sessions](../../security/sessions/) use application-level native Jetty configuration and ordinary request methods rather than scoped extension selection.
-Register contributions on the supplied scope; select collaborating extensions separately in the user's route or group callback, not through nested `with(...)` calls inside the provider.
+Register contributions on the supplied scope; select collaborating extensions separately in the user's route or group callback, not through nested `withExtension(...)` calls inside the provider.
 
 ### Register callbacks and route metadata
 
 Inside `install(...)`, `ApplicationCallbacks` registers behavior across the application, including routes that do not select the extension.
-Inside `configure(...)`, use `endpoint.lifecycle()` for request behavior on selected routes and groups.
+Inside `configure(...)`, register request behavior directly on the supplied `Lifecycle` for selected routes and groups.
 Cold route metadata remains on `endpoint.onRoute(...)`; it is separate from the request lifecycle.
-The registration methods below belong to the lifecycle collector unless marked as application-only, metadata or installation checks:
+The registration methods below belong to the lifecycle collector unless marked as application-only or metadata:
 
 | Registration method                                 | What it provides                                                                                                                                                                                                 |
 | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -81,15 +81,32 @@ The registration methods below belong to the lifecycle collector unless marked a
 | `observe(...)`                                      | Application or local request observation with context attachment and cleanup across executor handoffs. Application observations include unmatched requests; local observations begin only after a route matches. |
 | <code>on<wbr />Route(...)</code>                    | Local registration metadata for HTTP and SSE routes: method, composed path template and conditional availability. Runs before `beforeStart()` without invoking handlers or evaluating conditions.                |
 | `status(...)`                                       | Local renderer for a framework-generated status. A matching local renderer takes precedence over the application renderer.                                                                                       |
-| <code>require<wbr />Installed(...)</code>           | Check that another exact extension instance is installed in this application, without selecting its configuration or adding request behavior.                                                                    |
 
 The [request lifecycle reference](../../lifecycle/hooks/) explains callback order and completion rules, while [endpoint executors](../../lifecycle/executors/) explains observation context across thread handoffs.
+
+### Migrate existing registrations
+
+Application activation now selects endpoint behavior as well as establishing shared setup.
+When migrating an installation-only call, remove it and select the instance in the intended route or group instead.
+Keep application activation only when all registered endpoints should inherit the provider.
+
+| Previous interface | Current interface |
+| ------------------ | ----------------- |
+| `Extension<C>` | Implement `ApplicationExtension<C>`, `RouteExtension<C>` or both; retain common ownership and setup methods. |
+| Route callback `Extensions` | Route callback `Lifecycle`, with request hooks and `onRoute(...)` directly available. |
+| `extensions.with(instance)` | `lifecycle.withExtension(instance)`; shared setup is automatic. |
+| `extensions.without(instance)` | `lifecycle.withoutExtension(instance)`. |
+| `app.configureExtensionsDefaults(...)` | Separate `app.withExtension(instance, settings -> ...)` calls before routes. |
+| `app.authentication(instance)` | Scoped `lifecycle.withExtension(instance)` or application defaults through `app.withExtension(instance)`. |
+| Tracing or metrics `allRequests()` | `app.withExtension(instance)` selects registered endpoints by default, with scoped exclusions; unmatched requests remain unselected. |
+| Closing route scopes | Let the application own registration cleanup. |
+| Using `Shoostr` in try-with-resources | Let the JVM hook own shutdown or call `app.close()` explicitly; HTTP tests can use `TestServer`. |
 
 ## Example
 
 `RouteCatalog` copies a short description for each selected scope and receives the final composed method, path template and conditional-availability flag through `onRoute(...)`.
 Its `beforeStart()` compiles those facts into a fixed text snapshot, so serving `/catalog` neither executes documented handlers nor evaluates availability conditions.
-Application defaults select the catalog before route registration; `/catalog` inherits their description, and `/health` explicitly excludes catalog facts while retaining the installation-wide discovery header.
+Application defaults select the catalog before route registration; `/catalog` inherits their description, and `/health` excludes both catalog facts and its discovery header.
 The `/api/status` override leaves the inherited `/api/items/{id}` description unchanged.
 
 Route facts cover ordinary HTTP and SSE bindings, not WebSocket handshakes or static mounts, and an availability flag describes a condition rather than its current result.
@@ -105,7 +122,7 @@ For extensions that own long-lived work, `beforeStop()` is the prompt signalling
 
 `TestServer` is the HTTP test fixture: it starts the application on an available loopback port and owns its shutdown.
 
-The tests verify defaults, composed metadata and inherited overrides, preserve installation hooks on an excluded endpoint, and reject a second owner without disrupting the first application's catalog.
+The tests verify defaults, composed metadata, inherited overrides and exclusion, and reject a second owner without disrupting the first application's catalog.
 They also check cleanup after application closure, confirm availability is evaluated only for matching requests, and preserve the compiled snapshot when retained settings later change.
 
 <Code code={test} lang="java" title="RouteCatalogExampleTest.java" />

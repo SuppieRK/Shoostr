@@ -15,6 +15,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class GeneratedStatusExampleTest {
   @Test
   void usesTheLocalRendererForASelectedButUnavailableRoute() throws Exception {
+
     try (var test = TestServer.start(GeneratedStatusExample.application())) {
       var response =
           test.send(
@@ -28,6 +29,7 @@ class GeneratedStatusExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"/read-only", "/reports/daily"})
   void usesTheApplicationMethodRendererAndPreservesAllow(String path) throws Exception {
+
     try (var test = TestServer.start(GeneratedStatusExample.application())) {
       var response =
           test.send(
@@ -50,6 +52,7 @@ class GeneratedStatusExampleTest {
   })
   void distinguishesGeneratedThrownAndManualResponses(String path, int status, String body)
       throws Exception {
+
     try (var test = TestServer.start(GeneratedStatusExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
       assertEquals(status, response.statusCode());

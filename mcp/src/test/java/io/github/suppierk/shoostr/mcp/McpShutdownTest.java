@@ -4,7 +4,8 @@ import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import io.github.suppierk.shoostr.Extension;
+import io.github.suppierk.shoostr.ApplicationExtension;
+import io.github.suppierk.shoostr.Lifecycle;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
@@ -31,7 +32,7 @@ class McpShutdownTest {
             (ignored2, ignored3) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var initialized =
@@ -90,7 +91,7 @@ class McpShutdownTest {
                             .build())
                     .build());
     var app = new Shoostr();
-    app.extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var initialized =
@@ -160,15 +161,20 @@ class McpShutdownTest {
             },
             (ignored9, ignored10) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
-    class ShutdownWitness implements Extension<Void> {
+    class ShutdownWitness implements ApplicationExtension<Object> {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
       @Override
       public void beforeStop() {
         stopped.countDown();
       }
     }
-    Extension<Void> witness = new ShutdownWitness();
+    ApplicationExtension<Object> witness = new ShutdownWitness();
     var app = new Shoostr();
-    app.extensions(witness, mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    app.withExtension(witness).routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app);
         var workers = Executors.newVirtualThreadPerTaskExecutor()) {

@@ -19,6 +19,7 @@ class TypedWebSocketExampleTest {
   @Test
   @Timeout(15)
   void incrementsABinaryCounterAndKeepsRawTextIndependent() throws Exception {
+
     try (var server = TestServer.start(TypedWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var binary = new CompletableFuture<byte[]>();

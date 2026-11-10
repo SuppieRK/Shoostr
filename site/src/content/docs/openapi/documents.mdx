@@ -16,11 +16,11 @@ An OpenAPI document describes an HTTP API's operations, parameters and represent
 
 This example uses `shoostr-openapi` and Jackson 3's `jackson-databind` library for its JSON request and response handling.
 
-Shoostr's `OpenApi` provider collects explicit operation descriptions from registered routes. Register that provider with the application, then use the route's `Extensions` configuration object to select it and supply operation settings. Mounting the generated document is a separate route.
+Shoostr's `OpenApi` provider collects explicit operation descriptions from registered routes. Use the route's `Lifecycle` configuration object to select it with `withExtension(...)` and supply operation settings. The first selection establishes shared setup automatically. Mounting the generated document is a separate route.
 
 This task describes an item API, serves its document, and keeps another document independent. `MediaType` names representations, while the handler uses `BadRequestException` for invalid input independently of the schema.
 
-Build explicit Swagger OpenAPI models, register the `OpenApi` instance from `shoostr-openapi`, and select it in the relevant route or group configuration. A group supplies independent operation defaults; an endpoint can replace its summary, identifier, parameters, representations and responses. Serve the generated JSON by separately registering `docs.handler()`. Installation does not expose a URL or infer a document by scanning classes, annotations or codecs.
+Build explicit Swagger OpenAPI models, create an `OpenApi` instance from `shoostr-openapi`, and select it in the relevant route or group configuration. A group supplies independent operation defaults; an endpoint can replace its summary, identifier, parameters, representations and responses. Serve the generated JSON by separately registering `docs.handler()`. Shared setup does not expose a URL or infer a document by scanning classes, annotations or codecs.
 
 Schemas describe the API rather than validate requests, choose a codec or enforce authentication.
 Keep those responsibilities in the actual handlers and security configuration, even when an operation declares required fields or a security scheme.

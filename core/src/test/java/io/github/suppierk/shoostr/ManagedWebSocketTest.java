@@ -14,6 +14,7 @@ import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredExceptio
 import io.github.suppierk.shoostr.http.exceptions.BadRequestException;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -55,12 +56,17 @@ import org.junit.jupiter.params.provider.ValueSource;
 class ManagedWebSocketTest {
   @Test
   void rejectsDuplicateRoutesBeforeInvokingTheirConfiguration() throws Exception {
-    try (var app = new Shoostr()) {
-      var routes = app.routes();
-      routes.websocket("/echo", events -> events.onText(WebSocketConnection::send));
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> routes.websocket("/echo", ignored -> fail("Duplicate configuration must not run")));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        var routes = app.routes();
+        routes.websocket("/echo", events -> events.onText(WebSocketConnection::send));
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.websocket("/echo", ignored -> fail("Duplicate configuration must not run")));
+      }
     }
   }
 
@@ -522,36 +528,48 @@ class ManagedWebSocketTest {
   void freezesConfigurationAfterRegistration() throws Exception {
     var captured = new AtomicReference<io.github.suppierk.shoostr.WebSocket>();
 
-    try (var app = new Shoostr()) {
-      app.routes().websocket("/echo", captured::set);
-      var configuration = captured.get();
-      assertNotNull(configuration);
-      assertThrows(
-          IllegalStateException.class, () -> configuration.onText(WebSocketConnection::send));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup1 = app::close) {
+        app.routes().websocket("/echo", captured::set);
+        var configuration = captured.get();
+        assertNotNull(configuration);
+        assertThrows(
+            IllegalStateException.class, () -> configuration.onText(WebSocketConnection::send));
+      }
     }
   }
 
   @Test
   void releasesAReservedRouteWhenConfigurationFails() throws Exception {
-    try (var app = new Shoostr()) {
-      var routes = app.routes();
-      assertThrows(
-          IllegalArgumentException.class,
-          () ->
-              routes.websocket(
-                  "/retry",
-                  ignored12 -> {
-                    throw new IllegalArgumentException("Fixture failure");
-                  }));
-      app.routes().websocket("/retry", events -> events.onText(WebSocketConnection::send));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup2 = app::close) {
+        var routes = app.routes();
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.websocket(
+                    "/retry",
+                    ignored12 -> {
+                      throw new IllegalArgumentException("Fixture failure");
+                    }));
+        app.routes().websocket("/retry", events -> events.onText(WebSocketConnection::send));
+      }
     }
   }
 
   @Test
   void preventsStartupWhileWebSocketConfigurationIsRunning() throws Exception {
-    try (var app = new Shoostr()) {
-      app.routes()
-          .websocket("/echo", ignored13 -> assertThrows(IllegalStateException.class, app::start));
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup3 = app::close) {
+        app.routes()
+            .websocket("/echo", ignored13 -> assertThrows(IllegalStateException.class, app::start));
+      }
     }
   }
 
@@ -640,11 +658,12 @@ class ManagedWebSocketTest {
     var authentication = new FixtureAuthentication();
     var app =
         new Shoostr()
-            .authentication(authentication)
             .routes(
                 routes ->
                     routes.websocket(
-                        "/secure", ignored16 -> {}, extensions -> extensions.with(authentication)));
+                        "/secure",
+                        ignored16 -> {},
+                        extensions -> extensions.withExtension(authentication)));
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
@@ -672,7 +691,6 @@ class ManagedWebSocketTest {
     var authentication = new FixtureAuthentication();
     var app =
         new Shoostr()
-            .authentication(authentication)
             .routes(
                 routes ->
                     routes.path(
@@ -684,7 +702,7 @@ class ManagedWebSocketTest {
                                         (connection, ignored17) ->
                                             connection.send(
                                                 connection.principal().orElseThrow().getName())),
-                                extensions -> extensions.with(authentication))));
+                                extensions -> extensions.withExtension(authentication))));
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {

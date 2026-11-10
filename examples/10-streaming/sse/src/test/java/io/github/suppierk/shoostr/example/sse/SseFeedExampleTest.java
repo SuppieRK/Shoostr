@@ -12,6 +12,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class SseFeedExampleTest {
   @Test
   void sendsDataCommentsHeartbeatAndNamedEventFieldsAsCompleteFrames() throws Exception {
+
     try (var test = TestServer.start(SseFeedExample.application())) {
       var response =
           test.send(
@@ -46,6 +47,7 @@ class SseFeedExampleTest {
 
   @Test
   void resumesAfterTheLastEventIdSentByTheClient() throws Exception {
+
     try (var test = TestServer.start(SseFeedExample.application())) {
       var response =
           test.send(
@@ -73,6 +75,7 @@ class SseFeedExampleTest {
 
   @Test
   void sendsTheWholeReplayFeedWhenNoCursorWasSupplied() throws Exception {
+
     try (var test = TestServer.start(SseFeedExample.application())) {
       var response =
           test.send(request -> request.path("/replay"), HttpResponse.BodyHandlers.ofString());
@@ -98,6 +101,7 @@ class SseFeedExampleTest {
 
   @Test
   void returnsNoContentWithoutStartingAStreamAfterTheFinalEntry() throws Exception {
+
     try (var test = TestServer.start(SseFeedExample.application())) {
       var response = test.send(request -> request.path("/replay").header("Last-Event-ID", "3"));
       assertEquals(204, response.statusCode());
@@ -109,6 +113,7 @@ class SseFeedExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"abc", "-1", "4", "2147483648", ""})
   void rejectsInvalidReplayCursorsBeforeCommittingAnEventStream(String cursor) throws Exception {
+
     try (var test = TestServer.start(SseFeedExample.application())) {
       var response =
           test.send(

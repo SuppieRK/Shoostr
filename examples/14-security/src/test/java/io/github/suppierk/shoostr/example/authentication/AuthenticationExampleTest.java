@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 class AuthenticationExampleTest {
   @Test
   void leavesThePublicRouteOutsideTheAuthenticationGroup() throws Exception {
+
     try (var test = TestServer.start(AuthenticationExample.application())) {
       var response =
           test.send(request -> request.path("/public"), HttpResponse.BodyHandlers.ofString());
@@ -24,6 +25,7 @@ class AuthenticationExampleTest {
 
   @Test
   void exposesTheAuthenticatedPrincipalOnTheProtectedGroup() throws Exception {
+
     try (var test = TestServer.start(AuthenticationExample.application())) {
       var credentials =
           Base64.getEncoder().encodeToString("demo:local-only".getBytes(StandardCharsets.UTF_8));
@@ -42,6 +44,7 @@ class AuthenticationExampleTest {
 
   @Test
   void permitsTheAdministratorToUseTheRoleProtectedOperation() throws Exception {
+
     try (var test = TestServer.start(AuthenticationExample.application())) {
       var credentials =
           Base64.getEncoder().encodeToString("admin:local-only".getBytes(StandardCharsets.UTF_8));
@@ -60,6 +63,7 @@ class AuthenticationExampleTest {
 
   @Test
   void rejectsAnIncorrectPasswordBeforeInvokingTheProtectedHandler() throws Exception {
+
     try (var test = TestServer.start(AuthenticationExample.application())) {
       var credentials =
           Base64.getEncoder().encodeToString("demo:wrong".getBytes(StandardCharsets.UTF_8));
@@ -75,6 +79,7 @@ class AuthenticationExampleTest {
 
   @Test
   void rejectsAnAuthenticatedReaderWithoutTheAdminRole() throws Exception {
+
     try (var test = TestServer.start(AuthenticationExample.application())) {
       var credentials =
           Base64.getEncoder().encodeToString("demo:local-only".getBytes(StandardCharsets.UTF_8));
@@ -91,6 +96,7 @@ class AuthenticationExampleTest {
 
   @Test
   void challengesAnUnauthenticatedRequestToTheProtectedGroup() throws Exception {
+
     try (var test = TestServer.start(AuthenticationExample.application())) {
       var response = test.send(request -> request.path("/private/me"));
       assertAll(

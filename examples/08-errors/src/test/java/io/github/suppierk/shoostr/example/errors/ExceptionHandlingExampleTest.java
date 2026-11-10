@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -23,32 +24,37 @@ class ExceptionHandlingExampleTest {
   @Test
   void fallsBackSafelyWhenAScopedRendererFailsWithoutTryingTheApplicationRenderer()
       throws Exception {
-    try (var app = ExceptionHandlingExample.application()) {
-      app.routes()
-          .path(
-              "/renderer-failure",
-              group -> {
-                group.exception(
-                    IllegalStateException.class,
-                    (ignored, ignored2, response) -> {
-                      response
-                          .setHeader("X-Renderer-Diagnostic", "private")
-                          .text("Private renderer output");
-                      throw new IOException("Private renderer diagnostics");
-                    });
-                group.get(
-                    (ignored3, ignored4) -> {
-                      throw new IllegalStateException("Private original diagnostics");
-                    });
-              });
+    {
+      var app = ExceptionHandlingExample.application();
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(
-                request -> request.path("/renderer-failure"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(500, response.statusCode());
-        assertEquals("Internal Server Error", response.body());
-        assertTrue(response.headers().firstValue("X-Renderer-Diagnostic").isEmpty());
+      try (Closeable appCleanup = app::close) {
+        app.routes()
+            .path(
+                "/renderer-failure",
+                group -> {
+                  group.exception(
+                      IllegalStateException.class,
+                      (ignored, ignored2, response) -> {
+                        response
+                            .setHeader("X-Renderer-Diagnostic", "private")
+                            .text("Private renderer output");
+                        throw new IOException("Private renderer diagnostics");
+                      });
+                  group.get(
+                      (ignored3, ignored4) -> {
+                        throw new IllegalStateException("Private original diagnostics");
+                      });
+                });
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(
+                  request -> request.path("/renderer-failure"),
+                  HttpResponse.BodyHandlers.ofString());
+          assertEquals(500, response.statusCode());
+          assertEquals("Internal Server Error", response.body());
+          assertTrue(response.headers().firstValue("X-Renderer-Diagnostic").isEmpty());
+        }
       }
     }
   }
@@ -58,55 +64,59 @@ class ExceptionHandlingExampleTest {
     var release = new CountDownLatch(1);
     var rendererCalls = new AtomicInteger();
 
-    try (var app = ExceptionHandlingExample.application()) {
-      app.routes()
-          .exception(
-              IOException.class,
-              (ignored5, ignored6, response) -> {
-                rendererCalls.incrementAndGet();
-                response.text("Must not run after commitment");
-              });
-      app.routes()
-          .get(
-              "/committed",
-              (ignored7, response) -> {
-                var stream = response.startStream("text/plain");
-                stream.write("visible");
-                stream.flush();
-                if (!release.await(5, TimeUnit.SECONDS)) {
-                  throw new IOException("Reader did not release the handler");
-                }
+    {
+      var app = ExceptionHandlingExample.application();
 
-                stream.write("Private buffered output");
-                throw new IOException("Private transport diagnostics");
-              });
-
-      try (var test = TestServer.start(app)) {
-        try {
-          var response =
-              test.send(
-                  request -> request.path("/committed").timeout(Duration.ofSeconds(5)),
-                  HttpResponse.BodyHandlers.ofInputStream());
-          assertEquals(200, response.statusCode());
-
-          try (var input = response.body()) {
-            assertEquals("visible", new String(input.readNBytes(7), StandardCharsets.UTF_8));
-            release.countDown();
-            var tail = new ByteArrayOutputStream();
-            assertThrows(
+      try (Closeable appCleanup1 = app::close) {
+        app.routes()
+            .exception(
                 IOException.class,
-                () -> {
-                  int value;
-                  while ((value = input.read()) != -1) {
-                    tail.write(value);
-                  }
+                (ignored5, ignored6, response) -> {
+                  rendererCalls.incrementAndGet();
+                  response.text("Must not run after commitment");
                 });
-            assertEquals("", tail.toString(StandardCharsets.UTF_8));
-          }
+        app.routes()
+            .get(
+                "/committed",
+                (ignored7, response) -> {
+                  var stream = response.startStream("text/plain");
+                  stream.write("visible");
+                  stream.flush();
+                  if (!release.await(5, TimeUnit.SECONDS)) {
+                    throw new IOException("Reader did not release the handler");
+                  }
 
-          assertEquals(0, rendererCalls.get());
-        } finally {
-          release.countDown();
+                  stream.write("Private buffered output");
+                  throw new IOException("Private transport diagnostics");
+                });
+
+        try (var test = TestServer.start(app)) {
+          try {
+            var response =
+                test.send(
+                    request -> request.path("/committed").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofInputStream());
+            assertEquals(200, response.statusCode());
+
+            try (var input = response.body()) {
+              assertEquals("visible", new String(input.readNBytes(7), StandardCharsets.UTF_8));
+              release.countDown();
+              var tail = new ByteArrayOutputStream();
+              assertThrows(
+                  IOException.class,
+                  () -> {
+                    int value;
+                    while ((value = input.read()) != -1) {
+                      tail.write(value);
+                    }
+                  });
+              assertEquals("", tail.toString(StandardCharsets.UTF_8));
+            }
+
+            assertEquals(0, rendererCalls.get());
+          } finally {
+            release.countDown();
+          }
         }
       }
     }
@@ -120,6 +130,7 @@ class ExceptionHandlingExampleTest {
     "/input?name=Ada, 200, Ada"
   })
   void recoversLocallyOrReturnsValidInput(String path, int status, String body) throws Exception {
+
     try (var test = TestServer.start(ExceptionHandlingExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
       assertEquals(status, response.statusCode());
@@ -135,6 +146,7 @@ class ExceptionHandlingExampleTest {
   })
   void usesSafeDefaultsWithoutUnwrappingTheCause(String path, int status, String body)
       throws Exception {
+
     try (var test = TestServer.start(ExceptionHandlingExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
       assertEquals(status, response.statusCode());
@@ -154,6 +166,7 @@ class ExceptionHandlingExampleTest {
   })
   void selectsSpecificInheritedAndOverriddenScopeRenderers(String path, int status, String body)
       throws Exception {
+
     try (var test = TestServer.start(ExceptionHandlingExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
       assertEquals(status, response.statusCode());
@@ -163,6 +176,7 @@ class ExceptionHandlingExampleTest {
 
   @Test
   void rendersAnApplicationFailureWithoutPrivateStagedOutput() throws Exception {
+
     try (var test = TestServer.start(ExceptionHandlingExample.application())) {
       var response =
           test.send(request -> request.path("/checkout"), HttpResponse.BodyHandlers.ofString());

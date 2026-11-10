@@ -47,7 +47,6 @@ public final class Pac4jAuthenticationExample {
                 !"/accounts/admin".equals(context.getPath())
                     || profiles.getFirst().getRoles().contains("administrator"));
     return new Shoostr()
-        .authentication(authentication)
         .routes(
             routes ->
                 routes.path(
@@ -60,6 +59,6 @@ public final class Pac4jAuthenticationExample {
                                     response.text(request.principal().orElseThrow().getName()))
                             .get("/admin", (ignored3, response) -> response.text("permitted")),
                     // Select authentication for both account endpoints, not for every route.
-                    extensions -> extensions.with(authentication)));
+                    lifecycle -> lifecycle.withExtension(authentication)));
   }
 }

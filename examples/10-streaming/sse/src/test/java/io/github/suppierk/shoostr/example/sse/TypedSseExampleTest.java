@@ -12,6 +12,7 @@ class TypedSseExampleTest {
   @Test
   @Timeout(15)
   void sendsJsonObjectsAsCompleteSseDataEvents() throws Exception {
+
     try (var server = TestServer.start(TypedSseExample.application())) {
       var result =
           server.send(

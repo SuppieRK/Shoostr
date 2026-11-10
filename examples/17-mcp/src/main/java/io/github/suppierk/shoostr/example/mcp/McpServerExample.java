@@ -52,7 +52,7 @@ public final class McpServerExample {
                             explanationPrompt(), (ignored4, ignored5) -> explanation()))
                     .build());
     // Installation owns the server lifecycle; the HTTP mount is still an explicit registration.
-    return new Shoostr().extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    return new Shoostr().routes(routes -> routes.path("/mcp", mcp::routes));
   }
 
   /**
@@ -92,7 +92,7 @@ public final class McpServerExample {
                             (ignored9, ignored10) ->
                                 Mono.fromSupplier(McpServerExample::explanation)))
                     .build());
-    return new Shoostr().extensions(mcp).routes(routes -> routes.path("/mcp", mcp::routes));
+    return new Shoostr().routes(routes -> routes.path("/mcp", mcp::routes));
   }
 
   /**

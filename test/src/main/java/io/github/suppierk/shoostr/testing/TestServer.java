@@ -212,7 +212,7 @@ public final class TestServer implements Closeable {
             reservation.get());
       } catch (Exception | Error failure) {
         try (var ignored4 = reservation.get();
-            app) {
+            Closeable application = app::close) {
           if (client != null) {
             closeClient(client);
           }
@@ -394,7 +394,7 @@ public final class TestServer implements Closeable {
     closed = true;
 
     try (var ignored5 = reservation;
-        app) {
+        Closeable application = app::close) {
       closeClient(client);
     }
   }

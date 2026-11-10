@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.time.Duration;
@@ -65,49 +66,50 @@ class EndpointExecutionTest {
     var completed = new CompletableFuture<RequestOutcome>();
     var completions = new AtomicInteger();
 
-    try (var app =
-            new Shoostr()
-                .modifyServer(
-                    nativeServer ->
-                        ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-        var driver = Executors.newVirtualThreadPerTaskExecutor()) {
-      app.modifyServer(server -> server.setStopTimeout(0));
-      app.routes()
-          .get(
-              "/queued",
-              workers,
-              (ignored2, response) -> {
-                invoked.set(true);
-                response.text("wrong");
-              },
-              extensions ->
-                  extensions
-                      .lifecycle()
-                      .afterRequest(
-                          outcome -> {
-                            completions.incrementAndGet();
-                            completed.complete(outcome);
-                          }));
+    try {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
-      try (var test = TestServer.start(app)) {
-        var sent = driver.submit(() -> test.send(request -> request.path("/queued")));
-        await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 1);
-        app.close();
-        var outcome = completed.get(5, TimeUnit.SECONDS);
-        assertEquals("/queued", outcome.routePattern());
-        assertInstanceOf(RejectedExecutionException.class, outcome.applicationFailure());
-        assertFalse(invoked.get());
-        assertEquals(1, completions.get());
-        assertFalse(workers.isShutdown());
-        release.countDown();
-        assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
-        assertFalse(invoked.get());
-        assertEquals(1, completions.get());
+      try (Closeable appCleanup = app::close;
+          var driver = Executors.newVirtualThreadPerTaskExecutor()) {
+        app.modifyServer(server -> server.setStopTimeout(0));
+        app.routes()
+            .get(
+                "/queued",
+                workers,
+                (ignored2, response) -> {
+                  invoked.set(true);
+                  response.text("wrong");
+                },
+                extensions ->
+                    extensions.afterRequest(
+                        outcome -> {
+                          completions.incrementAndGet();
+                          completed.complete(outcome);
+                        }));
 
-        try {
-          sent.get(5, TimeUnit.SECONDS);
-        } catch (ExecutionException expected) {
-          assertInstanceOf(IOException.class, expected.getCause());
+        try (var test = TestServer.start(app)) {
+          var sent = driver.submit(() -> test.send(request -> request.path("/queued")));
+          await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 1);
+          app.close();
+          var outcome = completed.get(5, TimeUnit.SECONDS);
+          assertEquals("/queued", outcome.routePattern());
+          assertInstanceOf(RejectedExecutionException.class, outcome.applicationFailure());
+          assertFalse(invoked.get());
+          assertEquals(1, completions.get());
+          assertFalse(workers.isShutdown());
+          release.countDown();
+          assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
+          assertFalse(invoked.get());
+          assertEquals(1, completions.get());
+
+          try {
+            sent.get(5, TimeUnit.SECONDS);
+          } catch (ExecutionException expected) {
+            assertInstanceOf(IOException.class, expected.getCause());
+          }
         }
       }
     } finally {
@@ -142,22 +144,26 @@ class EndpointExecutionTest {
     var invoked = new AtomicBoolean();
     var workers = Executors.unconfigurableExecutorService(pool);
 
-    try (var app = new Shoostr()) {
-      app.exception(
-          RejectedExecutionException.class,
-          (ignored4, ignored5, response) -> response.status(503).text("rejected"));
-      app.routes()
-          .get(
-              "/inline",
-              workers,
-              (ignored6, response) -> {
-                invoked.set(true);
-                response.text("wrong");
-              });
+    try {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(503, test.send(request -> request.path("/inline")).statusCode());
-        assertFalse(invoked.get());
+      try (Closeable appCleanup1 = app::close) {
+        app.exception(
+            RejectedExecutionException.class,
+            (ignored4, ignored5, response) -> response.status(503).text("rejected"));
+        app.routes()
+            .get(
+                "/inline",
+                workers,
+                (ignored6, response) -> {
+                  invoked.set(true);
+                  response.text("wrong");
+                });
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(503, test.send(request -> request.path("/inline")).statusCode());
+          assertFalse(invoked.get());
+        }
       }
     } finally {
       release.countDown();
@@ -171,32 +177,33 @@ class EndpointExecutionTest {
     var owned = ConcurrentHashMap.<Thread>newKeySet();
     var workers = executor("platform", owned);
 
-    try (workers;
-        var app = new Shoostr()) {
-      app.routes()
-          .when(
-              () -> false,
-              routes ->
-                  routes.get(
-                      "/hidden",
-                      workers,
-                      (ignored7, ignored8) -> invoked.set(true),
-                      extensions ->
-                          extensions
-                              .lifecycle()
-                              .status(
-                                  404,
-                                  (ignored9, response) ->
-                                      response.text(
-                                          "local:" + owned.contains(Thread.currentThread())))));
+    try (workers) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(request -> request.path("/hidden"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(404, response.statusCode());
-        assertEquals("local:true", response.body());
-        assertEquals("no-store", response.headers().firstValue("Cache-Control").orElseThrow());
-        assertFalse(invoked.get());
+      try (Closeable appCleanup2 = app::close) {
+        app.routes()
+            .when(
+                () -> false,
+                routes ->
+                    routes.get(
+                        "/hidden",
+                        workers,
+                        (ignored7, ignored8) -> invoked.set(true),
+                        extensions ->
+                            extensions.status(
+                                404,
+                                (ignored9, response) ->
+                                    response.text(
+                                        "local:" + owned.contains(Thread.currentThread())))));
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(request -> request.path("/hidden"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(404, response.statusCode());
+          assertEquals("local:true", response.body());
+          assertEquals("no-store", response.headers().firstValue("Cache-Control").orElseThrow());
+          assertFalse(invoked.get());
+        }
       }
     }
   }
@@ -205,21 +212,25 @@ class EndpointExecutionTest {
   void preservesFrameworkAttributesAcrossSequentialHandoff() throws Exception {
     var workers = Executors.newFixedThreadPool(1);
 
-    try (workers;
-        var app = new Shoostr()) {
-      app.onRequestHeaders((request, ignored10) -> request.attribute("value", "original"));
-      app.routes()
-          .get(
-              "/attributes",
-              workers,
-              (request, response) ->
-                  response.text(request.attribute("value").orElseThrow().toString()));
+    try (workers) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            "original",
-            test.send(request -> request.path("/attributes"), HttpResponse.BodyHandlers.ofString())
-                .body());
+      try (Closeable appCleanup3 = app::close) {
+        app.onRequestHeaders((request, ignored10) -> request.attribute("value", "original"));
+        app.routes()
+            .get(
+                "/attributes",
+                workers,
+                (request, response) ->
+                    response.text(request.attribute("value").orElseThrow().toString()));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "original",
+              test.send(
+                      request -> request.path("/attributes"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
       }
     }
   }
@@ -229,20 +240,24 @@ class EndpointExecutionTest {
     var context = new ThreadLocal<String>();
     var workers = Executors.newFixedThreadPool(1);
 
-    try (workers;
-        var app = new Shoostr()) {
-      app.onRequestHeaders((ignored11, ignored12) -> context.set("admission-only"));
-      app.routes()
-          .get(
-              "/context",
-              workers,
-              (ignored13, response) -> response.text(context.get() == null ? "absent" : "copied"));
+    try (workers) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        assertEquals(
-            "absent",
-            test.send(request -> request.path("/context"), HttpResponse.BodyHandlers.ofString())
-                .body());
+      try (Closeable appCleanup4 = app::close) {
+        app.onRequestHeaders((ignored11, ignored12) -> context.set("admission-only"));
+        app.routes()
+            .get(
+                "/context",
+                workers,
+                (ignored13, response) ->
+                    response.text(context.get() == null ? "absent" : "copied"));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "absent",
+              test.send(request -> request.path("/context"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
       }
     }
   }
@@ -252,33 +267,36 @@ class EndpointExecutionTest {
     var invoked = new AtomicBoolean();
     var workers = Executors.newFixedThreadPool(1);
 
-    try (workers;
-        var app = new Shoostr()) {
-      app.exception(
-          RejectedExecutionException.class,
-          (ignored14, ignored15, response) -> response.status(503).text("app"));
-      app.routes()
-          .path(
-              "/rejected",
-              routes -> {
-                routes.exception(
-                    RejectedExecutionException.class,
-                    (ignored16, ignored17, response) -> response.status(503).text("local"));
-                routes.get(
-                    workers,
-                    (ignored18, response) -> {
-                      invoked.set(true);
-                      response.text("endpoint");
-                    });
-              });
+    try (workers) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        workers.shutdown();
-        var response =
-            test.send(request -> request.path("/rejected"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(503, response.statusCode());
-        assertEquals("local", response.body());
-        assertFalse(invoked.get());
+      try (Closeable appCleanup5 = app::close) {
+        app.exception(
+            RejectedExecutionException.class,
+            (ignored14, ignored15, response) -> response.status(503).text("app"));
+        app.routes()
+            .path(
+                "/rejected",
+                routes -> {
+                  routes.exception(
+                      RejectedExecutionException.class,
+                      (ignored16, ignored17, response) -> response.status(503).text("local"));
+                  routes.get(
+                      workers,
+                      (ignored18, response) -> {
+                        invoked.set(true);
+                        response.text("endpoint");
+                      });
+                });
+
+        try (var test = TestServer.start(app)) {
+          workers.shutdown();
+          var response =
+              test.send(request -> request.path("/rejected"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(503, response.statusCode());
+          assertEquals("local", response.body());
+          assertFalse(invoked.get());
+        }
       }
     }
   }
@@ -288,7 +306,7 @@ class EndpointExecutionTest {
   void runsLocalBeforeAppCallbackOnSelectedThread(
       String phase,
       String executorType,
-      BiConsumer<Extensions, Handler> localRegistration,
+      BiConsumer<Lifecycle, Handler> localRegistration,
       BiConsumer<Shoostr, Handler> appRegistration)
       throws Exception {
     var events = new ArrayList<String>();
@@ -297,39 +315,43 @@ class EndpointExecutionTest {
     var finished = new CompletableFuture<Void>();
     var workers = executor(executorType, owned);
 
-    try (workers;
-        var app = new Shoostr()) {
-      appRegistration.accept(
-          app,
-          (ignored19, ignored20) -> {
-            callbackThreads.add(Thread.currentThread());
-            events.add("app");
-          });
-      app.afterRequest(ignored21 -> finished.complete(null));
-      app.routes()
-          .get(
-              "/callbacks",
-              workers,
-              (ignored22, response) -> {
-                callbackThreads.add(Thread.currentThread());
-                response.text("ok");
-              },
-              extensions ->
-                  localRegistration.accept(
-                      extensions,
-                      (ignored23, ignored24) -> {
-                        callbackThreads.add(Thread.currentThread());
-                        events.add("local");
-                      }));
+    try (workers) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(request -> request.path("/callbacks"), HttpResponse.BodyHandlers.ofString());
-        assertEquals("ok", response.body());
-        finished.get(5, TimeUnit.SECONDS);
-        assertEquals(List.of("local", "app"), events, phase);
-        assertEquals(3, callbackThreads.size());
-        assertTrue(owned.containsAll(callbackThreads), executorType);
+      try (Closeable appCleanup6 = app::close) {
+        appRegistration.accept(
+            app,
+            (ignored19, ignored20) -> {
+              callbackThreads.add(Thread.currentThread());
+              events.add("app");
+            });
+        app.afterRequest(ignored21 -> finished.complete(null));
+        app.routes()
+            .get(
+                "/callbacks",
+                workers,
+                (ignored22, response) -> {
+                  callbackThreads.add(Thread.currentThread());
+                  response.text("ok");
+                },
+                extensions ->
+                    localRegistration.accept(
+                        extensions,
+                        (ignored23, ignored24) -> {
+                          callbackThreads.add(Thread.currentThread());
+                          events.add("local");
+                        }));
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(
+                  request -> request.path("/callbacks"), HttpResponse.BodyHandlers.ofString());
+          assertEquals("ok", response.body());
+          finished.get(5, TimeUnit.SECONDS);
+          assertEquals(List.of("local", "app"), events, phase);
+          assertEquals(3, callbackThreads.size());
+          assertTrue(owned.containsAll(callbackThreads), executorType);
+        }
       }
     }
   }
@@ -344,15 +366,18 @@ class EndpointExecutionTest {
                 .send(Boolean.toString(owned.contains(Thread.currentThread())));
     var workers = executor("platform", owned);
 
-    try (workers;
-        var app = new Shoostr()) {
-      app.routes().sse("/events", workers, endpoint);
+    try (workers) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals("data: true\n\n", response.body());
+      try (Closeable appCleanup7 = app::close) {
+        app.routes().sse("/events", workers, endpoint);
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, response.statusCode());
+          assertEquals("data: true\n\n", response.body());
+        }
       }
     }
   }
@@ -368,50 +393,54 @@ class EndpointExecutionTest {
         (ignored26, response) -> response.text(Objects.requireNonNull(context.get()));
     var workers = Executors.newFixedThreadPool(1);
 
-    try (workers;
-        var app = new Shoostr()) {
-      app.observe(
-          ignored27 -> {
-            var admission = Thread.currentThread();
-            context.set("server-context");
-            return new RequestObservation() {
-              @Override
-              public AutoCloseable attach() {
-                var owner = Thread.currentThread();
-                context.set("server-context");
-                events.add("worker-attach");
-                return () -> {
+    try (workers) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup8 = app::close) {
+        app.observe(
+            ignored27 -> {
+              var admission = Thread.currentThread();
+              context.set("server-context");
+              return new RequestObservation() {
+                @Override
+                public AutoCloseable attach() {
+                  var owner = Thread.currentThread();
+                  context.set("server-context");
+                  events.add("worker-attach");
+                  return () -> {
+                    context.remove();
+                    workerRestored.set(Thread.currentThread() == owner && context.get() == null);
+                    events.add("worker-close");
+                  };
+                }
+
+                @Override
+                public void close() {
                   context.remove();
-                  workerRestored.set(Thread.currentThread() == owner && context.get() == null);
-                  events.add("worker-close");
-                };
-              }
+                  admissionRestored.set(
+                      Thread.currentThread() == admission && context.get() == null);
+                  events.add("admission-close");
+                }
 
-              @Override
-              public void close() {
-                context.remove();
-                admissionRestored.set(Thread.currentThread() == admission && context.get() == null);
-                events.add("admission-close");
-              }
+                @Override
+                public void complete(RequestOutcome outcome) {
+                  events.add("complete");
+                  completed.complete(outcome);
+                }
+              };
+            });
+        app.routes().get("/scoped", workers, endpoint);
 
-              @Override
-              public void complete(RequestOutcome outcome) {
-                events.add("complete");
-                completed.complete(outcome);
-              }
-            };
-          });
-      app.routes().get("/scoped", workers, endpoint);
-
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(request -> request.path("/scoped"), HttpResponse.BodyHandlers.ofString());
-        assertEquals("server-context", response.body());
-        assertEquals(200, completed.get(5, TimeUnit.SECONDS).statusCode());
-        assertTrue(admissionRestored.get());
-        assertTrue(workerRestored.get());
-        assertEquals(
-            List.of("admission-close", "worker-attach", "worker-close", "complete"), events);
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(request -> request.path("/scoped"), HttpResponse.BodyHandlers.ofString());
+          assertEquals("server-context", response.body());
+          assertEquals(200, completed.get(5, TimeUnit.SECONDS).statusCode());
+          assertTrue(admissionRestored.get());
+          assertTrue(workerRestored.get());
+          assertEquals(
+              List.of("admission-close", "worker-attach", "worker-close", "complete"), events);
+        }
       }
     }
   }
@@ -424,15 +453,18 @@ class EndpointExecutionTest {
             response.text(Boolean.toString(owned.contains(Thread.currentThread())));
     var workers = executor("platform", owned);
 
-    try (workers;
-        var app = new Shoostr()) {
-      app.routes().get("/selected", workers, endpoint);
+    try (workers) {
+      var app = new Shoostr();
 
-      try (var test = TestServer.start(app)) {
-        var response =
-            test.send(request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, response.statusCode());
-        assertEquals("true", response.body());
+      try (Closeable appCleanup9 = app::close) {
+        app.routes().get("/selected", workers, endpoint);
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString());
+          assertEquals(200, response.statusCode());
+          assertEquals("true", response.body());
+        }
       }
     }
   }
@@ -476,32 +508,32 @@ class EndpointExecutionTest {
                     Arguments.of(
                         "matched",
                         executorType,
-                        (BiConsumer<Extensions, Handler>)
-                            (scope, hook) -> scope.lifecycle().onRouteMatched(hook),
+                        (BiConsumer<Lifecycle, Handler>)
+                            (scope, hook) -> scope.onRouteMatched(hook),
                         (BiConsumer<Shoostr, Handler>) Shoostr::onRouteMatched),
                     Arguments.of(
                         "before",
                         executorType,
-                        (BiConsumer<Extensions, Handler>)
-                            (scope, hook) -> scope.lifecycle().beforeRouteHandler(hook),
+                        (BiConsumer<Lifecycle, Handler>)
+                            (scope, hook) -> scope.beforeRouteHandler(hook),
                         (BiConsumer<Shoostr, Handler>) Shoostr::beforeRouteHandler),
                     Arguments.of(
                         "after",
                         executorType,
-                        (BiConsumer<Extensions, Handler>)
-                            (scope, hook) -> scope.lifecycle().afterRouteHandler(hook),
+                        (BiConsumer<Lifecycle, Handler>)
+                            (scope, hook) -> scope.afterRouteHandler(hook),
                         (BiConsumer<Shoostr, Handler>) Shoostr::afterRouteHandler),
                     Arguments.of(
                         "before-flush",
                         executorType,
-                        (BiConsumer<Extensions, Handler>)
-                            (scope, hook) -> scope.lifecycle().beforeResponseFlush(hook),
+                        (BiConsumer<Lifecycle, Handler>)
+                            (scope, hook) -> scope.beforeResponseFlush(hook),
                         (BiConsumer<Shoostr, Handler>) Shoostr::beforeResponseFlush),
                     Arguments.of(
                         "after-flush",
                         executorType,
-                        (BiConsumer<Extensions, Handler>)
-                            (scope, hook) -> scope.lifecycle().afterResponseFlush(hook),
+                        (BiConsumer<Lifecycle, Handler>)
+                            (scope, hook) -> scope.afterResponseFlush(hook),
                         (BiConsumer<Shoostr, Handler>) Shoostr::afterResponseFlush)));
   }
 }
