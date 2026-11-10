@@ -53,17 +53,17 @@ public final class Lifecycle {
       Set<Extension> installed, Consumer<Extension> initialize, @Nullable Lifecycle inherited) {
     this.installed = installed;
     this.initialize = initialize;
-    selections = new IdentityHashMap<>();
-    order = new ArrayList<>();
-    matched = new ArrayList<>();
-    before = new ArrayList<>();
-    after = new ArrayList<>();
-    beforeFlush = new ArrayList<>();
-    afterFlush = new ArrayList<>();
-    observers = new ArrayList<>();
-    instrumentation = new ArrayList<>();
-    statuses = new LinkedHashMap<>();
-    routeConsumers = new ArrayList<>();
+    this.selections = new IdentityHashMap<>();
+    this.order = new ArrayList<>();
+    this.matched = new ArrayList<>();
+    this.before = new ArrayList<>();
+    this.after = new ArrayList<>();
+    this.beforeFlush = new ArrayList<>();
+    this.afterFlush = new ArrayList<>();
+    this.observers = new ArrayList<>();
+    this.instrumentation = new ArrayList<>();
+    this.statuses = new LinkedHashMap<>();
+    this.routeConsumers = new ArrayList<>();
     if (inherited != null) {
       append(inherited);
       for (var extension : inherited.order) {

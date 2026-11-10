@@ -22,7 +22,7 @@ final class WebSocketRuntime {
    */
   WebSocketRuntime(Executor executor) {
     this.executor = Objects.requireNonNull(executor);
-    connections = new HashSet<>();
+    this.connections = new HashSet<>();
   }
 
   /**

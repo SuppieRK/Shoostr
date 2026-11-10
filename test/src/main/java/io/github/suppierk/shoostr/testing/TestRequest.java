@@ -26,11 +26,11 @@ public final class TestRequest {
    */
   TestRequest(URI baseUri) {
     this.baseUri = Objects.requireNonNull(baseUri);
-    builder = HttpRequest.newBuilder(baseUri).timeout(Duration.ofSeconds(10));
-    method = "GET";
-    body = HttpRequest.BodyPublishers.noBody();
-    pathConfigured = false;
-    finished = false;
+    this.builder = HttpRequest.newBuilder(baseUri).timeout(Duration.ofSeconds(10));
+    this.method = "GET";
+    this.body = HttpRequest.BodyPublishers.noBody();
+    this.pathConfigured = false;
+    this.finished = false;
   }
 
   /**

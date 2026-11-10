@@ -54,9 +54,9 @@ public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
 
   /** Initializes parser and wire storage before JMH configures the trial parameters. */
   public HeaderCacheBenchmark() {
-    headers = "repeated";
-    requests = new ByteBuffer[64];
-    parser = new HttpParser(this, 8192);
+    this.headers = "repeated";
+    this.requests = new ByteBuffer[64];
+    this.parser = new HttpParser(this, 8192);
   }
 
   /**

@@ -248,7 +248,7 @@ class AuthenticationCompositionTest {
     private IdentitySource(String name, List<String> events) {
       this.name = Objects.requireNonNull(name);
       this.events = Objects.requireNonNull(events);
-      requests = new AtomicInteger();
+      this.requests = new AtomicInteger();
     }
 
     @Override

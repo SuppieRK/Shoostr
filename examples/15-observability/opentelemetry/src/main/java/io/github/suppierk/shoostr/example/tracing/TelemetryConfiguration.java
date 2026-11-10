@@ -41,7 +41,7 @@ final class TelemetryConfiguration implements AutoCloseable {
                     .build())
             .build();
     // Build an app-local SDK; W3C propagation reads and writes standard trace-context headers.
-    sdk =
+    this.sdk =
         OpenTelemetrySdk.builder()
             .setTracerProvider(provider)
             .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))

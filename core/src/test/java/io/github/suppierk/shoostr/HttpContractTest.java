@@ -47,11 +47,11 @@ class HttpContractTest {
   private TestServer test;
 
   HttpContractTest() {
-    retainedResponse = new AtomicReference<>();
-    retainedRequest = new AtomicReference<>();
-    staged = new CountDownLatch(1);
-    releaseFinite = new CountDownLatch(1);
-    releaseStream = new CountDownLatch(1);
+    this.retainedResponse = new AtomicReference<>();
+    this.retainedRequest = new AtomicReference<>();
+    this.staged = new CountDownLatch(1);
+    this.releaseFinite = new CountDownLatch(1);
+    this.releaseStream = new CountDownLatch(1);
   }
 
   @BeforeEach

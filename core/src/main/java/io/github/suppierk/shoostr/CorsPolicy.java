@@ -90,15 +90,15 @@ public final class CorsPolicy {
       Origins.validateOrigin(origin);
     }
 
-    origins = wildcard(builder.origins, HttpCharacters.ASTERISK_STRING);
-    methods = builder.methods;
-    allMethods = builder.allMethods;
-    allowedHeaders =
+    this.origins = wildcard(builder.origins, HttpCharacters.ASTERISK_STRING);
+    this.methods = builder.methods;
+    this.allMethods = builder.allMethods;
+    this.allowedHeaders =
         wildcard(builder.allowedHeaders, HttpHeaders.of(HttpCharacters.ASTERISK_STRING));
-    credentials = builder.credentials;
-    exposedHeaders =
+    this.credentials = builder.credentials;
+    this.exposedHeaders =
         wildcard(builder.exposedHeaders, HttpHeaders.of(HttpCharacters.ASTERISK_STRING));
-    maxAgeSeconds = builder.maxAgeSeconds;
+    this.maxAgeSeconds = builder.maxAgeSeconds;
     validate();
   }
 
@@ -404,13 +404,13 @@ public final class CorsPolicy {
 
     /** Creates standalone default permissions. */
     private Builder() {
-      origins = Set.of();
-      methods = Set.of(HttpMethods.GET, HttpMethods.HEAD);
-      allMethods = false;
-      allowedHeaders = Set.of();
-      credentials = false;
-      exposedHeaders = Set.of();
-      maxAgeSeconds = 5;
+      this.origins = Set.of();
+      this.methods = Set.of(HttpMethods.GET, HttpMethods.HEAD);
+      this.allMethods = false;
+      this.allowedHeaders = Set.of();
+      this.credentials = false;
+      this.exposedHeaders = Set.of();
+      this.maxAgeSeconds = 5;
     }
 
     /**

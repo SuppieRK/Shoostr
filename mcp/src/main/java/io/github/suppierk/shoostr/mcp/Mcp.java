@@ -93,20 +93,20 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     this.security = Objects.requireNonNull(security);
     Objects.requireNonNull(limits);
     var metadata = security.resourceMetadata();
-    expiredTokenChallenge =
+    this.expiredTokenChallenge =
         "Bearer error=\"invalid_token\""
             + (metadata == null ? "" : ", resource_metadata=\"" + metadata.toASCIIString() + "\"");
     Objects.requireNonNull(factory);
-    provider = new Provider(limits);
-    owned = new AtomicBoolean();
-    deadlines =
+    this.provider = new Provider(limits);
+    this.owned = new AtomicBoolean();
+    this.deadlines =
         new ScheduledThreadPoolExecutor(
             1, task -> Thread.ofPlatform().daemon().name("shoostr-mcp-expiry").unstarted(task));
     deadlines.setRemoveOnCancelPolicy(true);
     deadlines.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
-    lifetimeAttribute = McpRequestLifetime.class.getName() + "." + UUID.randomUUID();
+    this.lifetimeAttribute = McpRequestLifetime.class.getName() + "." + UUID.randomUUID();
 
-    server = createServer(factory);
+    this.server = createServer(factory);
   }
 
   /**
@@ -862,21 +862,21 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      */
     private Provider(McpSessionLimits limits) {
       this.limits = new McpSessionLimits(limits);
-      idleNanos =
+      this.idleNanos =
           this.limits.idleTimeout().compareTo(Duration.ofNanos(Long.MAX_VALUE)) > 0
               ? Long.MAX_VALUE
               : this.limits.idleTimeout().toNanos();
-      owners = new HashMap<>();
-      closing = new HashMap<>();
-      initializing = new HashMap<>();
-      mapper =
+      this.owners = new HashMap<>();
+      this.closing = new HashMap<>();
+      this.initializing = new HashMap<>();
+      this.mapper =
           new JacksonMcpJsonMapper(
               JsonMapper.builder()
                   .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
                   .enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION)
                   .build());
-      sessions = new ConcurrentHashMap<>();
-      streams = new ConcurrentHashMap<>();
+      this.sessions = new ConcurrentHashMap<>();
+      this.streams = new ConcurrentHashMap<>();
     }
 
     /**

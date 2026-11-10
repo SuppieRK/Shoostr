@@ -53,15 +53,15 @@ public final class OpenApi
    * @param version nonblank application API version
    */
   public OpenApi(String title, String version) {
-    info = new Info().title(text(title)).version(text(version));
-    bindings = new ArrayList<>();
-    components = new Components();
-    servers = new ArrayList<>();
-    tags = new ArrayList<>();
-    interfaces = new ArrayList<>();
-    installed = false;
-    prepared = false;
-    document = new AtomicReference<>();
+    this.info = new Info().title(text(title)).version(text(version));
+    this.bindings = new ArrayList<>();
+    this.components = new Components();
+    this.servers = new ArrayList<>();
+    this.tags = new ArrayList<>();
+    this.interfaces = new ArrayList<>();
+    this.installed = false;
+    this.prepared = false;
+    this.document = new AtomicReference<>();
   }
 
   /**

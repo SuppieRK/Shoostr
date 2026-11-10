@@ -64,8 +64,8 @@ public class BufferedRequestBenchmark {
 
   /** Initializes the parameter defaults also used by direct fixture callers. */
   public BufferedRequestBenchmark() {
-    charset = "UTF-8";
-    content = "ascii";
+    this.charset = "UTF-8";
+    this.content = "ascii";
   }
 
   /**

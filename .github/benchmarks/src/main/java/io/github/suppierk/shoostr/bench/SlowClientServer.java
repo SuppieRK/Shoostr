@@ -33,12 +33,12 @@ public final class SlowClientServer implements AutoCloseable {
    * @param port requested loopback port, or zero for an ephemeral test listener
    */
   SlowClientServer(int port) {
-    phase = new Object();
-    release = new CountDownLatch(1);
-    connectors = List.of();
-    nativeConfiguration = "";
+    this.phase = new Object();
+    this.release = new CountDownLatch(1);
+    this.connectors = List.of();
+    this.nativeConfiguration = "";
     var defaults = new Options();
-    app =
+    this.app =
         new Shoostr()
             .modifyServer(
                 nativeServer -> {
@@ -46,15 +46,15 @@ public final class SlowClientServer implements AutoCloseable {
                   nativeConnector.setHost("127.0.0.1");
                   nativeConnector.setPort(port);
                 });
-    app.modifyServer(server -> connectors = List.of(server.getConnectors()));
-    app.modifyHttpConfiguration(configuration -> nativeConfiguration = configuration.dump());
+    app.modifyServer(server -> this.connectors = List.of(server.getConnectors()));
+    app.modifyHttpConfiguration(configuration -> this.nativeConfiguration = configuration.dump());
     app.onRouteMatched(
         (request, ignored) -> {
           synchronized (phase) {
             if (("POST".equals(request.method()) && "/slow-body".equals(request.path()))
                 || ("GET".equals(request.method()) && "/blocked".equals(request.path()))) {
-              activeExchanges++;
-              admitted++;
+              this.activeExchanges++;
+              this.admitted++;
             }
           }
         });
@@ -63,8 +63,8 @@ public final class SlowClientServer implements AutoCloseable {
           synchronized (phase) {
             if (("POST".equals(outcome.method()) && "/slow-body".equals(outcome.routePattern()))
                 || ("GET".equals(outcome.method()) && "/blocked".equals(outcome.routePattern()))) {
-              activeExchanges--;
-              completed++;
+              this.activeExchanges--;
+              this.completed++;
             }
           }
         });

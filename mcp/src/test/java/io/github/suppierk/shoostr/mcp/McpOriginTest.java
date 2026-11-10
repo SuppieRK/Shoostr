@@ -235,7 +235,7 @@ class McpOriginTest {
     private final AtomicInteger attempts;
 
     private RejectingAuthentication() {
-      attempts = new AtomicInteger();
+      this.attempts = new AtomicInteger();
     }
 
     @Override

@@ -47,11 +47,11 @@ public class StreamCompletionBenchmark {
 
   /** Initializes transport storage before JMH configures the trial parameters. */
   public StreamCompletionBenchmark() {
-    blocker = "fresh";
-    completion = "inline";
-    bytes = ByteBuffer.allocate(1024);
-    sink = this::complete;
-    pending = new ArrayBlockingQueue<>(1);
+    this.blocker = "fresh";
+    this.completion = "inline";
+    this.bytes = ByteBuffer.allocate(1024);
+    this.sink = this::complete;
+    this.pending = new ArrayBlockingQueue<>(1);
   }
 
   /**

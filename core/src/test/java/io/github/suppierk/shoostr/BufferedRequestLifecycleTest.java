@@ -1023,9 +1023,9 @@ class BufferedRequestLifecycleTest {
     private final ByteArrayOutputStream content;
 
     private Http2Response() {
-      headers = new CompletableFuture<>();
-      body = new CompletableFuture<>();
-      content = new ByteArrayOutputStream();
+      this.headers = new CompletableFuture<>();
+      this.body = new CompletableFuture<>();
+      this.content = new ByteArrayOutputStream();
     }
 
     @Override

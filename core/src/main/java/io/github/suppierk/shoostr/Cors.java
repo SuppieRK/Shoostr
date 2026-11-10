@@ -76,7 +76,7 @@ public record Cors(CorsPolicy policy)
     private Configuration(Lifecycle endpoint, Cors cors, @Nullable Configuration inherited) {
       this.endpoint = Objects.requireNonNull(endpoint);
       this.cors = Objects.requireNonNull(cors);
-      policy = inherited == null ? cors.policy : inherited.policy;
+      this.policy = inherited == null ? cors.policy : inherited.policy;
       endpoint.cors(cors, policy);
     }
 

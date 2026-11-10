@@ -117,24 +117,24 @@ public final class Shoostr {
    */
   public Shoostr(Options options) {
     this.options = new Options(Objects.requireNonNull(options));
-    pendingMatches = new HashSet<>();
-    routes = new Routes(this::ensureExtension);
-    extensions = new ArrayList<>();
-    exceptionHandlers = new HashMap<>();
-    statusHandlers = new HashMap<>();
-    requestHeaderHandlers = new ArrayList<>();
-    routeMatchedHandlers = new ArrayList<>();
-    beforeHandlers = new ArrayList<>();
-    afterRouteHandlers = new ArrayList<>();
-    beforeFlushHandlers = new ArrayList<>();
-    afterFlushHandlers = new ArrayList<>();
-    afterHandlers = new ArrayList<>();
-    observationFactories = new ArrayList<>();
-    serverConfigurations = new ArrayList<>();
-    httpConfigurations = new ArrayList<>();
-    beforeCloseCallbacks = new ArrayList<>();
-    afterCloseCallbacks = new ArrayList<>();
-    shutdownHook = new Thread(this::shutdown, "web-shutdown");
+    this.pendingMatches = new HashSet<>();
+    this.routes = new Routes(this::ensureExtension);
+    this.extensions = new ArrayList<>();
+    this.exceptionHandlers = new HashMap<>();
+    this.statusHandlers = new HashMap<>();
+    this.requestHeaderHandlers = new ArrayList<>();
+    this.routeMatchedHandlers = new ArrayList<>();
+    this.beforeHandlers = new ArrayList<>();
+    this.afterRouteHandlers = new ArrayList<>();
+    this.beforeFlushHandlers = new ArrayList<>();
+    this.afterFlushHandlers = new ArrayList<>();
+    this.afterHandlers = new ArrayList<>();
+    this.observationFactories = new ArrayList<>();
+    this.serverConfigurations = new ArrayList<>();
+    this.httpConfigurations = new ArrayList<>();
+    this.beforeCloseCallbacks = new ArrayList<>();
+    this.afterCloseCallbacks = new ArrayList<>();
+    this.shutdownHook = new Thread(this::shutdown, "web-shutdown");
     Runtime.getRuntime().addShutdownHook(shutdownHook);
   }
 
@@ -1781,25 +1781,25 @@ public final class Shoostr {
         @Nullable RadixRoutes websocketRoutes,
         @Nullable CompressionHandler compressionHandler,
         @Nullable WebSocketRuntime websocketRuntime) {
-      compiledRoutes = dispatch.router();
-      errors = dispatch.errors();
-      statuses = dispatch.statuses();
-      gates = dispatch.gates();
-      headerHooks = dispatch.headerHooks();
-      matchedHooks = dispatch.matchedHooks();
-      postRouteHooks = dispatch.postRouteHooks();
-      preFlushHooks = dispatch.beforeFlushHooks();
-      postFlushHooks = dispatch.afterFlushHooks();
-      observers = dispatch.observers();
-      instrumentation = dispatch.instrumentation();
-      localObservers = dispatch.localObservers();
+      this.compiledRoutes = dispatch.router();
+      this.errors = dispatch.errors();
+      this.statuses = dispatch.statuses();
+      this.gates = dispatch.gates();
+      this.headerHooks = dispatch.headerHooks();
+      this.matchedHooks = dispatch.matchedHooks();
+      this.postRouteHooks = dispatch.postRouteHooks();
+      this.preFlushHooks = dispatch.beforeFlushHooks();
+      this.postFlushHooks = dispatch.afterFlushHooks();
+      this.observers = dispatch.observers();
+      this.instrumentation = dispatch.instrumentation();
+      this.localObservers = dispatch.localObservers();
       this.proxy = proxy;
       this.websocketRoutes = websocketRoutes;
       this.compressionHandler = compressionHandler;
       this.websocketRuntime = websocketRuntime;
-      interceptPreflights = extensions.stream().anyMatch(Cors.class::isInstance);
+      this.interceptPreflights = extensions.stream().anyMatch(Cors.class::isInstance);
 
-      sessionContinuation =
+      this.sessionContinuation =
           new Abstract() {
             /** {@inheritDoc} */
             @Override
@@ -1811,7 +1811,7 @@ public final class Shoostr {
             }
           };
       if (sessionConfiguration == null) {
-        applicationSessions = null;
+        this.applicationSessions = null;
         setHandler(sessionContinuation);
       } else {
         var handler = new SessionHandler();
@@ -1821,7 +1821,7 @@ public final class Shoostr {
         handler.setSecureRequestOnly(true);
         handler.setUsingUriParameters(false);
         handler.setHandler(sessionContinuation);
-        applicationSessions = handler;
+        this.applicationSessions = handler;
         setHandler(handler);
       }
     }
@@ -2799,9 +2799,9 @@ public final class Shoostr {
     private Completion(String method, List<Consumer<RequestOutcome>> observers) {
       this.method = method;
       this.observers = observers;
-      localObservers = List.of();
-      scopes = new ArrayList<>();
-      started = System.nanoTime();
+      this.localObservers = List.of();
+      this.scopes = new ArrayList<>();
+      this.started = System.nanoTime();
     }
 
     /**

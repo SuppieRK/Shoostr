@@ -104,7 +104,7 @@ class ExtensionCompositionTest {
     private final List<String> operations;
 
     private Documentation() {
-      operations = new ArrayList<>();
+      this.operations = new ArrayList<>();
     }
 
     @Override
@@ -135,8 +135,8 @@ class ExtensionCompositionTest {
     private String summary;
 
     private Description(Description inherited) {
-      tag = inherited == null ? "" : inherited.tag;
-      summary = inherited == null ? "" : inherited.summary;
+      this.tag = inherited == null ? "" : inherited.tag;
+      this.summary = inherited == null ? "" : inherited.summary;
     }
 
     Description tag(String value) {

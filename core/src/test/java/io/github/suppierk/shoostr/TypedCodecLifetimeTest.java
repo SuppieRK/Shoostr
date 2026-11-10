@@ -237,8 +237,8 @@ class TypedCodecLifetimeTest {
     private final AtomicInteger writes;
 
     private CountingCodec() {
-      reads = new AtomicInteger();
-      writes = new AtomicInteger();
+      this.reads = new AtomicInteger();
+      this.writes = new AtomicInteger();
     }
 
     @Override

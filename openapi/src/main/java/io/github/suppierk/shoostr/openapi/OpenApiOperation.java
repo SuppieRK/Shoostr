@@ -32,8 +32,8 @@ public final class OpenApiOperation {
    */
   OpenApiOperation(OpenApi owner, @Nullable OpenApiOperation inherited) {
     this.owner = owner;
-    operation = inherited == null ? new Operation() : inherited.snapshot();
-    hidden = inherited != null && inherited.hidden;
+    this.operation = inherited == null ? new Operation() : inherited.snapshot();
+    this.hidden = inherited != null && inherited.hidden;
   }
 
   /**

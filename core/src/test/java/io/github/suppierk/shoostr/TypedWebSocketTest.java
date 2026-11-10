@@ -659,11 +659,11 @@ class TypedWebSocketTest {
     private final CompletableFuture<Integer> closed;
 
     private Messages() {
-      binary = new LinkedBlockingQueue<>();
-      text = new LinkedBlockingQueue<>();
-      bytes = new ByteArrayOutputStream();
-      characters = new StringBuilder();
-      closed = new CompletableFuture<>();
+      this.binary = new LinkedBlockingQueue<>();
+      this.text = new LinkedBlockingQueue<>();
+      this.bytes = new ByteArrayOutputStream();
+      this.characters = new StringBuilder();
+      this.closed = new CompletableFuture<>();
     }
 
     @Override

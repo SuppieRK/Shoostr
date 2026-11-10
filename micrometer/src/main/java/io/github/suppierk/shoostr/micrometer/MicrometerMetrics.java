@@ -35,11 +35,11 @@ public final class MicrometerMetrics
    */
   public MicrometerMetrics(MeterRegistry registry) {
     this.registry = Objects.requireNonNull(registry);
-    completed =
+    this.completed =
         Timer.builder("http.server.requests")
             .description("Terminal request count and duration")
             .withRegistry(registry);
-    active =
+    this.active =
         LongTaskTimer.builder("http.server.requests.active")
             .description("Requests admitted but not yet terminal")
             .register(registry);

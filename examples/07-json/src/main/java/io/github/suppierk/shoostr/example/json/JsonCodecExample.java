@@ -82,7 +82,7 @@ public final class JsonCodecExample {
     /** Configures the mapper before concurrent use. */
     private UserCodec() {
       // Configure the shared mapper once before concurrent handlers can use it.
-      mapper = new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+      this.mapper = new ObjectMapper().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
     }
 
     /**

@@ -535,12 +535,12 @@ class WebSocketExampleTest {
     private final CompletableFuture<String> closeReason;
 
     private Messages() {
-      text = new LinkedBlockingQueue<>();
-      partialText = new StringBuilder();
-      binary = new LinkedBlockingQueue<>();
-      partialBinary = new ByteArrayOutputStream();
-      closeCode = new CompletableFuture<>();
-      closeReason = new CompletableFuture<>();
+      this.text = new LinkedBlockingQueue<>();
+      this.partialText = new StringBuilder();
+      this.binary = new LinkedBlockingQueue<>();
+      this.partialBinary = new ByteArrayOutputStream();
+      this.closeCode = new CompletableFuture<>();
+      this.closeReason = new CompletableFuture<>();
     }
 
     @Override

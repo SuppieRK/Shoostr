@@ -536,8 +536,8 @@ class ExtensionOwnershipTest {
     private final AtomicInteger closes;
 
     private OwnedCapability() {
-      claimed = new AtomicBoolean();
-      closes = new AtomicInteger();
+      this.claimed = new AtomicBoolean();
+      this.closes = new AtomicInteger();
     }
 
     @Override

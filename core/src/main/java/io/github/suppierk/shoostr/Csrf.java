@@ -62,8 +62,8 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
 
   /** Creates a same-origin CSRF policy for a browser's cookie-authenticated routes. */
   public Csrf() {
-    random = new SecureRandom();
-    lifecycle = null;
+    this.random = new SecureRandom();
+    this.lifecycle = null;
   }
 
   /**
@@ -85,8 +85,8 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
    * @param lifecycle contribution scope controlling configuration lifetime
    */
   private Csrf(Csrf source, Lifecycle lifecycle) {
-    trustedOrigins = Set.copyOf(source.trustedOrigins);
-    random = source.random;
+    this.trustedOrigins = Set.copyOf(source.trustedOrigins);
+    this.random = source.random;
     this.lifecycle = Objects.requireNonNull(lifecycle);
   }
 
@@ -315,7 +315,7 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
 
     /** Creates same-origin permissions. */
     private Builder() {
-      trustedOrigins = Set.of();
+      this.trustedOrigins = Set.of();
     }
 
     /**

@@ -233,11 +233,11 @@ class NativeWebSocketExampleTest {
     private final CompletableFuture<Integer> closeCode;
 
     private Messages() {
-      text = new LinkedBlockingQueue<>();
-      partial = new StringBuilder();
-      binary = new LinkedBlockingQueue<>();
-      partialBinary = new ByteArrayOutputStream();
-      closeCode = new CompletableFuture<>();
+      this.text = new LinkedBlockingQueue<>();
+      this.partial = new StringBuilder();
+      this.binary = new LinkedBlockingQueue<>();
+      this.partialBinary = new ByteArrayOutputStream();
+      this.closeCode = new CompletableFuture<>();
     }
 
     @Override

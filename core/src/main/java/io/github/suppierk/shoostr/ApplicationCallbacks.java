@@ -24,14 +24,14 @@ public final class ApplicationCallbacks {
 
   /** Creates an empty collector for one installation. */
   ApplicationCallbacks() {
-    headers = new ArrayList<>();
-    matched = new ArrayList<>();
-    before = new ArrayList<>();
-    after = new ArrayList<>();
-    beforeFlush = new ArrayList<>();
-    afterFlush = new ArrayList<>();
-    completed = new ArrayList<>();
-    observations = new ArrayList<>();
+    this.headers = new ArrayList<>();
+    this.matched = new ArrayList<>();
+    this.before = new ArrayList<>();
+    this.after = new ArrayList<>();
+    this.beforeFlush = new ArrayList<>();
+    this.afterFlush = new ArrayList<>();
+    this.completed = new ArrayList<>();
+    this.observations = new ArrayList<>();
   }
 
   /**

@@ -35,8 +35,8 @@ class RouteCompositionTest {
   private TestServer test;
 
   RouteCompositionTest() {
-    retainedScope = new AtomicReference<>();
-    retainedRequest = new AtomicReference<>();
+    this.retainedScope = new AtomicReference<>();
+    this.retainedRequest = new AtomicReference<>();
   }
 
   @BeforeEach

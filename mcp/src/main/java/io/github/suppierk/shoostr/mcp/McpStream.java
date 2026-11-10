@@ -41,9 +41,9 @@ final class McpStream implements McpStreamableServerTransport {
   McpStream(McpJsonMapper mapper, @Nullable Instant expiresAt) {
     this.mapper = Objects.requireNonNull(mapper);
     this.expiresAt = expiresAt;
-    frames = new ArrayDeque<>();
-    lock = new ReentrantLock();
-    changed = lock.newCondition();
+    this.frames = new ArrayDeque<>();
+    this.lock = new ReentrantLock();
+    this.changed = lock.newCondition();
   }
 
   /**

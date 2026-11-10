@@ -45,7 +45,7 @@ public final class TestServer implements Closeable {
     this.baseUri = baseUri;
     this.client = client;
     this.reservation = reservation;
-    closed = false;
+    this.closed = false;
   }
 
   /**

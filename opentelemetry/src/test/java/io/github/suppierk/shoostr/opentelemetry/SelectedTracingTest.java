@@ -41,17 +41,17 @@ class SelectedTracingTest {
   private final LinkedBlockingQueue<RequestOutcome> outcomes;
 
   SelectedTracingTest() {
-    exporter = InMemorySpanExporter.create();
-    telemetry =
+    this.exporter = InMemorySpanExporter.create();
+    this.telemetry =
         OpenTelemetrySdk.builder()
             .setTracerProvider(
                 SdkTracerProvider.builder()
                     .addSpanProcessor(SimpleSpanProcessor.create(exporter))
                     .build())
             .build();
-    tracing = new OpenTelemetryTracing(telemetry);
-    app = new Shoostr();
-    outcomes = new LinkedBlockingQueue<>();
+    this.tracing = new OpenTelemetryTracing(telemetry);
+    this.app = new Shoostr();
+    this.outcomes = new LinkedBlockingQueue<>();
     app.afterRequest(outcomes::add);
   }
 

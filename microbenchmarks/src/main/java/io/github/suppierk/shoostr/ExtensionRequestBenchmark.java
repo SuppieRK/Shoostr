@@ -73,8 +73,8 @@ public class ExtensionRequestBenchmark {
    * Initializes fixture-owned resources and the execution default used by existing fixture tests.
    */
   public ExtensionRequestBenchmark() {
-    resources = new ArrayList<>();
-    execution = "default";
+    this.resources = new ArrayList<>();
+    this.execution = "default";
   }
 
   /**

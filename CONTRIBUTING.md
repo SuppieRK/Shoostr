@@ -26,6 +26,14 @@ containers. Failed selection or an unexpected skipped job fails the gate. Pushes
 and manual runs check every example. All example Java tests run in the ordinary build.
 External contributions do not need a replacement pull request on a maintainer branch.
 
+Never leave instance-field writes unqualified in constructors. Use `this.field`, or
+`EnclosingClass.this.field` when writing an enclosing instance's field. This includes
+assignments, compound assignments and increments or decrements, including constructor
+lambdas. Preserve other explicit receivers. The compiler-based `verifyConstructorFieldsMain`
+and `verifyConstructorFieldsTest` tasks run through `check` for every Java project,
+including build logic, examples and benchmarks. They resolve field bindings, so local
+variables, parameters and static fields are outside this rule. There are no suppressions.
+
 The validation job runs `ciBuild` and MCP conformance. `ciBuild` retains all project
 checks and assembles libraries and benchmark projects. Example compilation remains
 necessary for Java tests and coverage; the selected container matrix owns example

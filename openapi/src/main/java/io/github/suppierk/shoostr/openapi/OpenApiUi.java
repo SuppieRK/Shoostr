@@ -46,7 +46,7 @@ final class OpenApiUi implements Handler {
       throw new IllegalArgumentException("UI page path must end in a slash");
     }
 
-    resources = new AtomicReference<>();
+    this.resources = new AtomicReference<>();
   }
 
   /**

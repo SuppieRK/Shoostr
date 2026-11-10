@@ -18,7 +18,7 @@ public final class TypedShoostr {
    */
   TypedShoostr(Shoostr app, Codec codec) {
     this.app = Objects.requireNonNull(app);
-    routes = new TypedRoutes(app.routes(), codec);
+    this.routes = new TypedRoutes(app.routes(), codec);
   }
 
   /**

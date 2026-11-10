@@ -62,7 +62,7 @@ public final class OpenTelemetryTracing
    */
   public OpenTelemetryTracing(OpenTelemetry telemetry) {
     this.telemetry = Objects.requireNonNull(telemetry);
-    tracer = telemetry.getTracer("io.github.suppierk.shoostr");
+    this.tracer = telemetry.getTracer("io.github.suppierk.shoostr");
   }
 
   /**

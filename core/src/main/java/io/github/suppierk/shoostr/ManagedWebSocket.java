@@ -54,11 +54,11 @@ public final class ManagedWebSocket implements Session.Listener {
   ManagedWebSocket(WebSocket configuration, Request request, WebSocketRuntime runtime) {
     this.configuration = Objects.requireNonNull(configuration);
     this.runtime = Objects.requireNonNull(runtime);
-    events = new Object();
-    path = request.path();
-    parameters = request.pathParamMap();
-    principal = request.principal().orElse(null);
-    closeReason = "";
+    this.events = new Object();
+    this.path = request.path();
+    this.parameters = request.pathParamMap();
+    this.principal = request.principal().orElse(null);
+    this.closeReason = "";
   }
 
   /**

@@ -53,7 +53,7 @@ public class StreamBufferBenchmark {
 
   /** Initializes the view retained by the benchmark transport fixture. */
   public StreamBufferBenchmark() {
-    submitted = ByteBuffer.allocate(0);
+    this.submitted = ByteBuffer.allocate(0);
   }
 
   /** Prepares immutable payloads and a callback-completing transport outside measured work. */
@@ -259,9 +259,9 @@ public class StreamBufferBenchmark {
 
     /** Initializes the direct-fixture defaults before JMH injects a matrix case. */
     public FixedTotalWriteState() {
-      chunkBytes = 1024;
-      bufferBytes = 8192;
-      explicitFlush = true;
+      this.chunkBytes = 1024;
+      this.bufferBytes = 8192;
+      this.explicitFlush = true;
     }
 
     /**

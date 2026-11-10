@@ -58,7 +58,7 @@ public class TelemetryObservationBenchmark {
 
   /** Initializes ownership tracking for the dependencies created during trial setup. */
   public TelemetryObservationBenchmark() {
-    resources = new ArrayList<>();
+    this.resources = new ArrayList<>();
   }
 
   /**

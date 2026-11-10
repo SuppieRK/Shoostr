@@ -33,6 +33,7 @@ allprojects {
 	apply plugin: 'checkstyle'
 	apply plugin: 'java'
 	apply from: rootProject.file('config/gradle/errorprone.gradle')
+	apply from: rootProject.file('config/gradle/constructor-fields.gradle')
 
 	java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
 	tasks.withType(JavaCompile).configureEach {

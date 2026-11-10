@@ -52,7 +52,7 @@ public class FiniteResponseBenchmark {
 
   /** Initializes the fixture's empty transport capture before trial setup. */
   public FiniteResponseBenchmark() {
-    submitted = ByteBuffer.allocate(0);
+    this.submitted = ByteBuffer.allocate(0);
   }
 
   /**

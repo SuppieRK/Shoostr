@@ -74,24 +74,25 @@ public final class Routes {
    */
   Routes(Consumer<Extension> initialize) {
     this.initialize = Objects.requireNonNull(initialize);
-    root = this;
-    parent = null;
-    lock = new Object();
-    prefix = EMPTY_PATH;
-    scopeDepth = 0;
-    activeGroupDepth = ThreadLocal.withInitial(() -> 0);
-    conditions = List.of();
-    configuration = null;
-    installed = Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
-    notifications = new ArrayList<>();
-    registrations = new ArrayList<>();
-    websocketRegistrations = new ArrayList<>();
-    staticFiles = new ArrayList<>();
-    errors = new LinkedHashMap<>();
-    endpointScopes = new IdentityHashMap<>();
-    staticScopes = new IdentityHashMap<>();
-    routeKeys = new HashSet<>();
-    websocketRouteKeys = new HashSet<>();
+    this.root = this;
+    this.parent = null;
+    this.lock = new Object();
+    this.prefix = EMPTY_PATH;
+    this.scopeDepth = 0;
+    this.activeGroupDepth = ThreadLocal.withInitial(() -> 0);
+    this.conditions = List.of();
+    this.configuration = null;
+    this.installed =
+        Collections.synchronizedSet(Collections.newSetFromMap(new IdentityHashMap<>()));
+    this.notifications = new ArrayList<>();
+    this.registrations = new ArrayList<>();
+    this.websocketRegistrations = new ArrayList<>();
+    this.staticFiles = new ArrayList<>();
+    this.errors = new LinkedHashMap<>();
+    this.endpointScopes = new IdentityHashMap<>();
+    this.staticScopes = new IdentityHashMap<>();
+    this.routeKeys = new HashSet<>();
+    this.websocketRouteKeys = new HashSet<>();
   }
 
   /**
@@ -110,24 +111,24 @@ public final class Routes {
       @Nullable Lifecycle configuration,
       int scopeDepth) {
     this.parent = parent;
-    initialize = parent.initialize;
+    this.initialize = parent.initialize;
     this.root = parent.root;
-    lock = root.lock;
+    this.lock = root.lock;
     this.prefix = prefix;
     this.scopeDepth = scopeDepth;
-    activeGroupDepth = root.activeGroupDepth;
+    this.activeGroupDepth = root.activeGroupDepth;
     this.conditions = List.copyOf(conditions);
     this.configuration = configuration;
-    installed = root.installed;
-    notifications = root.notifications;
-    registrations = root.registrations;
-    websocketRegistrations = root.websocketRegistrations;
-    staticFiles = root.staticFiles;
-    errors = new LinkedHashMap<>();
-    endpointScopes = root.endpointScopes;
-    staticScopes = root.staticScopes;
-    routeKeys = root.routeKeys;
-    websocketRouteKeys = root.websocketRouteKeys;
+    this.installed = root.installed;
+    this.notifications = root.notifications;
+    this.registrations = root.registrations;
+    this.websocketRegistrations = root.websocketRegistrations;
+    this.staticFiles = root.staticFiles;
+    this.errors = new LinkedHashMap<>();
+    this.endpointScopes = root.endpointScopes;
+    this.staticScopes = root.staticScopes;
+    this.routeKeys = root.routeKeys;
+    this.websocketRouteKeys = root.websocketRouteKeys;
   }
 
   /**

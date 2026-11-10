@@ -70,9 +70,9 @@ public final class RouteCatalogExample {
 
     /** Creates an empty catalog. */
     public RouteCatalog() {
-      claimed = new AtomicBoolean();
-      routes = new ArrayList<>();
-      document = "";
+      this.claimed = new AtomicBoolean();
+      this.routes = new ArrayList<>();
+      this.document = "";
     }
 
     /** {@inheritDoc} */

@@ -25,7 +25,7 @@ public final class Upload {
   Upload(MultiPart.Part delegate, Runnable access) {
     this.delegate = delegate;
     this.access = access;
-    streams = new ArrayList<>();
+    this.streams = new ArrayList<>();
   }
 
   /**

@@ -111,7 +111,7 @@ class McpOwnershipTest {
 
     private ConstructionAttempt(Supplier<Mcp<?>> factory) {
       this.factory = Objects.requireNonNull(factory);
-      adapter = Optional.empty();
+      this.adapter = Optional.empty();
     }
 
     private void construct() {

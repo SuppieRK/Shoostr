@@ -65,8 +65,8 @@ public class SchedulingBenchmark {
 
   /** Creates the common producer queue and framework options outside timing. */
   public SchedulingBenchmark() {
-    pending = new LinkedBlockingQueue<>();
-    options = new Options();
+    this.pending = new LinkedBlockingQueue<>();
+    this.options = new Options();
   }
 
   /**
@@ -194,9 +194,9 @@ public class SchedulingBenchmark {
 
     /** Creates transport proxies outside timing; neither proxy performs socket or parser work. */
     private Exchange() {
-      headers = HttpFields.build();
-      submitted = ByteBuffer.allocate(0);
-      inbound =
+      this.headers = HttpFields.build();
+      this.submitted = ByteBuffer.allocate(0);
+      this.inbound =
           (Request)
               Proxy.newProxyInstance(
                   getClass().getClassLoader(),
@@ -208,7 +208,7 @@ public class SchedulingBenchmark {
                         case "consumeAvailable" -> true;
                         default -> throw new UnsupportedOperationException(method.getName());
                       });
-      sink =
+      this.sink =
           (Response)
               Proxy.newProxyInstance(
                   getClass().getClassLoader(),
@@ -223,14 +223,16 @@ public class SchedulingBenchmark {
                             throw new IllegalStateException("Expected a terminal finite write");
                           }
 
-                          writes++;
-                          submitted = (ByteBuffer) arguments[1];
+                          this.writes++;
+                          this.submitted = (ByteBuffer) arguments[1];
                           ((Callback) arguments[2]).succeeded();
                           yield null;
                         }
                         default -> throw new UnsupportedOperationException(method.getName());
                       });
-      completion = Callback.from(() -> completions++, thrown -> failure = thrown);
+      this.completion =
+          Callback.from(
+              () -> this.completions++, thrown -> SchedulingBenchmark.this.failure = thrown);
     }
 
     /**

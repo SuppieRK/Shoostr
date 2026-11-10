@@ -112,10 +112,10 @@ class ResponseResourceTest {
     private boolean open;
 
     private TrackingChannel(String content, boolean failPosition) {
-      bytes = content.getBytes(StandardCharsets.US_ASCII);
+      this.bytes = content.getBytes(StandardCharsets.US_ASCII);
       this.failPosition = failPosition;
-      readPositions = new ArrayList<>();
-      open = true;
+      this.readPositions = new ArrayList<>();
+      this.open = true;
     }
 
     @Override

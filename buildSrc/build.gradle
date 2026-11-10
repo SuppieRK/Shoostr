@@ -4,6 +4,7 @@ plugins {
 }
 
 apply from: file('../config/gradle/errorprone.gradle')
+apply from: file('../config/gradle/constructor-fields.gradle')
 
 group = 'io.github.suppierk'
 repositories { mavenCentral() }

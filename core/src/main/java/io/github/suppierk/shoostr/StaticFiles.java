@@ -110,7 +110,7 @@ final class StaticFiles implements Closeable {
     this.mount = Objects.requireNonNull(mount);
     this.options = Objects.requireNonNull(options);
     this.filesystem = filesystem;
-    resourceFactory = ResourceFactory.closeable();
+    this.resourceFactory = ResourceFactory.closeable();
 
     try {
       var resolved = resolve.apply(resourceFactory);
@@ -121,7 +121,7 @@ final class StaticFiles implements Closeable {
         throw new IllegalArgumentException("Static source must be a readable directory");
       }
 
-      source = resolved;
+      this.source = resolved;
     } catch (RuntimeException | Error failure) {
       try {
         resourceFactory.close();

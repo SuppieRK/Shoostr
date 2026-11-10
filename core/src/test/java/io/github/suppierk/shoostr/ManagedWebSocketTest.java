@@ -1896,10 +1896,10 @@ class ManagedWebSocketTest {
     private boolean paused;
 
     private PausedBinaryMessages() {
-      bytes = new ByteArrayOutputStream();
-      first = new CompletableFuture<>();
-      release = new CompletableFuture<>();
-      payload = new CompletableFuture<>();
+      this.bytes = new ByteArrayOutputStream();
+      this.first = new CompletableFuture<>();
+      this.release = new CompletableFuture<>();
+      this.payload = new CompletableFuture<>();
     }
 
     @Override
@@ -1959,12 +1959,12 @@ class ManagedWebSocketTest {
     private final ByteArrayOutputStream binaryParts;
 
     private Messages() {
-      text = new LinkedBlockingQueue<>();
-      binary = new LinkedBlockingQueue<>();
-      closeCode = new CompletableFuture<>();
-      closeReason = new CompletableFuture<>();
-      textParts = new StringBuilder();
-      binaryParts = new ByteArrayOutputStream();
+      this.text = new LinkedBlockingQueue<>();
+      this.binary = new LinkedBlockingQueue<>();
+      this.closeCode = new CompletableFuture<>();
+      this.closeReason = new CompletableFuture<>();
+      this.textParts = new StringBuilder();
+      this.binaryParts = new ByteArrayOutputStream();
     }
 
     @Override

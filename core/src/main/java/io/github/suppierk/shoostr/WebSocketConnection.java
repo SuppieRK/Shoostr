@@ -48,8 +48,8 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
     this.parameters = Map.copyOf(parameters);
     this.principal = principal;
     this.listener = Objects.requireNonNull(listener);
-    lifecycle = new Object();
-    writes = new ReentrantLock();
+    this.lifecycle = new Object();
+    this.writes = new ReentrantLock();
   }
 
   /**

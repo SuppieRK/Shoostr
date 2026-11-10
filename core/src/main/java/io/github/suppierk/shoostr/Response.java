@@ -2326,7 +2326,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
 
     /** Starts with shared empty storage so empty streams allocate no body buffer. */
     private Stream() {
-      buffer = EMPTY;
+      this.buffer = EMPTY;
     }
 
     /** Checks the response thread, lifetime and streaming state before caller conversion. */
