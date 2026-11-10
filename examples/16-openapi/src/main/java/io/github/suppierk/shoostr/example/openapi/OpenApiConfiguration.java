@@ -25,16 +25,20 @@ final class OpenApiConfiguration {
             .description(
                 "Explicit schemas, optional typed handlers, and protected local documentation")
             .tag("users", "User operations");
+
     this.internal = new OpenApi("Operations API", "1.0");
+
     // Swagger's model types describe auth and JSON shapes; they do not enforce either at runtime.
     var basic = new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme(BASIC_SCHEME);
     docs.securityScheme(BASIC_SCHEME, basic);
     internal.securityScheme(BASIC_SCHEME, basic);
+
     // Declare the User schema explicitly; neither the codec nor the Java record is scanned.
     var userSchema = new JsonSchema();
     userSchema.setTypes(Set.of("object"));
     userSchema.addProperty("name", new JsonSchema().types(Set.of("string")).minLength(1));
     userSchema.setRequired(List.of("name"));
+
     // Register the reusable schema and retain its reference for endpoint request/response
     // descriptions.
     this.user = docs.schema("User", userSchema);

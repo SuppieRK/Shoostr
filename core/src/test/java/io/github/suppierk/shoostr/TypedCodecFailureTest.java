@@ -24,13 +24,7 @@ class TypedCodecFailureTest {
   @ParameterizedTest
   @MethodSource("failures")
   void preservesDecodeFailureClassification(Exception failure, int status) throws Exception {
-    var codec =
-        new TestCodec() {
-          @Override
-          public <T> T read(byte[] source, Class<T> type) throws Exception {
-            throw failure;
-          }
-        };
+    var codec = createCodecForPreservesDecodeFailureClassification(failure);
 
     {
       var app = new Shoostr();
@@ -53,16 +47,19 @@ class TypedCodecFailureTest {
     }
   }
 
+  private TestCodec createCodecForPreservesDecodeFailureClassification(Exception failure) {
+    return new TestCodec() {
+      @Override
+      public <T> T read(byte[] source, Class<T> type) throws Exception {
+        throw failure;
+      }
+    };
+  }
+
   @ParameterizedTest
   @MethodSource("failures")
   void preservesEncodeFailureClassification(Exception failure, int status) throws Exception {
-    var codec =
-        new TestCodec() {
-          @Override
-          public byte[] write(Object value) throws Exception {
-            throw failure;
-          }
-        };
+    var codec = createCodecForPreservesEncodeFailureClassification(failure);
 
     {
       var app = new Shoostr();
@@ -79,16 +76,19 @@ class TypedCodecFailureTest {
     }
   }
 
+  private TestCodec createCodecForPreservesEncodeFailureClassification(Exception failure) {
+    return new TestCodec() {
+      @Override
+      public byte[] write(Object value) throws Exception {
+        throw failure;
+      }
+    };
+  }
+
   @Test
   void passesOriginalCheckedFailureToLocalRenderer() throws Exception {
     var failure = new IOException("codec unavailable");
-    var codec =
-        new TestCodec() {
-          @Override
-          public byte[] write(Object value) throws IOException {
-            throw failure;
-          }
-        };
+    var codec = createCodecForPassesOriginalCheckedFailureToLocalRenderer(failure);
 
     {
       var app = new Shoostr();
@@ -96,7 +96,7 @@ class TypedCodecFailureTest {
       try (Closeable appCleanup2 = app::close) {
         app.exception(
             IOException.class,
-            (ignored2, ignored3, response) -> response.status(502).text("global"));
+            (ignoredFailure, ignoredRequest, response) -> response.status(502).text("global"));
         app.codec(codec)
             .routes()
             .path(
@@ -104,17 +104,20 @@ class TypedCodecFailureTest {
                 routes -> {
                   routes.exception(
                       IOException.class,
-                      (caught, ignored4, response) -> {
+                      (caught, ignoredRequest, response) -> {
                         assertSame(failure, caught);
+
                         response.status(503).text("local");
                       });
                   routes.get(
-                      (ignored5, response) -> response.body(MediaType.APPLICATION_JSON, "Alice"));
+                      (ignoredTypedRequest, response) ->
+                          response.body(MediaType.APPLICATION_JSON, "Alice"));
                 });
 
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/failure"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(503, result.statusCode());
           assertEquals("local", result.body());
         }
@@ -122,16 +125,19 @@ class TypedCodecFailureTest {
     }
   }
 
+  private TestCodec createCodecForPassesOriginalCheckedFailureToLocalRenderer(IOException failure) {
+    return new TestCodec() {
+      @Override
+      public byte[] write(Object value) throws IOException {
+        throw failure;
+      }
+    };
+  }
+
   @Test
   void keepsStagedBodyAndHeadersWhenCodecThrows() throws Exception {
     var failure = new IOException("unavailable");
-    var codec =
-        new TestCodec() {
-          @Override
-          public byte[] write(Object value) throws IOException {
-            throw failure;
-          }
-        };
+    var codec = createCodecForKeepsStagedBodyAndHeadersWhenCodecThrows(failure);
 
     {
       var app = new Shoostr();
@@ -141,8 +147,9 @@ class TypedCodecFailureTest {
             .routes()
             .get(
                 "/failure",
-                (ignored6, response) -> {
+                (ignoredTypedRequest, response) -> {
                   response.text("kept");
+
                   assertSame(
                       failure,
                       assertThrows(
@@ -153,6 +160,7 @@ class TypedCodecFailureTest {
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/failure"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("kept", result.body());
           assertEquals(
@@ -163,16 +171,19 @@ class TypedCodecFailureTest {
     }
   }
 
+  private TestCodec createCodecForKeepsStagedBodyAndHeadersWhenCodecThrows(IOException failure) {
+    return new TestCodec() {
+      @Override
+      public byte[] write(Object value) throws IOException {
+        throw failure;
+      }
+    };
+  }
+
   @Test
   @SuppressWarnings("NullAway") // A deliberately broken codec violates its nonnull output contract.
   void rejectsNullEncodedBytesAsServerFailure() throws Exception {
-    var codec =
-        new TestCodec() {
-          @Override
-          public byte[] write(Object value) {
-            return null;
-          }
-        };
+    var codec = createCodecForRejectsNullEncodedBytesAsServerFailure();
 
     {
       var app = new Shoostr();
@@ -180,7 +191,9 @@ class TypedCodecFailureTest {
       try (Closeable appCleanup4 = app::close) {
         app.codec(codec)
             .routes()
-            .get("/null", (ignored7, response) -> response.body("application/json", "Alice"));
+            .get(
+                "/null",
+                (ignoredTypedRequest, response) -> response.body("application/json", "Alice"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(500, test.send(request -> request.path("/null")).statusCode());
@@ -189,16 +202,19 @@ class TypedCodecFailureTest {
     }
   }
 
+  private TestCodec createCodecForRejectsNullEncodedBytesAsServerFailure() {
+    return new TestCodec() {
+      @Override
+      public byte[] write(Object value) {
+        return null;
+      }
+    };
+  }
+
   @Test
   @SuppressWarnings("NullAway") // A deliberately broken codec violates its nonnull result contract.
   void rejectsNullDecodedValueAsServerFailure() throws Exception {
-    var codec =
-        new TestCodec() {
-          @Override
-          public <T> T read(byte[] source, Class<T> type) {
-            return null;
-          }
-        };
+    var codec = createCodecForRejectsNullDecodedValueAsServerFailure();
 
     {
       var app = new Shoostr();
@@ -214,6 +230,15 @@ class TypedCodecFailureTest {
         }
       }
     }
+  }
+
+  private TestCodec createCodecForRejectsNullDecodedValueAsServerFailure() {
+    return new TestCodec() {
+      @Override
+      public <T> T read(byte[] source, Class<T> type) {
+        return null;
+      }
+    };
   }
 
   private static Stream<Arguments> failures() {

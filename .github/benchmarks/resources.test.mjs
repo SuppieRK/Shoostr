@@ -9,33 +9,15 @@ import { fileURLToPath } from 'node:url';
 
 const resources = fileURLToPath(new URL('./resources.sh', import.meta.url));
 
-function shell(script, env = {}) {
-  return execFileSync('bash', ['-euo', 'pipefail', '-c', `source "$1"; ${script}`, 'bash', resources], {
-    encoding: 'utf8', env: {...process.env, ...env}
-  });
-}
-
-function resourceProbe(directory) {
-  const probe = path.join(directory, 'io/github/suppierk/shoostr/bench/ResourceProbe.java');
-  fs.mkdirSync(path.dirname(probe), {recursive: true});
-  fs.writeFileSync(probe, `package io.github.suppierk.shoostr.bench;
-    class ResourceProbe {
-      public static void main(String[] args) throws InterruptedException {
-        System.out.println("READY");
-        Thread.sleep(args.length == 0 ? 30000 : Long.parseLong(args[0]));
-      }
-    }
-  `);
-  return probe;
-}
-
 test('packaged JVM probe starts successfully in source-file mode', t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-source-probe-'));
+
   t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
   const java = process.env.JAVA_HOME ? path.join(process.env.JAVA_HOME, 'bin/java') : 'java';
   const result = execFileSync(java, ['-Xms256m', '-Xmx256m', '-XX:+UseG1GC', resourceProbe(directory), '0'], {
     encoding: 'utf8', timeout: 15000
   });
+
   assert.equal(result.trim(), 'READY');
 });
 
@@ -67,11 +49,13 @@ for (const memory of ['0', '-1', '256', '256.5', '01', '10000000', 'one']) {
 
 test('memory budgets larger than host RAM are rejected instead of silently clamped', () => {
   const mib = Math.floor(Number(fs.readFileSync('/proc/meminfo', 'utf8').match(/^MemTotal:\s+(\d+)/m)[1]) / 1024);
+
   assert.throws(() => shell('configure_resources', {JVM_MEMORY_MIB: String(mib + 1)}), /exceeds host RAM/);
 });
 
 test('steady selects ten workloads and overload selects the eight ordinary HTTP fixtures', () => {
   const workloads = JSON.parse(fs.readFileSync(new URL('./workloads.json', import.meta.url)));
+
   assert.equal(Object.keys(workloads).length, 10);
   assert.deepEqual(Object.entries(workloads).filter(([, value]) => value.ramp).map(([name]) => name),
     ['plaintext', 'json-bytes', 'echo', 'stream', 'route-literal', 'route-parameter', 'not-found', 'wrong-method']);
@@ -82,16 +66,59 @@ for (const mode of ['normal', 'oom']) {
     skip: process.env.BENCHMARK_TEST_CGROUP !== '1'
   }, t => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'shoostr-cgroup-test-'));
+
     t.after(() => fs.rmSync(directory, {recursive: true, force: true}));
     const probe = resourceProbe(directory);
-    const command = mode === 'normal'
+    const command = createProbeCommand(mode, probe);
+    const result = runCgroupProbe(mode, directory, command);
+
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, new RegExp(`memory.max\\n${mode === 'normal' ? 1073741824 : 67108864}\\nmemory.swap.max\\n0`));
+    assert.match(result.stdout, /affinity list: \d+$/m);
+    assert.match(result.stdout, new RegExp(`oom_kill ${mode === 'oom' ? 1 : 0}`));
+
+    if (mode === 'normal') {
+      assert.match(result.stdout, /-XX:MaxHeapSize=268435456/);
+      assert.match(result.stdout, /-XX:\+UseG1GC/);
+    }
+    if (mode === 'oom') assert.match(result.stdout, /EXIT=137/);
+
+    assert.match(fs.readFileSync(path.join(directory, 'resource.txt'), 'utf8'), /Maximum resident set size/);
+  });
+}
+
+function shell(script, env = {}) {
+  return execFileSync('bash', ['-euo', 'pipefail', '-c', `source "$1"; ${script}`, 'bash', resources], {
+    encoding: 'utf8', env: {...process.env, ...env}
+  });
+}
+
+function resourceProbe(directory) {
+  const probe = path.join(directory, 'io/github/suppierk/shoostr/bench/ResourceProbe.java');
+  fs.mkdirSync(path.dirname(probe), {recursive: true});
+  fs.writeFileSync(probe, `package io.github.suppierk.shoostr.bench;
+    class ResourceProbe {
+      public static void main(String[] args) throws InterruptedException {
+        System.out.println("READY");
+        Thread.sleep(args.length == 0 ? 30000 : Long.parseLong(args[0]));
+      }
+    }
+  `);
+  return probe;
+}
+
+function createProbeCommand(mode, probe) {
+  return mode === 'normal'
       ? [path.join(process.env.JAVA_HOME, 'bin/java'), '-Xms256m', '-Xmx256m', '-XX:+UseG1GC', probe]
       : [process.execPath, '-e', `
           console.log("READY");
           setTimeout(() => { globalThis.bytes = Buffer.alloc(128 * 1024 * 1024, 1); }, 1500);
           setInterval(() => {}, 1000);
         `];
-    const result = spawnSync('bash', ['-euo', 'pipefail', '-c', `
+}
+
+function runCgroupProbe(mode, directory, command) {
+  return spawnSync('bash', ['-euo', 'pipefail', '-c', `
       source "$1"
       configure_resources
       server_cgroup="/sys/fs/cgroup/shoostr-resource-test-$$"
@@ -136,15 +163,4 @@ for (const mode of ['normal', 'oom']) {
       encoding: 'utf8', timeout: 20000,
       env: {...process.env, JVM_CPUS: '1', JVM_MEMORY_MIB: '1024', BENCHMARK_PROBE_MODE: mode}
     });
-    assert.equal(result.status, 0, result.stdout + result.stderr);
-    assert.match(result.stdout, new RegExp(`memory.max\\n${mode === 'normal' ? 1073741824 : 67108864}\\nmemory.swap.max\\n0`));
-    assert.match(result.stdout, /affinity list: \d+$/m);
-    assert.match(result.stdout, new RegExp(`oom_kill ${mode === 'oom' ? 1 : 0}`));
-    if (mode === 'normal') {
-      assert.match(result.stdout, /-XX:MaxHeapSize=268435456/);
-      assert.match(result.stdout, /-XX:\+UseG1GC/);
-    }
-    if (mode === 'oom') assert.match(result.stdout, /EXIT=137/);
-    assert.match(fs.readFileSync(path.join(directory, 'resource.txt'), 'utf8'), /Maximum resident set size/);
-  });
 }

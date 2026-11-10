@@ -24,17 +24,7 @@ class OpenApiConditionalTest {
     var facts = new ArrayList<String>();
     var docs = new OpenApi("API", "1");
     var codec =
-        new Codec() {
-          @Override
-          public <T> T read(byte[] source, Class<T> type) {
-            return type.cast(new String(source, StandardCharsets.UTF_8));
-          }
-
-          @Override
-          public byte[] write(Object value) {
-            return value.toString().getBytes(StandardCharsets.UTF_8);
-          }
-        };
+        createCodecForDocumentsNestedAndTypedConditionalBindingsWithoutEvaluatingAvailability();
 
     {
       var app = new Shoostr();
@@ -45,20 +35,23 @@ class OpenApiConditionalTest {
               routes.path(
                   "/api",
                   group -> {
-                    group.get("/public", (ignored, ignored2) -> {});
+                    group.get("/public", (ignored, ignoredResponse) -> {});
                     group.when(
                         () -> {
                           calls.incrementAndGet();
+
                           return available;
                         },
                         conditional ->
                             conditional.path(
                                 "/nested",
-                                nested -> nested.get("/private", (ignored3, ignored4) -> {})));
+                                nested ->
+                                    nested.get(
+                                        "/private", (ignoredRequest, ignoredResponse) -> {})));
                   },
-                  e -> {
-                    e.withExtension(docs).summary("Default");
-                    e.onRoute((method, path) -> facts.add(method.value() + " " + path));
+                  lifecycle -> {
+                    lifecycle.withExtension(docs).summary("Default");
+                    lifecycle.onRoute((method, path) -> facts.add(method.value() + " " + path));
                   });
               routes.get("/openapi.json", docs.handler());
             });
@@ -68,24 +61,28 @@ class OpenApiConditionalTest {
                     routes.when(
                         () -> {
                           calls.incrementAndGet();
+
                           return available;
                         },
                         conditional ->
                             conditional.get(
                                 "/typed",
-                                (ignored5, ignored6) -> {},
-                                e -> e.withExtension(docs).summary("Typed"))));
+                                (ignoredTypedRequest, ignoredTypedResponse) -> {},
+                                lifecycle -> lifecycle.withExtension(docs).summary("Typed"))));
 
         try (var test = TestServer.start(app)) {
           var document =
               Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
+
           assertEquals(0, calls.get());
           assertEquals(List.of("GET /api/public", "GET /api/nested/private"), facts);
           assertEquals(3, document.path("paths").size());
           assertTrue(document.path("paths").has("/api/public"));
           assertTrue(document.path("paths").has("/api/nested/private"));
           assertTrue(document.path("paths").has("/typed"));
+
           test.send(request -> request.path("/openapi.json"));
+
           assertEquals(0, calls.get());
           assertEquals(
               available ? 200 : 404,
@@ -95,5 +92,20 @@ class OpenApiConditionalTest {
         }
       }
     }
+  }
+
+  private Codec
+      createCodecForDocumentsNestedAndTypedConditionalBindingsWithoutEvaluatingAvailability() {
+    return new Codec() {
+      @Override
+      public <T> T read(byte[] source, Class<T> type) {
+        return type.cast(new String(source, StandardCharsets.UTF_8));
+      }
+
+      @Override
+      public byte[] write(Object value) {
+        return value.toString().getBytes(StandardCharsets.UTF_8);
+      }
+    };
   }
 }

@@ -20,47 +20,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class HttpHeadersTest {
   private static final HttpHeaders TENANT = HttpHeaders.of("X-Tenant");
 
-  private static final Set<String> OBSOLETED =
-      Set.of(
-          "ACCESS_CONTROL",
-          "C_EXT",
-          "C_MAN",
-          "C_OPT",
-          "C_PEP",
-          "CONTENT_BASE",
-          "CONTENT_MD5",
-          "CONTENT_SCRIPT_TYPE",
-          "CONTENT_STYLE_TYPE",
-          "CONTENT_VERSION",
-          "COOKIE2",
-          "DEFAULT_STYLE",
-          "DERIVED_FROM",
-          "DIGEST",
-          "EXT",
-          "GETPROFILE",
-          "HTTP2_SETTINGS",
-          "MAN",
-          "METHOD_CHECK",
-          "METHOD_CHECK_EXPIRES",
-          "OPT",
-          "P3P",
-          "PEP",
-          "PEP_INFO",
-          "PICS_LABEL",
-          "PROFILEOBJECT",
-          "PROTOCOL",
-          "PROTOCOL_REQUEST",
-          "PROXY_FEATURES",
-          "PROXY_INSTRUCTION",
-          "PUBLIC",
-          "REFERER_ROOT",
-          "SAFE",
-          "SECURITY_SCHEME",
-          "SET_COOKIE2",
-          "SETPROFILE",
-          "URI",
-          "WANT_DIGEST",
-          "WARNING");
+  private static final Set<String> OBSOLETED = obsoleteHeaderNames();
 
   @Test
   void satisfiesEqualsAndHashCodeContract() {
@@ -74,7 +34,9 @@ class HttpHeadersTest {
       if (field.getType() == HttpHeaders.class && Modifier.isStatic(field.getModifiers())) {
         var header = (HttpHeaders) field.get(null);
         var value = header.value();
+
         assertTrue(names.add(value.toLowerCase(Locale.ROOT)), value);
+
         for (String spelling :
             new String[] {value, value.toLowerCase(Locale.ROOT), value.toUpperCase(Locale.ROOT)}) {
           assertSame(header, HttpHeaders.httpHeader(spelling).orElseThrow());
@@ -122,6 +84,7 @@ class HttpHeadersTest {
 
     try {
       Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+
       assertSame(HttpHeaders.IF_MATCH, HttpHeaders.httpHeader("IF-MATCH").orElseThrow());
       assertTrue(HttpHeaders.IF_MATCH.equalsIgnoreCase("if-match"));
     } finally {
@@ -163,8 +126,52 @@ class HttpHeadersTest {
     for (var field : HttpHeaders.class.getFields()) {
       if (field.getType() == HttpHeaders.class && Modifier.isStatic(field.getModifiers())) {
         var deprecated = field.isAnnotationPresent(Deprecated.class);
+
         assertEquals(OBSOLETED.contains(field.getName()), deprecated, field.getName());
       }
     }
+  }
+
+  private static Set<String> obsoleteHeaderNames() {
+    return Set.of(
+        "ACCESS_CONTROL",
+        "C_EXT",
+        "C_MAN",
+        "C_OPT",
+        "C_PEP",
+        "CONTENT_BASE",
+        "CONTENT_MD5",
+        "CONTENT_SCRIPT_TYPE",
+        "CONTENT_STYLE_TYPE",
+        "CONTENT_VERSION",
+        "COOKIE2",
+        "DEFAULT_STYLE",
+        "DERIVED_FROM",
+        "DIGEST",
+        "EXT",
+        "GETPROFILE",
+        "HTTP2_SETTINGS",
+        "MAN",
+        "METHOD_CHECK",
+        "METHOD_CHECK_EXPIRES",
+        "OPT",
+        "P3P",
+        "PEP",
+        "PEP_INFO",
+        "PICS_LABEL",
+        "PROFILEOBJECT",
+        "PROTOCOL",
+        "PROTOCOL_REQUEST",
+        "PROXY_FEATURES",
+        "PROXY_INSTRUCTION",
+        "PUBLIC",
+        "REFERER_ROOT",
+        "SAFE",
+        "SECURITY_SCHEME",
+        "SET_COOKIE2",
+        "SETPROFILE",
+        "URI",
+        "WANT_DIGEST",
+        "WARNING");
   }
 }

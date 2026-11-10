@@ -60,25 +60,6 @@ final class AcceptNegotiation {
   }
 
   /**
-   * Finds the quality of the most-specific matching range for one candidate.
-   *
-   * @param candidate representation to test
-   * @param ranges parsed client preferences
-   * @return quality in thousandths, or zero when unacceptable
-   */
-  private static int quality(MediaType candidate, List<Range> ranges) {
-    var representation = representation(candidate.value());
-    Range best = null;
-    for (var range : ranges) {
-      if (range.matches(representation) && (best == null || range.precedes(best))) {
-        best = range;
-      }
-    }
-
-    return best == null ? 0 : best.quality;
-  }
-
-  /**
    * Parses one media range and its weight.
    *
    * @param item trimmed range item
@@ -113,7 +94,27 @@ final class AcceptNegotiation {
     }
 
     var parameters = parameters(pieces);
+
     return new Range(type, subtype, parameters.values, parameters.quality);
+  }
+
+  /**
+   * Finds the quality of the most-specific matching range for one candidate.
+   *
+   * @param candidate representation to test
+   * @param ranges parsed client preferences
+   * @return quality in thousandths, or zero when unacceptable
+   */
+  private static int quality(MediaType candidate, List<Range> ranges) {
+    var representation = representation(candidate.value());
+    Range best = null;
+    for (var range : ranges) {
+      if (range.matches(representation) && (best == null || range.precedes(best))) {
+        best = range;
+      }
+    }
+
+    return best == null ? 0 : best.quality;
   }
 
   /**
@@ -126,6 +127,7 @@ final class AcceptNegotiation {
     var pieces = split(value, HttpCharacters.SEMICOLON_SIGN, false);
     var base = pieces.getFirst().trim();
     int slash = base.indexOf(HttpCharacters.PATH_SEPARATOR);
+
     return new Representation(
         base.substring(0, slash).trim().toLowerCase(Locale.ROOT),
         base.substring(slash + 1).trim().toLowerCase(Locale.ROOT),
@@ -178,7 +180,35 @@ final class AcceptNegotiation {
       throw malformed();
     }
 
-    return quality(tokenValue(value));
+    return qualityThousandths(tokenValue(value));
+  }
+
+  /**
+   * Parses an RFC quality value into integer thousandths.
+   *
+   * @param value quality input
+   * @return integer thousandths
+   */
+  private static int qualityThousandths(String value) {
+    if ("0".equals(value) || "1".equals(value)) {
+      return "1".equals(value) ? 1000 : 0;
+    }
+
+    if (value.length() < 2 || value.charAt(1) != HttpCharacters.DOT || value.length() > 5) {
+      throw malformed();
+    }
+
+    var whole = value.charAt(0);
+    var fraction = value.substring(2);
+    if ((whole != '0' && whole != '1') || !fraction.chars().allMatch(Character::isDigit)) {
+      throw malformed();
+    }
+
+    if (whole == '1' && !fraction.chars().allMatch(character -> character == '0')) {
+      throw malformed();
+    }
+
+    return (whole - '0') * 1000 + Integer.parseInt((fraction + "000").substring(0, 3));
   }
 
   /**
@@ -249,34 +279,6 @@ final class AcceptNegotiation {
   }
 
   /**
-   * Parses an RFC quality value into integer thousandths.
-   *
-   * @param value quality input
-   * @return integer thousandths
-   */
-  private static int quality(String value) {
-    if ("0".equals(value) || "1".equals(value)) {
-      return "1".equals(value) ? 1000 : 0;
-    }
-
-    if (value.length() < 2 || value.charAt(1) != HttpCharacters.DOT || value.length() > 5) {
-      throw malformed();
-    }
-
-    var whole = value.charAt(0);
-    var fraction = value.substring(2);
-    if ((whole != '0' && whole != '1') || !fraction.chars().allMatch(Character::isDigit)) {
-      throw malformed();
-    }
-
-    if (whole == '1' && !fraction.chars().allMatch(character -> character == '0')) {
-      throw malformed();
-    }
-
-    return (whole - '0') * 1000 + Integer.parseInt((fraction + "000").substring(0, 3));
-  }
-
-  /**
    * Splits one field component while preserving quoted commas and semicolons.
    *
    * @param value source field component
@@ -308,6 +310,7 @@ final class AcceptNegotiation {
     }
 
     add(values, value.substring(start), ignoreEmpty);
+
     return values;
   }
 

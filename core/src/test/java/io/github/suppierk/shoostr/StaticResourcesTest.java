@@ -44,6 +44,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -104,6 +105,7 @@ class StaticResourcesTest {
           var result =
               test.send(
                   request -> request.path("/assets/" + fileName).timeout(Duration.ofSeconds(3)));
+
           assertEquals(200, result.statusCode());
           assertEquals(expectedType, result.headers().firstValue("Content-Type").orElseThrow());
           assertArrayEquals(content, result.body());
@@ -121,6 +123,7 @@ class StaticResourcesTest {
 
       try (Closeable appCleanup1 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () -> routes.staticFiles("/assets/{tenant}", temporaryDirectory));
@@ -135,6 +138,7 @@ class StaticResourcesTest {
     try (var filesystem =
         FileSystems.newFileSystem(URI.create("jar:" + archive.toUri()), Map.of("create", "true"))) {
       var directory = Files.createDirectory(filesystem.getPath("/assets"));
+
       assertThrows(IllegalArgumentException.class, () -> new StaticFiles("/assets", directory));
     }
   }
@@ -146,6 +150,7 @@ class StaticResourcesTest {
 
       try (Closeable appCleanup2 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () -> routes.classpathResources("/assets", "/missing-static-directory"));
@@ -174,6 +179,7 @@ class StaticResourcesTest {
               server.send(
                   request -> request.path("/assets/" + encoded),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals(filename, response.body());
         }
@@ -249,6 +255,7 @@ class StaticResourcesTest {
               server.send(
                   request -> request.path("/assets/site.txt"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("selected bytes", response.body());
           assertTrue(completed.await(5, TimeUnit.SECONDS));
@@ -280,6 +287,7 @@ class StaticResourcesTest {
               server.send(
                   request -> request.path("/assets/linked/secret.txt"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(404, response.statusCode());
           assertFalse(response.body().contains("alias target"));
         }
@@ -329,8 +337,8 @@ class StaticResourcesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup8 = app::close) {
-        app.onRouteMatched((ignored, ignored2) -> stages.add("matched"));
-        app.afterRouteHandler((ignored3, ignored4) -> stages.add("after"));
+        app.onRouteMatched((ignored, ignoredResponse) -> stages.add("matched"));
+        app.afterRouteHandler((ignoredRequest, ignoredResponse) -> stages.add("after"));
         app.routes().staticFiles("/assets", temporaryDirectory);
 
         try (var test = TestServer.start(app)) {
@@ -339,9 +347,11 @@ class StaticResourcesTest {
               test.send(
                   request -> request.path("/assets/site.txt").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, hit.statusCode());
           assertEquals("filesystem resource", hit.body());
           assertEquals(List.of("matched", "after"), stages);
+
           stages.clear();
 
           var miss =
@@ -377,6 +387,7 @@ class StaticResourcesTest {
           for (String path : List.of("/assets", "/assets/")) {
             var result =
                 test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
+
             assertEquals(200, result.statusCode());
             assertEquals("<h1>root</h1>", result.body());
             assertEquals("text/html", result.headers().firstValue("Content-Type").orElseThrow());
@@ -414,7 +425,7 @@ class StaticResourcesTest {
                 "/assets",
                 temporaryDirectory,
                 StaticOptions.defaults().withSpaFallback("index.html"));
-        app.routes().get("/assets/health", (ignored5, response) -> response.text("endpoint"));
+        app.routes().get("/assets/health", (ignoredRequest, response) -> response.text("endpoint"));
 
         try (var test = TestServer.start(app)) {
 
@@ -555,6 +566,7 @@ class StaticResourcesTest {
   @Test
   void rejectsUnsafeConfiguredStaticFileNames() {
     var defaults = StaticOptions.defaults();
+
     assertThrows(IllegalArgumentException.class, () -> defaults.withWelcomeFile("../index.html"));
     assertThrows(IllegalArgumentException.class, () -> defaults.withSpaFallback("/index.html"));
     assertThrows(IllegalArgumentException.class, () -> defaults.withSpaFallback("index\\.html"));
@@ -569,7 +581,7 @@ class StaticResourcesTest {
 
       try (Closeable appCleanup14 = app::close) {
         app.beforeRouteHandler(
-            (request, ignored6) -> {
+            (request, ignoredResponse) -> {
               if ("/assets/blocked".equals(request.path())) {
                 throw new UnauthorizedException();
               }
@@ -588,10 +600,12 @@ class StaticResourcesTest {
                       request -> request.path("/assets/blocked"),
                       HttpResponse.BodyHandlers.ofString())
                   .statusCode());
+
           var head =
               test.send(
                   request -> request.path("/assets/missing").method("HEAD"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, head.statusCode());
           assertEquals("", head.body());
           assertEquals("12", head.headers().firstValue("Content-Length").orElseThrow());
@@ -609,24 +623,11 @@ class StaticResourcesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup15 = app::close) {
-        var cors =
-            new Cors(
-                new CorsPolicy(
-                    Set.of("https://client.example"),
-                    Set.of(HttpMethods.GET),
-                    Set.of(HttpHeaders.AUTHORIZATION),
-                    true,
-                    Set.of(),
-                    5));
+        var cors = createCorsForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt();
 
         var admission =
-            new AdmissionExtension(
-                (request, ignored7) -> {
-                  admissions.incrementAndGet();
-                  if (request.header("Authorization").filter("Bearer allowed"::equals).isEmpty()) {
-                    throw new UnauthorizedException();
-                  }
-                });
+            createAdmissionForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
+                admissions);
         app.routes()
             .path(
                 "/",
@@ -635,23 +636,17 @@ class StaticResourcesTest {
                         "/assets",
                         temporaryDirectory,
                         StaticOptions.defaults().withSpaFallback("index.html")),
-                e -> {
-                  e.withExtension(admission);
-                  e.withExtension(cors);
+                lifecycle -> {
+                  lifecycle.withExtension(admission);
+                  lifecycle.withExtension(cors);
                 });
 
         try (var test = TestServer.start(app)) {
 
           var preflight =
-              test.send(
-                  request ->
-                      request
-                          .path("/assets/missing")
-                          .header("Origin", "https://client.example")
-                          .header("Access-Control-Request-Method", "GET")
-                          .header("Access-Control-Request-Headers", "Authorization")
-                          .method("OPTIONS"),
-                  HttpResponse.BodyHandlers.ofString());
+              sendPreflightRequestForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
+                  test);
+
           assertEquals(204, preflight.statusCode());
           assertEquals(0, admissions.get());
           assertEquals(
@@ -663,6 +658,7 @@ class StaticResourcesTest {
                   request ->
                       request.path("/assets/missing").header("Origin", "https://client.example"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(401, denied.statusCode());
           assertEquals(1, admissions.get());
           assertEquals(
@@ -670,13 +666,9 @@ class StaticResourcesTest {
               denied.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
 
           var allowed =
-              test.send(
-                  request ->
-                      request
-                          .path("/assets/missing")
-                          .header("Origin", "https://client.example")
-                          .header("Authorization", "Bearer allowed"),
-                  HttpResponse.BodyHandlers.ofString());
+              sendAllowedRequestForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
+                  test);
+
           assertEquals(200, allowed.statusCode());
           assertEquals("<h1>app</h1>", allowed.body());
           assertEquals(2, admissions.get());
@@ -686,6 +678,55 @@ class StaticResourcesTest {
         }
       }
     }
+  }
+
+  private Cors createCorsForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt() {
+    return new Cors(
+        new CorsPolicy(
+            Set.of("https://client.example"),
+            Set.of(HttpMethods.GET),
+            Set.of(HttpHeaders.AUTHORIZATION),
+            true,
+            Set.of(),
+            5));
+  }
+
+  private AdmissionExtension
+      createAdmissionForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
+          AtomicInteger admissions) {
+    return new AdmissionExtension(
+        (request, ignoredResponse) -> {
+          admissions.incrementAndGet();
+          if (request.header("Authorization").filter("Bearer allowed"::equals).isEmpty()) {
+            throw new UnauthorizedException();
+          }
+        });
+  }
+
+  private HttpResponse<String>
+      sendPreflightRequestForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/assets/missing")
+                .header("Origin", "https://client.example")
+                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Headers", "Authorization")
+                .method("OPTIONS"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String>
+      sendAllowedRequestForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/assets/missing")
+                .header("Origin", "https://client.example")
+                .header("Authorization", "Bearer allowed"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -698,7 +739,7 @@ class StaticResourcesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup16 = app::close) {
-        app.beforeRouteHandler((ignored8, ignored9) -> Files.delete(selected));
+        app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> Files.delete(selected));
         app.routes()
             .staticFiles(
                 "/assets",
@@ -710,6 +751,7 @@ class StaticResourcesTest {
           var result =
               test.send(
                   request -> request.path("/assets/app.js"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(404, result.statusCode());
           assertFalse(result.body().contains("fallback"));
         }
@@ -738,6 +780,7 @@ class StaticResourcesTest {
               test.send(
                   request -> request.path("/assets/%2e%2e/secret.txt"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(400, traversal.statusCode());
           assertFalse(traversal.body().contains("top-secret-content"));
           assertEquals(
@@ -760,7 +803,7 @@ class StaticResourcesTest {
 
       try (Closeable appCleanup18 = app::close) {
         app.routes().staticFiles("/assets", temporaryDirectory);
-        app.afterRouteHandler((ignored10, response) -> response.redirect("/next"));
+        app.afterRouteHandler((ignoredRequest, response) -> response.redirect("/next"));
 
         try (var test = TestServer.start(app)) {
 
@@ -812,6 +855,7 @@ class StaticResourcesTest {
               test.send(
                   request -> request.path("/assets/priv%C3%A9.txt").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(404, outside.statusCode());
           assertFalse(outside.body().contains("outside-mount-secret"));
         }
@@ -846,19 +890,17 @@ class StaticResourcesTest {
               test.send(
                   request -> request.path("/assets/fallback.txt").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, selected.statusCode());
           assertEquals("selected fallback resource", selected.body());
+
           var etag = selected.headers().firstValue("ETag").orElseThrow();
+
           assertFalse(etag.isBlank());
 
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/assets/fallback.txt")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("If-None-Match", etag),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForValidatesTheFallbackResourceSelectedFromComposedStaticSources(
+                  test, etag);
 
           assertEquals(304, result.statusCode());
           assertEquals("", result.body());
@@ -868,6 +910,18 @@ class StaticResourcesTest {
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForValidatesTheFallbackResourceSelectedFromComposedStaticSources(
+          TestServer test, String etag) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/assets/fallback.txt")
+                .timeout(Duration.ofSeconds(3))
+                .header("If-None-Match", etag),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -895,6 +949,7 @@ class StaticResourcesTest {
               test.send(
                   request -> request.path("/assets/shared.txt").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, control.statusCode());
           assertEquals(
               filesystemFirst ? "filesystem content" : "classpath content", control.body());
@@ -976,6 +1031,7 @@ class StaticResourcesTest {
                   request ->
                       request.path("/assets/filesystem-only.txt").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, filesystemResult.statusCode());
           assertEquals("filesystem content", filesystemResult.body());
 
@@ -984,6 +1040,7 @@ class StaticResourcesTest {
                   request ->
                       request.path("/assets/classpath-only.txt").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, classpathResult.statusCode());
           assertEquals("classpath content", classpathResult.body());
         }
@@ -1026,8 +1083,11 @@ class StaticResourcesTest {
       Thread.currentThread().setContextClassLoader(loader);
       var files = new StaticFiles("/assets", "/archive");
       var filesystem = Objects.requireNonNull(files.archiveFileSystem());
+
       assertTrue(filesystem.isOpen());
+
       files.close();
+
       assertFalse(filesystem.isOpen());
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
@@ -1048,7 +1108,9 @@ class StaticResourcesTest {
       var routes = app.routes();
       routes.classpathResources("/assets", "/archive");
       var filesystem = registeredArchiveFilesystem(routes);
+
       assertTrue(filesystem.isOpen());
+
       app.close();
 
       assertFalse(filesystem.isOpen());
@@ -1067,18 +1129,14 @@ class StaticResourcesTest {
 
     try (var loader = new URLClassLoader(new URL[] {archive.toUri().toURL()}, previous);
         var occupied = new ServerSocket(0)) {
-      var app =
-          new Shoostr()
-              .modifyServer(
-                  nativeServer ->
-                      ((ServerConnector) nativeServer.getConnectors()[0])
-                          .setPort(occupied.getLocalPort()));
+      var app = createAppForClosesArchiveResourcesWhenStartupFails(occupied);
 
       try (Closeable appCleanup25 = app::close) {
         Thread.currentThread().setContextClassLoader(loader);
         var routes = app.routes();
         routes.classpathResources("/assets", "/archive");
         var filesystem = registeredArchiveFilesystem(routes);
+
         assertTrue(filesystem.isOpen());
 
         assertThrows(Exception.class, app::start);
@@ -1088,6 +1146,14 @@ class StaticResourcesTest {
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
+  }
+
+  private Shoostr createAppForClosesArchiveResourcesWhenStartupFails(ServerSocket occupied) {
+    return new Shoostr()
+        .modifyServer(
+            nativeServer ->
+                ((ServerConnector) nativeServer.getConnectors()[0])
+                    .setPort(occupied.getLocalPort()));
   }
 
   @Test
@@ -1104,6 +1170,7 @@ class StaticResourcesTest {
         var routes = app.routes();
         routes.classpathResources("/assets", "/archive");
         var filesystem = registeredArchiveFilesystem(routes);
+
         assertTrue(filesystem.isOpen());
 
         try (var test = TestServer.start(app)) {
@@ -1115,7 +1182,9 @@ class StaticResourcesTest {
 
           assertEquals(200, result.statusCode());
           assertEquals("archived resource", result.body());
+
           test.close();
+
           assertFalse(filesystem.isOpen());
         }
       }
@@ -1146,12 +1215,7 @@ class StaticResourcesTest {
                   request -> request.path("/assets/site.txt").header("Range", "bytes=5-8"),
                   HttpResponse.BodyHandlers.ofString());
           var conditional =
-              test.send(
-                  request ->
-                      request
-                          .path("/assets/site.txt")
-                          .header("If-None-Match", full.headers().firstValue("ETag").orElseThrow()),
-                  HttpResponse.BodyHandlers.ofString());
+              sendConditionalRequestForSupportsHeadRangesAndValidatorsForMountedFiles(test, full);
           var head =
               test.send(
                   request -> request.path("/assets/site.txt").method("HEAD"),
@@ -1165,6 +1229,17 @@ class StaticResourcesTest {
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendConditionalRequestForSupportsHeadRangesAndValidatorsForMountedFiles(
+          TestServer test, HttpResponse<String> full) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/assets/site.txt")
+                .header("If-None-Match", full.headers().firstValue("ETag").orElseThrow()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -1229,12 +1304,8 @@ class StaticResourcesTest {
             URI.create(
                 (tls ? "https" : "http") + "://127.0.0.1:" + app.port() + "/assets/site.txt");
         var result =
-            client.send(
-                HttpRequest.newBuilder(target)
-                    .timeout(Duration.ofSeconds(3))
-                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+            sendResultForReturnsMountedFileHeadMetadataWithoutBytesOverTheConfiguredProtocol(
+                client, target);
 
         assertEquals(expectedVersion, result.version());
         assertEquals(200, result.statusCode());
@@ -1244,6 +1315,17 @@ class StaticResourcesTest {
         assertEquals(tls, result.sslSession().isPresent());
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForReturnsMountedFileHeadMetadataWithoutBytesOverTheConfiguredProtocol(
+          HttpClient client, URI target) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(target)
+            .timeout(Duration.ofSeconds(3))
+            .method("HEAD", HttpRequest.BodyPublishers.noBody())
+            .build(),
+        HttpResponse.BodyHandlers.ofByteArray());
   }
 
   @ParameterizedTest
@@ -1283,6 +1365,7 @@ class StaticResourcesTest {
             client.send(
                 HttpRequest.newBuilder(target).timeout(Duration.ofSeconds(3)).GET().build(),
                 HttpResponse.BodyHandlers.ofByteArray());
+
         assertEquals(expectedVersion, full.version());
         assertEquals(200, full.statusCode());
         assertArrayEquals(
@@ -1295,16 +1378,12 @@ class StaticResourcesTest {
                     full.headers().firstValue("Last-Modified").orElseThrow(),
                     DateTimeFormatter.RFC_1123_DATE_TIME)
                 .toInstant());
+
         var etag = full.headers().firstValue("ETag").orElseThrow();
 
         var conditional =
-            client.send(
-                HttpRequest.newBuilder(target)
-                    .timeout(Duration.ofSeconds(3))
-                    .header("If-None-Match", etag)
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+            sendConditionalRequestForReturnsNotModifiedForAnUnchangedMountedFileAcrossResponseDates(
+                client, target, etag);
 
         assertEquals(expectedVersion, conditional.version());
         assertEquals(
@@ -1319,6 +1398,18 @@ class StaticResourcesTest {
         assertEquals(tls, conditional.sslSession().isPresent());
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendConditionalRequestForReturnsNotModifiedForAnUnchangedMountedFileAcrossResponseDates(
+          HttpClient client, URI target, String etag) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(target)
+            .timeout(Duration.ofSeconds(3))
+            .header("If-None-Match", etag)
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.ofByteArray());
   }
 
   @Test
@@ -1337,13 +1428,8 @@ class StaticResourcesTest {
         app.routes().staticFiles("/assets", temporaryDirectory);
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/assets/site.txt")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Accept-Encoding", "gzip"));
+          var result = sendResultForCompressesMountedFilesWhenGzipIsAccepted(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("gzip", result.headers().firstValue("Content-Encoding").orElseThrow());
           assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
@@ -1355,6 +1441,16 @@ class StaticResourcesTest {
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]> sendResultForCompressesMountedFilesWhenGzipIsAccepted(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/assets/site.txt")
+                .timeout(Duration.ofSeconds(3))
+                .header("Accept-Encoding", "gzip"));
   }
 
   @ParameterizedTest
@@ -1375,12 +1471,8 @@ class StaticResourcesTest {
 
         try (var test = TestServer.start(app)) {
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/assets/site.txt")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Accept-Encoding", acceptEncoding));
+              sendResultForServesMountedFilesUnencodedWhenGzipIsNotAccepted(test, acceptEncoding);
+
           assertEquals(200, result.statusCode());
           assertTrue(result.headers().firstValue("Content-Encoding").isEmpty());
           assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
@@ -1388,6 +1480,16 @@ class StaticResourcesTest {
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]> sendResultForServesMountedFilesUnencodedWhenGzipIsNotAccepted(
+      TestServer test, String acceptEncoding) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/assets/site.txt")
+                .timeout(Duration.ofSeconds(3))
+                .header("Accept-Encoding", acceptEncoding));
   }
 
   @ParameterizedTest
@@ -1415,25 +1517,19 @@ class StaticResourcesTest {
         try (var test = TestServer.start(app)) {
 
           var full =
-              test.send(
-                  request ->
-                      request
-                          .path("/assets/site.txt")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Accept-Encoding", acceptEncoding));
+              sendFullRequestForReturnsNotModifiedForMountedFileValidatorsWithCompressionEnabled(
+                  test, acceptEncoding);
+
           assertEquals(200, full.statusCode());
           assertEquals(
               acceptEncoding, full.headers().firstValue("Content-Encoding").orElse("identity"));
+
           var validator = full.headers().firstValue(responseHeader).orElseThrow();
 
           var conditional =
-              test.send(
-                  request ->
-                      request
-                          .path("/assets/site.txt")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Accept-Encoding", acceptEncoding)
-                          .header(requestHeader, validator));
+              sendConditionalRequestForReturnsNotModifiedForMountedFileValidatorsWithCompressionEnabled(
+                  test, acceptEncoding, requestHeader, validator);
+
           assertEquals(304, conditional.statusCode());
           assertEquals(0, conditional.body().length);
           assertEquals(validator, conditional.headers().firstValue(responseHeader).orElseThrow());
@@ -1441,6 +1537,30 @@ class StaticResourcesTest {
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendFullRequestForReturnsNotModifiedForMountedFileValidatorsWithCompressionEnabled(
+          TestServer test, String acceptEncoding) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/assets/site.txt")
+                .timeout(Duration.ofSeconds(3))
+                .header("Accept-Encoding", acceptEncoding));
+  }
+
+  private HttpResponse<byte[]>
+      sendConditionalRequestForReturnsNotModifiedForMountedFileValidatorsWithCompressionEnabled(
+          TestServer test, String acceptEncoding, String requestHeader, String validator)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/assets/site.txt")
+                .timeout(Duration.ofSeconds(3))
+                .header("Accept-Encoding", acceptEncoding)
+                .header(requestHeader, validator));
   }
 
   @Test
@@ -1452,7 +1572,8 @@ class StaticResourcesTest {
 
       try (Closeable appCleanup34 = app::close) {
         app.routes().staticFiles("/assets", temporaryDirectory);
-        app.routes().get("/assets/site.txt", (ignored11, response) -> response.text("endpoint"));
+        app.routes()
+            .get("/assets/site.txt", (ignoredRequest, response) -> response.text("endpoint"));
 
         try (var test = TestServer.start(app)) {
 
@@ -1535,6 +1656,7 @@ class StaticResourcesTest {
               test.send(
                   request -> request.path("/assets/site.txt"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, allowed.statusCode());
           assertEquals("public resource", allowed.body());
 
@@ -1578,6 +1700,7 @@ class StaticResourcesTest {
               test.send(
                   request -> request.path("/assets/site.txt"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, allowed.statusCode());
           assertEquals("public resource", allowed.body());
 
@@ -1630,11 +1753,13 @@ class StaticResourcesTest {
         try (var server = TestServer.start(app);
             var socket = new Socket(InetAddress.getLoopbackAddress(), app.port())) {
           assertEquals(200, server.send(request -> request.path("/assets/site.txt")).statusCode());
+
           socket.setSoTimeout(3000);
           var request =
               "GET /assets" + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
           socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
           var result = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
           assertTrue(
               result.startsWith("HTTP/1.1 400 ") || result.startsWith("HTTP/1.1 404 "), result);
           assertFalse(result.contains("mounted-private-target"));
@@ -1663,6 +1788,7 @@ class StaticResourcesTest {
               test.send(
                   request -> request.path("/assets/directory"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(404, missing.statusCode());
           assertEquals(404, directory.statusCode());
         }
@@ -1712,7 +1838,7 @@ class StaticResourcesTest {
 
       try (Closeable appCleanup42 = app::close) {
         app.beforeRouteHandler(
-            (ignored12, ignored13) -> {
+            (ignoredRequest, ignoredResponse) -> {
               throw new UnauthorizedException();
             });
         app.routes().staticFiles("/assets", temporaryDirectory);
@@ -1782,7 +1908,9 @@ class StaticResourcesTest {
                       request -> request.path("/assets/site.txt"),
                       HttpResponse.BodyHandlers.ofString())
                   .body());
+
           Files.writeString(file, "second");
+
           assertEquals(
               "second",
               test.send(
@@ -1807,7 +1935,7 @@ class StaticResourcesTest {
 
       try (Closeable appCleanup45 = app::close) {
         app.beforeRouteHandler(
-            (ignored14, ignored15) -> {
+            (ignoredRequest, ignoredResponse) -> {
               Files.move(publicDirectory, relocatedDirectory);
               directoryLink(publicDirectory, externalDirectory);
             });
@@ -1862,17 +1990,16 @@ class StaticResourcesTest {
                 clients.submit(
                     () -> {
                       ready.countDown();
+
                       assertTrue(start.await(3, TimeUnit.SECONDS));
+
                       for (int turn = 0; turn < 16; turn++) {
                         var prefix = (turn & 1) == 0 ? "" : "nested/deeper/";
                         int index = (id + turn) % 4;
                         var response =
-                            test.send(
-                                request ->
-                                    request
-                                        .path("/assets/" + prefix + "file-" + index + ".txt")
-                                        .timeout(Duration.ofSeconds(3)),
-                                HttpResponse.BodyHandlers.ofString());
+                            sendResponseForServesConcurrentRequestsFromATrustedReplacementDirectory(
+                                test, prefix, index);
+
                         assertEquals(200, response.statusCode());
                         assertEquals("outside:" + prefix + index, response.body());
                       }
@@ -1890,6 +2017,17 @@ class StaticResourcesTest {
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForServesConcurrentRequestsFromATrustedReplacementDirectory(
+          TestServer test, String prefix, int index) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/assets/" + prefix + "file-" + index + ".txt")
+                .timeout(Duration.ofSeconds(3)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -1933,6 +2071,7 @@ class StaticResourcesTest {
               server.send(
                   request -> request.path("/assets/nested/deeper/file.txt"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(expectedStatus, result.statusCode());
           assertFalse(result.body().contains("outside secret"));
         }
@@ -1968,24 +2107,19 @@ class StaticResourcesTest {
         app.start();
         var origin = "http://127.0.0.1:" + app.port();
         var pending =
-            Stream.of("/assets/file.txt", "/assets/nested/deeper/file.txt")
-                .map(
-                    path ->
-                        client.sendAsync(
-                            HttpRequest.newBuilder(URI.create(origin + path))
-                                .timeout(Duration.ofSeconds(5))
-                                .build(),
-                            HttpResponse.BodyHandlers.ofString()))
-                .toList();
+            createPendingForCompletesShutdownWhileConcurrentShallowAndNestedRequestsAreAdmitted(
+                client, origin);
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+
           app.close();
         } finally {
           release.countDown();
         }
 
         assertThrows(IllegalStateException.class, app::port);
+
         for (var exchange : pending) {
           try {
             var response = exchange.get(3, TimeUnit.SECONDS);
@@ -2000,6 +2134,20 @@ class StaticResourcesTest {
         }
       }
     }
+  }
+
+  private List<CompletableFuture<HttpResponse<String>>>
+      createPendingForCompletesShutdownWhileConcurrentShallowAndNestedRequestsAreAdmitted(
+          HttpClient client, String origin) {
+    return Stream.of("/assets/file.txt", "/assets/nested/deeper/file.txt")
+        .map(
+            path ->
+                client.sendAsync(
+                    HttpRequest.newBuilder(URI.create(origin + path))
+                        .timeout(Duration.ofSeconds(5))
+                        .build(),
+                    HttpResponse.BodyHandlers.ofString()))
+        .toList();
   }
 
   @Test
@@ -2044,13 +2192,14 @@ class StaticResourcesTest {
           app.routes()
               .get(
                   "/download-" + index,
-                  (ignored16, response) -> response.attachment(file, "text/plain", filename));
+                  (ignoredRequest, response) -> response.attachment(file, "text/plain", filename));
         }
 
         try (var test = TestServer.start(app)) {
 
           for (int index = 0; index < filenames.length; index++) {
             var path = "/download-" + index;
+
             assertEquals(
                 500,
                 test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString())
@@ -2073,7 +2222,7 @@ class StaticResourcesTest {
         app.routes()
             .get(
                 "/download",
-                (ignored17, response) ->
+                (ignoredRequest, response) ->
                     response.attachment(file, "text/plain", "résumé 2026.txt"));
 
         try (var test = TestServer.start(app)) {
@@ -2123,6 +2272,7 @@ class StaticResourcesTest {
               .redirectErrorStream(true)
               .start();
       var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
       assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction creation timed out");
       assertEquals(0, process.exitValue(), output);
     } else {
@@ -2132,32 +2282,55 @@ class StaticResourcesTest {
 
   private static HttpClient staticTransportClient(Shoostr app, boolean tls, boolean http2)
       throws Exception {
+    return staticTransportProperties(app, tls, http2).build();
+  }
+
+  private static HttpClient.Builder staticTransportProperties(
+      Shoostr app, boolean tls, boolean http2) throws Exception {
     var client =
         HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(3))
             .version(http2 ? HttpClient.Version.HTTP_2 : HttpClient.Version.HTTP_1_1);
     if (tls) {
-      var store = KeyStore.getInstance("PKCS12");
+      var store = staticTransportIdentity();
 
-      try (var input =
-          Objects.requireNonNull(
-              StaticResourcesTest.class.getResourceAsStream("/localhost-test.p12"))) {
-        store.load(input, "changeit".toCharArray());
-      }
+      configureStaticTransportTls(app, store);
 
-      app.tls(
-          context -> {
-            context.setKeyStore(store);
-            context.setKeyStorePassword("changeit");
-          });
-      var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-      trust.init(store);
-      var context = SSLContext.getInstance("TLS");
-      context.init(null, trust.getTrustManagers(), null);
+      var context = staticTransportTrust(store);
       client.sslContext(context);
     }
 
-    return client.build();
+    return client;
+  }
+
+  private static KeyStore staticTransportIdentity() throws Exception {
+    var store = KeyStore.getInstance("PKCS12");
+
+    try (var input =
+        Objects.requireNonNull(
+            StaticResourcesTest.class.getResourceAsStream("/localhost-test.p12"))) {
+      store.load(input, "changeit".toCharArray());
+    }
+
+    return store;
+  }
+
+  private static void configureStaticTransportTls(Shoostr app, KeyStore store) {
+    app.tls(
+        context -> {
+          context.setKeyStore(store);
+          context.setKeyStorePassword("changeit");
+        });
+  }
+
+  private static SSLContext staticTransportTrust(KeyStore store) throws Exception {
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(store);
+
+    var context = SSLContext.getInstance("TLS");
+    context.init(null, trust.getTrustManagers(), null);
+
+    return context;
   }
 
   private static FileSystem registeredArchiveFilesystem(Routes routes)
@@ -2166,6 +2339,7 @@ class StaticResourcesTest {
     field.setAccessible(true);
     var staticFiles = (List<?>) field.get(routes);
     var files = (StaticFiles) staticFiles.getFirst();
+
     return Objects.requireNonNull(files.archiveFileSystem());
   }
 

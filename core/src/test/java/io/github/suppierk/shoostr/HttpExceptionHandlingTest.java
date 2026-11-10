@@ -78,8 +78,10 @@ class HttpExceptionHandlingTest {
           assertEquals(
               result.body().getBytes(StandardCharsets.UTF_8).length,
               result.headers().firstValueAsLong("Content-Length").orElseThrow());
+
           var closedRequest = retainedRequest.get();
           var closedResponse = retainedResponse.get();
+
           assertThrows(IllegalStateException.class, closedRequest::path);
           assertThrows(IllegalStateException.class, () -> closedResponse.text("too late"));
         }
@@ -99,7 +101,7 @@ class HttpExceptionHandlingTest {
         app.routes()
             .get(
                 "/error",
-                (ignored, ignored2) -> {
+                (ignored, ignoredResponse) -> {
                   throw new BadRequestException(
                       "\"private-diagnostic\"\r\nX-Injected: secret\r\n\r\nHTTP/1.1 200 Injected");
                 });
@@ -115,12 +117,15 @@ class HttpExceptionHandlingTest {
                   "GET /error HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
                       .getBytes(StandardCharsets.US_ASCII));
           var wire = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
           assertTrue(wire.startsWith("HTTP/1.1 400 Bad Request\r\n"), wire);
           assertFalse(wire.contains("private-diagnostic"), wire);
           assertFalse(wire.contains("X-Injected"), wire);
           assertFalse(wire.contains("secret"), wire);
           assertFalse(wire.contains("200 Injected"), wire);
+
           int bodyStart = wire.indexOf("\r\n\r\n");
+
           assertTrue(bodyStart >= 0, wire);
           assertEquals("Bad Request", wire.substring(bodyStart + 4));
         }
@@ -137,7 +142,7 @@ class HttpExceptionHandlingTest {
         app.routes()
             .get(
                 "/error",
-                (ignored3, ignored4) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new CompletionException(new NotFoundException("secret"));
                 });
 
@@ -146,6 +151,7 @@ class HttpExceptionHandlingTest {
               test.send(
                   request -> request.path("/error").timeout(Duration.ofSeconds(5)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(500, result.statusCode());
           assertEquals("Internal Server Error", result.body());
         }
@@ -164,21 +170,13 @@ class HttpExceptionHandlingTest {
     options.setMultipart(MultipartOptions.defaults());
 
     {
-      var app =
-          new Shoostr(options)
-              .modifyServer(
-                  listenerServer -> {
-                    var listener = (ServerConnector) listenerServer.getConnectors()[0];
-                    listener.setHost("127.0.0.1");
-                    listener.setPort(0);
-                    listener.setIdleTimeout(5000);
-                  });
+      var app = createAppForOmitsReasonPhraseWhenItExceedsTheResponseLimit(options);
 
       try (Closeable appCleanup3 = app::close) {
         app.routes()
             .get(
                 "/error",
-                (ignored5, response) -> {
+                (ignoredRequest, response) -> {
                   response.text("x");
                   if (httpFailure) {
                     throw new ServiceUnavailableException("secret");
@@ -192,12 +190,24 @@ class HttpExceptionHandlingTest {
               test.send(
                   request -> request.path("/error").timeout(Duration.ofSeconds(5)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(httpFailure ? 503 : 500, result.statusCode());
           assertTrue(result.body().isEmpty());
           assertEquals(0, result.headers().firstValueAsLong("Content-Length").orElseThrow());
         }
       }
     }
+  }
+
+  private Shoostr createAppForOmitsReasonPhraseWhenItExceedsTheResponseLimit(Options options) {
+    return new Shoostr(options)
+        .modifyServer(
+            listenerServer -> {
+              var listener = (ServerConnector) listenerServer.getConnectors()[0];
+              listener.setHost("127.0.0.1");
+              listener.setPort(0);
+              listener.setIdleTimeout(5000);
+            });
   }
 
   @ParameterizedTest
@@ -214,7 +224,7 @@ class HttpExceptionHandlingTest {
         app.routes()
             .get(
                 "/stream",
-                (ignored6, response) -> {
+                (ignoredRequest, response) -> {
                   var stream = response.startStream("text/plain; charset=utf-8");
                   retainedStream.set(stream);
                   stream.write("partial\n");
@@ -238,12 +248,15 @@ class HttpExceptionHandlingTest {
                 test.send(
                     request -> request.path("/stream").timeout(Duration.ofSeconds(5)),
                     HttpResponse.BodyHandlers.ofInputStream());
+
             assertEquals(200, result.statusCode());
 
             try (var input = result.body()) {
               assertEquals("partial\n", new String(input.readNBytes(8), StandardCharsets.UTF_8));
+
               release.countDown();
               var received = new StringBuilder();
+
               assertThrows(
                   IOException.class,
                   () -> {
@@ -259,6 +272,7 @@ class HttpExceptionHandlingTest {
             }
 
             var closedStream = retainedStream.get();
+
             assertThrows(IllegalStateException.class, () -> closedStream.write("too late"));
           } finally {
             release.countDown();
@@ -278,15 +292,7 @@ class HttpExceptionHandlingTest {
     options.setMultipart(MultipartOptions.defaults());
 
     {
-      var app =
-          new Shoostr(options)
-              .modifyServer(
-                  listenerServer -> {
-                    var listener = (ServerConnector) listenerServer.getConnectors()[0];
-                    listener.setHost("127.0.0.1");
-                    listener.setPort(0);
-                    listener.setIdleTimeout(5000);
-                  });
+      var app = createAppForHandlersCanCatchBodyLimitErrorsThroughThePublicHierarchy(options);
 
       try (Closeable appCleanup5 = app::close;
           var client = HttpClient.newHttpClient()) {
@@ -295,6 +301,7 @@ class HttpExceptionHandlingTest {
                 "/body",
                 (request, response) -> {
                   assertThrows(ContentTooLargeException.class, request::bodyBytes);
+
                   response.status(413).text("handled by application");
                 });
         app.start();
@@ -302,10 +309,23 @@ class HttpExceptionHandlingTest {
             HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(new byte[5]));
         var result =
             client.send(request(app).POST(body).build(), HttpResponse.BodyHandlers.ofString());
+
         assertEquals(413, result.statusCode());
         assertEquals("handled by application", result.body());
       }
     }
+  }
+
+  private Shoostr createAppForHandlersCanCatchBodyLimitErrorsThroughThePublicHierarchy(
+      Options options) {
+    return new Shoostr(options)
+        .modifyServer(
+            listenerServer -> {
+              var listener = (ServerConnector) listenerServer.getConnectors()[0];
+              listener.setHost("127.0.0.1");
+              listener.setPort(0);
+              listener.setIdleTimeout(5000);
+            });
   }
 
   @Test
@@ -317,7 +337,7 @@ class HttpExceptionHandlingTest {
         app.routes()
             .head(
                 "/error",
-                (ignored7, ignored8) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new NotFoundException("secret");
                 });
 
@@ -326,6 +346,7 @@ class HttpExceptionHandlingTest {
               test.send(
                   request -> request.path("/error").timeout(Duration.ofSeconds(5)).method("HEAD"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(404, result.statusCode());
           assertTrue(result.body().isEmpty());
           assertFalse(result.headers().firstValue("Content-Type").isEmpty());
@@ -336,6 +357,7 @@ class HttpExceptionHandlingTest {
 
   private static Stream<HttpException> httpErrors() {
     var cause = new IllegalArgumentException("internal cause");
+
     return Stream.of(
         new BadRequestException("secret", cause),
         new NotFoundException(),

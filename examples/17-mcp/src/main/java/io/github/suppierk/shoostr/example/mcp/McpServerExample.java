@@ -5,8 +5,10 @@ import io.github.suppierk.shoostr.mcp.Mcp;
 import io.github.suppierk.shoostr.mcp.McpHttpSecurity;
 import io.github.suppierk.shoostr.mcp.McpIdentity;
 import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.server.McpAsyncServer;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
+import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
 import java.time.Duration;
 import java.util.List;
@@ -25,34 +27,45 @@ public final class McpServerExample {
    * @return unstarted application
    */
   public static Shoostr application() {
-    var mcp =
-        Mcp.sync(
-            publicSecurity(),
-            transport ->
-                McpServer.sync(transport)
-                    .serverInfo("shoostr-guide", "1.0")
-                    .requestTimeout(Duration.ofSeconds(5))
-                    // Advertise features without subscriptions or catalog-change notifications.
-                    .capabilities(
-                        McpSchema.ServerCapabilities.builder()
-                            .tools(false)
-                            .resources(false, false)
-                            .prompts(false)
-                            .build())
-                    .tools(
-                        McpServerFeatures.SyncToolSpecification.builder()
-                            .tool(greetingTool())
-                            .callHandler((ignored, ignored2) -> greeting())
-                            .build())
-                    .resources(
-                        new McpServerFeatures.SyncResourceSpecification(
-                            guideResource(), (ignored3, request) -> guide(request.uri())))
-                    .prompts(
-                        new McpServerFeatures.SyncPromptSpecification(
-                            explanationPrompt(), (ignored4, ignored5) -> explanation()))
-                    .build());
+    var mcp = mcpServer();
+
     // Installation owns the server lifecycle; the HTTP mount is still an explicit registration.
     return new Shoostr().routes(routes -> routes.path("/mcp", mcp::routes));
+  }
+
+  /**
+   * Configures the native MCP server and binds it to the HTTP transport.
+   *
+   * @return MCP extension owned by its application
+   */
+  private static Mcp<McpSyncServer> mcpServer() {
+    return Mcp.sync(
+        publicSecurity(),
+        transport ->
+            McpServer.sync(transport)
+                .serverInfo("shoostr-guide", "1.0")
+                .requestTimeout(Duration.ofSeconds(5))
+                // Advertise features without subscriptions or catalog-change notifications.
+                .capabilities(
+                    McpSchema.ServerCapabilities.builder()
+                        .tools(false)
+                        .resources(false, false)
+                        .prompts(false)
+                        .build())
+                .tools(
+                    McpServerFeatures.SyncToolSpecification.builder()
+                        .tool(greetingTool())
+                        .callHandler((ignored, ignoredCallToolRequest) -> greeting())
+                        .build())
+                .resources(
+                    new McpServerFeatures.SyncResourceSpecification(
+                        guideResource(),
+                        (ignoredMcpSyncServerExchange, request) -> guide(request.uri())))
+                .prompts(
+                    new McpServerFeatures.SyncPromptSpecification(
+                        explanationPrompt(),
+                        (ignoredMcpSyncServerExchange, ignoredGetPromptRequest) -> explanation()))
+                .build());
   }
 
   /**
@@ -62,37 +75,47 @@ public final class McpServerExample {
    */
   public static Shoostr asyncApplication() {
     // Publishers defer these results; they do not automatically offload blocking work.
-    var mcp =
-        Mcp.async(
-            publicSecurity(),
-            transport ->
-                McpServer.async(transport)
-                    .serverInfo("shoostr-guide", "1.0")
-                    .requestTimeout(Duration.ofSeconds(5))
-                    .capabilities(
-                        McpSchema.ServerCapabilities.builder()
-                            .tools(false)
-                            .resources(false, false)
-                            .prompts(false)
-                            .build())
-                    .tools(
-                        McpServerFeatures.AsyncToolSpecification.builder()
-                            .tool(greetingTool())
-                            .callHandler(
-                                (ignored6, ignored7) ->
-                                    Mono.fromSupplier(McpServerExample::greeting))
-                            .build())
-                    .resources(
-                        new McpServerFeatures.AsyncResourceSpecification(
-                            guideResource(),
-                            (ignored8, request) -> Mono.fromSupplier(() -> guide(request.uri()))))
-                    .prompts(
-                        new McpServerFeatures.AsyncPromptSpecification(
-                            explanationPrompt(),
-                            (ignored9, ignored10) ->
-                                Mono.fromSupplier(McpServerExample::explanation)))
-                    .build());
+    var mcp = asyncMcpServer();
+
     return new Shoostr().routes(routes -> routes.path("/mcp", mcp::routes));
+  }
+
+  /**
+   * Configures asynchronous native MCP handlers and their HTTP transport.
+   *
+   * @return MCP extension owned by its application
+   */
+  private static Mcp<McpAsyncServer> asyncMcpServer() {
+    return Mcp.async(
+        publicSecurity(),
+        transport ->
+            McpServer.async(transport)
+                .serverInfo("shoostr-guide", "1.0")
+                .requestTimeout(Duration.ofSeconds(5))
+                .capabilities(
+                    McpSchema.ServerCapabilities.builder()
+                        .tools(false)
+                        .resources(false, false)
+                        .prompts(false)
+                        .build())
+                .tools(
+                    McpServerFeatures.AsyncToolSpecification.builder()
+                        .tool(greetingTool())
+                        .callHandler(
+                            (ignoredMcpAsyncServerExchange, ignoredCallToolRequest) ->
+                                Mono.fromSupplier(McpServerExample::greeting))
+                        .build())
+                .resources(
+                    new McpServerFeatures.AsyncResourceSpecification(
+                        guideResource(),
+                        (ignoredMcpAsyncServerExchange, request) ->
+                            Mono.fromSupplier(() -> guide(request.uri()))))
+                .prompts(
+                    new McpServerFeatures.AsyncPromptSpecification(
+                        explanationPrompt(),
+                        (ignoredMcpAsyncServerExchange, ignoredGetPromptRequest) ->
+                            Mono.fromSupplier(McpServerExample::explanation)))
+                .build());
   }
 
   /**
@@ -104,8 +127,8 @@ public final class McpServerExample {
     // A shared identity is appropriate only for this deliberately public, nonsecret catalog.
     return new McpHttpSecurity(
         Set.of("https://client.example"),
-        ignored11 -> new McpIdentity("public-catalog", McpTransportContext.EMPTY, null),
-        (ignored12, ignored13) -> {});
+        ignoredRequest -> new McpIdentity("public-catalog", McpTransportContext.EMPTY, null),
+        (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
   }
 
   /**

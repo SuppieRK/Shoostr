@@ -22,15 +22,15 @@ public final class GeneratedStatusExample {
             (ignored, response) -> response.text("Route not found"))
         .status(
             HttpStatusCodes.METHOD_NOT_ALLOWED.value(),
-            (ignored2, response) -> response.text("Method unavailable"))
+            (ignoredRequest, response) -> response.text("Method unavailable"))
         .routes(
             routes ->
                 routes
-                    .get("/read-only", (ignored3, response) -> response.text("ready"))
+                    .get("/read-only", (ignoredRequest, response) -> response.text("ready"))
                     // This explicit response is not replaced by the generated 404 renderer.
                     .get(
                         "/manual",
-                        (ignored4, response) ->
+                        (ignoredRequest, response) ->
                             response
                                 .status(HttpStatusCodes.NOT_FOUND.value())
                                 .text("Chosen by the handler"))
@@ -38,7 +38,7 @@ public final class GeneratedStatusExample {
                     // hooks.
                     .get(
                         "/thrown",
-                        (ignored5, ignored6) -> {
+                        (ignoredRequest, ignoredResponse) -> {
                           throw new NotFoundException("Private lookup diagnostics");
                         })
                     // The group's renderer customizes the concealed 404 from its unavailable route.
@@ -50,10 +50,12 @@ public final class GeneratedStatusExample {
                                 unavailable ->
                                     unavailable.get(
                                         "/daily",
-                                        (ignored7, response) -> response.text("Report ready"))),
+                                        (ignoredRequest, response) ->
+                                            response.text("Report ready"))),
                         configuration ->
                             configuration.status(
                                 HttpStatusCodes.NOT_FOUND.value(),
-                                (ignored8, response) -> response.text("Report unavailable"))));
+                                (ignoredRequest, response) ->
+                                    response.text("Report unavailable"))));
   }
 }

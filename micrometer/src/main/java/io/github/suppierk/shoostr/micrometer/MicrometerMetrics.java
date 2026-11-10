@@ -78,6 +78,7 @@ public final class MicrometerMetrics
   @Override
   public RequestObservation apply(Request request) {
     var sample = active.start();
+
     return outcome -> {
       try {
         String error;
@@ -118,6 +119,7 @@ public final class MicrometerMetrics
   @Override
   public MicrometerMetrics configure(Lifecycle lifecycle, @Nullable MicrometerMetrics inherited) {
     lifecycle.observe(this);
+
     return this;
   }
 }

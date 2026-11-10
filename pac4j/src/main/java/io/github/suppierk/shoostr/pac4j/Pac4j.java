@@ -37,7 +37,7 @@ public final class Pac4j extends AuthenticationExtension {
    * @param challenge WWW-Authenticate value used for missing or invalid credentials
    */
   public Pac4j(DirectClient client, String challenge) {
-    this(client, challenge, (ignored, ignored2, ignored3) -> true);
+    this(client, challenge, (ignoredWebContext, ignoredSessionStore, ignoredProfiles) -> true);
   }
 
   /**
@@ -51,6 +51,7 @@ public final class Pac4j extends AuthenticationExtension {
     this.client = Objects.requireNonNull(client);
     this.challenge = new AuthenticationRequiredException(challenge).challenge();
     this.authorizer = Objects.requireNonNull(authorizer);
+
     client.init();
   }
 
@@ -90,20 +91,25 @@ public final class Pac4j extends AuthenticationExtension {
   @Override
   public void handle(Request request, Response response) {
     request.principal(null);
+
     if (request.headers(HttpHeaders.AUTHORIZATION.value()).size() > 1) {
       throw new AuthenticationRequiredException(challenge);
     }
 
     var context =
         new CallContext(new Pac4jContext(request, response), StatelessSessionStore.INSTANCE);
+
     var credentials =
         client.getCredentials(context).flatMap(value -> client.validateCredentials(context, value));
+
     var profile =
         credentials
             .flatMap(value -> client.getUserProfile(context, value))
             .filter(value -> !value.isExpired())
             .orElseThrow(() -> new AuthenticationRequiredException(challenge));
+
     request.principal(profile.asPrincipal());
+
     if (!authorizer.isAuthorized(context.webContext(), context.sessionStore(), List.of(profile))) {
       throw new ForbiddenException();
     }

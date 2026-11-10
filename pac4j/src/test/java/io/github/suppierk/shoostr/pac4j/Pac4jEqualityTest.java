@@ -10,6 +10,7 @@ import io.github.suppierk.shoostr.Response;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -23,8 +24,10 @@ import nl.jqno.equalsverifier.Warning;
 import org.junit.jupiter.api.Test;
 import org.pac4j.core.authorization.authorizer.Authorizer;
 import org.pac4j.core.client.DirectClient;
+import org.pac4j.core.context.CallContext;
 import org.pac4j.core.context.WebContext;
 import org.pac4j.core.context.session.SessionStore;
+import org.pac4j.core.credentials.Credentials;
 import org.pac4j.core.credentials.UsernamePasswordCredentials;
 import org.pac4j.core.profile.CommonProfile;
 import org.pac4j.core.profile.UserProfile;
@@ -48,14 +51,17 @@ class Pac4jEqualityTest {
     var authorizer = authorizer("alice");
     var first = new Pac4j(client, "Basic", authorizer);
     var second = new Pac4j(client, "Basic", authorizer);
+
     assertEquals(first, second);
     assertEquals(first.hashCode(), second.hashCode());
     assertNotEquals(first, new Pac4j(client("bob"), "Basic", authorizer));
     assertNotEquals(first, new Pac4j(client, "Basic realm=\"other\"", authorizer));
     assertNotEquals(first, new Pac4j(client, "Basic", authorizer("bob")));
+
     var values = new HashSet<Pac4j>();
     values.add(first);
     values.add(second);
+
     assertEquals(1, values.size());
 
     {
@@ -63,25 +69,27 @@ class Pac4jEqualityTest {
 
       try (Closeable appCleanup = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
                 routes.get(
                     "/conflict",
                     (request, response) -> {},
-                    e -> {
-                      e.withExtension(first);
-                      e.withExtension(second);
+                    lifecycle -> {
+                      lifecycle.withExtension(first);
+                      lifecycle.withExtension(second);
                     }));
+
         routes
             .get(
                 "/first",
                 (request, response) -> response.text(request.principal().orElseThrow().getName()),
-                e -> e.withExtension(first))
+                lifecycle -> lifecycle.withExtension(first))
             .get(
                 "/second",
                 (request, response) -> response.text(request.principal().orElseThrow().getName()),
-                e -> e.withExtension(second));
+                lifecycle -> lifecycle.withExtension(second));
 
         try (var server = TestServer.start(app)) {
           for (var path : new String[] {"/first", "/second"}) {
@@ -90,6 +98,7 @@ class Pac4jEqualityTest {
                     request ->
                         request.path(path).header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
                     HttpResponse.BodyHandlers.ofString());
+
             assertEquals(200, response.statusCode());
             assertEquals("alice", response.body());
           }
@@ -114,7 +123,9 @@ class Pac4jEqualityTest {
                 "/context",
                 (request, response) -> {
                   var context = new Pac4jContext(request, response);
+
                   assertNotEquals(context, new Pac4jContext(request, response));
+
                   contexts.add(context);
                   exchanges.add(Map.entry(request, response));
                   hashes.add(context.hashCode());
@@ -126,14 +137,8 @@ class Pac4jEqualityTest {
 
         try (var server = TestServer.start(app)) {
           for (int index = 0; index < 2; index++) {
-            var response =
-                server.send(
-                    request ->
-                        request
-                            .path("/context")
-                            .method("POST")
-                            .body("same".getBytes(StandardCharsets.UTF_8)),
-                    HttpResponse.BodyHandlers.ofString());
+            var response = sendResponseForContextRetainsIdentityWhileItsLiveExchangeChanges(server);
+
             assertEquals(200, response.statusCode());
             assertEquals("same", response.body());
             assertEquals("yes", response.headers().firstValue("X-Checked").orElseThrow());
@@ -149,11 +154,21 @@ class Pac4jEqualityTest {
     }
 
     assertNotEquals(contexts.get(0), contexts.get(1));
+
     for (int index = 0; index < contexts.size(); index++) {
       assertEquals(hashes.get(index).intValue(), contexts.get(index).hashCode());
       assertTrue(retained.remove(contexts.get(index)));
     }
+
     assertTrue(retained.isEmpty());
+  }
+
+  private HttpResponse<String> sendResponseForContextRetainsIdentityWhileItsLiveExchangeChanges(
+      TestServer server) throws IOException, InterruptedException {
+    return server.send(
+        request ->
+            request.path("/context").method("POST").body("same".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -162,22 +177,30 @@ class Pac4jEqualityTest {
   }
 
   private static DirectBasicAuthClient client(String identity) {
-    var client =
-        new DirectBasicAuthClient(
-            (context, supplied) -> {
-              if (!(supplied instanceof UsernamePasswordCredentials credentials)
-                  || !identity.equals(credentials.getUsername())
-                  || !"correct".equals(credentials.getPassword())) {
-                return Optional.empty();
-              }
-
-              var profile = new CommonProfile();
-              profile.setId(identity);
-              credentials.setUserProfile(profile);
-              return Optional.of(credentials);
-            });
+    var client = createClientForClient(identity);
     client.setName(identity);
+
     return client;
+  }
+
+  private static DirectBasicAuthClient createClientForClient(String identity) {
+    return new DirectBasicAuthClient(
+        (context, supplied) -> authenticate(identity, context, supplied));
+  }
+
+  private static Optional<Credentials> authenticate(
+      String identity, CallContext context, Credentials supplied) {
+    if (!(supplied instanceof UsernamePasswordCredentials credentials)
+        || !identity.equals(credentials.getUsername())
+        || !"correct".equals(credentials.getPassword())) {
+      return Optional.empty();
+    }
+
+    var profile = new CommonProfile();
+    profile.setId(identity);
+    credentials.setUserProfile(profile);
+
+    return Optional.of(credentials);
   }
 
   private static Authorizer authorizer(String identity) {

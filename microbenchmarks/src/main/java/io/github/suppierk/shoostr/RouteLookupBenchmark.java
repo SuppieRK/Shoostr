@@ -64,6 +64,7 @@ public class RouteLookupBenchmark {
   @Benchmark
   public Object mapReused() {
     int index = next();
+
     return resolve(map.get(paths[index]), methods[index]);
   }
 
@@ -75,6 +76,7 @@ public class RouteLookupBenchmark {
   @Benchmark
   public Object radixReused() {
     int index = next();
+
     return resolveRadix(paths[index], methods[index]);
   }
 
@@ -86,6 +88,7 @@ public class RouteLookupBenchmark {
   @Benchmark
   public Object mapFresh() {
     int index = next();
+
     return resolve(map.get(new String(characters[index])), methods[index]);
   }
 
@@ -97,6 +100,7 @@ public class RouteLookupBenchmark {
   @Benchmark
   public Object radixFresh() {
     int index = next();
+
     return resolveRadix(new String(characters[index]), methods[index]);
   }
 
@@ -121,26 +125,21 @@ public class RouteLookupBenchmark {
     }
 
     radix = RadixRoutes.from(routeEndpoints);
+
     paths = new String[QUERY_COUNT];
     characters = new char[QUERY_COUNT][];
     methods = new HttpMethods[QUERY_COUNT];
+
     var order = new ArrayList<Integer>(QUERY_COUNT);
-    for (int i = 0; i < QUERY_COUNT; i++) {
-      order.add(i);
+    for (int index = 0; index < QUERY_COUNT; index++) {
+      order.add(index);
     }
     Collections.shuffle(order, new Random(1729));
+
     var traffic = new Random(2718);
-    for (int i = 0; i < QUERY_COUNT; i++) {
-      int query = order.get(i);
-      int route =
-          switch (distribution) {
-            case "uniform" -> query % routeCount;
-            case "hot" ->
-                traffic.nextInt(10) == 0
-                    ? traffic.nextInt(routeCount)
-                    : traffic.nextInt(Math.min(4, routeCount));
-            default -> throw new IllegalArgumentException("Unknown distribution: " + distribution);
-          };
+    for (int queryIndex = 0; queryIndex < QUERY_COUNT; queryIndex++) {
+      int query = order.get(queryIndex);
+      int route = selectRoute(query, traffic);
       String path = path(route, shape);
       String selectedOutcome = outcome;
       if ("mixed".equals(outcome)) {
@@ -167,13 +166,34 @@ public class RouteLookupBenchmark {
         }
         default -> throw new IllegalArgumentException("Unknown outcome: " + selectedOutcome);
       }
-      characters[i] = path.toCharArray();
+
+      characters[queryIndex] = path.toCharArray();
       // Independent from registered keys: no String identity shortcut in the baseline.
-      paths[i] = new String(characters[i]);
-      paths[i].hashCode();
-      methods[i] = method;
+      paths[queryIndex] = new String(characters[queryIndex]);
+      paths[queryIndex].hashCode();
+      methods[queryIndex] = method;
     }
+
     cursor = 0;
+  }
+
+  /**
+   * Selects a registered route using the configured traffic distribution.
+   *
+   * @param query query sequence index
+   * @param traffic deterministic traffic selector
+   * @return route index for the next query
+   * @throws IllegalArgumentException if the configured benchmark scenario is unknown
+   */
+  private int selectRoute(int query, Random traffic) {
+    return switch (distribution) {
+      case "uniform" -> query % routeCount;
+      case "hot" ->
+          traffic.nextInt(10) == 0
+              ? traffic.nextInt(routeCount)
+              : traffic.nextInt(Math.min(4, routeCount));
+      default -> throw new IllegalArgumentException("Unknown distribution: " + distribution);
+    };
   }
 
   /**
@@ -185,8 +205,8 @@ public class RouteLookupBenchmark {
    */
   static Map<String, Map<HttpMethods, Handler>> registrations(int count, String shape) {
     var routes = new HashMap<String, Map<HttpMethods, Handler>>();
-    for (int i = 0; i < count; i++) {
-      String path = path(i, shape);
+    for (int index = 0; index < count; index++) {
+      String path = path(index, shape);
       var endpoints = new HashMap<HttpMethods, Handler>();
       endpoints.put(HttpMethods.GET, handler());
       endpoints.put(HttpMethods.POST, handler());
@@ -208,6 +228,7 @@ public class RouteLookupBenchmark {
         (path, methods) ->
             methods.forEach(
                 (method, handler) -> endpoints.add(RadixRoutes.endpoint(method, path, handler))));
+
     return endpoints;
   }
 
@@ -255,6 +276,7 @@ public class RouteLookupBenchmark {
   private int next() {
     int index = cursor;
     cursor = (cursor + 1) & (QUERY_COUNT - 1);
+
     return index;
   }
 
@@ -271,6 +293,7 @@ public class RouteLookupBenchmark {
     }
 
     var handler = endpoints.get(method);
+
     return handler == null ? METHOD_NOT_ALLOWED : handler;
   }
 

@@ -53,6 +53,7 @@ class CsrfEqualityTest {
     assertEquals(first.hashCode(), second.hashCode());
 
     var values = new HashSet<Csrf>();
+
     assertTrue(values.add(first));
     assertFalse(values.add(second));
     assertEquals(1, values.size());
@@ -79,22 +80,26 @@ class CsrfEqualityTest {
 
       try (Closeable appCleanup = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
                 routes.get(
                     "/shared",
-                    (ignored, ignored2) -> {},
+                    (ignored, ignoredResponse) -> {},
                     extensions -> {
                       extensions.withExtension(first);
                       extensions.withExtension(second);
                     }));
+
         app.routes()
             .get(
-                "/first", (ignored3, ignored4) -> {}, extensions -> extensions.withExtension(first))
+                "/first",
+                (ignoredRequest, ignoredResponse) -> {},
+                extensions -> extensions.withExtension(first))
             .get(
                 "/second",
-                (ignored5, ignored6) -> {},
+                (ignoredRequest, ignoredResponse) -> {},
                 extensions -> extensions.withExtension(second));
       }
     }

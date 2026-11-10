@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
 import java.net.http.HttpResponse;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
@@ -18,9 +19,12 @@ class CsrfYamlTest {
   void emptyNullAndResetPropertiesKeepSameOriginDefaults() {
     for (var mapping : new String[] {"{}", "trustedOrigins: null"}) {
       var settings = new Yaml().loadAs(mapping, Csrf.class);
+
       assertEquals(Set.of(), settings.getTrustedOrigins());
+
       settings.setTrustedOrigins(Set.of("https://client.example"));
       settings.setTrustedOrigins(null);
+
       assertEquals(Set.of(), settings.getTrustedOrigins());
     }
   }
@@ -33,6 +37,7 @@ class CsrfYamlTest {
           IllegalArgumentException.class, () -> settings.setTrustedOrigins(Set.of(invalid)));
       assertEquals(Set.of("https://client.example"), settings.getTrustedOrigins());
     }
+
     assertThrows(YAMLException.class, () -> new Yaml().loadAs("trustedOrigins: ['*']", Csrf.class));
     assertThrows(YAMLException.class, () -> new Yaml().loadAs("random: {}", Csrf.class));
   }
@@ -58,6 +63,7 @@ class CsrfYamlTest {
             server
                 .send(request -> request.path("/token"), HttpResponse.BodyHandlers.ofString())
                 .body();
+
         assertEquals(
             200,
             server
@@ -135,22 +141,13 @@ class CsrfYamlTest {
         assertThrows(
             IllegalStateException.class,
             () -> local.get().setTrustedOrigins(Set.of("https://changed.example")));
+
         source.setTrustedOrigins(null);
         var token =
             server
                 .send(request -> request.path("/token"), HttpResponse.BodyHandlers.ofString())
                 .body();
-        for (var entry :
-            Map.of(
-                    "/default",
-                    "https://app.example",
-                    "/group/write",
-                    "https://group.example",
-                    "/local",
-                    "https://local.example",
-                    "/reselected",
-                    "https://again.example")
-                .entrySet()) {
+        for (var entry : selectedOrigins().entrySet()) {
           assertEquals(
               200,
               server
@@ -174,9 +171,20 @@ class CsrfYamlTest {
                               .header("X-CSRF-Token", token))
                   .statusCode());
         }
+
         assertEquals(
             200, server.send(request -> request.path("/excluded").method("POST")).statusCode());
       }
     }
+  }
+
+  private Map<String, String> selectedOrigins() {
+    var entries = new LinkedHashMap<String, String>();
+    entries.put("/default", "https://app.example");
+    entries.put("/group/write", "https://group.example");
+    entries.put("/local", "https://local.example");
+    entries.put("/reselected", "https://again.example");
+
+    return Map.copyOf(entries);
   }
 }

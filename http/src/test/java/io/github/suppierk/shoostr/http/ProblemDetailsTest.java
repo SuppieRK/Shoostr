@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.Serializable;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -31,30 +32,36 @@ class ProblemDetailsTest {
 
   @Test
   void equalContentsHaveEqualHashesRegardlessOfExtensionOrder() {
-    var first =
-        ProblemDetails.builder()
-            .type(URI.create("/problems/invalid-order"))
-            .title("Invalid order")
-            .status(422)
-            .detail("Quantity must be positive")
-            .instance(URI.create("/orders/123"))
-            .extension("errors", List.of(Map.of("field", "quantity", "reason", "positive")))
-            .extension("trace", null)
-            .build();
-    var second =
-        ProblemDetails.builder()
-            .type(URI.create("/problems/invalid-order"))
-            .title("Invalid order")
-            .status(422)
-            .detail("Quantity must be positive")
-            .instance(URI.create("/orders/123"))
-            .extension("trace", null)
-            .extension("errors", List.of(Map.of("reason", "positive", "field", "quantity")))
-            .build();
+    var first = createFirstForEqualContentsHaveEqualHashesRegardlessOfExtensionOrder();
+    var second = createSecondForEqualContentsHaveEqualHashesRegardlessOfExtensionOrder();
 
     assertNotSame(first, second);
     assertEquals(first, second);
     assertEquals(first.hashCode(), second.hashCode());
+  }
+
+  private ProblemDetails createFirstForEqualContentsHaveEqualHashesRegardlessOfExtensionOrder() {
+    return ProblemDetails.builder()
+        .type(URI.create("/problems/invalid-order"))
+        .title("Invalid order")
+        .status(422)
+        .detail("Quantity must be positive")
+        .instance(URI.create("/orders/123"))
+        .extension("errors", List.of(Map.of("field", "quantity", "reason", "positive")))
+        .extension("trace", null)
+        .build();
+  }
+
+  private ProblemDetails createSecondForEqualContentsHaveEqualHashesRegardlessOfExtensionOrder() {
+    return ProblemDetails.builder()
+        .type(URI.create("/problems/invalid-order"))
+        .title("Invalid order")
+        .status(422)
+        .detail("Quantity must be positive")
+        .instance(URI.create("/orders/123"))
+        .extension("trace", null)
+        .extension("errors", List.of(Map.of("reason", "positive", "field", "quantity")))
+        .build();
   }
 
   @Test
@@ -66,23 +73,30 @@ class ProblemDetailsTest {
 
   @Test
   void projectsSuppliedStandardMembersWithoutEncodingTheirText() {
-    var problem =
-        ProblemDetails.builder()
-            .type(URI.create("https://example.com/problems/invalid-order"))
-            .title("Invalid order")
-            .status(422)
-            .detail("Quantity must be positive.\n\"数量\"")
-            .instance(URI.create("/orders/123"))
-            .build();
+    var problem = createProblemForProjectsSuppliedStandardMembersWithoutEncodingTheirText();
 
-    assertEquals(
-        Map.of(
-            "type", "https://example.com/problems/invalid-order",
-            "title", "Invalid order",
-            "status", 422,
-            "detail", "Quantity must be positive.\n\"数量\"",
-            "instance", "/orders/123"),
-        problem.toMap());
+    assertEquals(expectedMembers(), problem.toMap());
+  }
+
+  private ProblemDetails createProblemForProjectsSuppliedStandardMembersWithoutEncodingTheirText() {
+    return ProblemDetails.builder()
+        .type(URI.create("https://example.com/problems/invalid-order"))
+        .title("Invalid order")
+        .status(422)
+        .detail("Quantity must be positive.\n\"数量\"")
+        .instance(URI.create("/orders/123"))
+        .build();
+  }
+
+  private Map<String, Serializable> expectedMembers() {
+    var entries = new LinkedHashMap<String, Serializable>();
+    entries.put("type", "https://example.com/problems/invalid-order");
+    entries.put("title", "Invalid order");
+    entries.put("status", 422);
+    entries.put("detail", "Quantity must be positive.\n\"数量\"");
+    entries.put("instance", "/orders/123");
+
+    return Map.copyOf(entries);
   }
 
   @Test
@@ -139,14 +153,7 @@ class ProblemDetailsTest {
 
   @Test
   void exposesSuppliedStandardMembersWithoutChangingTheirTypes() {
-    var problem =
-        ProblemDetails.builder()
-            .type(URI.create("/problems/invalid-order"))
-            .title("Invalid order")
-            .status(422)
-            .detail("Quantity must be positive.")
-            .instance(URI.create("urn:order:123"))
-            .build();
+    var problem = createProblemForExposesSuppliedStandardMembersWithoutChangingTheirTypes();
 
     assertAll(
         () -> assertEquals(URI.create("/problems/invalid-order"), problem.type()),
@@ -154,6 +161,16 @@ class ProblemDetailsTest {
         () -> assertEquals(422, problem.status()),
         () -> assertEquals("Quantity must be positive.", problem.detail()),
         () -> assertEquals(URI.create("urn:order:123"), problem.instance()));
+  }
+
+  private ProblemDetails createProblemForExposesSuppliedStandardMembersWithoutChangingTheirTypes() {
+    return ProblemDetails.builder()
+        .type(URI.create("/problems/invalid-order"))
+        .title("Invalid order")
+        .status(422)
+        .detail("Quantity must be positive.")
+        .instance(URI.create("urn:order:123"))
+        .build();
   }
 
   @Test
@@ -199,15 +216,28 @@ class ProblemDetailsTest {
 
   @Test
   void retainsEmptySuppliedStandardStrings() {
-    var problem =
-        ProblemDetails.builder()
-            .type(URI.create(""))
-            .title("")
-            .detail("")
-            .instance(URI.create(""))
-            .build();
+    var problem = createProblemForRetainsEmptySuppliedStandardStrings();
 
-    assertEquals(Map.of("type", "", "title", "", "detail", "", "instance", ""), problem.toMap());
+    assertEquals(emptyMembers(), problem.toMap());
+  }
+
+  private ProblemDetails createProblemForRetainsEmptySuppliedStandardStrings() {
+    return ProblemDetails.builder()
+        .type(URI.create(""))
+        .title("")
+        .detail("")
+        .instance(URI.create(""))
+        .build();
+  }
+
+  private Map<String, String> emptyMembers() {
+    var entries = new LinkedHashMap<String, String>();
+    entries.put("type", "");
+    entries.put("title", "");
+    entries.put("detail", "");
+    entries.put("instance", "");
+
+    return Map.copyOf(entries);
   }
 
   @ParameterizedTest

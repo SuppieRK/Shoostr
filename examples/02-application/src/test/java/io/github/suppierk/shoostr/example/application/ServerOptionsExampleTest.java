@@ -22,7 +22,9 @@ class ServerOptionsExampleTest {
       try (Closeable appCleanup = app::close;
           var client = HttpClient.newHttpClient()) {
         app.start();
+
         assertTrue(app.port() > 0);
+
         var target = URI.create("http://127.0.0.1:" + app.port() + "/echo");
         var request =
             HttpRequest.newBuilder(target)
@@ -30,6 +32,7 @@ class ServerOptionsExampleTest {
                 .POST(HttpRequest.BodyPublishers.ofString("configured"))
                 .build();
         var response = client.send(request, HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, response.statusCode());
         assertEquals("configured", response.body());
         assertEquals(
@@ -51,32 +54,29 @@ class ServerOptionsExampleTest {
   void echoesBodiesWithinTheConfiguredLimits() throws Exception {
 
     try (var test = TestServer.start(ServerOptionsExample.application("127.0.0.1", 0))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/echo")
-                      .method("POST")
-                      .body("configured".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendConfiguredEcho(test);
 
       assertEquals(200, response.statusCode());
       assertEquals("configured", response.body());
     }
   }
 
+  private HttpResponse<String> sendConfiguredEcho(TestServer test) throws Exception {
+    return test.send(
+        request ->
+            request
+                .path("/echo")
+                .method("POST")
+                .body("configured".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void rejectsBodiesAboveTheConfiguredRequestLimit() throws Exception {
 
     try (var test = TestServer.start(ServerOptionsExample.application("127.0.0.1", 0))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/echo")
-                      .method("POST")
-                      .body("x".repeat(1024).getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendRequestLimitPayload(test);
+
       assertEquals(200, response.statusCode());
       assertEquals("x".repeat(1024), response.body());
       assertEquals(
@@ -86,5 +86,15 @@ class ServerOptionsExampleTest {
                   HttpResponse.BodyHandlers.discarding())
               .statusCode());
     }
+  }
+
+  private HttpResponse<String> sendRequestLimitPayload(TestServer test) throws Exception {
+    return test.send(
+        request ->
+            request
+                .path("/echo")
+                .method("POST")
+                .body("x".repeat(1024).getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 }

@@ -23,8 +23,11 @@ class TelemetryObservationBenchmarkTest {
 
     try (var ignored = original.makeCurrent()) {
       benchmark.setup();
+
       assertSame(original, Context.current());
+
       assertNotNull(benchmark.observe());
+
       assertSame(original, Context.current());
     } finally {
       benchmark.close();

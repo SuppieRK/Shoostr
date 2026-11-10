@@ -26,9 +26,12 @@ class RequestHooksExampleTest {
           test.send(
               request -> request.path("/jobs/42?token=private-query"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("job 42", response.body());
+
       var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+
       assertNotNull(outcome);
       assertEquals("GET", outcome.method());
       assertEquals("/jobs/{id}", outcome.routePattern());
@@ -63,7 +66,9 @@ class RequestHooksExampleTest {
     try (var test =
         TestServer.start(RequestHooksExample.application(phases::offer, outcomes::offer))) {
       assertEquals(500, test.send(request -> request.path("/jobs/failure")).statusCode());
+
       var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+
       assertNotNull(outcome);
       assertEquals("/jobs/failure", outcome.routePattern());
       assertEquals(500, outcome.statusCode());
@@ -83,7 +88,9 @@ class RequestHooksExampleTest {
     try (var test =
         TestServer.start(RequestHooksExample.application(phases::offer, outcomes::offer))) {
       assertEquals(404, test.send(request -> request.path("/missing")).statusCode());
+
       var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+
       assertNotNull(outcome);
       assertNull(outcome.routePattern());
       assertEquals(404, outcome.statusCode());

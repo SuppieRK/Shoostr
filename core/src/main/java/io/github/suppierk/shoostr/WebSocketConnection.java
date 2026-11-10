@@ -146,6 +146,20 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
   }
 
   /**
+   * Rejects future sends and settles an outstanding write independently of its write lock.
+   *
+   * @param failure observed transport termination
+   */
+  void terminate(Throwable failure) {
+    synchronized (lifecycle) {
+      terminal = true;
+      if (pending != null) {
+        pending.completeExceptionally(failure);
+      }
+    }
+  }
+
+  /**
    * Sends a complete text message, waiting for native write completion, not peer receipt.
    * Concurrent producers are ordered by write-lock admission. Interruption after submission stops
    * further writes because the message may already have been transmitted.
@@ -156,6 +170,7 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
    */
   public void send(String text) throws IOException, InterruptedException {
     Objects.requireNonNull(text);
+
     write(callback -> session.sendText(text, callback));
   }
 
@@ -169,6 +184,7 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
    */
   public void send(byte[] bytes) throws IOException, InterruptedException {
     Objects.requireNonNull(bytes);
+
     write(callback -> session.sendBinary(ByteBuffer.wrap(bytes.clone()), callback));
   }
 
@@ -254,20 +270,6 @@ public sealed class WebSocketConnection implements AutoCloseable permits TypedWe
     synchronized (lifecycle) {
       if (terminal || !session.isOpen()) {
         throw new IOException("WebSocket is closed");
-      }
-    }
-  }
-
-  /**
-   * Rejects future sends and settles an outstanding write independently of its write lock.
-   *
-   * @param failure observed transport termination
-   */
-  void terminate(Throwable failure) {
-    synchronized (lifecycle) {
-      terminal = true;
-      if (pending != null) {
-        pending.completeExceptionally(failure);
       }
     }
   }

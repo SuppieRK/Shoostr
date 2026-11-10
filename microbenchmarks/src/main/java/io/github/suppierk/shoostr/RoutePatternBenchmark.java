@@ -32,7 +32,7 @@ import org.openjdk.jmh.infra.Blackhole;
 @Threads(1)
 public class RoutePatternBenchmark {
   private static final int QUERY_COUNT = 16384;
-  private static final Handler HANDLER = (ignored, ignored2) -> {};
+  private static final Handler HANDLER = (ignored, ignoredResponse) -> {};
 
   @Param({"1", "100", "1000"})
   public int groups;
@@ -80,7 +80,9 @@ public class RoutePatternBenchmark {
   public Object route(Blackhole blackhole) {
     int index = cursor;
     cursor = (cursor + 1) & (QUERY_COUNT - 1);
+
     String path = fresh ? new String(characters[index]) : paths[index];
+
     var endpoint = router.match(path, method);
     if (endpoint == null) {
       return router.allowedMethods(path);
@@ -89,6 +91,7 @@ public class RoutePatternBenchmark {
     for (String name : parameterNames) {
       blackhole.consume(endpoint.parameter(path, name));
     }
+
     return endpoint;
   }
 
@@ -135,36 +138,50 @@ public class RoutePatternBenchmark {
               new String[0];
           default -> throw new IllegalArgumentException("Unknown workload: " + workload);
         };
+
     paths = new String[QUERY_COUNT];
     characters = new char[QUERY_COUNT][];
+
     var order = new ArrayList<Integer>(QUERY_COUNT);
-    for (int i = 0; i < QUERY_COUNT; i++) {
-      order.add(i);
+    for (int index = 0; index < QUERY_COUNT; index++) {
+      order.add(index);
     }
     Collections.shuffle(order, new Random(1729));
-    for (int i = 0; i < QUERY_COUNT; i++) {
-      int query = order.get(i);
+
+    for (int queryIndex = 0; queryIndex < QUERY_COUNT; queryIndex++) {
+      int query = order.get(queryIndex);
       String prefix = "/api/resources/" + (query % groups) + "/orders";
-      String suffix =
-          switch (workload) {
-            case "literal", "wrongMethod" -> "/latest";
-            case "oneParameter" -> "/order-" + query;
-            case "twoParameters" -> "/order-" + query + "/items/item-" + query;
-            case "encodedParameter" -> "/caf%C3%A9%20" + query;
-            case "precedence" -> "/shadowed";
-            case "fallback", "regexFallback" -> "/fixed/events";
-            case "notFound" -> "/order-" + query + "/missing";
-            case "catchAllNoRead", "catchAllRead", "catchAllWrongMethod" ->
-                "/archive/order-" + query + "/receipt";
-            case "catchAllFallback" -> "/fixed/other/" + query;
-            case "catchAllMiss", "regexMiss" -> "/";
-            case "regexNoRead", "regexRead", "regexWrongMethod" -> "/" + query;
-            default -> throw new IllegalArgumentException("Unknown workload: " + workload);
-          };
-      paths[i] = prefix + suffix;
-      characters[i] = paths[i].toCharArray();
+      String suffix = pathSuffix(query);
+      paths[queryIndex] = prefix + suffix;
+      characters[queryIndex] = paths[queryIndex].toCharArray();
     }
+
     cursor = 0;
+  }
+
+  /**
+   * Selects the path suffix for the configured routing scenario.
+   *
+   * @param query query sequence index
+   * @return suffix appended to the query path
+   * @throws IllegalArgumentException if the configured benchmark scenario is unknown
+   */
+  private String pathSuffix(int query) {
+    return switch (workload) {
+      case "literal", "wrongMethod" -> "/latest";
+      case "oneParameter" -> "/order-" + query;
+      case "twoParameters" -> "/order-" + query + "/items/item-" + query;
+      case "encodedParameter" -> "/caf%C3%A9%20" + query;
+      case "precedence" -> "/shadowed";
+      case "fallback", "regexFallback" -> "/fixed/events";
+      case "notFound" -> "/order-" + query + "/missing";
+      case "catchAllNoRead", "catchAllRead", "catchAllWrongMethod" ->
+          "/archive/order-" + query + "/receipt";
+      case "catchAllFallback" -> "/fixed/other/" + query;
+      case "catchAllMiss", "regexMiss" -> "/";
+      case "regexNoRead", "regexRead", "regexWrongMethod" -> "/" + query;
+      default -> throw new IllegalArgumentException("Unknown workload: " + workload);
+    };
   }
 
   /**

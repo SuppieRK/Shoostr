@@ -41,12 +41,14 @@ class ObservationHandoffTest {
               ignored -> {
                 var original = context.get();
                 context.set(value);
+
                 return new RequestObservation() {
                   @Override
                   public AutoCloseable attach() {
                     var previous = context.get();
                     events.add(value);
                     context.set(value);
+
                     return () -> {
                       context.set(previous);
                       events.add("/" + value);
@@ -65,19 +67,21 @@ class ObservationHandoffTest {
                 };
               });
         }
-        app.afterRequest(ignored2 -> finished.complete(null));
+        app.afterRequest(ignoredRequestOutcome -> finished.complete(null));
         app.routes()
             .get(
                 "/nested",
                 workers,
-                (ignored3, response) -> response.text(Objects.requireNonNull(context.get())));
+                (ignoredRequest, response) -> response.text(Objects.requireNonNull(context.get())));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
               "beta",
               test.send(request -> request.path("/nested"), HttpResponse.BodyHandlers.ofString())
                   .body());
+
           finished.get(5, TimeUnit.SECONDS);
+
           assertEquals(List.of("alpha", "beta", "/beta", "/alpha"), events);
           assertEquals("worker-base", workers.submit(context::get).get(5, TimeUnit.SECONDS));
           assertEquals(2, completions.get());
@@ -101,7 +105,7 @@ class ObservationHandoffTest {
 
       try (Closeable appCleanup1 = app::close) {
         app.observe(
-            ignored4 ->
+            ignoredRequest ->
                 new RequestObservation() {
                   @Override
                   public AutoCloseable attach() {
@@ -114,7 +118,7 @@ class ObservationHandoffTest {
                   }
                 });
         app.observe(
-            ignored5 ->
+            ignoredRequest ->
                 new RequestObservation() {
                   @Override
                   public AutoCloseable attach() {
@@ -133,11 +137,12 @@ class ObservationHandoffTest {
                   }
                 });
         app.observe(
-            ignored6 ->
+            ignoredRequest ->
                 new RequestObservation() {
                   @Override
                   public AutoCloseable attach() {
                     laterAttached.set(true);
+
                     return () -> {};
                   }
 
@@ -146,12 +151,14 @@ class ObservationHandoffTest {
                     completions.incrementAndGet();
                   }
                 });
-        app.afterRequest(ignored7 -> finished.complete(null));
-        app.routes().get("/failure", workers, (ignored8, response) -> response.text("ok"));
+        app.afterRequest(ignoredRequestOutcome -> finished.complete(null));
+        app.routes().get("/failure", workers, (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/failure")).statusCode());
+
           finished.get(5, TimeUnit.SECONDS);
+
           assertTrue(laterClosed.get());
           assertTrue(laterAttached.get());
           assertEquals(3, completions.get());
@@ -175,15 +182,17 @@ class ObservationHandoffTest {
 
       try (Closeable appCleanup2 = app::close) {
         app.observe(
-            ignored9 -> {
+            ignoredRequest -> {
               var owner = Thread.currentThread();
               context.set("observation");
+
               return new RequestObservation() {
                 @Override
                 public AutoCloseable attach() {
                   sameOwner.set(owner == Thread.currentThread());
                   events.add("attach");
                   context.set("observation");
+
                   return () -> {
                     context.remove();
                     events.add("attached-close");
@@ -205,17 +214,21 @@ class ObservationHandoffTest {
             });
         app.exception(
             RejectedExecutionException.class,
-            (ignored10, ignored11, response) ->
+            (ignoredFailure, ignoredRequest, response) ->
                 response.status(503).text(Objects.requireNonNull(context.get())));
-        app.routes().get("/rejected", workers, (ignored12, response) -> response.text("wrong"));
+        app.routes()
+            .get("/rejected", workers, (ignoredRequest, response) -> response.text("wrong"));
 
         try (var test = TestServer.start(app)) {
           workers.shutdown();
           var result =
               test.send(request -> request.path("/rejected"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(503, result.statusCode());
           assertEquals("observation", result.body());
+
           finished.get(5, TimeUnit.SECONDS);
+
           assertTrue(sameOwner.get());
           assertEquals(List.of("original-close", "attach", "attached-close", "complete"), events);
         }
@@ -225,6 +238,7 @@ class ObservationHandoffTest {
 
   private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
     options.setVirtualThreads(virtualApplication);
+
     return new Shoostr(options)
         .onRequestHeaders(
             (request, response) ->

@@ -36,6 +36,7 @@ class ExistingApplicationTest {
           client.send(
               HttpRequest.newBuilder(server.baseUri().resolve("api/value")).build(),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals("existing", reply.body());
       assertEquals(app.port(), server.baseUri().getPort());
     }
@@ -53,8 +54,10 @@ class ExistingApplicationTest {
 
       try (Closeable appCleanup = app::close;
           var client = HttpClient.newHttpClient()) {
-        app.routes().get("/value", (ignored2, response) -> response.text("still running"));
+        app.routes().get("/value", (ignoredRequest, response) -> response.text("still running"));
+
         app.start();
+
         var target = URI.create("http://127.0.0.1:" + app.port() + "/value");
 
         assertThrows(IllegalStateException.class, () -> TestServer.start(app));
@@ -71,6 +74,7 @@ class ExistingApplicationTest {
   void rejectsAnApplicationAlreadyClosedByItsOwner() throws Exception {
     var app = new Shoostr();
     app.close();
+
     assertThrows(IllegalStateException.class, () -> TestServer.start(app));
   }
 }

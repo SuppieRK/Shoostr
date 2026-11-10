@@ -23,8 +23,10 @@ import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublisher;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -33,8 +35,10 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpTester;
@@ -105,6 +109,7 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var result = receive(HttpTester.from(socket.getInputStream()));
+
           assertEquals(status, result.getStatus());
           assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
           assertEquals(-1, socket.getInputStream().read());
@@ -140,6 +145,7 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var result = receive(HttpTester.from(socket.getInputStream()));
+
           assertEquals(200, result.getStatus());
           assertEquals("file content", result.getContent());
           assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
@@ -174,17 +180,15 @@ class BufferedRequestLifecycleTest {
         try (var test = TestServer.start(app);
             var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
           var bytes = PAYLOAD.getBytes(StandardCharsets.US_ASCII);
+
           var publisher =
               chunked
                   ? HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))
                   : HttpRequest.BodyPublishers.ofByteArray(bytes);
           var result =
-              client.send(
-                  HttpRequest.newBuilder(test.baseUri().resolve("body"))
-                      .timeout(Duration.ofSeconds(3))
-                      .POST(publisher)
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForLeavesTheFirstBodyReadAvailableToPostFlushCallbacks(
+                  client, test, publisher);
+
           assertEquals(200, result.statusCode());
           assertEquals("ok", result.body());
           assertEquals("close", result.headers().firstValue("Connection").orElseThrow());
@@ -192,6 +196,17 @@ class BufferedRequestLifecycleTest {
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForLeavesTheFirstBodyReadAvailableToPostFlushCallbacks(
+      HttpClient client, TestServer test, BodyPublisher publisher)
+      throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(test.baseUri().resolve("body"))
+            .timeout(Duration.ofSeconds(3))
+            .POST(publisher)
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -227,9 +242,11 @@ class BufferedRequestLifecycleTest {
           socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var first = receive(input);
+
           assertEquals(200, first.getStatus());
           assertNull(first.get(HttpHeaders.CONNECTION.value()));
           assertEquals(post ? PAYLOAD : "", before.get(3, TimeUnit.SECONDS));
+
           if (afterFlush) {
             assertEquals(post ? PAYLOAD : "", after.get(3, TimeUnit.SECONDS));
           }
@@ -241,6 +258,7 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var next = receive(input);
+
           assertEquals(200, next.getStatus());
           assertEquals(first.getContent(), next.getContent());
           assertEquals(Integer.toString(socket.getLocalPort()), next.getContent());
@@ -274,6 +292,7 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var result = receive(HttpTester.from(socket.getInputStream()));
+
           assertEquals(200, result.getStatus());
           assertEquals("ok", result.getContent());
           assertEquals("close", result.get(HttpHeaders.CONNECTION.value()));
@@ -324,6 +343,7 @@ class BufferedRequestLifecycleTest {
           socket.getOutputStream().write("1\r\ny\r\n0\r\n\r\n".getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var result = receive(HttpTester.from(socket.getInputStream()));
+
           assertEquals(200, result.getStatus());
           assertEquals("Axy", result.getContent());
         }
@@ -360,35 +380,52 @@ class BufferedRequestLifecycleTest {
           client.setIdleTimeout(3000);
           client.start();
           var connection =
-              client
-                  .connect(
-                      null,
-                      new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
-                      new Session.Listener() {})
-                  .get(3, TimeUnit.SECONDS);
+              createConnectionForKeepsHttp2ConnectionsAvailableAfterFiniteResponsesWithUnreadInput(
+                  client, app);
           var response = new Http2Response();
           var request =
-              new MetaData.Request(
-                  "POST",
-                  HttpURI.from(test.baseUri().resolve("early").toString()),
-                  HttpVersion.HTTP_2,
-                  HttpFields.build().put(HttpHeaders.CONTENT_LENGTH.value(), "32"));
+              createRequestForKeepsHttp2ConnectionsAvailableAfterFiniteResponsesWithUnreadInput(
+                  test);
           connection
               .newStream(new HeadersFrame(request, null, false), response)
               .get(3, TimeUnit.SECONDS);
           var headers = response.headers.get(3, TimeUnit.SECONDS);
+
           assertEquals(200, headers.getStatus());
           assertEquals(HttpVersion.HTTP_2, headers.getHttpVersion());
           assertNull(headers.getHttpFields().get(HttpHeaders.CONNECTION.value()));
           assertEquals("ok", response.body.get(3, TimeUnit.SECONDS));
 
           var next = http2Request(connection, app, "GET", "/next", new byte[0]);
+
           assertEquals(200, next.headers.get(3, TimeUnit.SECONDS).getStatus());
           assertEquals(
               headers.getHttpFields().get("X-Peer-Port"), next.body.get(3, TimeUnit.SECONDS));
         }
       }
     }
+  }
+
+  private Session
+      createConnectionForKeepsHttp2ConnectionsAvailableAfterFiniteResponsesWithUnreadInput(
+          HTTP2Client client, Shoostr app)
+          throws InterruptedException, ExecutionException, TimeoutException, UnknownHostException {
+    return client
+        .connect(
+            null,
+            new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
+            new Session.Listener() {})
+        .get(3, TimeUnit.SECONDS);
+  }
+
+  private org.eclipse.jetty.http.MetaData.Request
+      createRequestForKeepsHttp2ConnectionsAvailableAfterFiniteResponsesWithUnreadInput(
+          TestServer test) {
+    return new MetaData.Request(
+        "POST",
+        HttpURI.from(test.baseUri().resolve("early").toString()),
+        HttpVersion.HTTP_2,
+        HttpFields.build().put(HttpHeaders.CONTENT_LENGTH.value(), "32"));
   }
 
   @ParameterizedTest
@@ -414,6 +451,7 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var rejected = receive(HttpTester.from(socket.getInputStream()));
+
           assertEquals(status, rejected.getStatus());
           assertEquals("close", rejected.get(HttpHeaders.CONNECTION.value()));
           assertEquals(-1, socket.getInputStream().read());
@@ -425,33 +463,22 @@ class BufferedRequestLifecycleTest {
   @Test
   void leavesRejectedBodyReadableByBeforeFlushCallbacks() throws Exception {
     var observedBody = new AtomicReference<String>();
-    var authentication =
-        new AuthenticationExtension() {
-          @Override
-          public void handle(Request request, Response response) {
-            throw new AuthenticationRequiredException("Basic realm=\"test\"");
-          }
-        };
+    var authentication = createAuthenticationForLeavesRejectedBodyReadableByBeforeFlushCallbacks();
 
     {
       var app = new Shoostr();
 
       try (Closeable appCleanup8 = app::close) {
-        app.beforeResponseFlush((request, ignored2) -> observedBody.set(request.bodyText()))
+        app.beforeResponseFlush((request, ignoredResponse) -> observedBody.set(request.bodyText()))
             .routes()
             .post(
                 "/body",
-                (ignored3, response) -> response.text("unexpected"),
+                (ignoredRequest, response) -> response.text("unexpected"),
                 extensions -> extensions.withExtension(authentication));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/body")
-                          .method("POST")
-                          .body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)));
+          var result = sendResultForLeavesRejectedBodyReadableByBeforeFlushCallbacks(test);
+
           assertEquals(401, result.statusCode());
           assertEquals(PAYLOAD, observedBody.get());
         }
@@ -459,15 +486,27 @@ class BufferedRequestLifecycleTest {
     }
   }
 
+  private AuthenticationExtension
+      createAuthenticationForLeavesRejectedBodyReadableByBeforeFlushCallbacks() {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        throw new AuthenticationRequiredException("Basic realm=\"test\"");
+      }
+    };
+  }
+
+  private HttpResponse<byte[]> sendResultForLeavesRejectedBodyReadableByBeforeFlushCallbacks(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/body").method("POST").body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)));
+  }
+
   @Test
   void leavesRejectedBodyReadableByACustomAuthenticationErrorRenderer() throws Exception {
     var authentication =
-        new AuthenticationExtension() {
-          @Override
-          public void handle(Request request, Response response) {
-            throw new AuthenticationRequiredException("Basic realm=\"test\"");
-          }
-        };
+        createAuthenticationForLeavesRejectedBodyReadableByACustomAuthenticationErrorRenderer();
 
     {
       var app = new Shoostr();
@@ -475,22 +514,17 @@ class BufferedRequestLifecycleTest {
       try (Closeable appCleanup9 = app::close) {
         app.exception(
                 AuthenticationRequiredException.class,
-                (ignored4, request, response) -> response.text(request.bodyText()))
+                (ignoredFailure, request, response) -> response.text(request.bodyText()))
             .routes()
             .post(
                 "/body",
-                (ignored5, response) -> response.text("unexpected"),
+                (ignoredRequest, response) -> response.text("unexpected"),
                 extensions -> extensions.withExtension(authentication));
 
         try (var test = TestServer.start(app)) {
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/body")
-                          .method("POST")
-                          .body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForLeavesRejectedBodyReadableByACustomAuthenticationErrorRenderer(test);
+
           assertEquals(401, result.statusCode());
           assertEquals(PAYLOAD, result.body());
         }
@@ -498,17 +532,29 @@ class BufferedRequestLifecycleTest {
     }
   }
 
+  private AuthenticationExtension
+      createAuthenticationForLeavesRejectedBodyReadableByACustomAuthenticationErrorRenderer() {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        throw new AuthenticationRequiredException("Basic realm=\"test\"");
+      }
+    };
+  }
+
+  private HttpResponse<String>
+      sendResultForLeavesRejectedBodyReadableByACustomAuthenticationErrorRenderer(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/body").method("POST").body(PAYLOAD.getBytes(StandardCharsets.US_ASCII)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void reusesHttp1ConnectionAfterAuthenticationRejectsAnAvailableBody() throws Exception {
     var authentication =
-        new AuthenticationExtension() {
-          @Override
-          public void handle(Request request, Response response) {
-            if (request.header("Authorization").isEmpty()) {
-              throw new AuthenticationRequiredException("Basic realm=\"test\"");
-            }
-          }
-        };
+        createAuthenticationForReusesHttp1ConnectionAfterAuthenticationRejectsAnAvailableBody();
 
     {
       var app =
@@ -534,8 +580,10 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var rejected = receive(input);
+
           assertEquals(401, rejected.getStatus());
           assertNull(rejected.get(HttpHeaders.CONNECTION.value()));
+
           socket
               .getOutputStream()
               .write(
@@ -545,6 +593,7 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var accepted = receive(input);
+
           assertEquals(200, accepted.getStatus());
           assertEquals(PAYLOAD, accepted.getContent());
         }
@@ -552,17 +601,24 @@ class BufferedRequestLifecycleTest {
     }
   }
 
+  private AuthenticationExtension
+      createAuthenticationForReusesHttp1ConnectionAfterAuthenticationRejectsAnAvailableBody() {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        if (request.header("Authorization").isEmpty()) {
+          throw new AuthenticationRequiredException("Basic realm=\"test\"");
+        }
+      }
+    };
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void advertisesConnectionClosureWhenAuthenticationRejectsAnUnavailableBody(
       boolean streamingRenderer) throws Exception {
     var authentication =
-        new AuthenticationExtension() {
-          @Override
-          public void handle(Request request, Response response) {
-            throw new AuthenticationRequiredException("Basic realm=\"test\"");
-          }
-        };
+        createAuthenticationForAdvertisesConnectionClosureWhenAuthenticationRejectsAnUnavailableBody();
 
     {
       var app =
@@ -574,7 +630,7 @@ class BufferedRequestLifecycleTest {
         if (streamingRenderer) {
           app.exception(
               AuthenticationRequiredException.class,
-              (ignored6, ignored7, response) ->
+              (ignoredFailure, ignoredRequest, response) ->
                   response
                       .startStream(MediaType.TEXT_PLAIN)
                       .write("rejected".getBytes(StandardCharsets.US_ASCII)));
@@ -583,7 +639,7 @@ class BufferedRequestLifecycleTest {
         app.routes()
             .post(
                 "/body",
-                (ignored8, response) -> response.text("unexpected"),
+                (ignoredRequest, response) -> response.text("unexpected"),
                 extensions -> extensions.withExtension(authentication));
         app.start();
 
@@ -596,6 +652,7 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var rejected = receive(HttpTester.from(socket.getInputStream()));
+
           assertEquals(401, rejected.getStatus());
           assertEquals("Basic realm=\"test\"", rejected.get("WWW-Authenticate"));
           assertEquals("close", rejected.get(HttpHeaders.CONNECTION.value()));
@@ -603,6 +660,16 @@ class BufferedRequestLifecycleTest {
         }
       }
     }
+  }
+
+  private AuthenticationExtension
+      createAuthenticationForAdvertisesConnectionClosureWhenAuthenticationRejectsAnUnavailableBody() {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        throw new AuthenticationRequiredException("Basic realm=\"test\"");
+      }
+    };
   }
 
   @ParameterizedTest
@@ -624,24 +691,33 @@ class BufferedRequestLifecycleTest {
                 "/body",
                 (request, response) -> {
                   assertArrayEquals(payload, request.bodyBytes());
+
                   response.text("accepted");
                 });
         app.start();
+
         var publisher =
             knownLength
                 ? HttpRequest.BodyPublishers.ofByteArray(payload)
                 : HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(payload));
         var result =
-            client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
-                    .timeout(Duration.ofSeconds(3))
-                    .POST(publisher)
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendResultForAcceptsAnExactDefaultLimitBodyAtTheLiveListener(client, app, publisher);
+
         assertEquals(200, result.statusCode());
         assertEquals("accepted", result.body());
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForAcceptsAnExactDefaultLimitBodyAtTheLiveListener(
+      HttpClient client, Shoostr app, BodyPublisher publisher)
+      throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
+            .timeout(Duration.ofSeconds(3))
+            .POST(publisher)
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -660,23 +736,32 @@ class BufferedRequestLifecycleTest {
           var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
         app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
         app.start();
+
         var publisher =
             knownLength
                 ? HttpRequest.BodyPublishers.ofByteArray(payload)
                 : HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(payload));
         var result =
-            client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
-                    .timeout(Duration.ofSeconds(3))
-                    // Await header-based rejection instead of racing it with the upload.
-                    .expectContinue(knownLength)
-                    .POST(publisher)
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendResultForRejectsOneByteBeyondTheDefaultLimitAtTheLiveListener(
+                client, app, knownLength, publisher);
+
         assertEquals(413, result.statusCode());
         assertEquals("Content Too Large", result.body());
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsOneByteBeyondTheDefaultLimitAtTheLiveListener(
+      HttpClient client, Shoostr app, boolean knownLength, BodyPublisher publisher)
+      throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
+            .timeout(Duration.ofSeconds(3))
+            // Await header-based rejection instead of racing it with the upload.
+            .expectContinue(knownLength)
+            .POST(publisher)
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -700,6 +785,7 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var rejected = receive(HttpTester.from(socket.getInputStream()));
+
           assertEquals(413, rejected.getStatus());
           assertEquals("Content Too Large", rejected.getContent());
         }
@@ -732,9 +818,12 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var rejected = receive(input);
+
           assertEquals(413, rejected.getStatus());
           assertEquals("too large", rejected.getContent());
+
           var outcome = completed(outcomes);
+
           assertEquals(413, outcome.statusCode());
           assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
           assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
@@ -747,6 +836,7 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var accepted = receive(input);
+
           assertEquals(200, accepted.getStatus());
           assertEquals(Integer.toString(socket.getLocalPort()), accepted.getContent());
           assertSuccessfulCompletion(outcomes);
@@ -780,10 +870,13 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var rejected = receive(HttpTester.from(socket.getInputStream()));
+
           assertEquals(413, rejected.getStatus());
           assertEquals("too large", rejected.getContent());
           assertEquals("close", rejected.get(HttpHeaders.CONNECTION.value()));
+
           var outcome = completed(outcomes);
+
           assertEquals(413, outcome.statusCode());
           assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
           assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
@@ -807,7 +900,7 @@ class BufferedRequestLifecycleTest {
         app.modifyHttpConfiguration(
             configuration ->
                 configuration.addCustomizer(
-                    (nativeRequest, ignored9) -> {
+                    (nativeRequest, ignoredMutable) -> {
                       if (!"/bad".equals(nativeRequest.getHttpURI().getPath())) {
                         return nativeRequest;
                       }
@@ -822,7 +915,7 @@ class BufferedRequestLifecycleTest {
         app.afterRequest(outcomes::add);
         app.exception(
             BadRequestException.class,
-            (failure, ignored10, response) -> {
+            (failure, ignoredRequest, response) -> {
               rejections.add(failure);
               response.text("bad length");
             });
@@ -840,9 +933,12 @@ class BufferedRequestLifecycleTest {
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var rejected = receive(input);
+
           assertEquals(400, rejected.getStatus());
           assertEquals("bad length", rejected.getContent());
+
           var outcome = completed(outcomes);
+
           assertEquals(400, outcome.statusCode());
           assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
           assertInstanceOf(BadRequestException.class, outcome.applicationFailure());
@@ -854,6 +950,7 @@ class BufferedRequestLifecycleTest {
                   "GET /ok HTTP/1.1\r\nHost: localhost\r\n\r\n"
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
+
           assertEquals(200, receive(input).getStatus());
           assertSuccessfulCompletion(outcomes);
           assertNull(outcomes.poll());
@@ -878,15 +975,12 @@ class BufferedRequestLifecycleTest {
         client.setIdleTimeout(3000);
         client.start();
         var connection =
-            client
-                .connect(
-                    null,
-                    new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
-                    new Session.Listener() {})
-                .get(3, TimeUnit.SECONDS);
+            createConnectionForMapsConsumedOversizeWithCompleteFramingAndReusesHttp2Connection(
+                client, app);
         var warmup = http2Request(connection, app, "GET", "/ok", new byte[0]);
         var warmupHeaders = warmup.headers.get(3, TimeUnit.SECONDS);
         var peer = warmup.body.get(3, TimeUnit.SECONDS);
+
         assertEquals(200, warmupHeaders.getStatus());
         assertEquals(HttpVersion.HTTP_2, warmupHeaders.getHttpVersion());
         assertSuccessfulCompletion(outcomes);
@@ -899,11 +993,14 @@ class BufferedRequestLifecycleTest {
             http2Request(
                 connection, app, "POST", "/body", PAYLOAD.getBytes(StandardCharsets.US_ASCII));
         var rejectedHeaders = rejected.headers.get(3, TimeUnit.SECONDS);
+
         assertEquals(413, rejectedHeaders.getStatus());
         assertEquals(HttpVersion.HTTP_2, rejectedHeaders.getHttpVersion());
         assertEquals("too large", rejected.body.get(3, TimeUnit.SECONDS));
         assertEquals(peer, rejectedHeaders.getHttpFields().get("X-Peer-Port"));
+
         var outcome = completed(outcomes);
+
         assertEquals(413, outcome.statusCode());
         assertSame(rejections.poll(3, TimeUnit.SECONDS), outcome.applicationFailure());
         assertInstanceOf(ContentTooLargeException.class, outcome.applicationFailure());
@@ -917,6 +1014,7 @@ class BufferedRequestLifecycleTest {
 
         var accepted = http2Request(connection, app, "GET", "/ok", new byte[0]);
         var acceptedHeaders = accepted.headers.get(3, TimeUnit.SECONDS);
+
         assertEquals(200, acceptedHeaders.getStatus());
         assertEquals(HttpVersion.HTTP_2, acceptedHeaders.getHttpVersion());
         assertEquals(peer, accepted.body.get(3, TimeUnit.SECONDS));
@@ -926,15 +1024,22 @@ class BufferedRequestLifecycleTest {
     }
   }
 
+  private Session
+      createConnectionForMapsConsumedOversizeWithCompleteFramingAndReusesHttp2Connection(
+          HTTP2Client client, Shoostr app)
+          throws InterruptedException, ExecutionException, TimeoutException, UnknownHostException {
+    return client
+        .connect(
+            null,
+            new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
+            new Session.Listener() {})
+        .get(3, TimeUnit.SECONDS);
+  }
+
   private static Http2Response http2Request(
       Session connection, Shoostr app, String method, String path, byte[] body) throws Exception {
     var response = new Http2Response();
-    var request =
-        new MetaData.Request(
-            method,
-            HttpURI.from("http://127.0.0.1:" + app.port() + path),
-            HttpVersion.HTTP_2,
-            HttpFields.EMPTY);
+    var request = createRequestForHttp2Request(method, app, path);
     var stream =
         connection
             .newStream(new HeadersFrame(request, null, body.length == 0), response)
@@ -946,6 +1051,15 @@ class BufferedRequestLifecycleTest {
     }
 
     return response;
+  }
+
+  private static org.eclipse.jetty.http.MetaData.Request createRequestForHttp2Request(
+      String method, Shoostr app, String path) {
+    return new MetaData.Request(
+        method,
+        HttpURI.from("http://127.0.0.1:" + app.port() + path),
+        HttpVersion.HTTP_2,
+        HttpFields.EMPTY);
   }
 
   private static Shoostr app() {
@@ -960,6 +1074,7 @@ class BufferedRequestLifecycleTest {
     configuredOptions.setMaxParameters(1000);
     configuredOptions.setMultipart(MultipartOptions.defaults());
     configuredOptions.setHttp2(http2);
+
     return new Shoostr(configuredOptions)
         .modifyServer(
             nativeServer -> {
@@ -979,7 +1094,9 @@ class BufferedRequestLifecycleTest {
         ContentTooLargeException.class,
         (failure, request, response) -> {
           rejections.add(failure);
+
           assertThrows(ContentTooLargeException.class, request::bodyBytes);
+
           response.setHeader("X-Peer-Port", peerPort(request));
           response.text("too large");
         });
@@ -998,20 +1115,25 @@ class BufferedRequestLifecycleTest {
 
   private static HttpTester.Response receive(HttpTester.Input input) throws IOException {
     var response = HttpTester.parseResponse(input);
+
     assertNotNull(response);
+
     return response;
   }
 
   private static RequestOutcome completed(LinkedBlockingQueue<RequestOutcome> outcomes)
       throws InterruptedException {
     var outcome = outcomes.poll(3, TimeUnit.SECONDS);
+
     assertNotNull(outcome);
+
     return outcome;
   }
 
   private static void assertSuccessfulCompletion(LinkedBlockingQueue<RequestOutcome> outcomes)
       throws InterruptedException {
     var outcome = completed(outcomes);
+
     assertEquals(200, outcome.statusCode());
     assertNull(outcome.applicationFailure());
     assertNull(outcome.transportFailure());
@@ -1068,6 +1190,7 @@ class BufferedRequestLifecycleTest {
     @Override
     public void onReset(Stream stream, ResetFrame frame, Callback callback) {
       fail(new IOException("HTTP/2 stream reset: " + frame.getError()));
+
       callback.succeeded();
     }
 
@@ -1075,6 +1198,7 @@ class BufferedRequestLifecycleTest {
     public void onFailure(
         Stream stream, int error, String reason, Throwable failure, Callback callback) {
       fail(failure);
+
       callback.succeeded();
     }
 

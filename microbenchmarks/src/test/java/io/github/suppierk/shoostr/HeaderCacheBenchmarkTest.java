@@ -26,6 +26,7 @@ class HeaderCacheBenchmarkTest {
       fixture.setup();
       for (int request = 0; request < 128; request++) {
         int expected = headers.startsWith("cookie") ? 8 : 7;
+
         assertEquals(expected, fixture.reusedConnection());
         assertEquals(expected, fixture.newConnection());
       }

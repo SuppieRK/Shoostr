@@ -39,25 +39,7 @@ public final class LoginLogoutExample {
     var csrf = new Csrf();
     var sessionCookie =
         Cookie.secure(AUTH_COOKIE, "").withHttpOnly(true).withSameSite(Cookie.SameSite.LAX);
-    var authentication =
-        new AuthenticationExtension() {
-          /** {@inheritDoc} */
-          @Override
-          public void handle(Request request, Response response) {
-            request.principal(null);
-            var session = request.getSession().orElseThrow(UnauthorizedException::new);
-            synchronized (session) {
-              if (!session.isValid()
-                  || !(session.getAttribute(ACCOUNT) instanceof String account)) {
-                throw new UnauthorizedException();
-              }
-
-              request.principal(() -> account);
-            }
-            // Account responses contain private state and must not enter shared caches.
-            response.setHeader(HttpHeaders.CACHE_CONTROL.value(), NO_STORE);
-          }
-        };
+    var authentication = authentication();
 
     return new Shoostr()
         .sessions(
@@ -83,6 +65,7 @@ public final class LoginLogoutExample {
                               session.setAttribute(THEME_ATTRIBUTE, "light");
                             }
                           }
+
                           response
                               .setHeader(HttpHeaders.CACHE_CONTROL.value(), NO_STORE)
                               .text(proof);
@@ -97,6 +80,7 @@ public final class LoginLogoutExample {
                           synchronized (session) {
                             requireAnonymous(session);
                           }
+
                           // Credential verification follows CSRF admission and runs outside the
                           // transition lock.
                           var account =
@@ -116,6 +100,7 @@ public final class LoginLogoutExample {
                             proof = csrf.token(request);
                             session.setAttribute(ACCOUNT, account);
                           }
+
                           response
                               .setHeader(HttpHeaders.CACHE_CONTROL.value(), NO_STORE)
                               .text(proof);
@@ -126,6 +111,7 @@ public final class LoginLogoutExample {
                         (request, response) -> {
                           var session =
                               request.getSession().orElseThrow(UnauthorizedException::new);
+
                           response.text(
                               request.principal().orElseThrow().getName()
                                   + ":"
@@ -139,10 +125,12 @@ public final class LoginLogoutExample {
                                   .formParam(THEME_ATTRIBUTE)
                                   .filter(value -> "light".equals(value) || "dark".equals(value))
                                   .orElseThrow(BadRequestException::new);
+
                           request
                               .getSession()
                               .orElseThrow(UnauthorizedException::new)
                               .setAttribute(THEME_ATTRIBUTE, theme);
+
                           response.text(theme);
                         })
                     .post(
@@ -155,11 +143,38 @@ public final class LoginLogoutExample {
                             // not delivered.
                             session.invalidate();
                           }
+
                           response
                               .removeCookie(sessionCookie)
                               .setHeader(HttpHeaders.CACHE_CONTROL.value(), NO_STORE)
                               .text("logged out");
                         }));
+  }
+
+  /**
+   * Configures the identity checks used by the protected example endpoints.
+   *
+   * @return authentication selected by the application
+   */
+  private static AuthenticationExtension authentication() {
+    return new AuthenticationExtension() {
+      /** {@inheritDoc} */
+      @Override
+      public void handle(Request request, Response response) {
+        request.principal(null);
+        var session = request.getSession().orElseThrow(UnauthorizedException::new);
+        synchronized (session) {
+          if (!session.isValid() || !(session.getAttribute(ACCOUNT) instanceof String account)) {
+            throw new UnauthorizedException();
+          }
+
+          request.principal(() -> account);
+        }
+
+        // Account responses contain private state and must not enter shared caches.
+        response.setHeader(HttpHeaders.CACHE_CONTROL.value(), NO_STORE);
+      }
+    };
   }
 
   /**

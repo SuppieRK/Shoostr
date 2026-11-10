@@ -31,8 +31,7 @@ public final class ExecutorExample {
     Objects.requireNonNull(workers);
     Objects.requireNonNull(context);
     Objects.requireNonNull(completed);
-    var configuredOptions = new Options();
-    configuredOptions.setVirtualThreads(virtual);
+    var configuredOptions = options(virtual);
 
     return new Shoostr(configuredOptions)
         .observe(
@@ -41,6 +40,7 @@ public final class ExecutorExample {
               var previous = context.get();
               var captured = request.header("X-Request-Id").orElse("unassigned");
               context.set(captured);
+
               return new RequestObservation() {
                 /** {@inheritDoc} */
                 @Override
@@ -48,6 +48,7 @@ public final class ExecutorExample {
                   // Restore each worker's own previous value when its attachment closes.
                   var workerPrevious = context.get();
                   context.set(captured);
+
                   return () -> restore(context, workerPrevious);
                 }
 
@@ -68,21 +69,35 @@ public final class ExecutorExample {
             })
         .exception(
             RejectedExecutionException.class,
-            (ignored, ignored2, response) -> response.status(503).text("busy:" + context.get()))
+            (ignored, ignoredRequest, response) ->
+                response.status(503).text("busy:" + context.get()))
         .routes(
             routes ->
                 routes
                     .get(
                         "/default",
-                        (ignored3, response) ->
+                        (ignoredRequest, response) ->
                             response.text("virtual=" + Thread.currentThread().isVirtual()))
                     // Shoostr borrows this pool; keep it alive until the application has
                     // stopped.
                     .get(
                         "/selected",
                         workers,
-                        (ignored4, response) ->
+                        (ignoredRequest, response) ->
                             response.text(context.get() + "|" + Thread.currentThread().getName())));
+  }
+
+  /**
+   * Configures the listener and resource policy used by this application.
+   *
+   * @param virtual application setting
+   * @return detached serving options
+   */
+  private static Options options(boolean virtual) {
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(virtual);
+
+    return configuredOptions;
   }
 
   /**

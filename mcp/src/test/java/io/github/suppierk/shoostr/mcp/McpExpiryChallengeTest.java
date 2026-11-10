@@ -16,6 +16,8 @@ import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredExceptio
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
+import io.modelcontextprotocol.server.McpSyncServer;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -43,41 +45,8 @@ class McpExpiryChallengeTest {
     ExecutorService selected = forkJoin ? new ForkJoinPool(1) : Executors.newSingleThreadExecutor();
     var passedIdentityCheck = new AtomicBoolean();
     var security =
-        new McpHttpSecurity(
-            Set.of(),
-            request ->
-                new McpIdentity(
-                    "alice:client",
-                    McpTransportContext.EMPTY,
-                    request.header("X-Expiring").isPresent() ? Instant.now().plusSeconds(2) : null),
-            (identity, ignored) -> {
-              var expiry = identity.expiresAt();
-              if (expiry == null) {
-                return;
-              }
-
-              assertTrue(
-                  Instant.now().isBefore(expiry), "Reach authorization with a fresh identity");
-              passedIdentityCheck.set(true);
-
-              await("authorization reaches the verified expiry before stream admission")
-                  .pollInSameThread()
-                  .pollDelay(Duration.ZERO)
-                  .pollInterval(Duration.ofMillis(10))
-                  .atMost(Duration.ofSeconds(5))
-                  .until(
-                      () -> {
-                        if (Thread.interrupted()) {
-                          Thread.currentThread().interrupt();
-                          throw new IllegalStateException(
-                              "The unarmed expiry wait was interrupted",
-                              new InterruptedException());
-                        }
-
-                        return !Instant.now().isBefore(expiry.plusMillis(100));
-                      });
-            },
-            URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
+        createSecurityForIncludesDiscoveryMetadataWhenATokenExpiresBeforeStreamAdmission(
+            passedIdentityCheck);
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
@@ -85,35 +54,12 @@ class McpExpiryChallengeTest {
     try (selected;
         var test = TestServer.start(app)) {
       var initialized =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(
-                          """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"expiry-challenge","version":"1.0"}}}
-              """
-                              .getBytes(StandardCharsets.UTF_8)));
+          sendInitializedRequestForIncludesDiscoveryMetadataWhenATokenExpiresBeforeStreamAdmission(
+              test);
       var session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var rejected =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .header("Mcp-Session-Id", session)
-                      .header("X-Expiring", "true")
-                      .body(
-                          "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}"
-                              .getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+          sendRejectedRequestForIncludesDiscoveryMetadataWhenATokenExpiresBeforeStreamAdmission(
+              test, session);
 
       assertTrue(passedIdentityCheck.get(), "Exercise the later stream-admission expiry check");
       assertEquals(401, rejected.statusCode());
@@ -125,6 +71,82 @@ class McpExpiryChallengeTest {
     }
   }
 
+  private McpHttpSecurity
+      createSecurityForIncludesDiscoveryMetadataWhenATokenExpiresBeforeStreamAdmission(
+          AtomicBoolean passedIdentityCheck) {
+    return new McpHttpSecurity(
+        Set.of(),
+        request ->
+            new McpIdentity(
+                "alice:client",
+                McpTransportContext.EMPTY,
+                request.header("X-Expiring").isPresent() ? Instant.now().plusSeconds(2) : null),
+        (identity, ignored) -> {
+          var expiry = identity.expiresAt();
+          if (expiry == null) {
+            return;
+          }
+
+          assertTrue(Instant.now().isBefore(expiry), "Reach authorization with a fresh identity");
+
+          passedIdentityCheck.set(true);
+
+          await("authorization reaches the verified expiry before stream admission")
+              .pollInSameThread()
+              .pollDelay(Duration.ZERO)
+              .pollInterval(Duration.ofMillis(10))
+              .atMost(Duration.ofSeconds(5))
+              .until(
+                  () -> {
+                    if (Thread.interrupted()) {
+                      Thread.currentThread().interrupt();
+                      throw new IllegalStateException(
+                          "The unarmed expiry wait was interrupted", new InterruptedException());
+                    }
+
+                    return !Instant.now().isBefore(expiry.plusMillis(100));
+                  });
+        },
+        URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
+  }
+
+  private HttpResponse<byte[]>
+      sendInitializedRequestForIncludesDiscoveryMetadataWhenATokenExpiresBeforeStreamAdmission(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(
+                    """
+              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "protocolVersion":"2025-11-25","capabilities":{},
+                "clientInfo":{"name":"expiry-challenge","version":"1.0"}}}
+              """
+                        .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<String>
+      sendRejectedRequestForIncludesDiscoveryMetadataWhenATokenExpiresBeforeStreamAdmission(
+          TestServer test, String session) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session)
+                .header("X-Expiring", "true")
+                .body(
+                    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}"
+                        .getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   @Timeout(15)
@@ -134,23 +156,8 @@ class McpExpiryChallengeTest {
     var verifiedExpiry = new AtomicReference<Instant>();
     var interruptedAt = new AtomicReference<Instant>();
     var mcp =
-        Mcp.sync(
-            new McpHttpSecurity(
-                Set.of(),
-                request -> {
-                  var expiry =
-                      request.header("X-Expiring").isPresent()
-                          ? Instant.now().plusSeconds(2)
-                          : null;
-                  if (expiry != null) {
-                    verifiedExpiry.set(expiry);
-                  }
-
-                  return new McpIdentity("alice:client", McpTransportContext.EMPTY, expiry);
-                },
-                (ignored2, ignored3) -> {},
-                URI.create("https://example.com/.well-known/oauth-protected-resource/mcp")),
-            transport -> McpServer.sync(transport).build());
+        createMcpForIncludesDiscoveryMetadataWhenAnArmedTokenExpiresBeforeTheFirstFlush(
+            verifiedExpiry);
     var app = new Shoostr();
     app.routes(
         routes ->
@@ -159,14 +166,14 @@ class McpExpiryChallengeTest {
                 group -> mcp.routes(group, selected),
                 extensions ->
                     extensions.beforeResponseFlush(
-                        (request, ignored4) -> {
+                        (request, ignoredResponse) -> {
                           if (request.header("X-Expiring").isPresent()) {
                             try {
                               // Only the verified deadline may release this first flush.
                               if (!new CountDownLatch(1).await(10, TimeUnit.SECONDS)) {
                                 fail("The token deadline must interrupt the held first flush");
                               }
-                            } catch (InterruptedException ignored5) {
+                            } catch (InterruptedException ignoredFailure) {
                               // Let the following MCP flush guard render the expired token.
                               interruptedAt.set(Instant.now());
                             }
@@ -176,37 +183,15 @@ class McpExpiryChallengeTest {
     try (selected;
         var test = TestServer.start(app)) {
       var initialized =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(
-                          """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"flush-expiry","version":"1.0"}}}
-              """
-                              .getBytes(StandardCharsets.UTF_8)));
+          sendInitializedRequestForIncludesDiscoveryMetadataWhenAnArmedTokenExpiresBeforeTheFirstFlush(
+              test);
       var session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var rejected =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .header("Mcp-Session-Id", session)
-                      .header("X-Expiring", "true")
-                      .body(
-                          "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}"
-                              .getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+          sendRejectedRequestForIncludesDiscoveryMetadataWhenAnArmedTokenExpiresBeforeTheFirstFlush(
+              test, session);
 
       var observedInterruption = interruptedAt.get();
+
       assertNotNull(observedInterruption, "Exercise the armed lifetime's first flush guard");
       assertFalse(
           observedInterruption.isBefore(verifiedExpiry.get()),
@@ -225,19 +210,68 @@ class McpExpiryChallengeTest {
     }
   }
 
+  private Mcp<McpSyncServer>
+      createMcpForIncludesDiscoveryMetadataWhenAnArmedTokenExpiresBeforeTheFirstFlush(
+          AtomicReference<Instant> verifiedExpiry) {
+    return Mcp.sync(
+        new McpHttpSecurity(
+            Set.of(),
+            request -> {
+              var expiry =
+                  request.header("X-Expiring").isPresent() ? Instant.now().plusSeconds(2) : null;
+              if (expiry != null) {
+                verifiedExpiry.set(expiry);
+              }
+
+              return new McpIdentity("alice:client", McpTransportContext.EMPTY, expiry);
+            },
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {},
+            URI.create("https://example.com/.well-known/oauth-protected-resource/mcp")),
+        transport -> McpServer.sync(transport).build());
+  }
+
+  private HttpResponse<byte[]>
+      sendInitializedRequestForIncludesDiscoveryMetadataWhenAnArmedTokenExpiresBeforeTheFirstFlush(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(
+                    """
+              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "protocolVersion":"2025-11-25","capabilities":{},
+                "clientInfo":{"name":"flush-expiry","version":"1.0"}}}
+              """
+                        .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<String>
+      sendRejectedRequestForIncludesDiscoveryMetadataWhenAnArmedTokenExpiresBeforeTheFirstFlush(
+          TestServer test, String session) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session)
+                .header("X-Expiring", "true")
+                .body(
+                    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}"
+                        .getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"GET", "POST", "DELETE"})
   void preservesTheExpiryChallengeWhenARouteRendererCustomizesTheBody(String method)
       throws Exception {
-    var mcp =
-        Mcp.sync(
-            new McpHttpSecurity(
-                Set.of(),
-                ignored6 ->
-                    new McpIdentity("alice:client", McpTransportContext.EMPTY, Instant.EPOCH),
-                (ignored7, ignored8) -> {},
-                URI.create("https://example.com/.well-known/oauth-protected-resource/mcp")),
-            transport -> McpServer.sync(transport).build());
+    var mcp = createMcpForPreservesTheExpiryChallengeWhenARouteRendererCustomizesTheBody();
     var app = new Shoostr();
     app.routes(
         routes ->
@@ -246,7 +280,7 @@ class McpExpiryChallengeTest {
                 group -> {
                   group.exception(
                       AuthenticationRequiredException.class,
-                      (ignored9, ignored10, response) ->
+                      (ignoredFailure, ignoredRequest, response) ->
                           response
                               .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Basic")
                               .body(
@@ -257,13 +291,9 @@ class McpExpiryChallengeTest {
 
     try (var test = TestServer.start(app)) {
       var rejected =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method(method)
-                      .header(HttpHeaders.ACCEPT, "application/json, text/event-stream"),
-              HttpResponse.BodyHandlers.ofString());
+          sendRejectedRequestForPreservesTheExpiryChallengeWhenARouteRendererCustomizesTheBody(
+              test, method);
+
       assertEquals(HttpStatusCodes.UNAUTHORIZED.value(), rejected.statusCode());
       assertEquals("Please authenticate", rejected.body());
       assertEquals(
@@ -272,31 +302,67 @@ class McpExpiryChallengeTest {
     }
   }
 
+  private Mcp<McpSyncServer>
+      createMcpForPreservesTheExpiryChallengeWhenARouteRendererCustomizesTheBody() {
+    return Mcp.sync(
+        new McpHttpSecurity(
+            Set.of(),
+            ignoredRequest ->
+                new McpIdentity("alice:client", McpTransportContext.EMPTY, Instant.EPOCH),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {},
+            URI.create("https://example.com/.well-known/oauth-protected-resource/mcp")),
+        transport -> McpServer.sync(transport).build());
+  }
+
+  private HttpResponse<String>
+      sendRejectedRequestForPreservesTheExpiryChallengeWhenARouteRendererCustomizesTheBody(
+          TestServer test, String method) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method(method)
+                .header(HttpHeaders.ACCEPT, "application/json, text/event-stream"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void retainsTheGenericExpiryChallengeWithoutMetadata(boolean explicitNull) throws Exception {
     Function<Request, McpIdentity> identity =
-        ignored11 -> new McpIdentity("alice:client", McpTransportContext.EMPTY, Instant.EPOCH);
-    var security =
-        explicitNull
-            ? new McpHttpSecurity(Set.of(), identity, (ignored12, ignored13) -> {}, null)
-            : new McpHttpSecurity(Set.of(), identity, (ignored14, ignored15) -> {});
+        ignoredRequest -> new McpIdentity("alice:client", McpTransportContext.EMPTY, Instant.EPOCH);
+    var security = expirySecurity(explicitNull, identity);
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
-      var rejected =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header(HttpHeaders.ACCEPT, "application/json, text/event-stream"));
+      var rejected = sendRejectedRequestForRetainsTheGenericExpiryChallengeWithoutMetadata(test);
+
       assertEquals(HttpStatusCodes.UNAUTHORIZED.value(), rejected.statusCode());
       assertEquals(
           "Bearer error=\"invalid_token\"",
           rejected.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).orElseThrow());
     }
+  }
+
+  private McpHttpSecurity expirySecurity(
+      boolean explicitNull, Function<Request, McpIdentity> identity) {
+    return explicitNull
+        ? new McpHttpSecurity(
+            Set.of(), identity, (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}, null)
+        : new McpHttpSecurity(
+            Set.of(), identity, (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+  }
+
+  private HttpResponse<byte[]>
+      sendRejectedRequestForRetainsTheGenericExpiryChallengeWithoutMetadata(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header(HttpHeaders.ACCEPT, "application/json, text/event-stream"));
   }
 }

@@ -10,6 +10,7 @@ import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.net.http.WebSocket.Builder;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.BlockingQueue;
@@ -46,27 +47,32 @@ class NativeWebSocketExampleTest {
         builder.header("Origin", origin);
       }
 
-      var failure =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  builder
-                      .buildAsync(
-                          new URI(
-                              "ws", test.baseUri().getRawAuthority(), "/native/lobby", null, null),
-                          new Messages())
-                      .thenApply(
-                          socket -> {
-                            socket.abort();
-                            return socket;
-                          })
-                      .get(3, TimeUnit.SECONDS));
+      var failure = assertFailureForRejectsMissingForeignAndAmbiguousOrigins(builder, test);
+
       assertEquals(
           403,
           assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
               .getResponse()
               .statusCode());
     }
+  }
+
+  private ExecutionException assertFailureForRejectsMissingForeignAndAmbiguousOrigins(
+      Builder builder, TestServer test) {
+    return assertThrows(
+        ExecutionException.class,
+        () ->
+            builder
+                .buildAsync(
+                    new URI("ws", test.baseUri().getRawAuthority(), "/native/lobby", null, null),
+                    new Messages())
+                .thenApply(
+                    socket -> {
+                      socket.abort();
+
+                      return socket;
+                    })
+                .get(3, TimeUnit.SECONDS));
   }
 
   @Test
@@ -80,9 +86,11 @@ class NativeWebSocketExampleTest {
 
       try {
         assertEquals("chat.v2", socket.getSubprotocol());
+
         socket.sendText("hel", false).get(3, TimeUnit.SECONDS);
         socket.sendText("lo", true).get(3, TimeUnit.SECONDS);
         socket.sendText("again", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("lobby:hello", messages.text.poll(3, TimeUnit.SECONDS));
         assertEquals("lobby:again", messages.text.poll(3, TimeUnit.SECONDS));
       } finally {
@@ -103,8 +111,11 @@ class NativeWebSocketExampleTest {
       try {
         socket.sendBinary(ByteBuffer.wrap(new byte[] {0, 1}), false).get(3, TimeUnit.SECONDS);
         socket.sendBinary(ByteBuffer.wrap(new byte[] {(byte) 255}), true).get(3, TimeUnit.SECONDS);
+
         assertArrayEquals(new byte[] {0, 1, (byte) 255}, messages.binary.poll(3, TimeUnit.SECONDS));
+
         socket.sendText("after binary", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("lobby:after binary", messages.text.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -147,10 +158,15 @@ class NativeWebSocketExampleTest {
 
       try {
         socket.sendText("a".repeat(64), true).get(3, TimeUnit.SECONDS);
+
         assertEquals("lobby:" + "a".repeat(64), messages.text.poll(3, TimeUnit.SECONDS));
+
         socket.sendBinary(ByteBuffer.allocate(64), true).get(3, TimeUnit.SECONDS);
+
         assertArrayEquals(new byte[64], messages.binary.poll(3, TimeUnit.SECONDS));
+
         socket.sendClose(WebSocket.NORMAL_CLOSURE, "Finished").get(3, TimeUnit.SECONDS);
+
         assertEquals(1000, messages.closeCode.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -195,23 +211,30 @@ class NativeWebSocketExampleTest {
       }
 
       var failure =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  builder
-                      .buildAsync(
-                          new URI(
-                              "ws", test.baseUri().getRawAuthority(), "/native/lobby", null, null),
-                          new Messages())
-                      .thenApply(
-                          socket -> {
-                            socket.abort();
-                            return socket;
-                          })
-                      .get(3, TimeUnit.SECONDS));
+          assertFailureForRejectsAHandshakeThatDoesNotOfferTheRequiredSubprotocol(builder, test);
+
       var handshake = assertInstanceOf(WebSocketHandshakeException.class, failure.getCause());
       assertEquals(400, handshake.getResponse().statusCode());
     }
+  }
+
+  private ExecutionException
+      assertFailureForRejectsAHandshakeThatDoesNotOfferTheRequiredSubprotocol(
+          Builder builder, TestServer test) {
+    return assertThrows(
+        ExecutionException.class,
+        () ->
+            builder
+                .buildAsync(
+                    new URI("ws", test.baseUri().getRawAuthority(), "/native/lobby", null, null),
+                    new Messages())
+                .thenApply(
+                    socket -> {
+                      socket.abort();
+
+                      return socket;
+                    })
+                .get(3, TimeUnit.SECONDS));
   }
 
   private static WebSocket connect(HttpClient client, TestServer test, Messages messages)
@@ -228,15 +251,19 @@ class NativeWebSocketExampleTest {
   private static final class Messages implements WebSocket.Listener {
     private final BlockingQueue<String> text;
     private final StringBuilder partial;
+
     private final BlockingQueue<byte[]> binary;
     private final ByteArrayOutputStream partialBinary;
+
     private final CompletableFuture<Integer> closeCode;
 
     private Messages() {
       this.text = new LinkedBlockingQueue<>();
       this.partial = new StringBuilder();
+
       this.binary = new LinkedBlockingQueue<>();
       this.partialBinary = new ByteArrayOutputStream();
+
       this.closeCode = new CompletableFuture<>();
     }
 
@@ -249,6 +276,7 @@ class NativeWebSocketExampleTest {
       }
 
       socket.request(1);
+
       return CompletableFuture.completedFuture(null);
     }
 
@@ -263,12 +291,14 @@ class NativeWebSocketExampleTest {
       }
 
       socket.request(1);
+
       return CompletableFuture.completedFuture(null);
     }
 
     @Override
     public CompletionStage<?> onClose(WebSocket socket, int code, String reason) {
       closeCode.complete(code);
+
       return CompletableFuture.completedFuture(null);
     }
 

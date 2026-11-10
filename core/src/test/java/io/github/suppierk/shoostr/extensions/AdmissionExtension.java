@@ -12,6 +12,7 @@ public record AdmissionExtension(Handler callback) implements TestExtension<Hand
   @Override
   public Handler configure(Lifecycle endpoint, Handler inherited) {
     endpoint.beforeRouteHandler(callback);
+
     return callback;
   }
 }

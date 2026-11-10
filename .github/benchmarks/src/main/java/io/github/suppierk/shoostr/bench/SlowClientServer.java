@@ -69,20 +69,21 @@ public final class SlowClientServer implements AutoCloseable {
           }
         });
     app.routes().post("/slow-body", this::consumeBody);
-    app.routes().get("/blocked", (ignored2, response) -> awaitRelease(response));
-    app.routes().post("/arm", (ignored3, response) -> arm(response));
+    app.routes().get("/blocked", (ignoredRequest, response) -> awaitRelease(response));
+    app.routes().post("/arm", (ignoredRequest, response) -> arm(response));
     app.routes()
         .post(
             "/release",
-            (ignored4, response) -> {
+            (ignoredRequest, response) -> {
               releaseWork();
+
               response.text("released");
             });
-    app.routes().get("/healthy", (ignored5, response) -> response.text("healthy"));
+    app.routes().get("/healthy", (ignoredRequest, response) -> response.text("healthy"));
     app.routes()
         .get(
             "/configuration",
-            (ignored6, response) ->
+            (ignoredRequest, response) ->
                 response.text(
                     "max_request_bytes="
                         + defaults.getMaxRequestBytes()
@@ -93,7 +94,7 @@ public final class SlowClientServer implements AutoCloseable {
     app.routes()
         .get(
             "/state",
-            (ignored7, response) ->
+            (ignoredRequest, response) ->
                 response.body("application/json", state().getBytes(StandardCharsets.UTF_8)));
   }
 
@@ -109,8 +110,11 @@ public final class SlowClientServer implements AutoCloseable {
       throw new IllegalArgumentException("Supply at most one loopback port");
     }
 
-    try (var server = new SlowClientServer(args.length == 0 ? 18080 : Integer.parseInt(args[0]))) {
+    int port = args.length == 0 ? 18080 : Integer.parseInt(args[0]);
+
+    try (var server = new SlowClientServer(port)) {
       server.start();
+
       Runtime.getRuntime()
           .addShutdownHook(
               Thread.ofPlatform()
@@ -123,7 +127,9 @@ public final class SlowClientServer implements AutoCloseable {
                           System.err.println("Fixture shutdown failed: " + failure);
                         }
                       }));
+
       System.out.println("READY " + server.port());
+
       new CountDownLatch(1).await();
     }
   }
@@ -172,6 +178,7 @@ public final class SlowClientServer implements AutoCloseable {
 
     try {
       request.input().transferTo(OutputStream.nullOutputStream());
+
       response.text("consumed");
     } finally {
       synchronized (phase) {
@@ -217,6 +224,7 @@ public final class SlowClientServer implements AutoCloseable {
 
       release = new CountDownLatch(1);
       peakWork = 0;
+
       response.text("armed");
     }
   }

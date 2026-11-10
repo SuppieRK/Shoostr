@@ -36,13 +36,18 @@ class PublishedConsumerTest {
   @ParameterizedTest
   @ValueSource(strings = {"pom", "module"})
   void rejectsUnexpectedTestLibrariesInThePublishedRuntimeGraph(String metadata) throws Exception {
-    var output =
-        runConsumer(
-            metadata,
-            "unexpected-runtime",
-            "\ndependencies { runtimeOnly 'org.junit.jupiter:junit-jupiter-api:6.1.3' }\n",
-            1);
+    var output = createOutputForRejectsUnexpectedTestLibrariesInThePublishedRuntimeGraph(metadata);
+
     assertTrue(output.contains("Unexpected runtime dependency"), output);
+  }
+
+  private String createOutputForRejectsUnexpectedTestLibrariesInThePublishedRuntimeGraph(
+      String metadata) throws Exception {
+    return runConsumer(
+        metadata,
+        "unexpected-runtime",
+        "\ndependencies { runtimeOnly 'org.junit.jupiter:junit-jupiter-api:6.1.3' }\n",
+        1);
   }
 
   @ParameterizedTest
@@ -50,6 +55,7 @@ class PublishedConsumerTest {
   void cannotResolveTheConsumerWhenThePublishedHttpModuleIsMissing(String metadata)
       throws Exception {
     var output = runConsumer(metadata, "missing-http", "", 1);
+
     assertTrue(output.contains("Could not find io.github.suppierk:shoostr-http:"), output);
   }
 
@@ -57,6 +63,7 @@ class PublishedConsumerTest {
   @ValueSource(strings = {"pom", "module"})
   void rejectsResolvedBinariesThatDoNotMatchTheCurrentProducer(String metadata) throws Exception {
     var output = runConsumer(metadata, "stale-core", "", 1);
+
     assertTrue(output.contains("Artifact hash mismatch: shoostr-core"), output);
   }
 
@@ -164,12 +171,7 @@ class PublishedConsumerTest {
     Files.write(evidence.resolve("command.txt"), command);
     Files.writeString(evidence.resolve("wrapper-working-directory.txt"), root.toString());
     var output = evidence.resolve("wrapper.log");
-    var process =
-        new ProcessBuilder(command)
-            .directory(root.toFile())
-            .redirectErrorStream(true)
-            .redirectOutput(output.toFile())
-            .start();
+    var process = createProcessForRunConsumer(command, root, output);
 
     try (var ignored = (AutoCloseable) () -> stopOwnedProcesses(process)) {
       if (waitForReady) {
@@ -200,11 +202,21 @@ class PublishedConsumerTest {
 
       assertTrue(process.waitFor(240, TimeUnit.SECONDS), "Consumer timed out; see " + output);
       assertEquals(exit, process.exitValue(), () -> readOutput(output));
+
       return Files.readString(output);
     } catch (InterruptedException failure) {
       Thread.currentThread().interrupt();
       throw failure;
     }
+  }
+
+  private static Process createProcessForRunConsumer(
+      ArrayList<String> command, Path root, Path output) throws IOException {
+    return new ProcessBuilder(command)
+        .directory(root.toFile())
+        .redirectErrorStream(true)
+        .redirectOutput(output.toFile())
+        .start();
   }
 
   private static void assertOwnedProcessesStopped(String scenario) throws IOException {
@@ -235,13 +247,14 @@ class PublishedConsumerTest {
         try {
           TimeUnit.NANOSECONDS.sleep(
               Math.clamp(deadline - System.nanoTime(), 1L, TimeUnit.MILLISECONDS.toNanos(10)));
-        } catch (InterruptedException ignored2) {
+        } catch (InterruptedException ignoredFailure) {
           interrupted = true;
         }
       }
 
       var survivors =
           owned.stream().filter(ProcessHandle::isAlive).map(ProcessHandle::pid).toList();
+
       assertTrue(survivors.isEmpty(), "Owned processes survived consumer cleanup: " + survivors);
     } finally {
       if (interrupted) {

@@ -34,14 +34,14 @@ class ExceptionHandlingExampleTest {
                 group -> {
                   group.exception(
                       IllegalStateException.class,
-                      (ignored, ignored2, response) -> {
+                      (ignored, ignoredRequest, response) -> {
                         response
                             .setHeader("X-Renderer-Diagnostic", "private")
                             .text("Private renderer output");
                         throw new IOException("Private renderer diagnostics");
                       });
                   group.get(
-                      (ignored3, ignored4) -> {
+                      (ignoredRequest, ignoredResponse) -> {
                         throw new IllegalStateException("Private original diagnostics");
                       });
                 });
@@ -51,6 +51,7 @@ class ExceptionHandlingExampleTest {
               test.send(
                   request -> request.path("/renderer-failure"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(500, response.statusCode());
           assertEquals("Internal Server Error", response.body());
           assertTrue(response.headers().firstValue("X-Renderer-Diagnostic").isEmpty());
@@ -71,14 +72,14 @@ class ExceptionHandlingExampleTest {
         app.routes()
             .exception(
                 IOException.class,
-                (ignored5, ignored6, response) -> {
+                (ignoredFailure, ignoredRequest, response) -> {
                   rendererCalls.incrementAndGet();
                   response.text("Must not run after commitment");
                 });
         app.routes()
             .get(
                 "/committed",
-                (ignored7, response) -> {
+                (ignoredRequest, response) -> {
                   var stream = response.startStream("text/plain");
                   stream.write("visible");
                   stream.flush();
@@ -96,12 +97,15 @@ class ExceptionHandlingExampleTest {
                 test.send(
                     request -> request.path("/committed").timeout(Duration.ofSeconds(5)),
                     HttpResponse.BodyHandlers.ofInputStream());
+
             assertEquals(200, response.statusCode());
 
             try (var input = response.body()) {
               assertEquals("visible", new String(input.readNBytes(7), StandardCharsets.UTF_8));
+
               release.countDown();
               var tail = new ByteArrayOutputStream();
+
               assertThrows(
                   IOException.class,
                   () -> {
@@ -133,6 +137,7 @@ class ExceptionHandlingExampleTest {
 
     try (var test = TestServer.start(ExceptionHandlingExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(status, response.statusCode());
       assertEquals(body, response.body());
     }
@@ -149,6 +154,7 @@ class ExceptionHandlingExampleTest {
 
     try (var test = TestServer.start(ExceptionHandlingExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(status, response.statusCode());
       assertEquals(body, response.body());
       assertEquals(
@@ -169,6 +175,7 @@ class ExceptionHandlingExampleTest {
 
     try (var test = TestServer.start(ExceptionHandlingExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(status, response.statusCode());
       assertEquals(body, response.body());
     }
@@ -180,6 +187,7 @@ class ExceptionHandlingExampleTest {
     try (var test = TestServer.start(ExceptionHandlingExample.application())) {
       var response =
           test.send(request -> request.path("/checkout"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(500, response.statusCode());
       assertEquals("Request failed", response.body());
       assertEquals(

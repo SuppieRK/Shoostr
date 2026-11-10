@@ -24,9 +24,11 @@ public final class ResponseCookiesExample {
             .withPath("/preferences")
             .withMaxAge(3600)
             .withSameSite(Cookie.SameSite.LAX);
+
     // Serve this Secure __Host- cookie over HTTPS, with Path=/ and no Domain.
     var secureTheme =
         Cookie.secure("__Host-theme", "dark").withHttpOnly(true).withSameSite(Cookie.SameSite.NONE);
+
     return new Shoostr()
         .routes(
             routes ->
@@ -41,7 +43,7 @@ public final class ResponseCookiesExample {
                             response.text(request.cookie(THEME_COOKIE).orElse("light")))
                     .delete(
                         THEME_PATH,
-                        (ignored2, response) ->
+                        (ignoredRequest, response) ->
                             response.removeCookie(theme).status(HttpStatusCodes.NO_CONTENT.value()))
                     // A browser will not attach the path-scoped preference to this endpoint.
                     .get(
@@ -50,11 +52,11 @@ public final class ResponseCookiesExample {
                             response.text(request.cookie(THEME_COOKIE).orElse("light")))
                     .post(
                         "/secure-preference",
-                        (ignored3, response) ->
+                        (ignoredRequest, response) ->
                             response.cookie(secureTheme).status(HttpStatusCodes.NO_CONTENT.value()))
                     .delete(
                         "/secure-preference",
-                        (ignored4, response) ->
+                        (ignoredRequest, response) ->
                             response
                                 .removeCookie(secureTheme)
                                 .status(HttpStatusCodes.NO_CONTENT.value())));

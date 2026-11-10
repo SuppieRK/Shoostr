@@ -49,12 +49,8 @@ class ServerSentEventsTest {
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/events?qp=my-qp")
-                          .header("Accept", accept)
-                          .timeout(Duration.ofSeconds(3)));
+              sendResultForEmitsTheQueryParameterAsExactEventBytesForPositiveAcceptHeaders(
+                  test, accept);
 
           assertEquals(200, result.statusCode());
           assertEquals(
@@ -64,6 +60,17 @@ class ServerSentEventsTest {
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForEmitsTheQueryParameterAsExactEventBytesForPositiveAcceptHeaders(
+          TestServer test, String accept) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/events?qp=my-qp")
+                .header("Accept", accept)
+                .timeout(Duration.ofSeconds(3)));
   }
 
   @Test
@@ -105,9 +112,11 @@ class ServerSentEventsTest {
         app.routes()
             .sse(
                 "/events",
-                (ignored2, response) -> {
+                (ignoredRequest, response) -> {
                   var events = response.startEventStream();
+
                   assertThrows(NullPointerException.class, () -> events.send((String) null));
+
                   events.send("valid");
                 });
 
@@ -137,17 +146,19 @@ class ServerSentEventsTest {
       var app = new Shoostr(options);
 
       try (Closeable appCleanup3 = app::close) {
-        app.beforeResponseFlush((ignored3, ignored4) -> before.incrementAndGet());
-        app.afterResponseFlush((ignored5, ignored6) -> after.incrementAndGet());
+        app.beforeResponseFlush((ignoredRequest, ignoredResponse) -> before.incrementAndGet());
+        app.afterResponseFlush((ignoredRequest, ignoredResponse) -> after.incrementAndGet());
         app.routes()
-            .sse("/events", (ignored7, response) -> response.startEventStream().send("abcd"));
+            .sse("/events", (ignoredRequest, response) -> response.startEventStream().send("abcd"));
 
         try (var test = TestServer.start(app)) {
 
           var result = test.send(request -> request.path("/events"));
 
           assertArrayEquals("data: abcd\n\n".getBytes(StandardCharsets.UTF_8), result.body());
+
           await().atMost(Duration.ofSeconds(3)).untilAsserted(() -> assertEquals(4, after.get()));
+
           assertEquals(4, before.get());
         }
       }
@@ -163,7 +174,8 @@ class ServerSentEventsTest {
 
       try (Closeable appCleanup4 = app::close) {
         app.routes()
-            .sse("/events", (ignored8, response) -> response.startEventStream().send(payload));
+            .sse(
+                "/events", (ignoredRequest, response) -> response.startEventStream().send(payload));
 
         try (var test = TestServer.start(app)) {
 
@@ -192,7 +204,7 @@ class ServerSentEventsTest {
         app.routes()
             .sse(
                 "/events",
-                (ignored9, response) -> {
+                (ignoredRequest, response) -> {
                   var events = response.startEventStream();
                   for (int sequence = 0; sequence < 100; sequence++) {
                     events.send(sequence + ":" + payload);
@@ -221,7 +233,8 @@ class ServerSentEventsTest {
       try (Closeable appCleanup6 = app::close) {
         app.routes()
             .sse(
-                "/events", (ignored10, response) -> response.startEventStream().send("café\nnext"));
+                "/events",
+                (ignoredRequest, response) -> response.startEventStream().send("café\nnext"));
 
         try (var test = TestServer.start(app)) {
 
@@ -248,7 +261,7 @@ class ServerSentEventsTest {
         app.routes()
             .sse(
                 "/events",
-                (ignored11, response) -> response.startEventStream().send("café\n next"));
+                (ignoredRequest, response) -> response.startEventStream().send("café\n next"));
 
         try (var test = TestServer.start(app)) {
 
@@ -274,17 +287,19 @@ class ServerSentEventsTest {
         app.routes()
             .sse(
                 "/events",
-                (ignored12, response) -> {
+                (ignoredRequest, response) -> {
                   var events = response.startEventStream();
                   var event =
                       SseEvent.of("ready")
                           .withEvent("update")
                           .withId("cursor-7")
                           .withRetry(Duration.ofSeconds(2));
+
                   assertSame(events, events.send("café\nnext"));
                   assertSame(events, events.send(event));
                   assertSame(events, events.comment("connected\nnext"));
                   assertSame(events, events.heartbeat());
+
                   events.send("tail").send(SseEvent.of("last")).comment("done").heartbeat();
                 });
 
@@ -330,7 +345,8 @@ class ServerSentEventsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup9 = app::close) {
-        app.routes().sse("/events", (ignored13, response) -> response.text("not an event stream"));
+        app.routes()
+            .sse("/events", (ignoredRequest, response) -> response.text("not an event stream"));
 
         try (var test = TestServer.start(app)) {
 
@@ -352,7 +368,8 @@ class ServerSentEventsTest {
         app.routes()
             .sse(
                 "/events",
-                (ignored14, response) -> response.startStream("application/json").write("wrong"));
+                (ignoredRequest, response) ->
+                    response.startStream("application/json").write("wrong"));
 
         try (var test = TestServer.start(app)) {
 
@@ -377,7 +394,7 @@ class ServerSentEventsTest {
                 routes ->
                     routes.sse(
                         "/events",
-                        (ignored15, response) -> response.startEventStream().send("scoped")));
+                        (ignoredRequest, response) -> response.startEventStream().send("scoped")));
 
         try (var test = TestServer.start(app)) {
 
@@ -401,11 +418,11 @@ class ServerSentEventsTest {
 
       try (Closeable appCleanup12 = app::close) {
         var routes = app.routes();
-        routes.sse("/events", (ignored16, response) -> response.startEventStream().send("ok"));
+        routes.sse("/events", (ignoredRequest, response) -> response.startEventStream().send("ok"));
 
         assertThrows(
             IllegalArgumentException.class,
-            () -> routes.get("/events", (ignored17, response) -> response.text("other")));
+            () -> routes.get("/events", (ignoredRequest, response) -> response.text("other")));
       }
     }
   }
@@ -416,7 +433,7 @@ class ServerSentEventsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup13 = app::close) {
-        app.routes().sse("/events", (ignored18, response) -> response.status(204));
+        app.routes().sse("/events", (ignoredRequest, response) -> response.status(204));
 
         try (var test = TestServer.start(app)) {
 
@@ -438,7 +455,7 @@ class ServerSentEventsTest {
       try (Closeable appCleanup14 = app::close) {
         app.exception(
             IllegalArgumentException.class,
-            (ignored19, ignored20, response) ->
+            (ignoredFailure, ignoredRequest, response) ->
                 response
                     .status(422)
                     .startStream("application/json")
@@ -446,7 +463,7 @@ class ServerSentEventsTest {
         app.routes()
             .sse(
                 "/events",
-                (ignored21, ignored22) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new IllegalArgumentException("invalid subscription");
                 });
 
@@ -477,7 +494,7 @@ class ServerSentEventsTest {
         app.routes()
             .sse(
                 "/events",
-                (ignored23, response) -> {
+                (ignoredRequest, response) -> {
                   try {
                     var events = response.startEventStream();
                     events.send("");
@@ -498,11 +515,13 @@ class ServerSentEventsTest {
 
             try (var input = result.body()) {
               var frames = "data: \n\ndata: first\n\ndata: second\n\n";
+
               assertEquals(
                   frames,
                   new String(
                       input.readNBytes(frames.getBytes(StandardCharsets.UTF_8).length),
                       StandardCharsets.UTF_8));
+
               await("the event handler remains active until released")
                   .pollDelay(Duration.ZERO)
                   .pollInterval(Duration.ofMillis(10))
@@ -511,6 +530,7 @@ class ServerSentEventsTest {
                   .failFast("the event handler exited before release", () -> exited.getCount() == 0)
                   .until(() -> exited.getCount() > 0);
               release.countDown();
+
               assertEquals(-1, input.read());
               assertTrue(exited.await(3, TimeUnit.SECONDS));
             }
@@ -531,7 +551,7 @@ class ServerSentEventsTest {
         app.routes()
             .get(
                 "/events",
-                (ignored24, response) -> {
+                (ignoredRequest, response) -> {
                   var event =
                       SseEvent.of("ready")
                           .withEvent("update")
@@ -562,7 +582,7 @@ class ServerSentEventsTest {
         app.routes()
             .get(
                 "/events",
-                (ignored25, response) -> {
+                (ignoredRequest, response) -> {
                   var events = response.startEventStream();
                   events.send(SseEvent.of("first\r\nid: forged\rtail\n").withId("good"));
                   events.comment("note\rretry: 1\n");
@@ -594,7 +614,7 @@ class ServerSentEventsTest {
         app.routes()
             .sse(
                 "/events",
-                (ignored26, response) -> {
+                (ignoredRequest, response) -> {
                   var events = response.startEventStream();
                   var payload = "first\rid: forged\r";
                   events.send(payload);
@@ -631,6 +651,7 @@ class ServerSentEventsTest {
     var event = SseEvent.of("x");
     var negativeRetry = Duration.ofMillis(-1);
     var overflowingRetry = Duration.ofSeconds(Long.MAX_VALUE);
+
     assertThrows(IllegalArgumentException.class, () -> event.withEvent("a\nb"));
     assertThrows(IllegalArgumentException.class, () -> event.withEvent("a\rb"));
     assertThrows(IllegalArgumentException.class, () -> event.withEvent("a\0b"));
@@ -692,7 +713,7 @@ class ServerSentEventsTest {
       try (Closeable appCleanup20 = app::close) {
 
         app.routes()
-            .get("/events", (ignored27, response) -> response.startEventStream().send("h2"));
+            .get("/events", (ignoredRequest, response) -> response.startEventStream().send("h2"));
 
         try (var test =
             TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_2))) {
@@ -727,7 +748,7 @@ class ServerSentEventsTest {
         app.routes()
             .get(
                 "/events",
-                (ignored28, response) -> {
+                (ignoredRequest, response) -> {
                   var events = response.startEventStream();
 
                   try {
@@ -757,6 +778,7 @@ class ServerSentEventsTest {
 
         socket.close();
         await().atMost(Duration.ofSeconds(3)).until(() -> cleaned.getCount() == 0);
+
         assertEquals(0, writeFailed.getCount());
       }
     }
@@ -781,7 +803,7 @@ class ServerSentEventsTest {
         app.routes()
             .get(
                 "/events",
-                (ignored29, response) -> {
+                (ignoredRequest, response) -> {
                   var events = response.startEventStream();
 
                   try {
@@ -804,6 +826,7 @@ class ServerSentEventsTest {
                 "GET /events HTTP/1.1\r\nHost: localhost\r\n\r\n"
                     .getBytes(StandardCharsets.US_ASCII));
         socket.getOutputStream().flush();
+
         assertTrue(firstSent.await(3, TimeUnit.SECONDS));
 
         await()
@@ -841,7 +864,7 @@ class ServerSentEventsTest {
         app.routes()
             .get(
                 "/events",
-                (ignored30, response) -> {
+                (ignoredRequest, response) -> {
                   try {
                     response.startEventStream().send("ready");
                     new CountDownLatch(1).await();

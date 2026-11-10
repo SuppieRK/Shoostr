@@ -221,12 +221,14 @@ class RegistrationEqualityTest {
                   (request, response) -> response.setHeader("X-Scope", "second"));
               scopes.add(extensions);
             });
+
     return scopes;
   }
 
   private static <K, V> IdentityHashMap<K, V> identityMap(K key, V value) {
     var result = new IdentityHashMap<K, V>();
     result.put(key, value);
+
     return result;
   }
 

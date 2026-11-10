@@ -8,6 +8,7 @@ import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
@@ -19,20 +20,24 @@ class RequestExampleTest {
   void preservesRepeatedFormValuesInOrder() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/forms")
-                      .method(HttpMethods.POST)
-                      .header(
-                          HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED.value())
-                      .body("name=Ada&tag=java&tag=HTTP%20API".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForPreservesRepeatedFormValuesInOrder(test);
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("Ada; tags=java,HTTP API", response.body()));
     }
+  }
+
+  private HttpResponse<String> sendResponseForPreservesRepeatedFormValuesInOrder(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/forms")
+                .method(HttpMethods.POST)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED.value())
+                .body("name=Ada&tag=java&tag=HTTP%20API".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -40,6 +45,7 @@ class RequestExampleTest {
 
     try (var test = TestServer.start(RequestExample.application(name -> name, () -> true))) {
       var response = test.send(request -> request.path("/preview"));
+
       assertAll(
           () -> assertEquals(404, response.statusCode()),
           () ->
@@ -74,6 +80,7 @@ class RequestExampleTest {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response = test.send(request -> request.path("/preview").method(HttpMethods.POST));
+
       assertAll(
           () -> assertEquals(405, response.statusCode()),
           () ->
@@ -159,6 +166,7 @@ class RequestExampleTest {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response = test.send(request -> request.path("/echo").method(HttpMethods.QUERY));
+
       assertAll(
           () -> assertEquals(405, response.statusCode()),
           () ->
@@ -179,21 +187,26 @@ class RequestExampleTest {
 
     try (var test = TestServer.start(RequestExample.application(name -> name, enabled::get))) {
       var disabled = test.send(request -> request.path("/preview").header("X-Preview", "true"));
+
       assertAll(
           () -> assertEquals(404, disabled.statusCode()),
           () ->
               assertEquals(
                   "no-store",
                   disabled.headers().firstValue(HttpHeaders.CACHE_CONTROL.value()).orElseThrow()));
+
       enabled.set(true);
       var available =
           test.send(
               request -> request.path("/preview").header("X-Preview", "true"),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, available.statusCode()),
           () -> assertEquals("Preview enabled", available.body()));
+
       enabled.set(false);
+
       assertEquals(
           404,
           test.send(request -> request.path("/preview").header("X-Preview", "true")).statusCode());
@@ -208,6 +221,7 @@ class RequestExampleTest {
           test.send(
               request -> request.path("/paths/guides/HTTP%20API"),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("guides/HTTP API", response.body()));
@@ -220,6 +234,7 @@ class RequestExampleTest {
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(request -> request.path("/items/42"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("42", response.body()));
@@ -232,6 +247,7 @@ class RequestExampleTest {
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(request -> request.path("/preferences").header("X-Request-Id", "demo-42"));
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () ->
@@ -249,6 +265,7 @@ class RequestExampleTest {
               HttpResponse.BodyHandlers.ofString());
       var subsequent =
           test.send(request -> request.path("/preferences"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, initial.statusCode()),
           () -> assertEquals("unset", initial.body()),
@@ -261,38 +278,47 @@ class RequestExampleTest {
   void decodesTheFormNameIndependentlyOfQueryParameters() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> "Welcome " + name))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/forms?name=QueryName")
-                      .method(HttpMethods.POST)
-                      .header(
-                          HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED.value())
-                      .body("name=Ada+Lovelace".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForDecodesTheFormNameIndependentlyOfQueryParameters(test);
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("Welcome Ada Lovelace; tags=", response.body()));
     }
   }
 
+  private HttpResponse<String> sendResponseForDecodesTheFormNameIndependentlyOfQueryParameters(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/forms?name=QueryName")
+                .method(HttpMethods.POST)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_FORM_URLENCODED.value())
+                .body("name=Ada+Lovelace".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void acceptsAQueryBodyThroughGenericEnumMethodRegistration() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/query")
-                      .method(HttpMethods.QUERY)
-                      .body("tag=java".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForAcceptsAQueryBodyThroughGenericEnumMethodRegistration(test);
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("tag=java", response.body()));
     }
+  }
+
+  private HttpResponse<String> sendResponseForAcceptsAQueryBodyThroughGenericEnumMethodRegistration(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/query")
+                .method(HttpMethods.QUERY)
+                .body("tag=java".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -300,6 +326,7 @@ class RequestExampleTest {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response = test.send(request -> request.path("/echo").method(HttpMethods.OPTIONS));
+
       assertAll(
           () -> assertEquals(204, response.statusCode()),
           () ->
@@ -315,6 +342,7 @@ class RequestExampleTest {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response = test.send(request -> request.path("/echo").method(HttpMethods.HEAD));
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () ->
@@ -328,6 +356,7 @@ class RequestExampleTest {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response = test.send(request -> request.path("/echo").method(HttpMethods.DELETE));
+
       assertAll(
           () -> assertEquals(204, response.statusCode()),
           () -> assertArrayEquals(new byte[0], response.body()));
@@ -338,14 +367,8 @@ class RequestExampleTest {
   void echoesPatchTextAndIdentifiesTheRequestMethod() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/echo")
-                      .method(HttpMethods.PATCH)
-                      .body("partial input".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForEchoesPatchTextAndIdentifiesTheRequestMethod(test);
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("partial input", response.body()),
@@ -355,17 +378,23 @@ class RequestExampleTest {
     }
   }
 
+  private HttpResponse<String> sendResponseForEchoesPatchTextAndIdentifiesTheRequestMethod(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/echo")
+                .method(HttpMethods.PATCH)
+                .body("partial input".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void preservesRawBytesSubmittedWithPut() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/echo")
-                      .method(HttpMethods.PUT)
-                      .body(new byte[] {0, 1, 127, -128, -1}));
+      var response = sendResponseForPreservesRawBytesSubmittedWithPut(test);
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertArrayEquals(new byte[] {0, 1, 127, -128, -1}, response.body()),
@@ -376,23 +405,35 @@ class RequestExampleTest {
     }
   }
 
+  private HttpResponse<byte[]> sendResponseForPreservesRawBytesSubmittedWithPut(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/echo").method(HttpMethods.PUT).body(new byte[] {0, 1, 127, -128, -1}));
+  }
+
   @Test
   void echoesUtf8TextSubmittedWithPost() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/echo")
-                      .method(HttpMethods.POST)
-                      .header(HttpHeaders.CONTENT_TYPE, MediaType.TEXT_PLAIN.value())
-                      .body("Hello, 世界!".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForEchoesUtf8TextSubmittedWithPost(test);
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("Hello, 世界!", response.body()));
     }
+  }
+
+  private HttpResponse<String> sendResponseForEchoesUtf8TextSubmittedWithPost(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/echo")
+                .method(HttpMethods.POST)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.TEXT_PLAIN.value())
+                .body("Hello, 世界!".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -401,6 +442,7 @@ class RequestExampleTest {
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(request -> request.path("/echo"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("Send text with POST or PATCH, or bytes with PUT", response.body()));
@@ -415,6 +457,7 @@ class RequestExampleTest {
           test.send(
               request -> request.path("/welcome?name=Ada%20Lovelace"),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("Welcome Ada Lovelace", response.body()));
@@ -427,6 +470,7 @@ class RequestExampleTest {
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
           test.send(request -> request.path("/search"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()), () -> assertEquals("", response.body()));
     }
@@ -446,6 +490,7 @@ class RequestExampleTest {
     try (var test = TestServer.start(RequestExample.application(name -> "Welcome " + name))) {
       var response =
           test.send(request -> request.path("/welcome"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("Welcome World", response.body()));
@@ -460,6 +505,7 @@ class RequestExampleTest {
           test.send(
               request -> request.path("/search?tag=java&tag=HTTP%20API"),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("java,HTTP API", response.body()));
@@ -473,6 +519,7 @@ class RequestExampleTest {
       var response =
           test.send(
               request -> request.path("/greetings/Ada"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("Test Ada", response.body()));

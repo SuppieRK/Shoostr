@@ -19,12 +19,15 @@ import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -59,21 +62,18 @@ class SelectiveTracingIsolationTest {
             .get(
                 "/unselected",
                 workers,
-                (ignored2, response) -> response.text(Span.current().getSpanContext().getTraceId()),
+                (ignoredRequest, response) ->
+                    response.text(Span.current().getSpanContext().getTraceId()),
                 lifecycle -> lifecycle.withoutExtension(selective));
 
         try (var test = TestServer.start(app)) {
           var response =
-              test.send(
-                  request ->
-                      request
-                          .path("/unselected")
-                          .header(
-                              "traceparent",
-                              "00-11111111111111111111111111111111-0123456789012345-01"),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResponseForPreservesGlobalSpanWithSelectiveTracingInstalledInEitherOrder(test);
+
           assertEquals("11111111111111111111111111111111", response.body());
+
           completed.get(5, TimeUnit.SECONDS);
+
           assertEquals(1, exporter.getFinishedSpanItems().size());
           assertFalse(
               workers
@@ -82,6 +82,17 @@ class SelectiveTracingIsolationTest {
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForPreservesGlobalSpanWithSelectiveTracingInstalledInEitherOrder(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/unselected")
+                .header("traceparent", "00-11111111111111111111111111111111-0123456789012345-01"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -111,19 +122,19 @@ class SelectiveTracingIsolationTest {
                 .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
                 .build();
         var tracing = new OpenTelemetryTracing(telemetry);
-        app.afterRequest(ignored3 -> completed.countDown());
+        app.afterRequest(ignoredRequestOutcome -> completed.countDown());
         app.routes()
             .get(
                 "/outer",
                 workers,
-                (ignored4, response) -> {
+                (ignoredRequest, response) -> {
                   var child =
                       applicationChild
                           ? telemetry.getTracer("test").spanBuilder("outer-business").startSpan()
                           : null;
                   var current = child == null ? Span.current() : child;
 
-                  try (var ignored5 = current.makeCurrent()) {
+                  try (var ignoredScope = current.makeCurrent()) {
                     outerThread.complete(Thread.currentThread());
                     outerSpan.complete(current.getSpanContext().getSpanId());
                     entered.countDown();
@@ -132,6 +143,7 @@ class SelectiveTracingIsolationTest {
                     }
 
                     assertTrue(workers.awaitQuiescence(5, TimeUnit.SECONDS));
+
                     response.text(Span.current().getSpanContext().getSpanId());
                   } finally {
                     if (child != null) {
@@ -139,11 +151,11 @@ class SelectiveTracingIsolationTest {
                     }
                   }
                 },
-                e -> e.withExtension(tracing))
+                lifecycle -> lifecycle.withExtension(tracing))
             .get(
                 "/inner",
                 workers,
-                (ignored6, response) -> {
+                (ignoredRequest, response) -> {
                   innerThread.complete(Thread.currentThread());
                   var inherited = Span.current().getSpanContext();
                   var business =
@@ -154,31 +166,22 @@ class SelectiveTracingIsolationTest {
 
         try (var test = TestServer.start(app)) {
           var outer =
-              drivers.submit(
-                  () ->
-                      test.send(
-                          request ->
-                              request
-                                  .path("/outer")
-                                  .header(
-                                      "traceparent",
-                                      "00-11111111111111111111111111111111-0123456789012345-01"),
-                          HttpResponse.BodyHandlers.ofString()));
+              submitOuterForDoesNotInheritAnotherRequestTraceWhileHelpingAnUnselectedRequest(
+                  drivers, test);
 
           try {
             assertTrue(entered.await(5, TimeUnit.SECONDS));
+
             var inner =
-                drivers.submit(
-                    () ->
-                        test.send(
-                            request -> request.path("/inner"),
-                            HttpResponse.BodyHandlers.ofString()));
+                submitInnerForDoesNotInheritAnotherRequestTraceWhileHelpingAnUnselectedRequest(
+                    drivers, test);
             await()
                 .atMost(Duration.ofSeconds(5))
                 .until(() -> workers.getQueuedSubmissionCount() > 0);
             allowHelping.countDown();
             var innerResponse = inner.get(5, TimeUnit.SECONDS);
             var outerResponse = outer.get(5, TimeUnit.SECONDS);
+
             assertTrue(completed.await(5, TimeUnit.SECONDS));
             assertSame(outerThread.get(5, TimeUnit.SECONDS), innerThread.get(5, TimeUnit.SECONDS));
             assertEquals(outerSpan.get(5, TimeUnit.SECONDS), outerResponse.body());
@@ -186,14 +189,18 @@ class SelectiveTracingIsolationTest {
                 workers
                     .submit(() -> Span.current().getSpanContext().isValid())
                     .get(5, TimeUnit.SECONDS));
+
             var spans = exporter.getFinishedSpanItems();
+
             assertEquals(
                 1, spans.stream().filter(span -> span.getKind() == SpanKind.SERVER).count());
+
             var business =
                 spans.stream()
                     .filter(span -> "inner-business".equals(span.getName()))
                     .findFirst()
                     .orElseThrow();
+
             assertAll(
                 () -> assertEquals("none", innerResponse.body()),
                 () -> assertFalse(business.getParentSpanContext().isValid()),
@@ -206,8 +213,31 @@ class SelectiveTracingIsolationTest {
     }
   }
 
+  private Future<HttpResponse<String>>
+      submitOuterForDoesNotInheritAnotherRequestTraceWhileHelpingAnUnselectedRequest(
+          ExecutorService drivers, TestServer test) {
+    return drivers.submit(
+        () ->
+            test.send(
+                request ->
+                    request
+                        .path("/outer")
+                        .header(
+                            "traceparent",
+                            "00-11111111111111111111111111111111-0123456789012345-01"),
+                HttpResponse.BodyHandlers.ofString()));
+  }
+
+  private Future<HttpResponse<String>>
+      submitInnerForDoesNotInheritAnotherRequestTraceWhileHelpingAnUnselectedRequest(
+          ExecutorService drivers, TestServer test) {
+    return drivers.submit(
+        () -> test.send(request -> request.path("/inner"), HttpResponse.BodyHandlers.ofString()));
+  }
+
   private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
     options.setVirtualThreads(virtualApplication);
+
     return new Shoostr(options)
         .onRequestHeaders(
             (request, response) ->

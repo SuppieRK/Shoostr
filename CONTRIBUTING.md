@@ -256,7 +256,9 @@ Use the fluent `Routes` and `TypedRoutes` methods for adjacent registrations on 
 Keep child callbacks and setup boundaries clear, and preserve registration order. A chain returns
 the current scope, not a builder for the last endpoint; a scope-wide setting can affect earlier routes.
 
-Show `new Shoostr()` and the application's fluent configuration in the example. Do not wrap
+Keep application construction and fluent configuration visible in the complete example class.
+Use named methods to organize setup; keep ownership and setup order apparent. Show `new Shoostr()` or its configured constructor.
+Do not wrap
 that definition in setup `try`/`catch` blocks, cleanup flags, or equivalent scaffolding, and do
 not replace it with a route-only definition. Remove catches that only rethrow an exception or
 duplicate lifecycle cleanup. Keep task-specific error handling and ordinary test
@@ -285,7 +287,7 @@ It does not claim formal ASD-STE100 compliance or enforce its complete dictionar
 | W10 — Java fluency         | Explain task-specific choices and non-obvious contracts, not assertions, standard Java syntax, or automatic resource closure.                                                                           |
 | W11 — In-code explanations | Comment meaningful choices, scope, ordering, ownership, and failure paths where the reader encounters them. Keep already-clear code concise.                                                            |
 | W12 — Fluent registration  | Chain adjacent registrations on the same route scope, preserving call order and child boundaries. Keep setup and unrelated operations separate.                                                         |
-| W13 — Application setup    | Show application construction and fluent configuration directly, without setup catch blocks, cleanup scaffolding, or route-only substitutes.                                                            |
+| W13 — Application setup    | Keep application construction and fluent configuration visible in the complete class, using named methods under the code-readability rules while preserving ownership and setup order. Omit setup catch blocks, cleanup scaffolding and route-only substitutes. |
 | W14 — Concept order        | Explain framework-specific concepts before relying on them in claims or examples. Introduce an example's purpose and needed concepts before its code; a forward link does not replace that explanation. |
 
 Review prose in context instead of treating sentence length or automated word counts as proof of clarity.

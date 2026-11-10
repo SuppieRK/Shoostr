@@ -6,7 +6,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import org.gradle.testkit.runner.BuildResult;
 import org.gradle.testkit.runner.GradleRunner;
+import org.gradle.testkit.runner.InvalidRunnerConfigurationException;
+import org.gradle.testkit.runner.UnexpectedBuildFailure;
+import org.gradle.testkit.runner.UnexpectedBuildSuccess;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -73,6 +77,7 @@ class NullAwayFixtureTest {
             .withProjectDir(project.toFile())
             .withArguments("--console=plain", "compileTestJava")
             .build();
+
     assertFalse(result.getOutput().contains("[NullAway]"), result.getOutput());
   }
 
@@ -98,6 +103,7 @@ class NullAwayFixtureTest {
             .withProjectDir(project.toFile())
             .withArguments("--console=plain", "compileTestJava")
             .buildAndFail();
+
     assertTrue(result.getOutput().contains("[EqualsNull]"), result.getOutput());
   }
 
@@ -132,11 +138,7 @@ class NullAwayFixtureTest {
         """);
 
     var result =
-        GradleRunner.create()
-            .withProjectDir(project.toFile())
-            .withArguments(
-                "--console=plain", "main".equals(sourceSet) ? "compileJava" : "compileTestJava")
-            .buildAndFail();
+        sendResultForRejectsUnnecessaryQualifiedExpressionsInEverySourceSet(project, sourceSet);
 
     assertTrue(result.getOutput().contains("[UnnecessarilyFullyQualified]"), result.getOutput());
     assertTrue(result.getOutput().contains("QualifiedName.java:"), result.getOutput());
@@ -144,6 +146,16 @@ class NullAwayFixtureTest {
     assertTrue(
         result.getOutput().contains("return java.util.Objects::requireNonNull;"),
         result.getOutput());
+  }
+
+  private BuildResult sendResultForRejectsUnnecessaryQualifiedExpressionsInEverySourceSet(
+      Path project, String sourceSet)
+      throws InvalidRunnerConfigurationException, UnexpectedBuildSuccess {
+    return GradleRunner.create()
+        .withProjectDir(project.toFile())
+        .withArguments(
+            "--console=plain", "main".equals(sourceSet) ? "compileJava" : "compileTestJava")
+        .buildAndFail();
   }
 
   @ParameterizedTest
@@ -179,13 +191,20 @@ class NullAwayFixtureTest {
         """);
 
     var result =
-        GradleRunner.create()
-            .withProjectDir(project.toFile())
-            .withArguments(
-                "--console=plain", "main".equals(sourceSet) ? "compileJava" : "compileTestJava")
-            .build();
+        sendResultForPermitsImportsAndNecessaryNameDisambiguationInEverySourceSet(
+            project, sourceSet);
 
     assertFalse(result.getOutput().contains("[UnnecessarilyFullyQualified]"), result.getOutput());
+  }
+
+  private BuildResult sendResultForPermitsImportsAndNecessaryNameDisambiguationInEverySourceSet(
+      Path project, String sourceSet)
+      throws InvalidRunnerConfigurationException, UnexpectedBuildFailure {
+    return GradleRunner.create()
+        .withProjectDir(project.toFile())
+        .withArguments(
+            "--console=plain", "main".equals(sourceSet) ? "compileJava" : "compileTestJava")
+        .build();
   }
 
   private static Path configureProject(Path project) throws IOException {
@@ -222,6 +241,7 @@ class NullAwayFixtureTest {
     Files.writeString(
         sourceDirectory.resolve("package-info.java"),
         "@NullMarked\npackage io.github.suppierk.fixture;\n\nimport org.jspecify.annotations.NullMarked;\n");
+
     return sourceDirectory;
   }
 

@@ -66,6 +66,7 @@ class MediaTypeTest {
 
     try {
       Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+
       assertEquals("application/json", MediaType.of("APPLICATION/JSON").value());
     } finally {
       Locale.setDefault(previous);
@@ -107,25 +108,29 @@ class MediaTypeTest {
 
   @Test
   void rejectsCharsetNamesRequiringQuotedValues() {
-    var charset =
-        new Charset("X-Test:Codec", new String[0]) {
-          @Override
-          public boolean contains(Charset other) {
-            return false;
-          }
-
-          @Override
-          public CharsetDecoder newDecoder() {
-            return StandardCharsets.UTF_8.newDecoder();
-          }
-
-          @Override
-          public CharsetEncoder newEncoder() {
-            return StandardCharsets.UTF_8.newEncoder();
-          }
-        };
+    var charset = createCharsetForRejectsCharsetNamesRequiringQuotedValues();
     var mediaType = MediaType.of("text/plain");
+
     assertThrows(IllegalArgumentException.class, () -> mediaType.withCharset(charset));
+  }
+
+  private Charset createCharsetForRejectsCharsetNamesRequiringQuotedValues() {
+    return new Charset("X-Test:Codec", new String[0]) {
+      @Override
+      public boolean contains(Charset other) {
+        return false;
+      }
+
+      @Override
+      public CharsetDecoder newDecoder() {
+        return StandardCharsets.UTF_8.newDecoder();
+      }
+
+      @Override
+      public CharsetEncoder newEncoder() {
+        return StandardCharsets.UTF_8.newEncoder();
+      }
+    };
   }
 
   private static Stream<String> invalidNames() {

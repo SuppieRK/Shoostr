@@ -55,19 +55,19 @@ class AuthenticationCompositionTest {
                 routes.get(
                     "/private",
                     (ignored, response) -> response.text("private"),
-                    e -> {
-                      e.onRoute((ignored2, path) -> facts.add(path));
-                      e.withExtension(reverse ? second : first);
-                      e.withExtension(reverse ? first : second);
+                    lifecycle -> {
+                      lifecycle.onRoute((ignoredHttpMethods, path) -> facts.add(path));
+                      lifecycle.withExtension(reverse ? second : first);
+                      lifecycle.withExtension(reverse ? first : second);
                     }));
 
         app.routes()
             .get(
                 "/private",
-                (ignored3, response) -> response.text("corrected"),
-                e -> {
-                  e.withExtension(second);
-                  e.onRoute((ignored4, path) -> facts.add(path));
+                (ignoredRequest, response) -> response.text("corrected"),
+                lifecycle -> {
+                  lifecycle.withExtension(second);
+                  lifecycle.onRoute((ignoredHttpMethods, path) -> facts.add(path));
                 });
 
         try (var test = TestServer.start(app)) {
@@ -100,10 +100,13 @@ class AuthenticationCompositionTest {
                     "/private",
                     child ->
                         child.get(
-                            "/child", (ignored5, ignored6) -> {}, e -> e.withExtension(second)),
-                    e -> e.withExtension(first)));
+                            "/child",
+                            (ignoredRequest, ignoredResponse) -> {},
+                            lifecycle -> lifecycle.withExtension(second)),
+                    lifecycle -> lifecycle.withExtension(first)));
 
-        app.routes().get("/private/child", (ignored7, response) -> response.text("corrected"));
+        app.routes()
+            .get("/private/child", (ignoredRequest, response) -> response.text("corrected"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -134,7 +137,7 @@ class AuthenticationCompositionTest {
                     child.get(
                         (request, response) ->
                             response.text(request.principal().orElseThrow().getName())),
-                e -> e.withExtension(first));
+                lifecycle -> lifecycle.withExtension(first));
         app.routes()
             .path(
                 "/second",
@@ -142,7 +145,7 @@ class AuthenticationCompositionTest {
                     child.get(
                         (request, response) ->
                             response.text(request.principal().orElseThrow().getName())),
-                e -> e.withExtension(second));
+                lifecycle -> lifecycle.withExtension(second));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -176,8 +179,8 @@ class AuthenticationCompositionTest {
                     child.get(
                         (request, response) ->
                             response.text(request.principal().orElseThrow().getName()),
-                        e -> e.withExtension(source)),
-                e -> e.withExtension(source));
+                        lifecycle -> lifecycle.withExtension(source)),
+                lifecycle -> lifecycle.withExtension(source));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -232,6 +235,7 @@ class AuthenticationCompositionTest {
 
     try (Closeable cleanup = app::close) {
       assertThrows(NullPointerException.class, () -> app.withExtension(null));
+
       app.withExtension(new IdentitySource("corrected"));
     }
   }

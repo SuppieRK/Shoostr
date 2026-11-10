@@ -40,6 +40,7 @@ final class Pac4jContext implements WebContext {
   @Override
   public Optional<String> getRequestParameter(String name) {
     var values = getRequestParameters().get(name);
+
     return values == null || values.length == 0 ? Optional.empty() : Optional.of(values[0]);
   }
 
@@ -50,6 +51,7 @@ final class Pac4jContext implements WebContext {
     request
         .queryParamMap()
         .forEach((name, values) -> parameters.put(name, values.toArray(String[]::new)));
+
     var contentType = request.header(HttpHeaders.CONTENT_TYPE.value()).orElse(null);
     if (contentType != null) {
       var separator = contentType.indexOf(HttpCharacters.SEMICOLON_SIGN);
@@ -174,19 +176,30 @@ final class Pac4jContext implements WebContext {
         cookie.getSameSitePolicy() == null
             ? null
             : SameSite.valueOf(cookie.getSameSitePolicy().toUpperCase(Locale.ROOT));
-    var converted =
-        new io.github.suppierk.shoostr.http.Cookie(
-            cookie.getName(),
-            cookie.getValue(),
-            Objects.requireNonNullElse(cookie.getPath(), HttpCharacters.PATH_SEPARATOR_STRING),
-            cookie.getDomain(),
-            cookie.getMaxAge(),
-            cookie.isSecure(),
-            cookie.isHttpOnly(),
-            sameSite,
-            null);
+    var converted = responseCookie(cookie, sameSite);
 
     response.cookie(converted);
+  }
+
+  /**
+   * Copies a pac4j cookie into the framework's explicit cookie representation.
+   *
+   * @param cookie pac4j cookie to copy
+   * @param sameSite normalized same-site attribute, or null when absent
+   * @return response cookie with normalized same-site policy
+   */
+  private io.github.suppierk.shoostr.http.Cookie responseCookie(
+      Cookie cookie, @Nullable SameSite sameSite) {
+    return new io.github.suppierk.shoostr.http.Cookie(
+        cookie.getName(),
+        cookie.getValue(),
+        Objects.requireNonNullElse(cookie.getPath(), HttpCharacters.PATH_SEPARATOR_STRING),
+        cookie.getDomain(),
+        cookie.getMaxAge(),
+        cookie.isSecure(),
+        cookie.isHttpOnly(),
+        sameSite,
+        null);
   }
 
   /** {@inheritDoc} */
@@ -217,6 +230,7 @@ final class Pac4jContext implements WebContext {
   private static String[] concatenate(String[] query, String[] form) {
     var combined = Arrays.copyOf(query, query.length + form.length);
     System.arraycopy(form, 0, combined, query.length, form.length);
+
     return combined;
   }
 

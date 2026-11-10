@@ -25,6 +25,7 @@ class NegotiationExampleTest {
 
     try (var test = TestServer.start(NegotiationExample.application())) {
       var response = test.send(request -> request.path("/greeting").header("Accept", accept));
+
       assertEquals(200, response.statusCode());
       assertEquals(mediaType, response.headers().firstValue("Content-Type").orElseThrow());
       assertArrayEquals(body.getBytes(StandardCharsets.UTF_8), response.body());
@@ -38,6 +39,7 @@ class NegotiationExampleTest {
 
     try (var test = TestServer.start(NegotiationExample.application())) {
       var response = test.send(request -> request.path("/greeting").header("Accept", accept));
+
       assertEquals(406, response.statusCode());
       assertArrayEquals("Not Acceptable".getBytes(StandardCharsets.UTF_8), response.body());
       assertEquals(List.of("Accept"), response.headers().allValues("Vary"));
@@ -50,6 +52,7 @@ class NegotiationExampleTest {
     try (var test = TestServer.start(NegotiationExample.application())) {
       var response =
           test.send(request -> request.path("/greeting").header("Accept", "text/plain;q=broken"));
+
       assertEquals(400, response.statusCode());
       assertArrayEquals("Bad Request".getBytes(StandardCharsets.UTF_8), response.body());
       assertEquals(List.of(), response.headers().allValues("Vary"));
@@ -68,6 +71,7 @@ class NegotiationExampleTest {
 
         try (var test = TestServer.start(app)) {
           var response = test.send(request -> request.path("/greeting").header("Accept", accept));
+
           assertEquals(status, response.statusCode());
           assertEquals(List.of("Origin", "Accept"), response.headers().allValues("Vary"));
         }
@@ -80,6 +84,7 @@ class NegotiationExampleTest {
 
     try (var test = TestServer.start(NegotiationExample.application())) {
       var response = test.send(request -> request.path("/greeting"));
+
       assertEquals(200, response.statusCode());
       assertEquals("application/json", response.headers().firstValue("Content-Type").orElseThrow());
       assertArrayEquals("{\"message\":\"café\"}".getBytes(StandardCharsets.UTF_8), response.body());

@@ -39,7 +39,7 @@ class EndpointMetricsTest {
             .get(
                 "/metrics/{id}",
                 workers,
-                (ignored2, response) -> {
+                (ignoredRequest, response) -> {
                   handled.complete(Thread.currentThread());
                   response.text("ok");
                 });
@@ -47,7 +47,9 @@ class EndpointMetricsTest {
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/metrics/42")).statusCode());
           assertTrue(owned.contains(handled.get(5, TimeUnit.SECONDS)));
+
           finished.get(5, TimeUnit.SECONDS);
+
           assertEquals(
               1,
               registry.get("http.server.requests").tag("route", "/metrics/{id}").timer().count());
@@ -61,15 +63,8 @@ class EndpointMetricsTest {
   }
 
   private static ExecutorService executor(String type, Set<Thread> owned) {
-    ThreadFactory factory =
-        task -> {
-          var thread =
-              "virtual".equals(type)
-                  ? Thread.ofVirtual().unstarted(task)
-                  : Thread.ofPlatform().unstarted(task);
-          owned.add(thread);
-          return thread;
-        };
+    ThreadFactory factory = createFactoryForExecutor(type, owned);
+
     return switch (type) {
       case "platform" -> Executors.newFixedThreadPool(1, factory);
       case "virtual" -> Executors.newThreadPerTaskExecutor(factory);
@@ -79,12 +74,25 @@ class EndpointMetricsTest {
     };
   }
 
+  private static ThreadFactory createFactoryForExecutor(String type, Set<Thread> owned) {
+    return task -> {
+      var thread =
+          "virtual".equals(type)
+              ? Thread.ofVirtual().unstarted(task)
+              : Thread.ofPlatform().unstarted(task);
+      owned.add(thread);
+
+      return thread;
+    };
+  }
+
   private static ForkJoinPool forkJoin(Set<Thread> owned) {
     return new ForkJoinPool(
         1,
         pool -> {
           var worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
           owned.add(worker);
+
           return worker;
         },
         null,

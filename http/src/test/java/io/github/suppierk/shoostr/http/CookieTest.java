@@ -17,30 +17,36 @@ class CookieTest {
 
   @Test
   void satisfiesEqualsAndHashCodeContract() {
-    var first =
-        new Cookie(
-            "first",
-            "alpha",
-            "/one",
-            "one.example",
-            60,
-            false,
-            false,
-            Cookie.SameSite.LAX,
-            Instant.parse("2030-01-01T00:00:00Z"));
-    var second =
-        new Cookie(
-            "second",
-            "beta",
-            "/two",
-            "two.example",
-            120,
-            true,
-            true,
-            Cookie.SameSite.STRICT,
-            Instant.parse("2031-01-01T00:00:00Z"));
+    var first = createFirstForSatisfiesEqualsAndHashCodeContract();
+    var second = createSecondForSatisfiesEqualsAndHashCodeContract();
 
     EqualsVerifier.forExamples(first, second).withNonnullFields("name", "value", "path").verify();
+  }
+
+  private Cookie createFirstForSatisfiesEqualsAndHashCodeContract() {
+    return new Cookie(
+        "first",
+        "alpha",
+        "/one",
+        "one.example",
+        60,
+        false,
+        false,
+        Cookie.SameSite.LAX,
+        Instant.parse("2030-01-01T00:00:00Z"));
+  }
+
+  private Cookie createSecondForSatisfiesEqualsAndHashCodeContract() {
+    return new Cookie(
+        "second",
+        "beta",
+        "/two",
+        "two.example",
+        120,
+        true,
+        true,
+        Cookie.SameSite.STRICT,
+        Instant.parse("2031-01-01T00:00:00Z"));
   }
 
   @ParameterizedTest
@@ -53,17 +59,7 @@ class CookieTest {
   @Test
   void constructorNormalizesDomainAndExpiryBeforeFormatting() {
     var expiry = Instant.parse("2030-01-01T00:00:00.987Z");
-    var cookie =
-        new Cookie(
-            "session",
-            "value",
-            "/app",
-            ".EXAMPLE.test",
-            60,
-            true,
-            true,
-            Cookie.SameSite.NONE,
-            expiry);
+    var cookie = createCookieForConstructorNormalizesDomainAndExpiryBeforeFormatting(expiry);
 
     assertEquals("example.test", cookie.domain());
     assertEquals(Instant.parse("2030-01-01T00:00:00Z"), cookie.expires());
@@ -71,6 +67,12 @@ class CookieTest {
         "session=value; Path=/app; Domain=example.test; Max-Age=60; "
             + "Expires=Tue, 01 Jan 2030 00:00:00 GMT; Secure; HttpOnly; SameSite=None",
         cookie.headerValue());
+  }
+
+  private Cookie createCookieForConstructorNormalizesDomainAndExpiryBeforeFormatting(
+      Instant expiry) {
+    return new Cookie(
+        "session", "value", "/app", ".EXAMPLE.test", 60, true, true, Cookie.SameSite.NONE, expiry);
   }
 
   @Test

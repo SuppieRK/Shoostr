@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.RequestOutcome;
+import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -32,11 +33,13 @@ class RequestMetricsExampleTest {
         assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
         assertEquals(200, test.send(request -> request.path("/api/items/42")).statusCode());
         assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
+
         var timer =
             registry
                 .get("http.server.requests")
                 .tags("method", "GET", "route", "/api/items/{id}", "status", "200", "error", "none")
                 .timer();
+
         assertEquals(2, timer.count());
         assertEquals(0, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
         assertEquals(1, registry.find("http.server.requests").timers().size());
@@ -63,6 +66,7 @@ class RequestMetricsExampleTest {
 
       var timer = Timer.builder("application.work").register(registry);
       timer.record(Duration.ofMillis(1));
+
       assertEquals(1, timer.count());
     } finally {
       registry.close();
@@ -78,16 +82,8 @@ class RequestMetricsExampleTest {
 
     try (var clients = Executors.newVirtualThreadPerTaskExecutor()) {
       var app =
-          RequestMetricsExample.application(registry)
-              .beforeClose(release::countDown)
-              .beforeRouteHandler(
-                  (ignored, ignored2) -> {
-                    entered.countDown();
-                    if (!release.await(5, TimeUnit.SECONDS)) {
-                      throw new IllegalStateException("request was not released");
-                    }
-                  })
-              .afterRequest(outcomes::offer);
+          createAppForKeepsTheActiveSampleOpenUntilTheRequestTerminates(
+              registry, release, entered, outcomes);
 
       try (Closeable appCleanup1 = app::close;
           var test = TestServer.start(app)) {
@@ -112,6 +108,23 @@ class RequestMetricsExampleTest {
     }
   }
 
+  private Shoostr createAppForKeepsTheActiveSampleOpenUntilTheRequestTerminates(
+      SimpleMeterRegistry registry,
+      CountDownLatch release,
+      CountDownLatch entered,
+      LinkedBlockingQueue<RequestOutcome> outcomes) {
+    return RequestMetricsExample.application(registry)
+        .beforeClose(release::countDown)
+        .beforeRouteHandler(
+            (ignored, ignoredResponse) -> {
+              entered.countDown();
+              if (!release.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("request was not released");
+              }
+            })
+        .afterRequest(outcomes::offer);
+  }
+
   @Test
   void labelsApplicationFailuresWithoutUsingTheirExceptionText() throws Exception {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
@@ -119,12 +132,7 @@ class RequestMetricsExampleTest {
 
     try {
       var app =
-          RequestMetricsExample.application(registry)
-              .beforeRouteHandler(
-                  (ignored3, ignored4) -> {
-                    throw new IllegalStateException("private failure");
-                  })
-              .afterRequest(outcomes::offer);
+          createAppForLabelsApplicationFailuresWithoutUsingTheirExceptionText(registry, outcomes);
 
       try (Closeable appCleanup2 = app::close;
           var test = TestServer.start(app)) {
@@ -145,5 +153,15 @@ class RequestMetricsExampleTest {
     } finally {
       registry.close();
     }
+  }
+
+  private Shoostr createAppForLabelsApplicationFailuresWithoutUsingTheirExceptionText(
+      SimpleMeterRegistry registry, LinkedBlockingQueue<RequestOutcome> outcomes) {
+    return RequestMetricsExample.application(registry)
+        .beforeRouteHandler(
+            (ignoredRequest, ignoredResponse) -> {
+              throw new IllegalStateException("private failure");
+            })
+        .afterRequest(outcomes::offer);
   }
 }

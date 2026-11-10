@@ -58,24 +58,6 @@ public final class McpSessionLimits {
   }
 
   /**
-   * Returns maximum allocations for one verified owner.
-   *
-   * @return maximum allocations for one verified owner
-   */
-  public int maxSessionsPerOwner() {
-    return maxSessionsPerOwner;
-  }
-
-  /**
-   * Returns positive quiescent interval.
-   *
-   * @return positive quiescent interval
-   */
-  public Duration idleTimeout() {
-    return idleTimeout;
-  }
-
-  /**
    * Returns maximum simultaneous allocations.
    *
    * @return maximum simultaneous allocations
@@ -104,6 +86,15 @@ public final class McpSessionLimits {
    *
    * @return maximum allocations for one verified owner
    */
+  public int maxSessionsPerOwner() {
+    return maxSessionsPerOwner;
+  }
+
+  /**
+   * Returns maximum allocations for one verified owner.
+   *
+   * @return maximum allocations for one verified owner
+   */
   public Integer getMaxSessionsPerOwner() {
     return maxSessionsPerOwner;
   }
@@ -121,6 +112,15 @@ public final class McpSessionLimits {
     }
 
     maxSessionsPerOwner = resolved;
+  }
+
+  /**
+   * Returns positive quiescent interval.
+   *
+   * @return positive quiescent interval
+   */
+  public Duration idleTimeout() {
+    return idleTimeout;
   }
 
   /**

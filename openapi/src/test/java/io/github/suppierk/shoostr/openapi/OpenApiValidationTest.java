@@ -48,6 +48,7 @@ class OpenApiValidationTest {
 
       try (Closeable appCleanup = app::close) {
         app.withExtension(docs);
+
         assertThrows(IllegalArgumentException.class, app::start);
       }
     }
@@ -69,13 +70,14 @@ class OpenApiValidationTest {
       try (Closeable appCleanup1 = app::close) {
 
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
                 routes.post(
                     "/users",
-                    (ignored, ignored2) -> {},
-                    e -> e.withExtension(docs).requestBody(body)));
+                    (ignored, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(docs).requestBody(body)));
       }
     }
   }
@@ -108,8 +110,9 @@ class OpenApiValidationTest {
         app.routes()
             .get(
                 "/users/{id:[0-9]+}",
-                (ignored3, ignored4) -> {},
-                e -> e.withExtension(docs).parameter(parameter));
+                (ignoredRequest, ignoredResponse) -> {},
+                lifecycle -> lifecycle.withExtension(docs).parameter(parameter));
+
         assertThrows(IllegalArgumentException.class, app::start);
       }
     }
@@ -126,13 +129,14 @@ class OpenApiValidationTest {
       try (Closeable appCleanup3 = app::close) {
 
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
                 routes.get(
                     "/users",
-                    (ignored5, ignored6) -> {},
-                    e -> e.withExtension(docs).parameter(parameter)));
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(docs).parameter(parameter)));
       }
     }
   }
@@ -152,8 +156,9 @@ class OpenApiValidationTest {
             routes ->
                 routes.get(
                     "/files/{*tail}",
-                    (ignored7, ignored8) -> {},
-                    e -> e.withExtension(docs).summary("Files")));
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(docs).summary("Files")));
+
         assertThrows(IllegalArgumentException.class, app::start);
       }
     }
@@ -174,8 +179,10 @@ class OpenApiValidationTest {
             routes ->
                 routes.get(
                     "/users/{id}",
-                    (ignored9, ignored10) -> {},
-                    e -> e.withExtension(docs).pathParameter("other", "Wrong parameter")));
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle ->
+                        lifecycle.withExtension(docs).pathParameter("other", "Wrong parameter")));
+
         assertThrows(IllegalArgumentException.class, app::start);
       }
     }
@@ -197,8 +204,9 @@ class OpenApiValidationTest {
                 routes.route(
                     "CONNECT",
                     "/tunnel",
-                    (ignored11, ignored12) -> {},
-                    e -> e.withExtension(docs).summary("Tunnel")));
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(docs).summary("Tunnel")));
+
         assertThrows(IllegalArgumentException.class, app::start);
       }
     }
@@ -208,6 +216,7 @@ class OpenApiValidationTest {
   void rejectsSecuritySchemesMissingTheirRequiredType() throws Exception {
     try (var docs = new OpenApi("API", "1")) {
       var scheme = new SecurityScheme();
+
       assertThrows(IllegalArgumentException.class, () -> docs.securityScheme("broken", scheme));
     }
   }
@@ -223,13 +232,14 @@ class OpenApiValidationTest {
       try (Closeable appCleanup7 = app::close) {
 
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
                 routes.get(
                     "/users",
-                    (ignored13, ignored14) -> {},
-                    e -> e.withExtension(docs).response(200, response)));
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(docs).response(200, response)));
       }
     }
   }
@@ -237,7 +247,7 @@ class OpenApiValidationTest {
   @Test
   void rejectsDuplicateExplicitOperationIdentifiersWithinOneDocument() throws Exception {
     var docs = new OpenApi("API", "1");
-    Handler shared = (ignored15, ignored16) -> {};
+    Handler shared = (ignoredRequest, ignoredResponse) -> {};
 
     {
       var app =
@@ -248,9 +258,14 @@ class OpenApiValidationTest {
       try (Closeable appCleanup8 = app::close) {
         app.routes(
             routes -> {
-              routes.get("/first", shared, e -> e.withExtension(docs).operationId("read"));
-              routes.get("/second", shared, e -> e.withExtension(docs).operationId("read"));
+              routes.get(
+                  "/first", shared, lifecycle -> lifecycle.withExtension(docs).operationId("read"));
+              routes.get(
+                  "/second",
+                  shared,
+                  lifecycle -> lifecycle.withExtension(docs).operationId("read"));
             });
+
         var failure = assertThrows(IllegalArgumentException.class, app::start);
         assertEquals("Duplicate OpenAPI operationId: read", failure.getMessage());
       }
@@ -272,14 +287,16 @@ class OpenApiValidationTest {
             routes ->
                 routes.get(
                     "/users",
-                    (ignored17, ignored18) -> {},
-                    e ->
-                        e.withExtension(docs)
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle ->
+                        lifecycle
+                            .withExtension(docs)
                             .response(
                                 200,
                                 "User",
                                 MediaType.APPLICATION_JSON,
                                 new JsonSchema().$ref("#/components/schemas/Missing"))));
+
         var failure = assertThrows(IllegalArgumentException.class, app::start);
         assertEquals(
             "Unknown local OpenAPI reference: #/components/schemas/Missing", failure.getMessage());
@@ -302,8 +319,9 @@ class OpenApiValidationTest {
             routes ->
                 routes.get(
                     "/users",
-                    (ignored19, ignored20) -> {},
-                    e -> e.withExtension(docs).security("missing")));
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(docs).security("missing")));
+
         var failure = assertThrows(IllegalArgumentException.class, app::start);
         assertEquals("Unknown OpenAPI security scheme: missing", failure.getMessage());
       }

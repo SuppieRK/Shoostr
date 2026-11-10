@@ -8,8 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.net.http.WebSocket.Builder;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -19,6 +21,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -70,24 +73,29 @@ class ManagedWebSocketExampleTest {
       origins.forEach(origin -> builder.header("Origin", origin));
 
       var failure =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  builder
-                      .buildAsync(
-                          new URI(
-                              "ws", test.baseUri().getRawAuthority(), "/rooms/lobby", null, null),
-                          new Messages())
-                      .thenApply(
-                          socket -> {
-                            socket.abort();
-                            return socket;
-                          })
-                      .get(3, TimeUnit.SECONDS));
+          assertFailureForRejectsMissingForeignOrAmbiguousOriginsBeforeUpgrading(builder, test);
 
       var handshake = assertInstanceOf(WebSocketHandshakeException.class, failure.getCause());
       assertEquals(403, handshake.getResponse().statusCode());
     }
+  }
+
+  private ExecutionException assertFailureForRejectsMissingForeignOrAmbiguousOriginsBeforeUpgrading(
+      Builder builder, TestServer test) {
+    return assertThrows(
+        ExecutionException.class,
+        () ->
+            builder
+                .buildAsync(
+                    new URI("ws", test.baseUri().getRawAuthority(), "/rooms/lobby", null, null),
+                    new Messages())
+                .thenApply(
+                    socket -> {
+                      socket.abort();
+
+                      return socket;
+                    })
+                .get(3, TimeUnit.SECONDS));
   }
 
   @Test
@@ -102,9 +110,11 @@ class ManagedWebSocketExampleTest {
       try {
         socket.sendBinary(ByteBuffer.wrap(new byte[] {0, 1}), false).get(3, TimeUnit.SECONDS);
         socket.sendBinary(ByteBuffer.wrap(new byte[] {(byte) 255}), true).get(3, TimeUnit.SECONDS);
+
         assertArrayEquals(new byte[] {0, 1, (byte) 255}, messages.binary.poll(3, TimeUnit.SECONDS));
 
         socket.sendClose(WebSocket.NORMAL_CLOSURE, "Finished").get(3, TimeUnit.SECONDS);
+
         assertEquals(1000, messages.closeCode.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -123,8 +133,11 @@ class ManagedWebSocketExampleTest {
 
       try {
         socket.sendText(" ", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("error: message required", messages.text.poll(3, TimeUnit.SECONDS));
+
         socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("lobby:1:hello", messages.text.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -141,7 +154,7 @@ class ManagedWebSocketExampleTest {
             "/fixture/failure",
             socket ->
                 socket.onText(
-                    (ignored, ignored2) -> {
+                    (ignored, ignoredText) -> {
                       throw new IllegalStateException("private storage credential");
                     }));
 
@@ -149,15 +162,12 @@ class ManagedWebSocketExampleTest {
         var client = HttpClient.newHttpClient()) {
       var messages = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/fixture/failure", null, null),
-                  messages)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForClosesAnUnexpectedHandlerFailureWithoutSendingItsPrivateMessage(
+              client, test, messages);
 
       try {
         socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
+
         assertEquals(1011, messages.closeCode.get(3, TimeUnit.SECONDS));
         assertEquals("Processing failed", messages.closeReason.get(3, TimeUnit.SECONDS));
         assertEquals(0, messages.text.size());
@@ -167,13 +177,15 @@ class ManagedWebSocketExampleTest {
     }
   }
 
-  private static Stream<List<String>> rejectedOrigins() {
-    return Stream.of(
-        List.of(),
-        List.of("https://other.example"),
-        List.of("null"),
-        List.of("https://app.example", "https://app.example"),
-        List.of("https://app.example, https://other.example"));
+  private WebSocket createSocketForClosesAnUnexpectedHandlerFailureWithoutSendingItsPrivateMessage(
+      HttpClient client, TestServer test, Messages messages)
+      throws URISyntaxException, InterruptedException, ExecutionException, TimeoutException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/fixture/failure", null, null),
+            messages)
+        .get(3, TimeUnit.SECONDS);
   }
 
   private static WebSocket connect(HttpClient client, TestServer test, Messages messages)
@@ -186,19 +198,32 @@ class ManagedWebSocketExampleTest {
         .get(3, TimeUnit.SECONDS);
   }
 
+  private static Stream<List<String>> rejectedOrigins() {
+    return Stream.of(
+        List.of(),
+        List.of("https://other.example"),
+        List.of("null"),
+        List.of("https://app.example", "https://app.example"),
+        List.of("https://app.example, https://other.example"));
+  }
+
   private static final class Messages implements WebSocket.Listener {
     private final BlockingQueue<String> text;
     private final StringBuilder partial;
+
     private final BlockingQueue<byte[]> binary;
     private final ByteArrayOutputStream partialBinary;
+
     private final CompletableFuture<Integer> closeCode;
     private final CompletableFuture<String> closeReason;
 
     private Messages() {
       this.text = new LinkedBlockingQueue<>();
       this.partial = new StringBuilder();
+
       this.binary = new LinkedBlockingQueue<>();
       this.partialBinary = new ByteArrayOutputStream();
+
       this.closeCode = new CompletableFuture<>();
       this.closeReason = new CompletableFuture<>();
     }
@@ -212,6 +237,7 @@ class ManagedWebSocketExampleTest {
       }
 
       socket.request(1);
+
       return CompletableFuture.completedFuture(null);
     }
 
@@ -226,6 +252,7 @@ class ManagedWebSocketExampleTest {
       }
 
       socket.request(1);
+
       return CompletableFuture.completedFuture(null);
     }
 
@@ -233,6 +260,7 @@ class ManagedWebSocketExampleTest {
     public CompletionStage<?> onClose(WebSocket socket, int code, String reason) {
       closeCode.complete(code);
       closeReason.complete(reason);
+
       return CompletableFuture.completedFuture(null);
     }
 

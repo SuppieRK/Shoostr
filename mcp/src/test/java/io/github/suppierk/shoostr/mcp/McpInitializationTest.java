@@ -10,6 +10,7 @@ import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.spec.McpSchema;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
@@ -22,7 +23,7 @@ class McpInitializationTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored2, ignored3) -> {});
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var mcp =
         Mcp.sync(
             security,
@@ -31,33 +32,41 @@ class McpInitializationTest {
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
-      var result =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .method("POST")
-                      .body(
-                          """
-                              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                                "protocolVersion":"2025-11-25","capabilities":{},
-                                "clientInfo":{"name":"fixture-client","version":"1.0"}}}
-                              """
-                              .getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var result = sendResultForInitializesTheConfiguredNativeServerAtTheExplicitMount(test);
 
       assertEquals(200, result.statusCode());
       assertFalse(result.headers().firstValue("Mcp-Session-Id").orElseThrow().isBlank());
+
       var mapper = McpJsonDefaults.getMapper();
+
       var reply =
           assertInstanceOf(
               McpSchema.JSONRPCResponse.class,
               McpSchema.deserializeJsonRpcMessage(mapper, result.body()));
+
       var initialized = mapper.convertValue(reply.result(), McpSchema.InitializeResult.class);
+
       assertEquals("2025-11-25", initialized.protocolVersion());
       assertEquals("shoostr-fixture", initialized.serverInfo().name());
     }
+  }
+
+  private HttpResponse<String> sendResultForInitializesTheConfiguredNativeServerAtTheExplicitMount(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .method("POST")
+                .body(
+                    """
+                              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                                "protocolVersion":"2025-11-25","capabilities":{},
+                                "clientInfo":{"name":"fixture-client","version":"1.0"}}}
+                              """
+                        .getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 }

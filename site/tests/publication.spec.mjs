@@ -11,6 +11,7 @@ const published = new URL(basePath, process.env.SITE_URL || 'https://suppierk.gi
 test('published pages keep their links and assets inside the hosting path', async ({ page }) => {
   const files = await readdir(output, { recursive: true });
   const pages = files.filter(file => file.endsWith('.html'));
+
   expect(pages.length).toBeGreaterThan(1);
   expect(files).toContain('404.html');
   expect(files).toContain(join('pagefind', 'pagefind.js'));
@@ -28,38 +29,16 @@ test('published pages keep their links and assets inside the hosting path', asyn
     for (const reference of references) {
       const url = new URL(reference, pageURL);
       if (url.origin !== published.origin) continue;
+
       expect(url.pathname.startsWith(basePath), `${file}: ${reference}`).toBe(true);
+
       const path = join(output, decodeURIComponent(url.pathname.slice(basePath.length)));
       const destination = url.pathname.endsWith('/') ? join(path, 'index.html') : path;
+
       expect((await stat(destination)).isFile(), `${file}: ${reference}`).toBe(true);
     }
   }
 });
-
-/** @param {import('@playwright/test').Page} page */
-async function checkEnglishSelectorAndLayout(page) {
-  const selector = page.getByRole('combobox', { name: 'Select language', exact: true });
-  await expect(selector).toBeVisible();
-  await expect(selector.locator('option')).toHaveText(['English']);
-  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await selector.focus();
-  await expect(selector).toBeFocused();
-  const currentURL = page.url();
-  await selector.selectOption({ label: 'English' });
-  await expect(page).toHaveURL(currentURL);
-
-  const layout = await page.evaluate(() => {
-    const title = document.querySelector('.title-wrapper');
-    const header = document.querySelector('header.header');
-    const heading = document.querySelector('main h1');
-    return {
-      overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
-      clippedTitle: title.scrollWidth > title.clientWidth + 1,
-      coveredHeading: heading.getBoundingClientRect().top < header.getBoundingClientRect().bottom,
-    };
-  });
-  expect(layout).toEqual({ overflow: false, clippedTitle: false, coveredHeading: false });
-}
 
 for (const width of [1440, 390, 320]) {
   for (const theme of ['light', 'dark']) {
@@ -78,6 +57,7 @@ for (const width of [1440, 390, 320]) {
       await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
       await page.evaluate(() => history.replaceState(null, '', '?review=language#first-route'));
       await checkEnglishSelectorAndLayout(page);
+
       await page.getByRole('link', { name: 'Build your first endpoint', exact: true }).first().click();
       await expect(page).toHaveURL(new RegExp(`${basePath}start/first-request/$`));
       await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
@@ -92,9 +72,11 @@ for (const width of [1440, 390, 320]) {
       const content = page.locator('main');
       await expect(content).toContainText('public final class HelloExample');
       await expect(content).toContainText('class HelloExampleTest');
+
       const copy = page.getByRole('button', { name: /Copy to clipboard/i }).first();
       await copy.focus();
       await expect(copy).toBeFocused();
+
       await copy.click();
       await expect(page.locator('.expressive-code .feedback').first()).toHaveText('Copied!');
 
@@ -113,6 +95,7 @@ for (const width of [1440, 390, 320]) {
       await result.click();
       await expect(page).toHaveURL(new RegExp(`${basePath}errors/problem-details/`));
       await expect(page.getByRole('heading', { level: 1 })).toContainText(/problem details/i);
+
       expect(failures).toEqual([]);
     });
   }
@@ -120,7 +103,40 @@ for (const width of [1440, 390, 320]) {
 
 test('missing pages return a usable 404 page with the correct hosting path', async ({ page }) => {
   const response = await page.goto('missing-publication-page/');
+
   expect(response.status()).toBe(404);
+
   await expect(page.getByRole('heading', { level: 1 })).toContainText('404');
   await expect(page.locator('header a').first()).toHaveAttribute('href', basePath);
 });
+
+/** @param {import('@playwright/test').Page} page */
+async function checkEnglishSelectorAndLayout(page) {
+  const selector = page.getByRole('combobox', { name: 'Select language', exact: true });
+  await expect(selector).toBeVisible();
+  await expect(selector.locator('option')).toHaveText(['English']);
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+
+  await selector.focus();
+  await expect(selector).toBeFocused();
+
+  const currentURL = page.url();
+  await selector.selectOption({ label: 'English' });
+  await expect(page).toHaveURL(currentURL);
+
+  const layout = await page.evaluate(measurePageLayout);
+
+  expect(layout).toEqual({ overflow: false, clippedTitle: false, coveredHeading: false });
+}
+
+function measurePageLayout() {
+  const title = document.querySelector('.title-wrapper');
+  const header = document.querySelector('header.header');
+  const heading = document.querySelector('main h1');
+
+  return {
+    overflow: document.documentElement.scrollWidth > window.innerWidth + 1,
+    clippedTitle: title.scrollWidth > title.clientWidth + 1,
+    coveredHeading: heading.getBoundingClientRect().top < header.getBoundingClientRect().bottom,
+  };
+}

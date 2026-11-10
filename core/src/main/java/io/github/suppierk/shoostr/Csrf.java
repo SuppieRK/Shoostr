@@ -35,24 +35,6 @@ import org.jspecify.annotations.Nullable;
  * history. Installation and endpoint selection still identify the exact extension instance.
  */
 public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Csrf> {
-  /** A token is valid only while its issuing session keeps the same identifier. */
-  private record Token(String sessionId, String value) implements Serializable {
-    @Serial private static final long serialVersionUID = 1L;
-
-    /**
-     * Validates both parts of the session-bound token.
-     *
-     * @param sessionId issuing session identifier
-     * @param value encoded token
-     * @throws IllegalArgumentException if either part is empty
-     */
-    private Token {
-      if (Objects.requireNonNull(sessionId).isBlank() || Objects.requireNonNull(value).isBlank()) {
-        throw new IllegalArgumentException("CSRF token parts cannot be blank");
-      }
-    }
-  }
-
   private static final String ATTRIBUTE = Csrf.class.getName() + ".token";
   private static final String HEADER = "X-CSRF-Token";
 
@@ -159,6 +141,7 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
     endpoint.csrf(this);
     var selected = new Csrf(inherited == null ? this : inherited, endpoint);
     endpoint.beforeRouteHandler(selected::verify);
+
     return selected;
   }
 
@@ -184,6 +167,7 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
       random.nextBytes(bytes);
       var value = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
       session.setAttribute(ATTRIBUTE, new Token(session.getId(), value));
+
       return value;
     }
   }
@@ -229,32 +213,6 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
   }
 
   /**
-   * Reads exactly one supported token channel, detecting duplicate or conflicting values.
-   *
-   * @param request current request
-   * @return presented values, or empty if none
-   * @throws IOException if form input cannot be read
-   * @throws ForbiddenException if header and form token channels conflict
-   */
-  private static List<String> presented(Request request) throws IOException {
-    var headers = request.headers(HEADER);
-    var type =
-        HttpField.getValueParameters(
-            request.header(HttpHeaders.CONTENT_TYPE.value()).orElse(null), new HashMap<>());
-    if (!MediaType.APPLICATION_FORM_URLENCODED.value().equalsIgnoreCase(type)
-        && !"multipart/form-data".equalsIgnoreCase(type)) {
-      return headers;
-    }
-
-    var fields = request.formParams("_csrf");
-    if (!headers.isEmpty() && !fields.isEmpty()) {
-      throw new ForbiddenException();
-    }
-
-    return headers.isEmpty() ? fields : headers;
-  }
-
-  /**
    * Recognizes the methods defined as safe by RFC 9110.
    *
    * @param method incoming wire method
@@ -262,6 +220,7 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
    */
   private static boolean safe(String method) {
     var known = HttpMethods.httpMethod(method).orElse(null);
+
     return known == HttpMethods.GET
         || known == HttpMethods.HEAD
         || known == HttpMethods.OPTIONS
@@ -303,9 +262,54 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
       }
 
       Origins.validateOrigin(origin);
+
       return trustedOrigins.contains(origin) || Origins.sameOrigin(origin, request.effectiveUrl());
     } catch (IllegalArgumentException ignored) {
       return false;
+    }
+  }
+
+  /**
+   * Reads exactly one supported token channel, detecting duplicate or conflicting values.
+   *
+   * @param request current request
+   * @return presented values, or empty if none
+   * @throws IOException if form input cannot be read
+   * @throws ForbiddenException if header and form token channels conflict
+   */
+  private static List<String> presented(Request request) throws IOException {
+    var headers = request.headers(HEADER);
+    var type =
+        HttpField.getValueParameters(
+            request.header(HttpHeaders.CONTENT_TYPE.value()).orElse(null), new HashMap<>());
+    if (!MediaType.APPLICATION_FORM_URLENCODED.value().equalsIgnoreCase(type)
+        && !"multipart/form-data".equalsIgnoreCase(type)) {
+      return headers;
+    }
+
+    var fields = request.formParams("_csrf");
+    if (!headers.isEmpty() && !fields.isEmpty()) {
+      throw new ForbiddenException();
+    }
+
+    return headers.isEmpty() ? fields : headers;
+  }
+
+  /** A token is valid only while its issuing session keeps the same identifier. */
+  private record Token(String sessionId, String value) implements Serializable {
+    @Serial private static final long serialVersionUID = 1L;
+
+    /**
+     * Validates both parts of the session-bound token.
+     *
+     * @param sessionId issuing session identifier
+     * @param value encoded token
+     * @throws IllegalArgumentException if either part is empty
+     */
+    private Token {
+      if (Objects.requireNonNull(sessionId).isBlank() || Objects.requireNonNull(value).isBlank()) {
+        throw new IllegalArgumentException("CSRF token parts cannot be blank");
+      }
     }
   }
 

@@ -17,6 +17,7 @@ class ExceptionExampleTest {
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(request -> request.path("/number"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(400, response.statusCode()),
           () -> assertEquals("Integer required", response.body()),
@@ -34,6 +35,7 @@ class ExceptionExampleTest {
       var response =
           test.send(
               request -> request.path("/builtin/not-found"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(404, response.statusCode()),
           () -> assertEquals("Not Found", response.body()),
@@ -50,6 +52,7 @@ class ExceptionExampleTest {
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(request -> request.path("/unknown"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(404, response.statusCode()),
           () -> assertEquals("Route not found", response.body()),
@@ -67,6 +70,7 @@ class ExceptionExampleTest {
       var response =
           test.send(
               request -> request.path("/inherited/input"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(400, response.statusCode()),
           () -> assertEquals("Route input error", response.body()),
@@ -83,6 +87,7 @@ class ExceptionExampleTest {
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(request -> request.path("/group/input"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(400, response.statusCode()),
           () -> assertEquals("Group input error", response.body()),
@@ -100,6 +105,7 @@ class ExceptionExampleTest {
       var response =
           test.send(
               request -> request.path("/route-failure"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(400, response.statusCode()),
           () -> assertEquals("Route input error", response.body()),
@@ -116,6 +122,7 @@ class ExceptionExampleTest {
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
           test.send(request -> request.path("/app-failure"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(500, response.statusCode()),
           () -> assertEquals("Application failure", response.body()),
@@ -135,6 +142,7 @@ class ExceptionExampleTest {
           test.send(
               request -> request.path("/number?value=" + value),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(400, response.statusCode()),
           () -> assertEquals("Integer required", response.body()),
@@ -152,6 +160,7 @@ class ExceptionExampleTest {
       var response =
           test.send(
               request -> request.path("/number?value=42"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("42", response.body()),
@@ -170,6 +179,7 @@ class ExceptionExampleTest {
           test.send(
               request -> request.path("/builtin/bad-request"),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(400, response.statusCode()),
           () -> assertEquals("Bad Request", response.body()),

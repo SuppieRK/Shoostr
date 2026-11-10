@@ -58,23 +58,27 @@ class ExtensionLifecycleTest {
       try (Closeable appCleanup = app::close) {
         app.sessions().withExtension(first);
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
                 routes.get(
                     "/value",
                     (request, response) -> response.text("unexpected"),
-                    e -> {
-                      e.withoutExtension(first);
-                      e.withExtension(second);
+                    lifecycle -> {
+                      lifecycle.withoutExtension(first);
+                      lifecycle.withExtension(second);
                     }));
+
         app.routes().get("/value", (request, response) -> response.text("kept"));
 
         try (var test = TestServer.start(app)) {
           var response =
               test.send(
-                  r -> r.path("/value").header("Origin", "https://first.example"),
+                  testRequest ->
+                      testRequest.path("/value").header("Origin", "https://first.example"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("kept", response.body());
         }
@@ -93,6 +97,7 @@ class ExtensionLifecycleTest {
       try (Closeable appCleanup5 = app::close) {
         app.withExtension(first);
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
@@ -103,6 +108,7 @@ class ExtensionLifecycleTest {
                       extensions.withoutExtension(first);
                       extensions.withExtension(second);
                     }));
+
         app.routes()
             .get(
                 "/identity",
@@ -120,15 +126,7 @@ class ExtensionLifecycleTest {
 
   @Test
   void selectingAuthenticationThroughWithProtectsApplicationDefaults() throws Exception {
-    var authentication =
-        authenticator(
-            (request, response) -> {
-              if (!"Bearer valid".equals(request.header("Authorization").orElse(null))) {
-                throw new UnauthorizedException("Bearer");
-              }
-
-              request.principal(() -> "alice");
-            });
+    var authentication = bearerAuthentication();
 
     {
       var app = new Shoostr();
@@ -148,12 +146,24 @@ class ExtensionLifecycleTest {
               test.send(
                   request -> request.path("/identity").header("Authorization", "Bearer valid"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(401, missing.statusCode());
           assertEquals(200, valid.statusCode());
           assertEquals("alice", valid.body());
         }
       }
     }
+  }
+
+  private AuthenticationExtension bearerAuthentication() {
+    return authenticator(
+        (request, response) -> {
+          if (!"Bearer valid".equals(request.header("Authorization").orElse(null))) {
+            throw new UnauthorizedException("Bearer");
+          }
+
+          request.principal(() -> "alice");
+        });
   }
 
   @Test
@@ -184,6 +194,7 @@ class ExtensionLifecycleTest {
               test.send(request -> request.path("/excluded"), HttpResponse.BodyHandlers.ofString());
           var included =
               test.send(request -> request.path("/included"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, excluded.statusCode());
           assertEquals("excluded", excluded.body());
           assertTrue(excluded.headers().firstValue("X-Policy").isEmpty());
@@ -220,6 +231,7 @@ class ExtensionLifecycleTest {
           var second =
               test.send(
                   request -> request.path("/nested/second"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, first.statusCode());
           assertEquals("first", first.body());
           assertEquals("application", first.headers().firstValue("X-Policy").orElseThrow());
@@ -245,23 +257,30 @@ class ExtensionLifecycleTest {
       try (Closeable appCleanup11 = app::close) {
 
         var routes = app.routes();
-        routes.get("/other", (ignored3, ignored4) -> {}, e -> e.withExtension(missing));
+        routes.get(
+            "/other",
+            (ignoredRequest, ignoredResponse) -> {},
+            routeLifecycle -> routeLifecycle.withExtension(missing));
         app.routes()
             .get(
                 "/route",
-                (ignored5, response) -> response.text("ok"),
-                e -> {
-                  assertSame(e.withExtension(installed), e.withExtension(installed));
-                  retained.set(e);
-                  retainedLifecycle.set(e);
+                (ignoredRequest, response) -> response.text("ok"),
+                routeLifecycle -> {
+                  assertSame(
+                      routeLifecycle.withExtension(installed),
+                      routeLifecycle.withExtension(installed));
+
+                  retained.set(routeLifecycle);
+                  retainedLifecycle.set(routeLifecycle);
                 });
         var configuration = retained.get();
         var lifecycle = retainedLifecycle.get();
+
         assertThrows(
             IllegalStateException.class, () -> configuration.onRoute((method, path) -> {}));
         assertThrows(
             IllegalStateException.class,
-            () -> lifecycle.afterRouteHandler((ignored6, ignored7) -> {}));
+            () -> lifecycle.afterRouteHandler((ignoredRequest, ignoredResponse) -> {}));
 
         try (var test = TestServer.start(app)) {
           assertThrows(IllegalStateException.class, () -> app.withExtension(missing));
@@ -278,31 +297,14 @@ class ExtensionLifecycleTest {
   void eagerProviderFailureClosesEveryClaimedResourceAndPreventsRestart() throws Exception {
     var events = new ArrayList<String>();
     var first = new Capability("first", events);
-    ApplicationExtension<Object> broken =
-        new ApplicationExtension<Object>() {
-          @Override
-          public Object configure(Lifecycle lifecycle, Object inherited) {
-            return this;
-          }
-
-          @Override
-          public void install(ApplicationCallbacks callbacks) {
-            events.add("install-broken");
-            throw new IllegalStateException("setup failed");
-          }
-
-          @Override
-          public void close() throws IOException {
-            events.add("close-broken");
-            throw new IOException("cleanup failed");
-          }
-        };
+    ApplicationExtension<Object> broken = setupFailingProvider(events);
 
     {
       var app = new Shoostr();
 
       try (Closeable appCleanup12 = app::close) {
         var routes = app.routes();
+
         var failure =
             assertThrows(
                 IllegalStateException.class, () -> app.withExtension(first).withExtension(broken));
@@ -310,33 +312,39 @@ class ExtensionLifecycleTest {
         assertEquals(1, failure.getSuppressed().length);
         assertThrows(IllegalStateException.class, app::start);
         assertThrows(
-            IllegalStateException.class, () -> routes.get("/", (ignored8, ignored9) -> {}));
+            IllegalStateException.class,
+            () -> routes.get("/", (ignoredRequest, ignoredResponse) -> {}));
       }
     }
 
     assertEquals(List.of("install-first", "install-broken", "close-broken", "close-first"), events);
   }
 
+  private ApplicationExtension<Object> setupFailingProvider(ArrayList<String> events) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void install(ApplicationCallbacks callbacks) {
+        events.add("install-broken");
+        throw new IllegalStateException("setup failed");
+      }
+
+      @Override
+      public void close() throws IOException {
+        events.add("close-broken");
+        throw new IOException("cleanup failed");
+      }
+    };
+  }
+
   @Test
   void finalizationFailureClosesTheAppBeforeTraffic() throws Exception {
     var closed = new AtomicBoolean();
-    ApplicationExtension<Object> broken =
-        new ApplicationExtension<Object>() {
-          @Override
-          public Object configure(Lifecycle lifecycle, Object inherited) {
-            return this;
-          }
-
-          @Override
-          public void beforeStart() {
-            throw new IllegalStateException("prepare failed");
-          }
-
-          @Override
-          public void close() {
-            closed.set(true);
-          }
-        };
+    ApplicationExtension<Object> broken = finalizationFailingProvider(closed);
 
     {
       var app =
@@ -346,12 +354,32 @@ class ExtensionLifecycleTest {
 
       try (Closeable appCleanup13 = app::close) {
         app.withExtension(broken);
+
         assertThrows(IllegalStateException.class, app::start);
         assertTrue(closed.get());
         assertThrows(IllegalStateException.class, app::port);
         assertThrows(IllegalStateException.class, app::start);
       }
     }
+  }
+
+  private ApplicationExtension<Object> finalizationFailingProvider(AtomicBoolean closed) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void beforeStart() {
+        throw new IllegalStateException("prepare failed");
+      }
+
+      @Override
+      public void close() {
+        closed.set(true);
+      }
+    };
   }
 
   @Test
@@ -362,12 +390,14 @@ class ExtensionLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup14 = app::close) {
-        app.onRouteMatched((ignored10, ignored11) -> events.add("app"));
+        app.onRouteMatched((ignoredRequest, ignoredResponse) -> events.add("app"));
         app.routes()
             .get(
                 "/ordered",
-                (ignored12, response) -> response.text("ok"),
-                e -> e.onRouteMatched((ignored13, ignored14) -> events.add("local")));
+                (ignoredRequest, response) -> response.text("ok"),
+                lifecycle ->
+                    lifecycle.onRouteMatched(
+                        (ignoredRequest, ignoredResponse) -> events.add("local")));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -388,12 +418,14 @@ class ExtensionLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup15 = app::close) {
-        app.beforeRouteHandler((ignored15, ignored16) -> events.add("app"));
+        app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> events.add("app"));
         app.routes()
             .get(
                 "/ordered",
-                (ignored17, response) -> response.text("ok"),
-                e -> e.beforeRouteHandler((ignored18, ignored19) -> events.add("local")));
+                (ignoredRequest, response) -> response.text("ok"),
+                lifecycle ->
+                    lifecycle.beforeRouteHandler(
+                        (ignoredRequest, ignoredResponse) -> events.add("local")));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -414,12 +446,14 @@ class ExtensionLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup16 = app::close) {
-        app.afterRouteHandler((ignored20, ignored21) -> events.add("app"));
+        app.afterRouteHandler((ignoredRequest, ignoredResponse) -> events.add("app"));
         app.routes()
             .get(
                 "/ordered",
-                (ignored22, response) -> response.text("ok"),
-                e -> e.afterRouteHandler((ignored23, ignored24) -> events.add("local")));
+                (ignoredRequest, response) -> response.text("ok"),
+                lifecycle ->
+                    lifecycle.afterRouteHandler(
+                        (ignoredRequest, ignoredResponse) -> events.add("local")));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -435,7 +469,8 @@ class ExtensionLifecycleTest {
   @Test
   void runsExtensionAdmissionBeforeDirectLocalAdmission() throws Exception {
     var events = new LinkedBlockingQueue<String>();
-    var admission = new AdmissionExtension((ignored25, ignored26) -> events.add("extension"));
+    var admission =
+        new AdmissionExtension((ignoredRequest, ignoredResponse) -> events.add("extension"));
 
     {
       var app = new Shoostr();
@@ -444,10 +479,11 @@ class ExtensionLifecycleTest {
         app.routes()
             .get(
                 "/ordered",
-                (ignored27, response) -> response.text("ok"),
-                e -> {
-                  e.beforeRouteHandler((ignored28, ignored29) -> events.add("local"));
-                  e.withExtension(admission);
+                (ignoredRequest, response) -> response.text("ok"),
+                lifecycle -> {
+                  lifecycle.beforeRouteHandler(
+                      (ignoredRequest, ignoredResponse) -> events.add("local"));
+                  lifecycle.withExtension(admission);
                 });
 
         try (var test = TestServer.start(app)) {
@@ -463,10 +499,10 @@ class ExtensionLifecycleTest {
 
   @Test
   void makesAuthenticatedPrincipalAvailableToExtensionAdmission() throws Exception {
-    var auth = authenticator((request, ignored30) -> request.principal(() -> "alice"));
+    var auth = authenticator((request, ignoredResponse) -> request.principal(() -> "alice"));
     var admission =
         new AdmissionExtension(
-            (request, ignored31) ->
+            (request, ignoredResponse) ->
                 request.attribute("identity", request.principal().orElseThrow().getName()));
 
     {
@@ -478,9 +514,9 @@ class ExtensionLifecycleTest {
                 "/identity",
                 (request, response) ->
                     response.text(request.attribute("identity").orElseThrow().toString()),
-                e -> {
-                  e.withExtension(admission);
-                  e.withExtension(auth);
+                lifecycle -> {
+                  lifecycle.withExtension(admission);
+                  lifecycle.withExtension(auth);
                 });
 
         try (var test = TestServer.start(app)) {
@@ -496,7 +532,7 @@ class ExtensionLifecycleTest {
   @Test
   void selectingAuthenticationRepeatedlyAuthenticatesOnce() throws Exception {
     var calls = new AtomicInteger();
-    var auth = authenticator((ignored32, ignored33) -> calls.incrementAndGet());
+    var auth = authenticator((ignoredRequest, ignoredResponse) -> calls.incrementAndGet());
 
     {
       var app = new Shoostr();
@@ -508,9 +544,9 @@ class ExtensionLifecycleTest {
                 routes ->
                     routes.get(
                         "/identity",
-                        (ignored34, response) -> response.text("ok"),
-                        e -> e.withExtension(auth)),
-                e -> e.withExtension(auth));
+                        (ignoredRequest, response) -> response.text("ok"),
+                        lifecycle -> lifecycle.withExtension(auth)),
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -531,17 +567,18 @@ class ExtensionLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup20 = app::close) {
-        app.beforeRouteHandler((ignored35, ignored36) -> events.add("app"));
+        app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> events.add("app"));
         app.routes()
             .when(
                 () -> {
                   events.add("availability");
+
                   return true;
                 },
                 routes ->
                     routes.get(
                         "/ordered",
-                        (ignored37, response) -> {
+                        (ignoredRequest, response) -> {
                           events.add("endpoint");
                           response.text("ok");
                         }));
@@ -559,7 +596,7 @@ class ExtensionLifecycleTest {
 
   @Test
   void makesAuthenticatedPrincipalAvailableToAvailability() throws Exception {
-    var auth = authenticator((request, ignored38) -> request.principal(() -> "alice"));
+    var auth = authenticator((request, ignoredResponse) -> request.principal(() -> "alice"));
 
     {
       var app = new Shoostr();
@@ -571,8 +608,8 @@ class ExtensionLifecycleTest {
                 routes ->
                     routes.get(
                         "/identity",
-                        (ignored39, response) -> response.text("ok"),
-                        e -> e.withExtension(auth)));
+                        (ignoredRequest, response) -> response.text("ok"),
+                        lifecycle -> lifecycle.withExtension(auth)));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -594,7 +631,7 @@ class ExtensionLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup22 = app::close) {
-        app.status(404, (ignored40, response) -> response.text("app missing"));
+        app.status(404, (ignoredRequest, response) -> response.text("app missing"));
         app.routes()
             .when(
                 enabled::get,
@@ -603,6 +640,7 @@ class ExtensionLifecycleTest {
                   outer.when(
                       request -> {
                         innerCalls.incrementAndGet();
+
                         return request
                             .header("Accept-Language")
                             .filter("fr-FR"::equals)
@@ -611,18 +649,20 @@ class ExtensionLifecycleTest {
                       inner ->
                           inner.get(
                               "/users/fixed",
-                              (ignored41, response) -> response.text("enabled"),
-                              e ->
-                                  e.status(
+                              (ignoredRequest, response) -> response.text("enabled"),
+                              lifecycle ->
+                                  lifecycle.status(
                                       404,
-                                      (ignored42, response) -> response.text("locally disabled"))));
+                                      (ignoredRequest, response) ->
+                                          response.text("locally disabled"))));
                 });
-        app.routes().get("/users/{id}", (ignored43, response) -> response.text("fallback"));
+        app.routes().get("/users/{id}", (ignoredRequest, response) -> response.text("fallback"));
 
         try (var test = TestServer.start(app)) {
           var denied =
               test.send(
                   request -> request.path("/users/fixed"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(404, denied.statusCode());
           assertEquals("locally disabled", denied.body());
           assertEquals("no-store", denied.headers().firstValue("Cache-Control").orElseThrow());
@@ -633,11 +673,13 @@ class ExtensionLifecycleTest {
                       request -> request.path("/users/fixed").method("POST"),
                       HttpResponse.BodyHandlers.ofString())
                   .statusCode());
+
           enabled.set(true);
           var admitted =
               test.send(
                   request -> request.path("/users/fixed").header("Accept-Language", "fr-FR"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals("enabled", admitted.body());
           assertTrue(admitted.headers().firstValue("Cache-Control").isEmpty());
           assertEquals(1, groupCalls.get());
@@ -659,32 +701,33 @@ class ExtensionLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup23 = app::close) {
-        app.beforeRouteHandler((ignored44, ignored45) -> events.add("app"));
-        app.afterRouteHandler((ignored46, ignored47) -> events.add("after-app"));
+        app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> events.add("app"));
+        app.afterRouteHandler((ignoredRequest, ignoredResponse) -> events.add("after-app"));
         app.exception(
             IllegalArgumentException.class,
-            (ignored48, ignored49, response) -> response.text("app error"));
+            (ignoredFailure, ignoredRequest, response) -> response.text("app error"));
         app.routes()
             .path(
                 "/fail",
                 routes -> {
                   routes.exception(
                       Exception.class,
-                      (ignored50, ignored51, response) -> response.text("local error"));
+                      (ignoredFailure, ignoredRequest, response) -> response.text("local error"));
                   routes.get(
-                      (ignored52, response) -> response.text("handler"),
-                      e -> {
-                        e.beforeRouteHandler(
-                            (ignored53, ignored54) -> {
+                      (ignoredRequest, response) -> response.text("handler"),
+                      lifecycle -> {
+                        lifecycle.beforeRouteHandler(
+                            (ignoredRequest, ignoredResponse) -> {
                               throw new IllegalArgumentException("local");
                             });
-                        e.afterRouteHandler((ignored55, ignored56) -> events.add("after-local"));
+                        lifecycle.afterRouteHandler(
+                            (ignoredRequest, ignoredResponse) -> events.add("after-local"));
                       });
                 });
         app.routes()
             .get(
                 "/fallback",
-                (ignored57, ignored58) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new IllegalArgumentException();
                 });
 
@@ -714,13 +757,13 @@ class ExtensionLifecycleTest {
         app.routes()
             .get(
                 "/observed",
-                (ignored59, response) -> response.text("ok"),
-                e -> {
-                  e.afterRequest(
-                      ignored60 -> {
+                (ignoredRequest, response) -> response.text("ok"),
+                lifecycle -> {
+                  lifecycle.afterRequest(
+                      ignoredRequestOutcome -> {
                         throw new IllegalStateException("observer failed");
                       });
-                  e.afterRequest(outcomes::add);
+                  lifecycle.afterRequest(outcomes::add);
                 });
 
         try (var test = TestServer.start(app)) {
@@ -728,7 +771,9 @@ class ExtensionLifecycleTest {
               200,
               test.send(request -> request.path("/observed"), HttpResponse.BodyHandlers.ofString())
                   .statusCode());
+
           var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+
           assertNotNull(outcome);
           assertEquals("/observed", outcome.routePattern());
           assertEquals(200, outcome.statusCode());
@@ -748,23 +793,27 @@ class ExtensionLifecycleTest {
 
       try (Closeable appCleanup25 = app::close) {
         app.onRequestHeaders(
-            (ignored61, response) -> response.startStream("text/plain").write("early"));
-        app.beforeResponseFlush((ignored62, ignored63) -> events.add("app-before"));
-        app.afterResponseFlush((ignored64, ignored65) -> events.add("app-after"));
+            (ignoredRequest, response) -> response.startStream("text/plain").write("early"));
+        app.beforeResponseFlush((ignoredRequest, ignoredResponse) -> events.add("app-before"));
+        app.afterResponseFlush((ignoredRequest, ignoredResponse) -> events.add("app-after"));
         app.afterRequest(completed::add);
         app.routes()
             .get(
                 "/early",
-                (ignored66, ignored67) -> {},
-                e -> {
-                  e.onRouteMatched((ignored68, ignored69) -> events.add("matched"));
-                  e.beforeResponseFlush((ignored70, ignored71) -> events.add("local-before"));
-                  e.afterResponseFlush((ignored72, ignored73) -> events.add("local-after"));
+                (ignoredRequest, ignoredResponse) -> {},
+                lifecycle -> {
+                  lifecycle.onRouteMatched(
+                      (ignoredRequest, ignoredResponse) -> events.add("matched"));
+                  lifecycle.beforeResponseFlush(
+                      (ignoredRequest, ignoredResponse) -> events.add("local-before"));
+                  lifecycle.afterResponseFlush(
+                      (ignoredRequest, ignoredResponse) -> events.add("local-after"));
                 });
 
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/early"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("early", result.body());
           assertNotNull(completed.poll(5, TimeUnit.SECONDS));
@@ -792,27 +841,32 @@ class ExtensionLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup26 = app::close) {
-        app.beforeResponseFlush((ignored74, ignored75) -> events.add("app-before"));
-        app.afterResponseFlush((ignored76, ignored77) -> events.add("app-after"));
+        app.beforeResponseFlush((ignoredRequest, ignoredResponse) -> events.add("app-before"));
+        app.afterResponseFlush((ignoredRequest, ignoredResponse) -> events.add("app-after"));
         app.afterRequest(completed::add);
         app.routes()
             .get(
                 "/events",
-                (ignored78, ignored79) -> events.add("endpoint"),
-                e -> {
-                  e.onRouteMatched(
-                      (ignored80, response) -> response.startEventStream().send("early"));
-                  e.beforeResponseFlush((ignored81, ignored82) -> events.add("local-before"));
-                  e.afterResponseFlush((ignored83, ignored84) -> events.add("local-after"));
+                (ignoredRequest, ignoredResponse) -> events.add("endpoint"),
+                lifecycle -> {
+                  lifecycle.onRouteMatched(
+                      (ignoredRequest, response) -> response.startEventStream().send("early"));
+                  lifecycle.beforeResponseFlush(
+                      (ignoredRequest, ignoredResponse) -> events.add("local-before"));
+                  lifecycle.afterResponseFlush(
+                      (ignoredRequest, ignoredResponse) -> events.add("local-after"));
                 });
 
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("data: early\n\n", result.body());
           assertNotNull(completed.poll(5, TimeUnit.SECONDS));
+
           var order = List.copyOf(events);
+
           assertTrue(order.indexOf("endpoint") >= 4);
           assertEquals(
               List.of("local-before", "app-before", "local-after", "app-after"),
@@ -831,8 +885,8 @@ class ExtensionLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup27 = app::close) {
-        app.beforeResponseFlush((ignored85, ignored86) -> events.add("app-before"));
-        app.afterResponseFlush((ignored87, ignored88) -> events.add("app-after"));
+        app.beforeResponseFlush((ignoredRequest, ignoredResponse) -> events.add("app-before"));
+        app.afterResponseFlush((ignoredRequest, ignoredResponse) -> events.add("app-after"));
         app.afterRequest(
             outcome -> {
               events.add("app-terminal");
@@ -841,11 +895,13 @@ class ExtensionLifecycleTest {
         app.routes()
             .sse(
                 "/events",
-                (ignored89, response) -> response.startEventStream().send("a").send("b"),
-                e -> {
-                  e.beforeResponseFlush((ignored90, ignored91) -> events.add("local-before"));
-                  e.afterResponseFlush((ignored92, ignored93) -> events.add("local-after"));
-                  e.afterRequest(ignored94 -> events.add("local-terminal"));
+                (ignoredRequest, response) -> response.startEventStream().send("a").send("b"),
+                lifecycle -> {
+                  lifecycle.beforeResponseFlush(
+                      (ignoredRequest, ignoredResponse) -> events.add("local-before"));
+                  lifecycle.afterResponseFlush(
+                      (ignoredRequest, ignoredResponse) -> events.add("local-after"));
+                  lifecycle.afterRequest(ignoredRequestOutcome -> events.add("local-terminal"));
                 });
 
         try (var test = TestServer.start(app)) {
@@ -854,11 +910,14 @@ class ExtensionLifecycleTest {
               test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString())
                   .body());
           assertNotNull(completed.poll(5, TimeUnit.SECONDS));
+
           var order = List.copyOf(events);
+
           assertTrue(order.size() >= 10);
           assertEquals(
               List.of("local-terminal", "app-terminal"),
               order.subList(order.size() - 2, order.size()));
+
           for (int index = 0; index < order.size() - 2; index += 4) {
             assertEquals(
                 List.of("local-before", "app-before", "local-after", "app-after"),
@@ -885,19 +944,22 @@ class ExtensionLifecycleTest {
                 routes -> {
                   routes.exception(
                       IllegalArgumentException.class,
-                      (ignored95, ignored96, response) -> response.text("flag failed"));
+                      (ignoredFailure, ignoredRequest, response) -> response.text("flag failed"));
                   routes.get(
                       "/flag",
-                      (ignored97, response) -> response.text("unexpected"),
-                      e -> e.afterRequest(outcomes::add));
+                      (ignoredRequest, response) -> response.text("unexpected"),
+                      lifecycle -> lifecycle.afterRequest(outcomes::add));
                 });
 
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/flag"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(500, result.statusCode());
           assertEquals("flag failed", result.body());
+
           var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+
           assertNotNull(outcome);
           assertEquals("/flag", outcome.routePattern());
           assertInstanceOf(IllegalArgumentException.class, outcome.applicationFailure());
@@ -911,15 +973,8 @@ class ExtensionLifecycleTest {
   void rejectsProviderSideNestedAuthenticationSelectionWithoutPublishingTheEndpoint()
       throws Exception {
     var calls = new AtomicInteger();
-    var auth = authenticator((ignored98, ignored99) -> calls.incrementAndGet());
-    TestExtension<Object> nested =
-        new TestExtension<>() {
-          @Override
-          public Object configure(Lifecycle endpoint, Object inherited) {
-            endpoint.withExtension(auth);
-            return new Object();
-          }
-        };
+    var auth = authenticator((ignoredRequest, ignoredResponse) -> calls.incrementAndGet());
+    TestExtension<Object> nested = nestedAuthenticationProvider(auth);
 
     {
       var app = new Shoostr();
@@ -927,12 +982,16 @@ class ExtensionLifecycleTest {
       try (Closeable appCleanup29 = app::close) {
 
         var routes = app.routes();
+
         assertThrows(
             IllegalStateException.class,
             () ->
                 routes.get(
-                    "/nested", (ignored100, ignored101) -> {}, e -> e.withExtension(nested)));
-        app.routes().get("/nested", (ignored102, response) -> response.text("retry"));
+                    "/nested",
+                    (ignoredRequest, ignoredResponse) -> {},
+                    lifecycle -> lifecycle.withExtension(nested)));
+
+        app.routes().get("/nested", (ignoredRequest, response) -> response.text("retry"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -943,6 +1002,17 @@ class ExtensionLifecycleTest {
         }
       }
     }
+  }
+
+  private TestExtension<Object> nestedAuthenticationProvider(AuthenticationExtension auth) {
+    return new TestExtension<>() {
+      @Override
+      public Object configure(Lifecycle endpoint, Object inherited) {
+        endpoint.withExtension(auth);
+
+        return new Object();
+      }
+    };
   }
 
   @Test
@@ -957,7 +1027,7 @@ class ExtensionLifecycleTest {
 
       try (Closeable appCleanup30 = app::close) {
 
-        app.beforeRouteHandler((ignored103, ignored104) -> events.add("app"));
+        app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> events.add("app"));
         app.routes()
             .path(
                 "/outer",
@@ -967,20 +1037,24 @@ class ExtensionLifecycleTest {
                         inner ->
                             inner.get(
                                 "/endpoint",
-                                (ignored105, response) -> {
+                                (ignoredRequest, response) -> {
                                   events.add("handler");
                                   response.text("ok");
                                 },
-                                e -> {
-                                  e.withExtension(first);
-                                  e.beforeRouteHandler(
-                                      (ignored106, ignored107) -> events.add("endpoint"));
+                                lifecycle -> {
+                                  lifecycle.withExtension(first);
+                                  lifecycle.beforeRouteHandler(
+                                      (ignoredRequest, ignoredResponse) -> events.add("endpoint"));
                                 }),
-                        e -> e.beforeRouteHandler((ignored108, ignored109) -> events.add("inner"))),
-                e -> {
-                  e.beforeRouteHandler((ignored110, ignored111) -> events.add("outer"));
-                  e.withExtension(second);
-                  assertSame(e.withExtension(first), e.withExtension(first));
+                        lifecycle ->
+                            lifecycle.beforeRouteHandler(
+                                (ignoredRequest, ignoredResponse) -> events.add("inner"))),
+                lifecycle -> {
+                  lifecycle.beforeRouteHandler(
+                      (ignoredRequest, ignoredResponse) -> events.add("outer"));
+                  lifecycle.withExtension(second);
+
+                  assertSame(lifecycle.withExtension(first), lifecycle.withExtension(first));
                 });
 
         try (var test = TestServer.start(app)) {
@@ -1004,7 +1078,8 @@ class ExtensionLifecycleTest {
     return new TestExtension<>() {
       @Override
       public Object configure(Lifecycle endpoint, Object inherited) {
-        endpoint.beforeRouteHandler((ignored112, ignored113) -> events.add(name));
+        endpoint.beforeRouteHandler((ignoredRequest, ignoredResponse) -> events.add(name));
+
         return new Object();
       }
     };

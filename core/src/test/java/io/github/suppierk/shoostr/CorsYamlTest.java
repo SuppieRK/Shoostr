@@ -30,6 +30,7 @@ class CorsYamlTest {
         """
         }) {
       var policy = new Yaml().loadAs(mapping, CorsPolicy.class);
+
       assertEquals(Set.of(), policy.origins());
       assertEquals(Set.of(HttpMethods.GET, HttpMethods.HEAD), policy.methods());
       assertFalse(policy.allMethods());
@@ -45,6 +46,7 @@ class CorsYamlTest {
     for (var mapping :
         new String[] {"methods: []\nallMethods: true", "allMethods: true\nmethods: []"}) {
       var policy = new Yaml().loadAs(mapping, CorsPolicy.class);
+
       assertTrue(policy.allMethods());
       assertEquals(Set.of(), policy.methods());
     }
@@ -58,24 +60,15 @@ class CorsYamlTest {
 
   @Test
   void settersRestoreDefaultsAndInvalidValuesRetainPreviousSettings() {
-    var settings =
-        new Yaml()
-            .loadAs(
-                """
-        origins: [https://client.example]
-        methods: [POST]
-        allowedHeaders: [X-Proof]
-        credentials: true
-        exposedHeaders: [ETag]
-        maxAgeSeconds: 60
-        """,
-                CorsPolicy.class);
+    var settings = createSettingsForSettersRestoreDefaultsAndInvalidValuesRetainPreviousSettings();
     var snapshot = new Cors(settings).policy();
+
     assertThrows(
         IllegalArgumentException.class, () -> settings.setOrigins(Set.of("not-an-origin")));
     assertThrows(IllegalArgumentException.class, () -> settings.setMaxAgeSeconds(-1L));
     assertEquals(Set.of("https://client.example"), settings.getOrigins());
     assertEquals(60L, settings.getMaxAgeSeconds());
+
     settings.setOrigins(null);
     settings.setMethods(null);
     settings.setAllMethods(null);
@@ -84,6 +77,7 @@ class CorsYamlTest {
     settings.setExposedHeaders(null);
     settings.setMaxAgeSeconds(null);
     var defaults = settings;
+
     assertEquals(Set.of(), defaults.origins());
     assertEquals(Set.of(HttpMethods.GET, HttpMethods.HEAD), defaults.methods());
     assertFalse(defaults.allMethods());
@@ -95,6 +89,21 @@ class CorsYamlTest {
     assertEquals(Set.of(HttpMethods.POST), snapshot.methods());
     assertTrue(snapshot.credentials());
     assertEquals(60, snapshot.maxAgeSeconds());
+  }
+
+  private CorsPolicy
+      createSettingsForSettersRestoreDefaultsAndInvalidValuesRetainPreviousSettings() {
+    return new Yaml()
+        .loadAs(
+            """
+        origins: [https://client.example]
+        methods: [POST]
+        allowedHeaders: [X-Proof]
+        credentials: true
+        exposedHeaders: [ETag]
+        maxAgeSeconds: 60
+        """,
+            CorsPolicy.class);
   }
 
   @Test
@@ -112,19 +121,8 @@ class CorsYamlTest {
 
   @Test
   void mapsEveryExistingPolicyPropertyToTypedValues() {
-    var policy =
-        new Yaml()
-            .loadAs(
-                """
-        origins: [https://client.example]
-        methods: [POST, OPTIONS]
-        allMethods: false
-        allowedHeaders: [Content-Type, X-Proof]
-        credentials: true
-        exposedHeaders: [ETag, X-Request-Id]
-        maxAgeSeconds: 60
-        """,
-                CorsPolicy.class);
+    var policy = createPolicyForMapsEveryExistingPolicyPropertyToTypedValues();
+
     assertEquals(Set.of("https://client.example"), policy.origins());
     assertEquals(Set.of(HttpMethods.POST, HttpMethods.OPTIONS), policy.methods());
     assertFalse(policy.allMethods());
@@ -135,9 +133,25 @@ class CorsYamlTest {
     assertEquals(60, policy.maxAgeSeconds());
   }
 
+  private CorsPolicy createPolicyForMapsEveryExistingPolicyPropertyToTypedValues() {
+    return new Yaml()
+        .loadAs(
+            """
+        origins: [https://client.example]
+        methods: [POST, OPTIONS]
+        allMethods: false
+        allowedHeaders: [Content-Type, X-Proof]
+        credentials: true
+        exposedHeaders: [ETag, X-Request-Id]
+        maxAgeSeconds: 60
+        """,
+            CorsPolicy.class);
+  }
+
   @Test
   void partialConfigurationPreservesTheExistingPolicyDefaults() {
     var policy = new Yaml().loadAs("origins: [https://client.example]", CorsPolicy.class);
+
     assertEquals(Set.of("https://client.example"), policy.origins());
     assertEquals(Set.of(HttpMethods.GET, HttpMethods.HEAD), policy.methods());
     assertFalse(policy.allMethods());
@@ -167,6 +181,7 @@ class CorsYamlTest {
               (request, response) -> response.text("ok"),
               lifecycle -> {
                 var selected = lifecycle.withExtension(cors).policy(replacement);
+
                 assertThrows(IllegalArgumentException.class, () -> selected.policy(invalid));
               })
           .get("/sibling", (request, response) -> response.text("ok"));
@@ -197,6 +212,7 @@ class CorsYamlTest {
                 .send(
                     request -> request.path("/reports").header("Origin", "https://client.example"))
                 .statusCode());
+
         for (var path : new String[] {"/default", "/reports", "/sibling"}) {
           assertEquals(
               403,

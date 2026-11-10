@@ -40,6 +40,7 @@ public final class TypedShoostr {
   public Shoostr routes(Consumer<TypedRoutes> registration) {
     Objects.requireNonNull(registration);
     app.routes(ignored -> registration.accept(routes));
+
     return app;
   }
 }

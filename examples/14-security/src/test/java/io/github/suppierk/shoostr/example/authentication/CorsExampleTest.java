@@ -13,6 +13,7 @@ import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.exceptions.AuthenticationRequiredException;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.util.Locale;
 import java.util.Set;
@@ -30,25 +31,15 @@ class CorsExampleTest {
 
     try (var test = TestServer.start(CorsExample.application())) {
       var preflight =
-          test.send(
-              request ->
-                  request
-                      .path("/reports/daily")
-                      .method("OPTIONS")
-                      .header("Origin", origin)
-                      .header("Access-Control-Request-Method", "GET")
-                      .header("Access-Control-Request-Headers", "X-Report-Format"));
+          sendPreflightForReplacesReportOriginsHeadersCredentialsAndCacheLifetime(test, origin);
+
       assertEquals(204, preflight.statusCode());
       assertEquals("0", preflight.headers().firstValue("Access-Control-Max-Age").orElseThrow());
       assertFalse(preflight.headers().firstValue("Access-Control-Allow-Credentials").isPresent());
+
       var actual =
-          test.send(
-              request ->
-                  request
-                      .path("/reports/daily")
-                      .header("Origin", origin)
-                      .header("X-Report-Format", "csv"),
-              HttpResponse.BodyHandlers.ofString());
+          sendActualForReplacesReportOriginsHeadersCredentialsAndCacheLifetime(test, origin);
+
       assertEquals(200, actual.statusCode());
       assertEquals("csv", actual.body());
       assertEquals(
@@ -79,32 +70,67 @@ class CorsExampleTest {
     }
   }
 
+  private HttpResponse<byte[]>
+      sendPreflightForReplacesReportOriginsHeadersCredentialsAndCacheLifetime(
+          TestServer test, String origin) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/reports/daily")
+                .method("OPTIONS")
+                .header("Origin", origin)
+                .header("Access-Control-Request-Method", "GET")
+                .header("Access-Control-Request-Headers", "X-Report-Format"));
+  }
+
+  private HttpResponse<String> sendActualForReplacesReportOriginsHeadersCredentialsAndCacheLifetime(
+      TestServer test, String origin) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/reports/daily")
+                .header("Origin", origin)
+                .header("X-Report-Format", "csv"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void keepsMissingTargetsAndUnsupportedMethodsAsRoutingErrorsWithoutCorsGrants() throws Exception {
 
     try (var test = TestServer.start(CorsExample.application())) {
       for (var path : new String[] {"/reports/missing", "/reports/daily"}) {
         var preflight =
-            test.send(
-                request ->
-                    request
-                        .path(path)
-                        .method("OPTIONS")
-                        .header("Origin", "https://reports.example")
-                        .header("Access-Control-Request-Method", "POST"));
+            sendPreflightForKeepsMissingTargetsAndUnsupportedMethodsAsRoutingErrorsWithoutCorsGrants(
+                test, path);
+
         assertEquals(path.endsWith("daily") ? 405 : 404, preflight.statusCode());
         assertFalse(preflight.headers().firstValue("Access-Control-Allow-Origin").isPresent());
+
         var actual =
             test.send(
                 request ->
                     request.path(path).method("POST").header("Origin", "https://reports.example"));
+
         assertEquals(path.endsWith("daily") ? 405 : 404, actual.statusCode());
         assertFalse(actual.headers().firstValue("Access-Control-Allow-Origin").isPresent());
+
         if (path.endsWith("daily")) {
           assertEquals("GET", actual.headers().firstValue("Allow").orElseThrow());
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendPreflightForKeepsMissingTargetsAndUnsupportedMethodsAsRoutingErrorsWithoutCorsGrants(
+          TestServer test, String path) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path(path)
+                .method("OPTIONS")
+                .header("Origin", "https://reports.example")
+                .header("Access-Control-Request-Method", "POST"));
   }
 
   @Test
@@ -115,25 +141,25 @@ class CorsExampleTest {
 
     try (var test = TestServer.start(app)) {
       var preflight =
-          test.send(
-              request ->
-                  request
-                      .path("/reports/outside")
-                      .method("OPTIONS")
-                      .header("Origin", "https://reports.example")
-                      .header("Access-Control-Request-Method", "GET"));
+          sendPreflightForGivesASeparatelyRegisteredEndpointApplicationDefaultsInsteadOfTheReportsPolicy(
+              test);
+
       assertEquals(403, preflight.statusCode());
+
       var actual =
           test.send(
               request ->
                   request.path("/reports/outside").header("Origin", "https://reports.example"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(403, actual.statusCode());
       assertFalse(actual.headers().firstValue("Access-Control-Allow-Origin").isPresent());
+
       var allowed =
           test.send(
               request -> request.path("/reports/outside").header("Origin", "https://app.example"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, allowed.statusCode());
       assertEquals("outside", allowed.body());
       assertEquals(
@@ -142,19 +168,25 @@ class CorsExampleTest {
     }
   }
 
+  private HttpResponse<byte[]>
+      sendPreflightForGivesASeparatelyRegisteredEndpointApplicationDefaultsInsteadOfTheReportsPolicy(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/reports/outside")
+                .method("OPTIONS")
+                .header("Origin", "https://reports.example")
+                .header("Access-Control-Request-Method", "GET"));
+  }
+
   @Test
   void answersAnAllowedCredentialedPreflightWithoutAnOptionsHandler() throws Exception {
 
     try (var test = TestServer.start(CorsExample.application())) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/messages")
-                      .method("OPTIONS")
-                      .header("Origin", "https://app.example")
-                      .header("Access-Control-Request-Method", "POST")
-                      .header("Access-Control-Request-Headers", "content-type, authorization"));
+          sendResponseForAnswersAnAllowedCredentialedPreflightWithoutAnOptionsHandler(test);
+
       assertEquals(204, response.statusCode());
       assertEquals(0, response.body().length);
       assertEquals(
@@ -181,6 +213,19 @@ class CorsExampleTest {
     }
   }
 
+  private HttpResponse<byte[]>
+      sendResponseForAnswersAnAllowedCredentialedPreflightWithoutAnOptionsHandler(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/messages")
+                .method("OPTIONS")
+                .header("Origin", "https://app.example")
+                .header("Access-Control-Request-Method", "POST")
+                .header("Access-Control-Request-Headers", "content-type, authorization"));
+  }
+
   @ParameterizedTest
   @CsvSource({"GET, 200, hello", "POST, 201, accepted"})
   void sharesAnAllowedResponseAndExposesOnlyTheConfiguredExtraHeader(
@@ -192,6 +237,7 @@ class CorsExampleTest {
               request ->
                   request.path("/messages").method(method).header("Origin", "https://app.example"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(status, response.statusCode());
       assertEquals(body, response.body());
       assertEquals(
@@ -217,6 +263,7 @@ class CorsExampleTest {
 
     try (var test = TestServer.start(CorsExample.application())) {
       var response = test.send(request -> request.path("/messages").header("Origin", origin));
+
       assertEquals(status, response.statusCode());
       assertFalse(response.headers().firstValue("Access-Control-Allow-Origin").isPresent());
     }
@@ -229,17 +276,25 @@ class CorsExampleTest {
 
     try (var test = TestServer.start(CorsExample.application())) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/messages")
-                      .method("OPTIONS")
-                      .header("Origin", "https://app.example")
-                      .header("Access-Control-Request-Method", method)
-                      .header("Access-Control-Request-Headers", header));
+          sendResponseForRejectsAPreflightRequestingAnUnregisteredMethodOrUnlistedHeader(
+              test, method, header);
+
       assertEquals(status, response.statusCode());
       assertFalse(response.headers().firstValue("Access-Control-Allow-Origin").isPresent());
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResponseForRejectsAPreflightRequestingAnUnregisteredMethodOrUnlistedHeader(
+          TestServer test, String method, String header) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/messages")
+                .method("OPTIONS")
+                .header("Origin", "https://app.example")
+                .header("Access-Control-Request-Method", method)
+                .header("Access-Control-Request-Headers", header));
   }
 
   @ParameterizedTest
@@ -249,46 +304,53 @@ class CorsExampleTest {
 
     try (var test = TestServer.start(CorsExample.application())) {
       var response =
-          test.send(
-              request -> {
-                request.path("/messages");
-                if (sameOrigin) {
-                  request.header(
-                      "Origin",
-                      test.baseUri().getScheme() + "://" + test.baseUri().getRawAuthority());
-                }
-              },
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForKeepsRequestsWithoutAnOriginOrFromTheSameOriginInNormalDispatch(
+              test, sameOrigin);
+
       assertEquals(200, response.statusCode());
       assertEquals("hello", response.body());
       assertFalse(response.headers().firstValue("Access-Control-Allow-Origin").isPresent());
     }
   }
 
+  private HttpResponse<String>
+      sendResponseForKeepsRequestsWithoutAnOriginOrFromTheSameOriginInNormalDispatch(
+          TestServer test, boolean sameOrigin) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/messages");
+          if (sameOrigin) {
+            request.header(
+                "Origin", test.baseUri().getScheme() + "://" + test.baseUri().getRawAuthority());
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void rejectsDuplicateOriginFields() throws Exception {
 
     try (var test = TestServer.start(CorsExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/messages")
-                      .header("Origin", "https://app.example")
-                      .header("Origin", "https://app.example"));
+      var response = sendResponseForRejectsDuplicateOriginFields(test);
+
       assertEquals(400, response.statusCode());
     }
+  }
+
+  private HttpResponse<byte[]> sendResponseForRejectsDuplicateOriginFields(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/messages")
+                .header("Origin", "https://app.example")
+                .header("Origin", "https://app.example"));
   }
 
   @Test
   void admitsPreflightButStillRequiresAuthenticationForTheActualOperation() throws Exception {
     var authentication =
-        new AuthenticationExtension() {
-          @Override
-          public void handle(Request request, Response response) {
-            throw new AuthenticationRequiredException("Bearer realm=\"private\"");
-          }
-        };
+        createAuthenticationForAdmitsPreflightButStillRequiresAuthenticationForTheActualOperation();
     var app = CorsExample.application();
     app.routes()
         .get(
@@ -298,18 +360,15 @@ class CorsExampleTest {
 
     try (var test = TestServer.start(app)) {
       var preflight =
-          test.send(
-              request ->
-                  request
-                      .path("/fixture/private")
-                      .method("OPTIONS")
-                      .header("Origin", "https://app.example")
-                      .header("Access-Control-Request-Method", "GET"));
+          sendPreflightForAdmitsPreflightButStillRequiresAuthenticationForTheActualOperation(test);
+
       assertEquals(204, preflight.statusCode());
       assertFalse(preflight.headers().firstValue("WWW-Authenticate").isPresent());
+
       var actual =
           test.send(
               request -> request.path("/fixture/private").header("Origin", "https://app.example"));
+
       assertEquals(401, actual.statusCode());
       assertEquals(
           "Bearer realm=\"private\"",
@@ -320,6 +379,28 @@ class CorsExampleTest {
     }
   }
 
+  private AuthenticationExtension
+      createAuthenticationForAdmitsPreflightButStillRequiresAuthenticationForTheActualOperation() {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        throw new AuthenticationRequiredException("Bearer realm=\"private\"");
+      }
+    };
+  }
+
+  private HttpResponse<byte[]>
+      sendPreflightForAdmitsPreflightButStillRequiresAuthenticationForTheActualOperation(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/fixture/private")
+                .method("OPTIONS")
+                .header("Origin", "https://app.example")
+                .header("Access-Control-Request-Method", "GET"));
+  }
+
   @Test
   void excludedHealthEndpointExecutesWithoutGrantingCrossOriginSharing() throws Exception {
 
@@ -328,20 +409,29 @@ class CorsExampleTest {
           test.send(
               request -> request.path("/health").header("Origin", "https://unlisted.example"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, actual.statusCode());
       assertEquals("ready", actual.body());
       assertFalse(actual.headers().firstValue("Access-Control-Allow-Origin").isPresent());
+
       var preflight =
-          test.send(
-              request ->
-                  request
-                      .path("/health")
-                      .method("OPTIONS")
-                      .header("Origin", "https://app.example")
-                      .header("Access-Control-Request-Method", "GET"));
+          sendPreflightForExcludedHealthEndpointExecutesWithoutGrantingCrossOriginSharing(test);
+
       assertEquals(403, preflight.statusCode());
       assertFalse(preflight.headers().firstValue("Access-Control-Allow-Origin").isPresent());
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendPreflightForExcludedHealthEndpointExecutesWithoutGrantingCrossOriginSharing(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/health")
+                .method("OPTIONS")
+                .header("Origin", "https://app.example")
+                .header("Access-Control-Request-Method", "GET"));
   }
 
   @Test
@@ -349,6 +439,7 @@ class CorsExampleTest {
     var origins = Set.of("*");
     var methods = Set.of(HttpMethods.GET);
     var headers = Set.<HttpHeaders>of();
+
     assertThrows(
         IllegalArgumentException.class,
         () -> new CorsPolicy(origins, methods, headers, true, headers, 0));

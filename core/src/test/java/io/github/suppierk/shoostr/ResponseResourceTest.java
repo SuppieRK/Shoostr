@@ -65,43 +65,51 @@ class ResponseResourceTest {
 
   private static Response response(
       HttpFields requestHeaders, HttpFields responseHeaders, ByteArrayOutputStream body) {
-    var request =
-        (Request)
-            Proxy.newProxyInstance(
-                ResponseResourceTest.class.getClassLoader(),
-                new Class<?>[] {Request.class},
-                (ignored, method, ignored2) ->
-                    switch (method.getName()) {
-                      case "getMethod" -> "GET";
-                      case "getHeaders" -> requestHeaders;
-                      case "consumeAvailable" -> true;
-                      case "addHttpStreamWrapper" -> null;
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
-    var delegate =
-        (org.eclipse.jetty.server.Response)
-            Proxy.newProxyInstance(
-                ResponseResourceTest.class.getClassLoader(),
-                new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (ignored3, method, arguments) ->
-                    switch (method.getName()) {
-                      case "getStatus" -> 200;
-                      case "setStatus" -> null;
-                      case "getHeaders" -> responseHeaders;
-                      case "isCommitted" -> false;
-                      case "write" -> {
-                        var buffer = ((ByteBuffer) arguments[1]).duplicate();
-                        var bytes = new byte[buffer.remaining()];
-                        buffer.get(bytes);
-                        body.write(bytes);
-                        ((Callback) arguments[2]).succeeded();
-                        yield null;
-                      }
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
+    var request = createRequestForResponse(requestHeaders);
+    var delegate = createDelegateForResponse(responseHeaders, body);
+
     return io.github.suppierk.shoostr.Request.create(
             request, delegate, new Options(), Callback.NOOP)
         .response();
+  }
+
+  private static Request createRequestForResponse(HttpFields requestHeaders) {
+    return (Request)
+        Proxy.newProxyInstance(
+            ResponseResourceTest.class.getClassLoader(),
+            new Class<?>[] {Request.class},
+            (ignored, method, ignoredObjectValues) ->
+                switch (method.getName()) {
+                  case "getMethod" -> "GET";
+                  case "getHeaders" -> requestHeaders;
+                  case "consumeAvailable" -> true;
+                  case "addHttpStreamWrapper" -> null;
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
+  }
+
+  private static org.eclipse.jetty.server.Response createDelegateForResponse(
+      HttpFields responseHeaders, ByteArrayOutputStream body) {
+    return (org.eclipse.jetty.server.Response)
+        Proxy.newProxyInstance(
+            ResponseResourceTest.class.getClassLoader(),
+            new Class<?>[] {org.eclipse.jetty.server.Response.class},
+            (ignoredObject, method, arguments) ->
+                switch (method.getName()) {
+                  case "getStatus" -> 200;
+                  case "setStatus" -> null;
+                  case "getHeaders" -> responseHeaders;
+                  case "isCommitted" -> false;
+                  case "write" -> {
+                    var buffer = ((ByteBuffer) arguments[1]).duplicate();
+                    var bytes = new byte[buffer.remaining()];
+                    buffer.get(bytes);
+                    body.write(bytes);
+                    ((Callback) arguments[2]).succeeded();
+                    yield null;
+                  }
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
   }
 
   private static final class TrackingChannel implements SeekableByteChannel {
@@ -124,6 +132,7 @@ class ResponseResourceTest {
       var length = Math.min(destination.remaining(), bytes.length - Math.toIntExact(position));
       destination.put(bytes, Math.toIntExact(position), length);
       position += length;
+
       return length;
     }
 

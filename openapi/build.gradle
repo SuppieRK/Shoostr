@@ -12,7 +12,7 @@ configurations {
 	}
 }
 
-version = '2026.11.10.1'
+version = '2026.11.10.2'
 
 dependencies {
 	api shoostrDependency('core', '2026.11.10.0')
@@ -32,15 +32,18 @@ tasks.named('processResources') {
 		def digest = MessageDigest.getInstance('SHA-256').digest(artifact.bytes)
 		assert HexFormat.of().formatHex(digest) == 'a439f1bd0d0c69667e97fac5a8cdfb3cc599ed9bdb31fbf40602c648dd2e1a63' : 'Pinned Swagger UI artifact checksum mismatch'
 	}
+
 	from({ zipTree(configurations.swaggerUiAssets.singleFile) }) {
 		include 'META-INF/resources/webjars/swagger-ui/5.34.0/swagger-ui.css'
 		include 'META-INF/resources/webjars/swagger-ui/5.34.0/swagger-ui-bundle.js'
 		include 'META-INF/resources/webjars/swagger-ui/5.34.0/swagger-ui-bundle.js.LICENSE.txt'
+
 		eachFile { details ->
 			details.path = details.name.endsWith('.LICENSE.txt') ?
 					"META-INF/licenses/swagger-ui-5.34.0/${details.name}" :
 					"io/github/suppierk/shoostr/openapi/ui/${details.name}"
 		}
+
 		includeEmptyDirs = false
 	}
 }

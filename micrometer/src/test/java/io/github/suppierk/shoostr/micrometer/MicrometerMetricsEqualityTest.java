@@ -52,18 +52,25 @@ class MicrometerMetricsEqualityTest {
       try (Closeable appCleanup = app::close) {
         var first = new MicrometerMetrics(registry);
         var second = new MicrometerMetrics(registry);
+
         assertEquals(first, second);
         assertEquals(first.hashCode(), second.hashCode());
 
         app.withExtension(first);
+
         assertEquals(first, second);
+
         app.withExtension(second);
+
         assertEquals(first, second);
         assertEquals(first.hashCode(), second.hashCode());
+
         var values = new HashSet<MicrometerMetrics>();
         values.add(first);
         values.add(second);
+
         assertEquals(1, values.size());
+
         app.routes().get("/metrics", (request, response) -> response.text("done"));
 
         try (var server = TestServer.start(app)) {

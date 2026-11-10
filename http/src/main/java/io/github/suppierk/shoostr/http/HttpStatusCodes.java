@@ -444,6 +444,20 @@ public enum HttpStatusCodes {
   }
 
   /**
+   * Builds the numeric index once; unassigned entries remain null to avoid hashing or boxing on
+   * lookup.
+   *
+   * @return status codes indexed by their numeric value
+   */
+  private static Map<Integer, HttpStatusCodes> lookup() {
+    final var lookup = new HashMap<Integer, HttpStatusCodes>();
+    for (var value : HttpStatusCodes.values()) {
+      lookup.put(value.value(), value);
+    }
+    return lookup;
+  }
+
+  /**
    * Identifies informational responses.
    *
    * @return true for a 1xx status
@@ -471,6 +485,15 @@ public enum HttpStatusCodes {
   }
 
   /**
+   * Identifies client or server errors.
+   *
+   * @return true for a 4xx or 5xx status
+   */
+  public boolean isError() {
+    return isClientError() || isServerError();
+  }
+
+  /**
    * Identifies client errors.
    *
    * @return true for a 4xx status
@@ -486,28 +509,5 @@ public enum HttpStatusCodes {
    */
   public boolean isServerError() {
     return value >= 500 && value < 600;
-  }
-
-  /**
-   * Identifies client or server errors.
-   *
-   * @return true for a 4xx or 5xx status
-   */
-  public boolean isError() {
-    return isClientError() || isServerError();
-  }
-
-  /**
-   * Builds the numeric index once; unassigned entries remain null to avoid hashing or boxing on
-   * lookup.
-   *
-   * @return status codes indexed by their numeric value
-   */
-  private static Map<Integer, HttpStatusCodes> lookup() {
-    final var lookup = new HashMap<Integer, HttpStatusCodes>();
-    for (var value : HttpStatusCodes.values()) {
-      lookup.put(value.value(), value);
-    }
-    return lookup;
   }
 }

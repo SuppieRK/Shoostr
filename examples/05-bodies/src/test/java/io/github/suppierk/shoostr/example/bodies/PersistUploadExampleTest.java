@@ -36,17 +36,14 @@ class PersistUploadExampleTest {
 
     try (var test = TestServer.start(PersistUploadExample.application(directory))) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/documents")
-                      .method("POST")
-                      .header("Content-Type", "multipart/form-data; boundary=example")
-                      .body(multipart("notes.bin", bytes)),
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForKeepsInMemoryAndSpilledUploadsAfterTheApplicationCloses(test, bytes);
+
       assertEquals(201, response.statusCode());
+
       saved = directory.resolve(response.body());
+
       assertArrayEquals(bytes, Files.readAllBytes(saved));
+
       await()
           .atMost(Duration.ofSeconds(3))
           .untilAsserted(
@@ -60,6 +57,19 @@ class PersistUploadExampleTest {
     assertArrayEquals(bytes, Files.readAllBytes(saved));
   }
 
+  private HttpResponse<String>
+      sendResponseForKeepsInMemoryAndSpilledUploadsAfterTheApplicationCloses(
+          TestServer test, byte[] bytes) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/documents")
+                .method("POST")
+                .header("Content-Type", "multipart/form-data; boundary=example")
+                .body(multipart("notes.bin", bytes)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void generatesUniqueNamesAndPreservesExistingFiles() throws Exception {
     var sentinel = Files.writeString(directory.resolve("existing.txt"), "keep");
@@ -67,6 +77,7 @@ class PersistUploadExampleTest {
     try (var test = TestServer.start(PersistUploadExample.application(directory))) {
       var first = send(test, "../../existing.txt", new byte[] {1});
       var second = send(test, "../../existing.txt", new byte[] {2});
+
       assertEquals(201, first.statusCode());
       assertEquals(201, second.statusCode());
       assertNotEquals(first.body(), second.body());
@@ -74,6 +85,7 @@ class PersistUploadExampleTest {
       assertTrue(second.body().matches("upload-[0-9]+\\.bin"));
       assertArrayEquals(new byte[] {1}, Files.readAllBytes(directory.resolve(first.body())));
       assertArrayEquals(new byte[] {2}, Files.readAllBytes(directory.resolve(second.body())));
+
       await()
           .atMost(Duration.ofSeconds(3))
           .untilAsserted(
@@ -97,6 +109,7 @@ class PersistUploadExampleTest {
           test.send(
               request -> request.path("/documents").method("POST"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(400, response.statusCode());
 
       try (var files = Files.list(directory)) {
@@ -118,6 +131,7 @@ class PersistUploadExampleTest {
     }
 
     var file = Files.createFile(directory.resolve("not-a-directory"));
+
     assertThrows(IOException.class, () -> PersistUploadExample.application(file));
     assertThrows(NullPointerException.class, () -> PersistUploadExample.application(null));
   }
@@ -143,6 +157,7 @@ class PersistUploadExampleTest {
             .getBytes(StandardCharsets.UTF_8));
     body.writeBytes(bytes);
     body.writeBytes("\r\n--example--\r\n".getBytes(StandardCharsets.US_ASCII));
+
     return body.toByteArray();
   }
 }

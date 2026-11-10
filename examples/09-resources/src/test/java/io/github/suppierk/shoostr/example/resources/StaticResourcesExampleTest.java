@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.http.HttpResponse;
@@ -42,6 +43,7 @@ class StaticResourcesExampleTest {
         var response =
             test.send(
                 request -> request.path("/files/notes.txt"), HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, response.statusCode());
         assertEquals("public notes", response.body());
         assertEquals("text/plain", response.headers().firstValue("Content-Type").orElseThrow());
@@ -67,6 +69,7 @@ class StaticResourcesExampleTest {
         var response =
             test.send(
                 request -> request.path("/bundled/site.css"), HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, response.statusCode());
         assertEquals("body { color: navy; }", response.body());
         assertEquals("text/css", response.headers().firstValue("Content-Type").orElseThrow());
@@ -102,6 +105,7 @@ class StaticResourcesExampleTest {
       try (var test = TestServer.start(StaticResourcesExample.application(files))) {
         var response =
             test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, response.statusCode());
         assertEquals(expected, response.body());
         assertEquals(404, test.send(request -> request.path("/files/")).statusCode());
@@ -125,11 +129,14 @@ class StaticResourcesExampleTest {
 
       try (var test = TestServer.start(StaticResourcesExample.application(files))) {
         var head = test.send(request -> request.path("/files/notes.txt").method("HEAD"));
+
         assertEquals(200, head.statusCode());
         assertEquals(0, head.body().length);
         assertEquals("12", head.headers().firstValue("Content-Length").orElseThrow());
         assertEquals("text/plain", head.headers().firstValue("Content-Type").orElseThrow());
+
         var binary = test.send(request -> request.path("/files/data.shoostr-unknown"));
+
         assertEquals(200, binary.statusCode());
         assertEquals(
             "application/octet-stream", binary.headers().firstValue("Content-Type").orElseThrow());
@@ -148,7 +155,9 @@ class StaticResourcesExampleTest {
     var external = Files.createDirectory(directory.resolve("external"));
     Files.writeString(external.resolve("private.txt"), "private data");
     directoryAlias(files.resolve("escape"), external);
+
     assertEquals("private data", Files.readString(files.resolve("escape/private.txt")));
+
     Files.createDirectory(directory.resolve("recipe-public"));
     var previous = Thread.currentThread().getContextClassLoader();
 
@@ -161,10 +170,12 @@ class StaticResourcesExampleTest {
             test.send(request -> request.path("/files/%2e%2e/external/private.txt")).statusCode());
         assertEquals(
             404, test.send(request -> request.path("/files/escape/private.txt")).statusCode());
+
         var fallback =
             test.send(
                 request -> request.path("/app/escape/private.txt"),
                 HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, fallback.statusCode());
         assertEquals("shell", fallback.body());
       }
@@ -182,12 +193,7 @@ class StaticResourcesExampleTest {
 
     // Windows directory junctions exercise alias rejection without symlink privileges.
     var log = Files.createTempFile(alias.getParent(), "junction-", ".log");
-    var process =
-        new ProcessBuilder(
-                "cmd.exe", "/d", "/c", "mklink", "/J", alias.toString(), target.toString())
-            .redirectErrorStream(true)
-            .redirectOutput(log.toFile())
-            .start();
+    var process = createProcessForDirectoryAlias(alias, target, log);
 
     try {
       assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction creation timed out");
@@ -195,8 +201,19 @@ class StaticResourcesExampleTest {
           0, process.exitValue(), new String(Files.readAllBytes(log), StandardCharsets.UTF_8));
     } finally {
       process.destroyForcibly();
+
       assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction command did not exit");
+
       Files.deleteIfExists(log);
     }
+  }
+
+  private static Process createProcessForDirectoryAlias(Path alias, Path target, Path log)
+      throws IOException {
+    return new ProcessBuilder(
+            "cmd.exe", "/d", "/c", "mklink", "/J", alias.toString(), target.toString())
+        .redirectErrorStream(true)
+        .redirectOutput(log.toFile())
+        .start();
   }
 }

@@ -8,9 +8,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
+import java.io.IOException;
 import java.io.OutputStream;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
+import java.net.http.HttpRequest.BodyPublisher;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
@@ -47,19 +49,26 @@ class RequestBodyCharsetTest {
 
         try (var test = TestServer.start(app)) {
           var response =
-              test.send(
-                  request ->
-                      request
-                          .path("/text")
-                          .method("POST")
-                          .header("Content-Type", "text/plain; charset=UTF-16")
-                          .body(new byte[] {'c', 'a', 'f', (byte) 0xe9}),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResponseForDecodesUsingTheSuppliedCharsetInsteadOfDeclaredMetadata(test);
+
           assertEquals(200, response.statusCode());
           assertEquals("café", response.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForDecodesUsingTheSuppliedCharsetInsteadOfDeclaredMetadata(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/text")
+                .method("POST")
+                .header("Content-Type", "text/plain; charset=UTF-16")
+                .body(new byte[] {'c', 'a', 'f', (byte) 0xe9}),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -74,27 +83,31 @@ class RequestBodyCharsetTest {
                 (request, response) -> {
                   assertEquals("Ã©", request.bodyText(StandardCharsets.ISO_8859_1));
                   assertEquals("é", request.bodyText());
+
                   var copy = request.bodyBytes();
                   copy[0] = 0;
+
                   assertEquals("Ã©", request.bodyText(StandardCharsets.ISO_8859_1));
                   assertArrayEquals(new byte[] {(byte) 0xc3, (byte) 0xa9}, request.bodyBytes());
+
                   response.text("checked");
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/text")
-                          .method("POST")
-                          .body(new byte[] {(byte) 0xc3, (byte) 0xa9}),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForDecodesCachedBytesIndependentlyForEachCharset(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("checked", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForDecodesCachedBytesIndependentlyForEachCharset(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request -> request.path("/text").method("POST").body(new byte[] {(byte) 0xc3, (byte) 0xa9}),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -105,15 +118,7 @@ class RequestBodyCharsetTest {
   void preservesCachedBytesAndDefensiveCopiesForEveryStandardCharset(
       String name, String expected, String hex) throws Exception {
     var charset =
-        switch (name) {
-          case "UTF-8" -> StandardCharsets.UTF_8;
-          case "ISO-8859-1" -> StandardCharsets.ISO_8859_1;
-          case "US-ASCII" -> StandardCharsets.US_ASCII;
-          case "UTF-16" -> StandardCharsets.UTF_16;
-          case "UTF-16BE" -> StandardCharsets.UTF_16BE;
-          case "UTF-16LE" -> StandardCharsets.UTF_16LE;
-          default -> throw new IllegalArgumentException(name);
-        };
+        createCharsetForPreservesCachedBytesAndDefensiveCopiesForEveryStandardCharset(name);
     var encoded = HexFormat.of().parseHex(hex);
 
     {
@@ -125,10 +130,13 @@ class RequestBodyCharsetTest {
                 "/text",
                 (request, response) -> {
                   assertEquals(expected, request.bodyText(charset));
+
                   var copy = request.bodyBytes();
                   copy[0] ^= 0x7f;
+
                   assertArrayEquals(encoded, request.bodyBytes());
                   assertEquals(expected, request.bodyText(charset));
+
                   response.text("checked");
                 });
 
@@ -137,11 +145,25 @@ class RequestBodyCharsetTest {
               server.send(
                   request -> request.path("/text").method("POST").body(encoded),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("checked", result.body());
         }
       }
     }
+  }
+
+  private Charset createCharsetForPreservesCachedBytesAndDefensiveCopiesForEveryStandardCharset(
+      String name) {
+    return switch (name) {
+      case "UTF-8" -> StandardCharsets.UTF_8;
+      case "ISO-8859-1" -> StandardCharsets.ISO_8859_1;
+      case "US-ASCII" -> StandardCharsets.US_ASCII;
+      case "UTF-16" -> StandardCharsets.UTF_16;
+      case "UTF-16BE" -> StandardCharsets.UTF_16BE;
+      case "UTF-16LE" -> StandardCharsets.UTF_16LE;
+      default -> throw new IllegalArgumentException(name);
+    };
   }
 
   @ParameterizedTest
@@ -160,6 +182,7 @@ class RequestBodyCharsetTest {
                 "/text",
                 (request, response) -> {
                   assertEquals("SAFE", request.bodyText(charset));
+
                   var retained = exposed.get();
                   if (retained != null && !retained.isReadOnly()) {
                     for (int index = 0; index < retained.limit(); index++)
@@ -168,6 +191,7 @@ class RequestBodyCharsetTest {
 
                   assertArrayEquals(new byte[] {'s', 'a', 'f', 'e'}, request.bodyBytes());
                   assertEquals("safe", request.bodyText());
+
                   response.text("checked");
                 });
 
@@ -177,6 +201,7 @@ class RequestBodyCharsetTest {
                   request ->
                       request.path("/text").method("POST").body(new byte[] {'s', 'a', 'f', 'e'}),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("checked", result.body());
         }
@@ -209,6 +234,7 @@ class RequestBodyCharsetTest {
               test.send(
                   request -> request.path("/text").method("POST").body(new byte[] {1, 2, 3}),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("checked", result.body());
         }
@@ -230,26 +256,24 @@ class RequestBodyCharsetTest {
 
         try (var test = TestServer.start(app)) {
           var defaultResult =
-              test.send(
-                  request ->
-                      request
-                          .path("/default")
-                          .method("POST")
-                          .header("Content-Type", "text/plain; charset=ISO-8859-1")
-                          .body(new byte[] {(byte) 0xc3, (byte) 0xa9}),
-                  HttpResponse.BodyHandlers.ofString());
+              sendDefaultResultRequestForPreservesDefaultUtf8AndReplacementDecoding(test);
+
           assertEquals(200, defaultResult.statusCode());
           assertEquals("é", defaultResult.body());
+
           var malformed =
               test.send(
                   request -> request.path("/utf16").method("POST").body(new byte[] {0x00}),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, malformed.statusCode());
           assertEquals("\uFFFD", malformed.body());
+
           var empty =
               test.send(
                   request -> request.path("/utf16").method("POST"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, empty.statusCode());
           assertEquals("", empty.body());
         }
@@ -257,14 +281,28 @@ class RequestBodyCharsetTest {
     }
   }
 
+  private HttpResponse<String>
+      sendDefaultResultRequestForPreservesDefaultUtf8AndReplacementDecoding(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/default")
+                .method("POST")
+                .header("Content-Type", "text/plain; charset=ISO-8859-1")
+                .body(new byte[] {(byte) 0xc3, (byte) 0xa9}),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @ParameterizedTest
   @CsvSource({"4, false, 200", "6, false, 413", "4, true, 200", "6, true, 413"})
   void enforcesByteLimitsForFixedAndUnknownLengthUtf16(int size, boolean chunked, int status)
       throws Exception {
     var bytes = new byte[size];
-    for (int i = 1; i < size; i += 2) {
-      bytes[i] = 'a';
+    for (int index = 1; index < size; index += 2) {
+      bytes[index] = 'a';
     }
+
     var publisher =
         chunked
             ? HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes))
@@ -278,15 +316,7 @@ class RequestBodyCharsetTest {
     configuredOptions.setMultipart(MultipartOptions.defaults());
 
     {
-      var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+      var app = createAppForEnforcesByteLimitsForFixedAndUnknownLengthUtf16(configuredOptions);
 
       try (Closeable appCleanup6 = app::close;
           var client = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()) {
@@ -297,19 +327,40 @@ class RequestBodyCharsetTest {
 
         try (var test = TestServer.start(app)) {
           var response =
-              client.send(
-                  HttpRequest.newBuilder(test.baseUri().resolve("/text"))
-                      .timeout(Duration.ofSeconds(3))
-                      .POST(publisher)
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResponseForEnforcesByteLimitsForFixedAndUnknownLengthUtf16(
+                  client, test, publisher);
+
           assertEquals(status, response.statusCode());
+
           if (status == 200) {
             assertEquals("aa", response.body());
           }
         }
       }
     }
+  }
+
+  private Shoostr createAppForEnforcesByteLimitsForFixedAndUnknownLengthUtf16(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
+  private HttpResponse<String> sendResponseForEnforcesByteLimitsForFixedAndUnknownLengthUtf16(
+      HttpClient client, TestServer test, BodyPublisher publisher)
+      throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(test.baseUri().resolve("/text"))
+            .timeout(Duration.ofSeconds(3))
+            .POST(publisher)
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -330,6 +381,7 @@ class RequestBodyCharsetTest {
               test.send(
                   request -> request.path("/text").method("POST").body(new byte[] {(byte) 0xe9}),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("é", response.body());
         }
@@ -353,23 +405,31 @@ class RequestBodyCharsetTest {
                 "/form",
                 (request, response) -> {
                   assertEquals("tag=é", request.bodyText(StandardCharsets.ISO_8859_1));
+
                   response.text(request.formParam("tag").orElseThrow());
                 });
 
         try (var test = TestServer.start(app)) {
           var response =
-              test.send(
-                  request ->
-                      request
-                          .path("/form")
-                          .method("POST")
-                          .header("Content-Type", contentType)
-                          .body(new byte[] {'t', 'a', 'g', '=', (byte) 0xe9}),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResponseForDoesNotRelaxFormDecodingWhenAnotherTextCharsetWasUsed(
+                  test, contentType);
+
           assertEquals(contentType.contains("charset") ? 415 : 400, response.statusCode());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResponseForDoesNotRelaxFormDecodingWhenAnotherTextCharsetWasUsed(
+      TestServer test, String contentType) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/form")
+                .method("POST")
+                .header("Content-Type", contentType)
+                .body(new byte[] {'t', 'a', 'g', '=', (byte) 0xe9}),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -383,8 +443,10 @@ class RequestBodyCharsetTest {
                 "/buffered",
                 (request, response) -> {
                   request.bodyText(StandardCharsets.ISO_8859_1);
+
                   assertThrows(IllegalStateException.class, request::input);
                   assertThrows(IllegalStateException.class, request::files);
+
                   response.text("checked");
                 });
         app.routes()
@@ -395,6 +457,7 @@ class RequestBodyCharsetTest {
                     assertThrows(
                         IllegalStateException.class,
                         () -> request.bodyText(StandardCharsets.ISO_8859_1));
+
                     input.transferTo(OutputStream.nullOutputStream());
                   }
 
@@ -405,29 +468,36 @@ class RequestBodyCharsetTest {
                 "/multipart",
                 (request, response) -> {
                   request.files();
+
                   assertThrows(
                       IllegalStateException.class,
                       () -> request.bodyText(StandardCharsets.ISO_8859_1));
+
                   response.text("checked");
                 });
 
         try (var test = TestServer.start(app)) {
           for (var path : new String[] {"/buffered", "/streamed", "/multipart"}) {
-            var response =
-                test.send(
-                    request ->
-                        request
-                            .path(path)
-                            .method("POST")
-                            .header("Content-Type", "multipart/form-data; boundary=x")
-                            .body("--x--\r\n".getBytes(StandardCharsets.US_ASCII)),
-                    HttpResponse.BodyHandlers.ofString());
+            var response = sendResponseForPreservesBodyModeExclusionInBothDirections(test, path);
+
             assertEquals(200, response.statusCode());
             assertEquals("checked", response.body());
           }
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResponseForPreservesBodyModeExclusionInBothDirections(
+      TestServer test, String path) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path(path)
+                .method("POST")
+                .header("Content-Type", "multipart/form-data; boundary=x")
+                .body("--x--\r\n".getBytes(StandardCharsets.US_ASCII)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -447,7 +517,9 @@ class RequestBodyCharsetTest {
                 (request, response) -> {
                   saved.set(request);
                   thread.set(Thread.currentThread());
+
                   assertEquals("a", request.bodyText(StandardCharsets.ISO_8859_1));
+
                   children
                       .submit(
                           () ->
@@ -463,13 +535,17 @@ class RequestBodyCharsetTest {
               test.send(
                   request -> request.path("/text").method("POST").body(new byte[] {'a'}),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("checked", response.body());
+
           executor
               .submit(
                   () -> {
                     assertSame(thread.get(), Thread.currentThread());
+
                     var request = saved.get();
+
                     assertThrows(
                         IllegalStateException.class,
                         () -> request.bodyText(StandardCharsets.ISO_8859_1));

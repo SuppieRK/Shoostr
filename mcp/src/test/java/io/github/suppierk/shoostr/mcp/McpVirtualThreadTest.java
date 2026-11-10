@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentHashMap.KeySetView;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -67,52 +68,49 @@ class McpVirtualThreadTest {
   private void runFixture(String scenario) throws Exception {
     var log = temporary.resolve(scenario + ".log");
     var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-    var process =
-        new ProcessBuilder(
-                java,
-                "-Djdk.virtualThreadScheduler.parallelism=2",
-                "-Djdk.virtualThreadScheduler.maxPoolSize=4",
-                "-cp",
-                System.getProperty("java.class.path"),
-                CarrierFixture.class.getName(),
-                scenario)
-            .redirectErrorStream(true)
-            .redirectOutput(log.toFile())
-            .start();
+    var process = createProcessForRunFixture(java, scenario, log);
 
     try {
       var exited = process.waitFor("heartbeat".equals(scenario) ? 30 : 20, TimeUnit.SECONDS);
       var output = Files.readString(log);
+
       assertTrue(exited, "MCP carrier fixture did not exit: " + output);
       assertEquals(0, process.exitValue(), output);
+
       System.out.println(output.lines().findFirst().orElseThrow());
     } finally {
       if (process.isAlive()) {
         process.destroyForcibly();
+
         assertTrue(process.waitFor(5, TimeUnit.SECONDS), "MCP carrier fixture was not reaped");
       }
     }
+  }
+
+  private Process createProcessForRunFixture(String java, String scenario, Path log)
+      throws IOException {
+    return new ProcessBuilder(
+            java,
+            "-Djdk.virtualThreadScheduler.parallelism=2",
+            "-Djdk.virtualThreadScheduler.maxPoolSize=4",
+            "-cp",
+            System.getProperty("java.class.path"),
+            CarrierFixture.class.getName(),
+            scenario)
+        .redirectErrorStream(true)
+        .redirectOutput(log.toFile())
+        .start();
   }
 
   public static final class CarrierFixture {
     // test-source-policy: subprocess-main; pin the virtual scheduler before its first use.
     public static void main(String[] args) throws Exception {
       assertEquals(21, Runtime.version().feature());
+
       System.out.println("MCP carrier fixture Java " + Runtime.version());
       var owners = ConcurrentHashMap.<Thread>newKeySet();
       var expiry = new AtomicReference<Instant>();
-      var security =
-          new McpHttpSecurity(
-              Set.of(),
-              request -> {
-                if ("GET".equals(request.method())) {
-                  assertTrue(Thread.currentThread().isVirtual());
-                  owners.add(Thread.currentThread());
-                }
-
-                return new McpIdentity("public", McpTransportContext.EMPTY, expiry.get());
-              },
-              (ignored, ignored2) -> {});
+      var security = createSecurityForMain(owners, expiry);
       var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
       var configuredOptions = new Options();
       configuredOptions.setVirtualThreads(true);
@@ -122,12 +120,13 @@ class McpVirtualThreadTest {
       app.routes()
           .get(
               "/ready",
-              (ignored3, response) ->
+              (ignoredRequest, response) ->
                   response.text(Boolean.toString(Thread.currentThread().isVirtual())));
 
       try (var test =
           TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
         assertReady(test);
+
         var sessions = new ArrayList<String>();
         for (int index = 0; index < 4; index++) {
           sessions.add(initialize(test));
@@ -141,17 +140,10 @@ class McpVirtualThreadTest {
 
         try {
           for (var session : sessions) {
-            var response =
-                test.send(
-                    request ->
-                        request
-                            .path("/mcp")
-                            .header("Accept", "text/event-stream")
-                            .header("Mcp-Session-Id", session)
-                            .header("MCP-Protocol-Version", "2025-11-25"),
-                    HttpResponse.BodyHandlers.ofInputStream());
+            var response = sendResponseForMain(test, session);
             var body = response.body();
             bodies.add(body);
+
             assertEquals(200, response.statusCode());
             assertEquals(":\n\n", new String(body.readNBytes(3), StandardCharsets.UTF_8));
           }
@@ -165,20 +157,15 @@ class McpVirtualThreadTest {
                       owners.size() == 4
                           && owners.stream()
                               .allMatch(owner -> owner.getState() == Thread.State.TIMED_WAITING));
+
           assertTrue(
               Duration.ofNanos(System.nanoTime() - started).compareTo(Duration.ofSeconds(8)) < 0,
               "Listener setup must leave time to probe before the first 15-second heartbeat");
+
           if ("delete".equals(args[0])) {
             for (var session : sessions) {
-              var deleted =
-                  test.send(
-                      request ->
-                          request
-                              .path("/mcp")
-                              .method("DELETE")
-                              .timeout(Duration.ofSeconds(2))
-                              .header("Mcp-Session-Id", session)
-                              .header("MCP-Protocol-Version", "2025-11-25"));
+              var deleted = sendDeletedRequestForMain(test, session);
+
               assertEquals(200, deleted.statusCode());
             }
 
@@ -197,6 +184,7 @@ class McpVirtualThreadTest {
                     .submit(
                         () -> {
                           app.close();
+
                           return null;
                         })
                     .get(3, TimeUnit.SECONDS);
@@ -222,6 +210,46 @@ class McpVirtualThreadTest {
       }
     }
 
+    private static McpHttpSecurity createSecurityForMain(
+        KeySetView<Thread, Boolean> owners, AtomicReference<Instant> expiry) {
+      return new McpHttpSecurity(
+          Set.of(),
+          request -> {
+            if ("GET".equals(request.method())) {
+              assertTrue(Thread.currentThread().isVirtual());
+
+              owners.add(Thread.currentThread());
+            }
+
+            return new McpIdentity("public", McpTransportContext.EMPTY, expiry.get());
+          },
+          (ignored, ignoredJSONRPCMessage) -> {});
+    }
+
+    private static HttpResponse<InputStream> sendResponseForMain(TestServer test, String session)
+        throws IOException, InterruptedException {
+      return test.send(
+          request ->
+              request
+                  .path("/mcp")
+                  .header("Accept", "text/event-stream")
+                  .header("Mcp-Session-Id", session)
+                  .header("MCP-Protocol-Version", "2025-11-25"),
+          HttpResponse.BodyHandlers.ofInputStream());
+    }
+
+    private static HttpResponse<byte[]> sendDeletedRequestForMain(TestServer test, String session)
+        throws IOException, InterruptedException {
+      return test.send(
+          request ->
+              request
+                  .path("/mcp")
+                  .method("DELETE")
+                  .timeout(Duration.ofSeconds(2))
+                  .header("Mcp-Session-Id", session)
+                  .header("MCP-Protocol-Version", "2025-11-25"));
+    }
+
     private static List<Instant> awaitClosed(
         List<InputStream> bodies, Duration timeout, Optional<Instant> expiry, Set<Thread> owners)
         throws Exception {
@@ -235,7 +263,7 @@ class McpVirtualThreadTest {
                     () -> {
                       try {
                         body.readAllBytes();
-                      } catch (IOException ignored4) {
+                      } catch (IOException ignoredFailure) {
                         // A terminated committed stream may report EOF or a transport failure.
                       }
 
@@ -294,28 +322,35 @@ class McpVirtualThreadTest {
           test.send(
               request -> request.path("/ready").timeout(Duration.ofSeconds(2)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, ready.statusCode());
       assertEquals("true", ready.body());
     }
 
     private static String initialize(TestServer test) throws Exception {
-      var initialized =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(
-                          """
+      var initialized = sendInitializedRequestForInitialize(test);
+
+      assertEquals(200, initialized.statusCode());
+
+      return initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
+    }
+
+    private static HttpResponse<byte[]> sendInitializedRequestForInitialize(TestServer test)
+        throws IOException, InterruptedException {
+      return test.send(
+          request ->
+              request
+                  .path("/mcp")
+                  .method("POST")
+                  .header("Content-Type", "application/json")
+                  .header("Accept", "application/json, text/event-stream")
+                  .body(
+                      """
               {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
                 "protocolVersion":"2025-11-25","capabilities":{},
                 "clientInfo":{"name":"carrier-fixture","version":"1.0"}}}
               """
-                              .getBytes(StandardCharsets.UTF_8)));
-      assertEquals(200, initialized.statusCode());
-      return initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
+                          .getBytes(StandardCharsets.UTF_8)));
     }
   }
 }

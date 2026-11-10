@@ -9,6 +9,7 @@ import io.github.suppierk.shoostr.http.ForwardedHeaders;
 import io.github.suppierk.shoostr.testing.TestRequest;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.Socket;
 import java.net.http.HttpResponse;
@@ -49,6 +50,7 @@ class EffectiveSecurityTest {
           test.send(
               request -> forwarding(request.path("/security"), family, protocol),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("false:" + effective, response.body());
     }
@@ -64,10 +66,13 @@ class EffectiveSecurityTest {
           test.send(
               request -> forwarding(request.path("/security"), family, "https"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, supplied.statusCode());
       assertEquals("false:false", supplied.body());
+
       var absent =
           test.send(request -> request.path("/security"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, absent.statusCode());
       assertEquals("false:false", absent.body());
     }
@@ -80,22 +85,28 @@ class EffectiveSecurityTest {
 
     try (var test = TestServer.start(application(family, true))) {
       var response =
-          test.send(
-              request -> {
-                request.path("/security");
-                if (family == ForwardedHeaders.RFC7239) {
-                  request.header(
-                      "Forwarded", "for=203.0.113.7;proto=http, for=127.0.0.2;proto=https");
-                } else {
-                  request
-                      .header("X-Forwarded-For", "203.0.113.7, 127.0.0.2")
-                      .header("X-Forwarded-Proto", "http, https");
-                }
-              },
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForSelectsTheBoundaryProtocolInsteadOfTheNearestProxyProtocol(test, family);
+
       assertEquals(200, response.statusCode());
       assertEquals("false:false", response.body());
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForSelectsTheBoundaryProtocolInsteadOfTheNearestProxyProtocol(
+          TestServer test, ForwardedHeaders family) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/security");
+          if (family == ForwardedHeaders.RFC7239) {
+            request.header("Forwarded", "for=203.0.113.7;proto=http, for=127.0.0.2;proto=https");
+          } else {
+            request
+                .header("X-Forwarded-For", "203.0.113.7, 127.0.0.2")
+                .header("X-Forwarded-Proto", "http, https");
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -130,10 +141,13 @@ class EffectiveSecurityTest {
               test.send(
                   request -> forwarding(request.path("/security"), family, protocol),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("true:" + effective, response.body());
+
           var noForwarding =
               test.send(request -> request.path("/security"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, noForwarding.statusCode());
           assertEquals("true:true", noForwarding.body());
         }
@@ -160,6 +174,7 @@ class EffectiveSecurityTest {
                   .getBytes(StandardCharsets.US_ASCII));
       socket.getOutputStream().flush();
       var response = HttpTester.parseResponse(HttpTester.from(socket.getInputStream()));
+
       assertNotNull(response);
       assertEquals(200, response.getStatus());
       assertEquals("false:false", response.getContent());
@@ -196,7 +211,9 @@ class EffectiveSecurityTest {
                 (request, response) -> {
                   saved.set(request);
                   thread.set(Thread.currentThread());
+
                   assertEquals(asserted, request.isEffectivelySecure());
+
                   children
                       .submit(
                           () ->
@@ -208,27 +225,38 @@ class EffectiveSecurityTest {
 
         try (var test = TestServer.start(app)) {
           var response =
-              test.send(
-                  request -> {
-                    request.path("/guard");
-                    if (asserted) {
-                      request.header("Forwarded", "for=203.0.113.7;proto=https");
-                    }
-                  },
-                  HttpResponse.BodyHandlers.ofString());
+              sendResponseForGuardsBothProtocolAndTransportBranchesByThreadAndLifetime(
+                  test, asserted);
+
           assertEquals(200, response.statusCode());
           assertEquals("checked", response.body());
+
           executor
               .submit(
                   () -> {
                     assertSame(thread.get(), Thread.currentThread());
+
                     var request = saved.get();
+
                     assertThrows(IllegalStateException.class, request::isEffectivelySecure);
                   })
               .get(3, TimeUnit.SECONDS);
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForGuardsBothProtocolAndTransportBranchesByThreadAndLifetime(
+          TestServer test, boolean asserted) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/guard");
+          if (asserted) {
+            request.header("Forwarded", "for=203.0.113.7;proto=https");
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -250,6 +278,7 @@ class EffectiveSecurityTest {
               test.send(
                   request -> request.path("/security").header("Forwarded", "proto=https"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("false:true", response.body());
         }
@@ -268,6 +297,7 @@ class EffectiveSecurityTest {
             "/security",
             (request, response) ->
                 response.text(request.isSecure() + ":" + request.isEffectivelySecure()));
+
     return app;
   }
 

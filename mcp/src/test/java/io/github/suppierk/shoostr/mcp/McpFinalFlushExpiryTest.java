@@ -9,7 +9,9 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
+import io.modelcontextprotocol.server.McpSyncServer;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -19,6 +21,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -39,31 +42,17 @@ class McpFinalFlushExpiryTest {
     var expiry = new AtomicReference<Instant>();
     var completed = new CountDownLatch(1);
     var hold = new CountDownLatch(1);
-    var mcp =
-        Mcp.sync(
-            new McpHttpSecurity(
-                Set.of(),
-                request -> {
-                  if (request.header("X-Expiring").isEmpty()) {
-                    return new McpIdentity("public", McpTransportContext.EMPTY, null);
-                  }
-
-                  var verifiedExpiry = Instant.now().plusSeconds(2);
-                  expiry.set(verifiedExpiry);
-                  return new McpIdentity("public", McpTransportContext.EMPTY, verifiedExpiry);
-                },
-                (ignored, ignored2) -> {}),
-            transport -> McpServer.sync(transport).build());
+    var mcp = createMcpForInterruptsTheFrameworkFinalFlushAfterTheHandlerReturns(expiry);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
     app.afterRouteHandler(
-        (request, ignored3) -> {
+        (request, ignoredResponse) -> {
           if (request.header("X-Expiring").isPresent()) {
             request.attribute("handler-returned", true);
           }
         });
     app.beforeResponseFlush(
-        (request, ignored4) -> {
+        (request, ignoredResponse) -> {
           if (request.attribute("handler-returned").filter(Boolean.TRUE::equals).isPresent()) {
             finalFlush.countDown();
 
@@ -88,49 +77,16 @@ class McpFinalFlushExpiryTest {
         var test = TestServer.start(app)) {
       try {
         var initialized =
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .method("POST")
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .body(
-                            """
-                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                  "protocolVersion":"2025-11-25","capabilities":{},
-                  "clientInfo":{"name":"final-flush","version":"1.0"}}}
-                """
-                                .getBytes(StandardCharsets.UTF_8)));
+            sendInitializedRequestForInterruptsTheFrameworkFinalFlushAfterTheHandlerReturns(test);
         var session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
         var response =
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .method("POST")
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .header("Mcp-Session-Id", session)
-                        .header("X-Expiring", "true")
-                        .body(
-                            "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}"
-                                .getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofInputStream());
+            sendResponseForInterruptsTheFrameworkFinalFlushAfterTheHandlerReturns(test, session);
 
         try (var body = response.body()) {
           assertEquals(200, response.statusCode());
-          var ended =
-              readers.submit(
-                  () -> {
-                    try {
-                      body.readAllBytes();
-                    } catch (IOException ignored5) {
-                      // Expiry aborts an already committed stream rather than replacing its status.
-                    }
 
-                    return Instant.now();
-                  });
+          var ended =
+              submitEndedForInterruptsTheFrameworkFinalFlushAfterTheHandlerReturns(readers, body);
           await("framework final flush is held")
               .atMost(Duration.ofSeconds(1))
               .until(() -> finalFlush.getCount() == 0);
@@ -138,6 +94,7 @@ class McpFinalFlushExpiryTest {
           awaitTermination(
               verifiedExpiry,
               () -> interrupted.get() != null && completed.getCount() == 0 && ended.isDone());
+
           assertNotBeforeExpiry(verifiedExpiry, interrupted.get());
           assertNotBeforeExpiry(verifiedExpiry, ended.get());
         }
@@ -145,5 +102,75 @@ class McpFinalFlushExpiryTest {
         hold.countDown();
       }
     }
+  }
+
+  private Mcp<McpSyncServer> createMcpForInterruptsTheFrameworkFinalFlushAfterTheHandlerReturns(
+      AtomicReference<Instant> expiry) {
+    return Mcp.sync(
+        new McpHttpSecurity(
+            Set.of(),
+            request -> {
+              if (request.header("X-Expiring").isEmpty()) {
+                return new McpIdentity("public", McpTransportContext.EMPTY, null);
+              }
+
+              var verifiedExpiry = Instant.now().plusSeconds(2);
+              expiry.set(verifiedExpiry);
+
+              return new McpIdentity("public", McpTransportContext.EMPTY, verifiedExpiry);
+            },
+            (ignored, ignoredJSONRPCMessage) -> {}),
+        transport -> McpServer.sync(transport).build());
+  }
+
+  private HttpResponse<byte[]>
+      sendInitializedRequestForInterruptsTheFrameworkFinalFlushAfterTheHandlerReturns(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(
+                    """
+                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                  "protocolVersion":"2025-11-25","capabilities":{},
+                  "clientInfo":{"name":"final-flush","version":"1.0"}}}
+                """
+                        .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<InputStream>
+      sendResponseForInterruptsTheFrameworkFinalFlushAfterTheHandlerReturns(
+          TestServer test, String session) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", session)
+                .header("X-Expiring", "true")
+                .body(
+                    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}"
+                        .getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofInputStream());
+  }
+
+  private Future<Instant> submitEndedForInterruptsTheFrameworkFinalFlushAfterTheHandlerReturns(
+      ExecutorService readers, InputStream body) {
+    return readers.submit(
+        () -> {
+          try {
+            body.readAllBytes();
+          } catch (IOException ignoredFailure) {
+            // Expiry aborts an already committed stream rather than replacing its status.
+          }
+
+          return Instant.now();
+        });
   }
 }

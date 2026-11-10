@@ -66,28 +66,33 @@ class MultipartRequestTest {
                 "/files",
                 (request, response) -> {
                   assertNoUploads(request);
+
                   response.body("application/octet-stream", request.bodyBytes());
                 });
 
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request -> {
-                    request
-                        .path("/files")
-                        .timeout(Duration.ofSeconds(3))
-                        .method("POST")
-                        .body(BINARY_CONTENT);
-                    if (!contentType.isEmpty()) {
-                      request.header("Content-Type", contentType);
-                    }
-                  });
+              sendResultForPreservesNonmultipartBodyBytesWhenFileAccessorsAreCalledFirst(
+                  test, contentType);
+
           assertEquals(200, result.statusCode());
           assertArrayEquals(BINARY_CONTENT, result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForPreservesNonmultipartBodyBytesWhenFileAccessorsAreCalledFirst(
+          TestServer test, String contentType) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/files").timeout(Duration.ofSeconds(3)).method("POST").body(BINARY_CONTENT);
+          if (!contentType.isEmpty()) {
+            request.header("Content-Type", contentType);
+          }
+        });
   }
 
   @ParameterizedTest
@@ -104,29 +109,35 @@ class MultipartRequestTest {
                 "/files",
                 (request, response) -> {
                   request.bodyBytes();
+
                   assertNoUploads(request);
+
                   response.body("application/octet-stream", request.bodyBytes());
                 });
 
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request -> {
-                    request
-                        .path("/files")
-                        .timeout(Duration.ofSeconds(3))
-                        .method("POST")
-                        .body(BINARY_CONTENT);
-                    if (!contentType.isEmpty()) {
-                      request.header("Content-Type", contentType);
-                    }
-                  });
+              sendResultForAllowsNonmultipartFileAccessAfterBufferedBodyConsumption(
+                  test, contentType);
+
           assertEquals(200, result.statusCode());
           assertArrayEquals(BINARY_CONTENT, result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForAllowsNonmultipartFileAccessAfterBufferedBodyConsumption(
+          TestServer test, String contentType) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/files").timeout(Duration.ofSeconds(3)).method("POST").body(BINARY_CONTENT);
+          if (!contentType.isEmpty()) {
+            request.header("Content-Type", contentType);
+          }
+        });
   }
 
   @ParameterizedTest
@@ -151,25 +162,31 @@ class MultipartRequestTest {
                     }
 
                     assertEquals(-1, input.read());
+
                     response.body("application/octet-stream", content);
                   }
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/files")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "application/octet-stream")
-                          .method("POST")
-                          .body(BINARY_CONTENT));
+          var result = sendResultForPreservesNonmultipartInputRegardlessOfFileAccessOrder(test);
+
           assertEquals(200, result.statusCode());
           assertArrayEquals(BINARY_CONTENT, result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]> sendResultForPreservesNonmultipartInputRegardlessOfFileAccessOrder(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/files")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "application/octet-stream")
+                .method("POST")
+                .body(BINARY_CONTENT));
   }
 
   @Test
@@ -183,6 +200,7 @@ class MultipartRequestTest {
                 "/files",
                 (request, response) -> {
                   assertNoUploads(request);
+
                   response.text(request.bodyText());
                 });
 
@@ -191,6 +209,7 @@ class MultipartRequestTest {
               test.send(
                   request -> request.path("/files").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("", result.body());
         }
@@ -211,25 +230,31 @@ class MultipartRequestTest {
                 "/files",
                 (request, response) -> {
                   assertNoUploads(request);
+
                   response.text(request.bodyText());
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/files")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "text/plain")
-                          .method("POST")
-                          .body(content.getBytes(StandardCharsets.UTF_8)),
-                  HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+          var result = sendResultForPreservesNonmultipartUtf8TextAfterFileLookup(test, content);
+
           assertEquals(200, result.statusCode());
           assertEquals(content, result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForPreservesNonmultipartUtf8TextAfterFileLookup(
+      TestServer test, String content) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/files")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "text/plain")
+                .method("POST")
+                .body(content.getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
   }
 
   @Test
@@ -244,25 +269,31 @@ class MultipartRequestTest {
                 (request, response) -> {
                   assertNoUploads(request);
                   assertThrows(IllegalStateException.class, request::bodyBytes);
+
                   response.text(request.formParam("document").orElseThrow());
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/files")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(partBody("Content-Disposition: form-data; name=\"document\"")),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForKeepsMultipartWithoutFilesExclusiveFromRawBodyAccess(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("contents", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForKeepsMultipartWithoutFilesExclusiveFromRawBodyAccess(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/files")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(partBody("Content-Disposition: form-data; name=\"document\"")),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -284,20 +315,26 @@ class MultipartRequestTest {
 
         try (var test = TestServer.start(app)) {
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/files")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", contentType)
-                          .method("POST")
-                          .body(malformedBody()),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForRejectsDeclaredMalformedMultipartDuringFileLookup(test, contentType);
+
           assertEquals(400, result.statusCode());
           assertEquals("Bad Request", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsDeclaredMalformedMultipartDuringFileLookup(
+      TestServer test, String contentType) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/files")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", contentType)
+                .method("POST")
+                .body(malformedBody()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -316,6 +353,7 @@ class MultipartRequestTest {
                 "/upload",
                 (request, response) -> {
                   var upload = request.file("document").orElseThrow();
+
                   assertEquals("document", upload.name());
                   assertEquals("binary.bin", upload.fileName());
                   assertEquals(5, upload.size());
@@ -344,12 +382,14 @@ class MultipartRequestTest {
           output.flush();
 
           var interim = HttpTester.parseResponse(input);
+
           assertNotNull(interim);
           assertEquals(100, interim.getStatus());
 
           output.write(body);
           output.flush();
           var result = HttpTester.parseResponse(input);
+
           assertNotNull(result);
           assertEquals(200, result.getStatus());
           assertEquals("application/octet-stream", result.get("Content-Type"));
@@ -366,14 +406,7 @@ class MultipartRequestTest {
     var multipart = new MultipartOptions(300_000, 250_000, 2, 8192, 1024, directory);
     var completed = new CompletableFuture<Void>();
     var body =
-        ("--"
-                + BOUNDARY
-                + "\r\nContent-Disposition: form-data; name=\"document\"\r\n\r\n"
-                + content
-                + "\r\n--"
-                + BOUNDARY
-                + "--\r\n")
-            .getBytes(StandardCharsets.UTF_8);
+        createBodyForPreservesALargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(content);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -388,6 +421,7 @@ class MultipartRequestTest {
                 "/upload",
                 (request, response) -> {
                   var fields = request.formParamMap();
+
                   assertEquals(Map.of("document", List.of(content)), fields);
                   assertTrue(request.files().isEmpty());
 
@@ -401,22 +435,42 @@ class MultipartRequestTest {
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body));
+              sendResultForPreservesALargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(
+                  test, body);
 
           assertEquals(200, result.statusCode());
           assertArrayEquals(content.getBytes(StandardCharsets.UTF_8), result.body());
+
           completed.get(3, TimeUnit.SECONDS);
           awaitFile(directory, false);
         }
       }
     }
+  }
+
+  private byte[] createBodyForPreservesALargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(
+      String content) {
+    return ("--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"document\"\r\n\r\n"
+            + content
+            + "\r\n--"
+            + BOUNDARY
+            + "--\r\n")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForPreservesALargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(
+          TestServer test, byte[] body) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body));
   }
 
   @Test
@@ -433,7 +487,7 @@ class MultipartRequestTest {
       var app = new Shoostr(configuredOptions);
 
       try (Closeable appCleanup9 = app::close) {
-        app.afterRequest(ignored2 -> completed.complete(null));
+        app.afterRequest(ignoredRequestOutcome -> completed.complete(null));
         app.routes()
             .post(
                 "/upload",
@@ -441,7 +495,9 @@ class MultipartRequestTest {
                   assertTrue(request.formParamMap().isEmpty());
                   assertEquals(1, request.files().size());
                   assertEquals(1, request.files("document").size());
+
                   var upload = request.file("document").orElseThrow();
+
                   assertEquals("document", upload.name());
                   assertEquals("report.txt", upload.fileName());
                   assertEquals(194_560, upload.size());
@@ -458,22 +514,30 @@ class MultipartRequestTest {
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(fileBody(content)));
+              sendResultForPreservesASameSizedNamedMultipartPartAsAFileAndCleansItsTemporaryStorage(
+                  test, content);
 
           assertEquals(200, result.statusCode());
           assertArrayEquals(content.getBytes(StandardCharsets.UTF_8), result.body());
+
           completed.get(3, TimeUnit.SECONDS);
           awaitFile(directory, false);
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForPreservesASameSizedNamedMultipartPartAsAFileAndCleansItsTemporaryStorage(
+          TestServer test, String content) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(fileBody(content)));
   }
 
   @Test
@@ -487,7 +551,9 @@ class MultipartRequestTest {
                 "/upload",
                 (request, response) -> {
                   var upload = request.file("document").orElseThrow();
+
                   assertTrue(request.file("missing").isEmpty());
+
                   response.text(
                       request.formParam("title").orElseThrow()
                           + "|"
@@ -499,21 +565,26 @@ class MultipartRequestTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForReadsMultipartTextAndFileFields(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("report|document|report.txt|contents", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForReadsMultipartTextAndFileFields(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -531,25 +602,31 @@ class MultipartRequestTest {
                   assertArrayEquals(
                       BINARY_CONTENT,
                       request.file("document").orElseThrow().content().readAllBytes());
+
                   response.text("binary");
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForPreservesBinaryUploadContent(test, body);
+
           assertEquals(200, result.statusCode());
           assertEquals("binary", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForPreservesBinaryUploadContent(
+      TestServer test, byte[] body) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -577,36 +654,54 @@ class MultipartRequestTest {
 
         try (var test = TestServer.start(app)) {
           var inMemory =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(fileBody("12345678")),
-                  HttpResponse.BodyHandlers.ofString());
+              sendInMemoryRequestForSpillsOnlyUploadsAboveTheMemoryThresholdToTheConfiguredDirectory(
+                  test);
+
           assertEquals(200, inMemory.statusCode());
           assertEquals("0", inMemory.body());
+
           awaitFile(directory, false);
           var onDisk =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(fileBody("123456789")),
-                  HttpResponse.BodyHandlers.ofString());
+              sendOnDiskRequestForSpillsOnlyUploadsAboveTheMemoryThresholdToTheConfiguredDirectory(
+                  test);
+
           assertEquals(200, onDisk.statusCode());
           assertEquals("1", onDisk.body());
+
           awaitFile(directory, false);
         }
       }
     } finally {
       Files.deleteIfExists(directory);
     }
+  }
+
+  private HttpResponse<String>
+      sendInMemoryRequestForSpillsOnlyUploadsAboveTheMemoryThresholdToTheConfiguredDirectory(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(fileBody("12345678")),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String>
+      sendOnDiskRequestForSpillsOnlyUploadsAboveTheMemoryThresholdToTheConfiguredDirectory(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(fileBody("123456789")),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -632,16 +727,8 @@ class MultipartRequestTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(fileBody("../../outside.txt", "contents")),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForTreatsHostileFilenamesAsMetadataInsteadOfDestinationPaths(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("../../outside.txt", result.body());
           assertEquals("contents", Files.readString(destination));
@@ -657,6 +744,20 @@ class MultipartRequestTest {
     }
   }
 
+  private HttpResponse<String>
+      sendResultForTreatsHostileFilenamesAsMetadataInsteadOfDestinationPaths(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(fileBody("../../outside.txt", "contents")),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void rejectsMultipartAccessAfterRawBodyAccess() throws Exception {
     {
@@ -668,26 +769,33 @@ class MultipartRequestTest {
                 "/upload",
                 (request, response) -> {
                   request.bodyBytes();
+
                   assertThrows(IllegalStateException.class, () -> request.file("document"));
+
                   response.text("exclusive");
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsMultipartAccessAfterRawBodyAccess(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("exclusive", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsMultipartAccessAfterRawBodyAccess(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -701,26 +809,33 @@ class MultipartRequestTest {
                 "/upload",
                 (request, response) -> {
                   request.file("document");
+
                   assertThrows(IllegalStateException.class, request::bodyBytes);
+
                   response.text("exclusive");
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsRawBodyAccessAfterMultipartAccess(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("exclusive", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsRawBodyAccessAfterMultipartAccess(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -735,21 +850,26 @@ class MultipartRequestTest {
                 (request, response) -> response.text(String.join(",", request.formParams("tag"))));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(repeatedTextBody()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForPreservesRepeatedMultipartTextFieldsInArrivalOrder(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("first,second", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForPreservesRepeatedMultipartTextFieldsInArrivalOrder(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(repeatedTextBody()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -774,16 +894,8 @@ class MultipartRequestTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(fileBody("contents")),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForPersistsAnUploadBeyondRequestCompletion(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("saved", result.body());
         }
@@ -796,6 +908,19 @@ class MultipartRequestTest {
       Files.deleteIfExists(destination);
       Files.deleteIfExists(directory);
     }
+  }
+
+  private HttpResponse<String> sendResultForPersistsAnUploadBeyondRequestCompletion(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(fileBody("contents")),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -815,21 +940,27 @@ class MultipartRequestTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsReadingRetainedUploadContentAfterHandlerCompletion(test);
+
           assertEquals(200, result.statusCode());
           assertThrows(IllegalStateException.class, retained.get()::read);
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForRejectsReadingRetainedUploadContentAfterHandlerCompletion(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -862,29 +993,36 @@ class MultipartRequestTest {
 
                   assertEquals(
                       "contents", new String(content.readAllBytes(), StandardCharsets.UTF_8));
+
                   response.text("ready");
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsSkippingUploadContentOutsideItsHandlerLifetime(test);
 
           assertEquals(200, result.statusCode());
           assertEquals("ready", result.body());
+
           var closedInput = retained.get();
+
           assertThrows(IllegalStateException.class, () -> closedInput.skip(1));
           assertThrows(IllegalStateException.class, () -> closedInput.skipNBytes(1));
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsSkippingUploadContentOutsideItsHandlerLifetime(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -904,21 +1042,26 @@ class MultipartRequestTest {
                 (request, response) -> response.text(request.formParam("title").orElseThrow()));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsMultipartBodiesExceedingTheAggregateLimit(test);
+
           assertEquals(413, result.statusCode());
           assertEquals("Content Too Large", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsMultipartBodiesExceedingTheAggregateLimit(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -937,20 +1080,28 @@ class MultipartRequestTest {
 
         try (var test = TestServer.start(app)) {
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(fileBody(content)),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForAcceptsFixedLengthMultipartBodiesWithinTheMultipartAggregateLimit(
+                  test, content);
+
           assertEquals(200, result.statusCode());
           assertEquals("2000000", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForAcceptsFixedLengthMultipartBodiesWithinTheMultipartAggregateLimit(
+          TestServer test, String content) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(fileBody(content)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -974,19 +1125,23 @@ class MultipartRequestTest {
                 (request, response) -> response.text(request.formParam("title").orElseThrow()));
         app.start();
         var result =
-            client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/upload"))
-                    .timeout(Duration.ofSeconds(3))
-                    .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                    .POST(
-                        HttpRequest.BodyPublishers.ofInputStream(
-                            () -> new ByteArrayInputStream(body())))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendResultForRejectsChunkedMultipartBodiesExceedingTheAggregateLimit(client, app);
+
         assertEquals(413, result.statusCode());
         assertEquals("Content Too Large", result.body());
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsChunkedMultipartBodiesExceedingTheAggregateLimit(
+      HttpClient client, Shoostr app) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/upload"))
+            .timeout(Duration.ofSeconds(3))
+            .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+            .POST(HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(body())))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1011,26 +1166,36 @@ class MultipartRequestTest {
                 (request, response) -> {
                   assertThrows(ContentTooLargeException.class, request::files);
                   assertThrows(ContentTooLargeException.class, request::formParamMap);
+
                   response.text("rejected");
                 });
         app.start();
         var result =
-            client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/upload"))
-                    .timeout(Duration.ofSeconds(3))
-                    .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                    .POST(
-                        HttpRequest.BodyPublishers.ofInputStream(
-                            () -> new ByteArrayInputStream(fileBody("x".repeat(200)))))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendResultForCleansUpAndRepeatsLimitRejectionsWithoutPublishingPartialParts(
+                client, app);
+
         assertEquals(200, result.statusCode());
         assertEquals("rejected", result.body());
+
         awaitFile(directory, false);
       }
     } finally {
       Files.deleteIfExists(directory);
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForCleansUpAndRepeatsLimitRejectionsWithoutPublishingPartialParts(
+          HttpClient client, Shoostr app) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/upload"))
+            .timeout(Duration.ofSeconds(3))
+            .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+            .POST(
+                HttpRequest.BodyPublishers.ofInputStream(
+                    () -> new ByteArrayInputStream(fileBody("x".repeat(200)))))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1054,6 +1219,7 @@ class MultipartRequestTest {
                 (request, response) -> {
                   assertThrows(ContentTooLargeException.class, request::files);
                   assertThrows(ContentTooLargeException.class, request::formParamMap);
+
                   response.text("rejected");
                 });
         app.start();
@@ -1079,8 +1245,10 @@ class MultipartRequestTest {
           output.write("0\r\n\r\n".getBytes(StandardCharsets.UTF_8));
           output.flush();
           var response = new String(socket.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
           assertTrue(response.startsWith("HTTP/1.1 200"));
           assertTrue(response.endsWith("rejected"));
+
           awaitFile(directory, false);
         }
       }
@@ -1107,21 +1275,26 @@ class MultipartRequestTest {
                     response.text(request.file("document").orElseThrow().fileName()));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(fileBody("contents")),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsFilesExceedingThePerFileLimit(test);
+
           assertEquals(413, result.statusCode());
           assertEquals("Content Too Large", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsFilesExceedingThePerFileLimit(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(fileBody("contents")),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1141,21 +1314,26 @@ class MultipartRequestTest {
                 (request, response) -> response.text(request.files("document").toString()));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(repeatedFilesBody()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsMultipartRequestsExceedingThePartLimit(test);
+
           assertEquals(413, result.statusCode());
           assertEquals("Content Too Large", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsMultipartRequestsExceedingThePartLimit(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(repeatedFilesBody()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1176,21 +1354,26 @@ class MultipartRequestTest {
                     response.text(request.file("document").orElseThrow().fileName()));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsMultipartPartsExceedingTheHeaderLimit(test);
+
           assertEquals(413, result.statusCode());
           assertEquals("Content Too Large", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsMultipartPartsExceedingTheHeaderLimit(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1205,21 +1388,26 @@ class MultipartRequestTest {
                 (request, response) -> response.text(request.formParam("title").orElseThrow()));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data")
-                          .method("POST")
-                          .body(body()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsMultipartRequestsWithoutABoundary(test);
+
           assertEquals(400, result.statusCode());
           assertEquals("Bad Request", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsMultipartRequestsWithoutABoundary(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data")
+                .method("POST")
+                .body(body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1234,21 +1422,26 @@ class MultipartRequestTest {
                 (request, response) -> response.text(request.formParam("title").orElseThrow()));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(nonUtf8TextFieldBody()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsMultipartTextFieldsWithANonUtf8Charset(test);
+
           assertEquals(415, result.statusCode());
           assertEquals("Unsupported Media Type", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsMultipartTextFieldsWithANonUtf8Charset(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(nonUtf8TextFieldBody()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1263,25 +1456,32 @@ class MultipartRequestTest {
                 (request, response) -> {
                   assertThrows(BadRequestException.class, request::files);
                   assertThrows(BadRequestException.class, request::formParamMap);
+
                   response.text("rejected");
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(invalidMetadataBody()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsEveryAccessorAfterMultipartMetadataValidationFails(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("rejected", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForRejectsEveryAccessorAfterMultipartMetadataValidationFails(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(invalidMetadataBody()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1296,6 +1496,7 @@ class MultipartRequestTest {
                 (request, response) -> {
                   assertThrows(BadRequestException.class, request::files);
                   assertThrows(BadRequestException.class, request::formParamMap);
+
                   response.text("rejected");
                 });
 
@@ -1303,22 +1504,27 @@ class MultipartRequestTest {
 
           for (var body :
               List.of(wrongDispositionBody(), missingDispositionBody(), missingNameBody())) {
-            var result =
-                test.send(
-                    request ->
-                        request
-                            .path("/upload")
-                            .timeout(Duration.ofSeconds(3))
-                            .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                            .method("POST")
-                            .body(body),
-                    HttpResponse.BodyHandlers.ofString());
+            var result = sendResultForRejectsEachRequiredMultipartMetadataBranch(test, body);
+
             assertEquals(200, result.statusCode());
             assertEquals("rejected", result.body());
           }
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRejectsEachRequiredMultipartMetadataBranch(
+      TestServer test, byte[] body) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1340,18 +1546,11 @@ class MultipartRequestTest {
                     response.text(request.file("document").orElseThrow().fileName()));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(malformedBody()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForDeletesTemporaryUploadsAfterMalformedMultipartInput(test);
+
           assertEquals(400, result.statusCode());
           assertEquals("Bad Request", result.body());
+
           awaitFile(directory, false);
         }
       }
@@ -1362,6 +1561,19 @@ class MultipartRequestTest {
     } finally {
       Files.deleteIfExists(directory);
     }
+  }
+
+  private HttpResponse<String> sendResultForDeletesTemporaryUploadsAfterMalformedMultipartInput(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(malformedBody()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1380,26 +1592,19 @@ class MultipartRequestTest {
         app.routes()
             .post(
                 "/upload",
-                (request, ignored3) -> {
+                (request, ignoredResponse) -> {
                   var content = request.file("document").orElseThrow().content();
                   firstByte.set(content.read());
                   throw new IllegalStateException("expected failure");
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForDeletesTemporaryUploadsAfterAHandlerFailure(test);
+
           assertEquals(500, result.statusCode());
           assertEquals("Internal Server Error", result.body());
           assertEquals('c', firstByte.get());
+
           awaitFile(directory, false);
         }
       }
@@ -1410,6 +1615,19 @@ class MultipartRequestTest {
     } finally {
       Files.deleteIfExists(directory);
     }
+  }
+
+  private HttpResponse<String> sendResultForDeletesTemporaryUploadsAfterAHandlerFailure(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1431,18 +1649,11 @@ class MultipartRequestTest {
                     response.text(request.file("document").orElseThrow().fileName()));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForDeletesTemporaryUploadsAfterASuccessfulResponse(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("report.txt", result.body());
+
           awaitFile(directory, false);
         }
       }
@@ -1453,6 +1664,19 @@ class MultipartRequestTest {
     } finally {
       Files.deleteIfExists(directory);
     }
+  }
+
+  private HttpResponse<String> sendResultForDeletesTemporaryUploadsAfterASuccessfulResponse(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1475,15 +1699,8 @@ class MultipartRequestTest {
 
         try (var test = TestServer.start(app)) {
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(body()),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForReportsServerErrorsWhenTemporaryUploadStorageCannotBeCreated(test);
+
           assertEquals(500, result.statusCode());
           assertEquals("Internal Server Error", result.body());
         }
@@ -1491,6 +1708,20 @@ class MultipartRequestTest {
     } finally {
       Files.deleteIfExists(storage);
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForReportsServerErrorsWhenTemporaryUploadStorageCannotBeCreated(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(body()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1581,6 +1812,7 @@ class MultipartRequestTest {
                   (request, response) -> {
                     var upload = request.file("document").orElseThrow();
                     survivorParsed.countDown();
+
                     assertTrue(releaseSurvivor.await(5, TimeUnit.SECONDS));
 
                     try (var content = upload.content()) {
@@ -1589,7 +1821,7 @@ class MultipartRequestTest {
                           .body("application/octet-stream", content.readAllBytes());
                     }
                   });
-          app.routes().get("/healthy", (ignored4, response) -> response.text("healthy"));
+          app.routes().get("/healthy", (ignoredRequest, response) -> response.text("healthy"));
 
           try (var test = TestServer.start(app)) {
             try (var abandoned = new Socket();
@@ -1607,6 +1839,7 @@ class MultipartRequestTest {
                         .orElseThrow();
                 survivor.getOutputStream().write(closingBoundary);
                 survivor.getOutputStream().flush();
+
                 assertTrue(survivorParsed.await(3, TimeUnit.SECONDS));
 
                 abandoned.close();
@@ -1614,6 +1847,7 @@ class MultipartRequestTest {
                 await()
                     .atMost(Duration.ofSeconds(3))
                     .untilAsserted(() -> assertFalse(Files.exists(abandonedSpool)));
+
                 assertFalse(abandonedPublished.get());
                 assertEquals(List.of(survivorSpool), awaitSpoolFiles(directory, 1));
                 assertTrue(Files.exists(survivorSpool));
@@ -1621,10 +1855,12 @@ class MultipartRequestTest {
 
                 releaseSurvivor.countDown();
                 var response = HttpTester.parseResponse(survivor.getInputStream());
+
                 assertNotNull(response);
                 assertEquals(200, response.getStatus());
                 assertEquals("survivor.txt", response.get("X-Upload-Name"));
                 assertArrayEquals(survivorContent, response.getContentBytes());
+
                 survivorCompleted.get(3, TimeUnit.SECONDS);
                 awaitFile(directory, false);
               } finally {
@@ -1636,6 +1872,7 @@ class MultipartRequestTest {
                 test.send(
                     request -> request.path("/healthy").timeout(Duration.ofSeconds(1)),
                     HttpResponse.BodyHandlers.ofString());
+
             assertEquals(200, healthy.statusCode());
             assertEquals("healthy", healthy.body());
           }
@@ -1660,21 +1897,26 @@ class MultipartRequestTest {
                             .collect(Collectors.joining(","))));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(repeatedFilesBody()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRetainsRepeatedUploadsInArrivalOrder(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("first.txt,second.txt", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForRetainsRepeatedUploadsInArrivalOrder(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(repeatedFilesBody()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1690,16 +1932,8 @@ class MultipartRequestTest {
                     response.text("<" + request.file("document").orElseThrow().fileName() + ">"));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/upload")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
-                          .method("POST")
-                          .body(emptyFilenameBody()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForTreatsAnEmptyFilenameAsAnUpload(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("<>", result.body());
         }
@@ -1707,9 +1941,23 @@ class MultipartRequestTest {
     }
   }
 
+  private HttpResponse<String> sendResultForTreatsAnEmptyFilenameAsAnUpload(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/upload")
+                .timeout(Duration.ofSeconds(3))
+                .header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY)
+                .method("POST")
+                .body(emptyFilenameBody()),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   private static void assertNoUploads(Request request) throws IOException {
     var files = request.files();
     var namedFiles = request.files("document");
+
     assertEquals(Map.of(), files);
     assertEquals(List.of(), namedFiles);
     assertTrue(request.file("document").isEmpty());
@@ -1779,6 +2027,7 @@ class MultipartRequestTest {
             .getBytes(StandardCharsets.UTF_8));
     output.write(BINARY_CONTENT);
     output.write(("\r\n--" + BOUNDARY + "--\r\n").getBytes(StandardCharsets.UTF_8));
+
     return output.toByteArray();
   }
 

@@ -59,75 +59,6 @@ public sealed class WebSocket permits TypedWebSocket {
   }
 
   /**
-   * Registers an opening callback, completed before admitting application messages.
-   *
-   * @param handler callback using the application's configured execution mode
-   * @return this configuration
-   */
-  public synchronized WebSocket onOpen(ConnectionHandler handler) {
-    requireMutable();
-    open = Objects.requireNonNull(handler);
-    return this;
-  }
-
-  /**
-   * Registers complete binary handling with an owned array safe to retain after callback return.
-   *
-   * @param handler sequential callback using the application's configured execution mode
-   * @return this configuration
-   */
-  public synchronized WebSocket onBinary(MessageHandler<byte[]> handler) {
-    requireMutable();
-    binary = Objects.requireNonNull(handler);
-    return this;
-  }
-
-  /**
-   * Registers a terminal notification after active application work has unwound. Native resource
-   * release does not depend on this observer, which may not run during shutdown or rejected
-   * dispatch.
-   *
-   * @param handler close code and reason observer serialized with the connection's other callbacks
-   * @return this configuration
-   */
-  public synchronized WebSocket onClose(CloseHandler handler) {
-    requireMutable();
-    close = Objects.requireNonNull(handler);
-    return this;
-  }
-
-  /**
-   * Registers a terminal failure observer, not a recovery handler or HTTP exception renderer.
-   * Recoverable message failures should be caught inside the message callback. Observer failures
-   * are logged without recursion, and native cleanup never waits for this observer.
-   *
-   * @param handler first unexpected application or transport failure observer
-   * @return this configuration
-   */
-  public synchronized WebSocket onError(MessageHandler<Throwable> handler) {
-    requireMutable();
-    error = Objects.requireNonNull(handler);
-    return this;
-  }
-
-  /**
-   * Registers complete text handling. Captured state is shared by this route's connections.
-   *
-   * @param handler callback whose return permits the next message
-   * @return this configuration
-   */
-  public synchronized WebSocket onText(MessageHandler<String> handler) {
-    requireMutable();
-    text = Objects.requireNonNull(handler);
-    return this;
-  }
-
-  /** Prevents changes after the route configuration callback returns. */
-  synchronized void freeze() {
-    frozen = true;
-  }
-
-  /**
    * Runs HTTP admission without permitting streaming or file commitment.
    *
    * @param request live handshake input
@@ -149,12 +80,15 @@ public sealed class WebSocket permits TypedWebSocket {
   }
 
   /**
-   * Reads the registered text callback after configuration has frozen.
+   * Registers an opening callback, completed before admitting application messages.
    *
-   * @return registered handler, or null
+   * @param handler callback using the application's configured execution mode
+   * @return this configuration
    */
-  @Nullable MessageHandler<String> text() {
-    return text;
+  public synchronized WebSocket onOpen(ConnectionHandler handler) {
+    requireMutable();
+    open = Objects.requireNonNull(handler);
+    return this;
   }
 
   /**
@@ -167,12 +101,38 @@ public sealed class WebSocket permits TypedWebSocket {
   }
 
   /**
+   * Registers complete binary handling with an owned array safe to retain after callback return.
+   *
+   * @param handler sequential callback using the application's configured execution mode
+   * @return this configuration
+   */
+  public synchronized WebSocket onBinary(MessageHandler<byte[]> handler) {
+    requireMutable();
+    binary = Objects.requireNonNull(handler);
+    return this;
+  }
+
+  /**
    * Reads the frozen binary callback.
    *
    * @return registered handler, or null
    */
   @Nullable MessageHandler<byte[]> binary() {
     return binary;
+  }
+
+  /**
+   * Registers a terminal notification after active application work has unwound. Native resource
+   * release does not depend on this observer, which may not run during shutdown or rejected
+   * dispatch.
+   *
+   * @param handler close code and reason observer serialized with the connection's other callbacks
+   * @return this configuration
+   */
+  public synchronized WebSocket onClose(CloseHandler handler) {
+    requireMutable();
+    close = Objects.requireNonNull(handler);
+    return this;
   }
 
   /**
@@ -185,12 +145,52 @@ public sealed class WebSocket permits TypedWebSocket {
   }
 
   /**
+   * Registers a terminal failure observer, not a recovery handler or HTTP exception renderer.
+   * Recoverable message failures should be caught inside the message callback. Observer failures
+   * are logged without recursion, and native cleanup never waits for this observer.
+   *
+   * @param handler first unexpected application or transport failure observer
+   * @return this configuration
+   */
+  public synchronized WebSocket onError(MessageHandler<Throwable> handler) {
+    requireMutable();
+    error = Objects.requireNonNull(handler);
+    return this;
+  }
+
+  /**
    * Reads the frozen error observer.
    *
    * @return registered observer, or null
    */
   @Nullable MessageHandler<Throwable> error() {
     return error;
+  }
+
+  /**
+   * Registers complete text handling. Captured state is shared by this route's connections.
+   *
+   * @param handler callback whose return permits the next message
+   * @return this configuration
+   */
+  public synchronized WebSocket onText(MessageHandler<String> handler) {
+    requireMutable();
+    text = Objects.requireNonNull(handler);
+    return this;
+  }
+
+  /**
+   * Reads the registered text callback after configuration has frozen.
+   *
+   * @return registered handler, or null
+   */
+  @Nullable MessageHandler<String> text() {
+    return text;
+  }
+
+  /** Prevents changes after the route configuration callback returns. */
+  synchronized void freeze() {
+    frozen = true;
   }
 
   /**

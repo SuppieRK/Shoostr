@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.nio.charset.StandardCharsets;
@@ -17,11 +18,13 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.locks.ReentrantLock;
 import nl.jqno.equalsverifier.EqualsVerifier;
 import nl.jqno.equalsverifier.Warning;
@@ -72,27 +75,21 @@ class WebSocketEqualityTest {
             for (int index = 0; index < 2; index++) {
               var messages = new LinkedBlockingQueue<String>();
               var nativeClient =
-                  client
-                      .newWebSocketBuilder()
-                      .buildAsync(
-                          new URI("ws", server.baseUri().getRawAuthority(), "/socket", null, null),
-                          new WebSocket.Listener() {
-                            @Override
-                            public CompletionStage<?> onText(
-                                WebSocket socket, CharSequence text, boolean last) {
-                              messages.add(text.toString());
-                              return WebSocket.Listener.super.onText(socket, text, last);
-                            }
-                          })
-                      .get(3, TimeUnit.SECONDS);
+                  createNativeClientForIdentifiesSeparateConnectionsAndRetainsHashesThroughMessagesAndClose(
+                      client, server, messages);
               clients.add(nativeClient);
               var connection = opened.poll(3, TimeUnit.SECONDS);
+
               assertNotNull(connection);
+
               connections.add(connection);
               nativeClient.sendText("same", true).get(3, TimeUnit.SECONDS);
+
               assertEquals("echo:same", messages.poll(3, TimeUnit.SECONDS));
             }
+
             assertNotEquals(connections.get(0), connections.get(1));
+
             if (typed) {
               verifier(TypedWebSocketConnection.class, connections, firstExecutor, secondExecutor)
                   .verify();
@@ -107,6 +104,7 @@ class WebSocketEqualityTest {
             for (var nativeClient : clients) {
               nativeClient.sendClose(WebSocket.NORMAL_CLOSURE, "done").get(3, TimeUnit.SECONDS);
               var connection = closed.poll(3, TimeUnit.SECONDS);
+
               assertNotNull(connection);
             }
           } finally {
@@ -122,8 +120,28 @@ class WebSocketEqualityTest {
       assertEquals(entry.getValue().intValue(), entry.getKey().hashCode());
       assertTrue(retained.remove(entry.getKey()));
     }
+
     assertTrue(retained.isEmpty());
     assertTrue(closed.isEmpty());
+  }
+
+  private WebSocket
+      createNativeClientForIdentifiesSeparateConnectionsAndRetainsHashesThroughMessagesAndClose(
+          HttpClient client, TestServer server, LinkedBlockingQueue<String> messages)
+          throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", server.baseUri().getRawAuthority(), "/socket", null, null),
+            new WebSocket.Listener() {
+              @Override
+              public CompletionStage<?> onText(WebSocket socket, CharSequence text, boolean last) {
+                messages.add(text.toString());
+
+                return WebSocket.Listener.super.onText(socket, text, last);
+              }
+            })
+        .get(3, TimeUnit.SECONDS);
   }
 
   private static <T> SingleTypeEqualsVerifierApi<T> verifier(
@@ -167,6 +185,7 @@ class WebSocketEqualityTest {
       throws ReflectiveOperationException {
     var field = WebSocketConnection.class.getDeclaredField("listener");
     field.setAccessible(true);
+
     return (ManagedWebSocket) field.get(connection);
   }
 
@@ -174,6 +193,7 @@ class WebSocketEqualityTest {
       throws ReflectiveOperationException {
     var field = WebSocketConnection.class.getDeclaredField("session");
     field.setAccessible(true);
+
     return (Session) field.get(connection);
   }
 

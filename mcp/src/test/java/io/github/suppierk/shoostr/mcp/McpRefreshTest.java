@@ -10,16 +10,21 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServer;
+import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSchema.JSONRPCMessage;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -31,84 +36,38 @@ class McpRefreshTest {
   void replacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener() throws Exception {
     var oldExpiry = new AtomicReference<Instant>();
     var security =
-        new McpHttpSecurity(
-            Set.of(),
-            request -> {
-              var expiry =
-                  Instant.now().plusSeconds(request.header("X-Old-Token").isPresent() ? 2 : 10);
-              if (request.header("X-Old-Token").isPresent()) {
-                oldExpiry.set(expiry);
-              }
-
-              return new McpIdentity("alice:client", McpTransportContext.EMPTY, expiry);
-            },
-            (ignored, ignored2) -> {});
+        createSecurityForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+            oldExpiry);
     var mcp =
-        Mcp.sync(
-            security,
-            transport ->
-                McpServer.sync(transport)
-                    .capabilities(McpSchema.ServerCapabilities.builder().tools(true).build())
-                    .build());
+        createMcpForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+            security);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var readers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {
       var initialized =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(
-                          """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"refresh-fixture","version":"1.0"}}}
-              """
-                              .getBytes(StandardCharsets.UTF_8)));
+          sendInitializedRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+              test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var oldGet =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .header("Accept", "text/event-stream")
-                      .header("Mcp-Session-Id", sessionId)
-                      .header("MCP-Protocol-Version", "2025-11-25")
-                      .header("X-Old-Token", "true"),
-              HttpResponse.BodyHandlers.ofInputStream());
+          sendOldGetRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+              test, sessionId);
 
       try (var oldInput = oldGet.body()) {
         var refreshedGet =
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .header("Accept", "text/event-stream")
-                        .header("Mcp-Session-Id", sessionId)
-                        .header("MCP-Protocol-Version", "2025-11-25"),
-                HttpResponse.BodyHandlers.ofInputStream());
+            sendRefreshedGetRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+                test, sessionId);
 
         try (var refreshedInput =
             new BufferedReader(
                 new InputStreamReader(refreshedGet.body(), StandardCharsets.UTF_8))) {
           assertEquals(200, oldGet.statusCode());
           assertEquals(200, refreshedGet.statusCode());
-          var oldEnded =
-              readers.submit(
-                  () -> {
-                    try {
-                      oldInput.readAllBytes();
-                    } catch (IOException ignored3) {
-                      // Either EOF or a transport failure ends the committed old stream.
-                    }
 
-                    return null;
-                  });
+          var oldEnded =
+              submitOldEndedForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+                  readers, oldInput);
           oldEnded.get(1, TimeUnit.SECONDS);
           var target = oldExpiry.get().plusMillis(100);
           var started = System.nanoTime();
@@ -129,16 +88,9 @@ class McpRefreshTest {
                   });
           mcp.server().notifyToolsListChanged();
           var received =
-              readers.submit(
-                  () -> {
-                    String line;
-                    do {
-                      line = refreshedInput.readLine();
-                      assertNotNull(line, "The refreshed stream must remain attached");
-                    } while (!line.startsWith("data:"));
-                    return McpSchema.deserializeJsonRpcMessage(
-                        McpJsonDefaults.getMapper(), line.substring(5).strip());
-                  });
+              submitReceivedForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+                  readers, refreshedInput);
+
           var notification =
               assertInstanceOf(
                   McpSchema.JSONRPCNotification.class, received.get(3, TimeUnit.SECONDS));
@@ -146,5 +98,110 @@ class McpRefreshTest {
         }
       }
     }
+  }
+
+  private McpHttpSecurity
+      createSecurityForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+          AtomicReference<Instant> oldExpiry) {
+    return new McpHttpSecurity(
+        Set.of(),
+        request -> {
+          var expiry =
+              Instant.now().plusSeconds(request.header("X-Old-Token").isPresent() ? 2 : 10);
+          if (request.header("X-Old-Token").isPresent()) {
+            oldExpiry.set(expiry);
+          }
+
+          return new McpIdentity("alice:client", McpTransportContext.EMPTY, expiry);
+        },
+        (ignored, ignoredJSONRPCMessage) -> {});
+  }
+
+  private Mcp<McpSyncServer>
+      createMcpForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+          McpHttpSecurity security) {
+    return Mcp.sync(
+        security,
+        transport ->
+            McpServer.sync(transport)
+                .capabilities(McpSchema.ServerCapabilities.builder().tools(true).build())
+                .build());
+  }
+
+  private HttpResponse<byte[]>
+      sendInitializedRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(
+                    """
+              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "protocolVersion":"2025-11-25","capabilities":{},
+                "clientInfo":{"name":"refresh-fixture","version":"1.0"}}}
+              """
+                        .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<InputStream>
+      sendOldGetRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+          TestServer test, String sessionId) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .header("Accept", "text/event-stream")
+                .header("Mcp-Session-Id", sessionId)
+                .header("MCP-Protocol-Version", "2025-11-25")
+                .header("X-Old-Token", "true"),
+        HttpResponse.BodyHandlers.ofInputStream());
+  }
+
+  private HttpResponse<InputStream>
+      sendRefreshedGetRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+          TestServer test, String sessionId) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .header("Accept", "text/event-stream")
+                .header("Mcp-Session-Id", sessionId)
+                .header("MCP-Protocol-Version", "2025-11-25"),
+        HttpResponse.BodyHandlers.ofInputStream());
+  }
+
+  private Future<Object>
+      submitOldEndedForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+          ExecutorService readers, InputStream oldInput) {
+    return readers.submit(
+        () -> {
+          try {
+            oldInput.readAllBytes();
+          } catch (IOException ignoredFailure) {
+            // Either EOF or a transport failure ends the committed old stream.
+          }
+
+          return null;
+        });
+  }
+
+  private Future<JSONRPCMessage>
+      submitReceivedForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
+          ExecutorService readers, BufferedReader refreshedInput) {
+    return readers.submit(
+        () -> {
+          String line;
+          do {
+            line = refreshedInput.readLine();
+
+            assertNotNull(line, "The refreshed stream must remain attached");
+          } while (!line.startsWith("data:"));
+          return McpSchema.deserializeJsonRpcMessage(
+              McpJsonDefaults.getMapper(), line.substring(5).strip());
+        });
   }
 }

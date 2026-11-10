@@ -19,6 +19,7 @@ import io.swagger.v3.oas.models.parameters.Parameter;
 import io.swagger.v3.oas.models.parameters.RequestBody;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import java.io.Closeable;
+import java.io.IOException;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -27,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.StreamWriteConstraints;
 import tools.jackson.core.json.JsonFactory;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 class OpenApiTest {
@@ -78,6 +80,7 @@ class OpenApiTest {
             Json31.mapper()
                 .readTree(server.send(request -> request.path("/private.json")).body())
                 .path("paths");
+
         assertEquals(4, publicPaths.size());
         assertEquals(4, privatePaths.size());
         assertEquals(
@@ -127,6 +130,7 @@ class OpenApiTest {
                     .streamWriteConstraints(
                         StreamWriteConstraints.builder().maxNestingDepth(1).build())
                     .build()));
+
         var failure = assertThrows(IllegalStateException.class, app::start);
         assertEquals("Cannot serialize OpenAPI document", failure.getMessage());
         assertInstanceOf(JacksonException.class, failure.getCause());
@@ -155,11 +159,19 @@ class OpenApiTest {
               routes.get(
                   "/first",
                   shared,
-                  e -> e.withExtension(docs).summary("First operation").operationId("first"));
+                  lifecycle ->
+                      lifecycle
+                          .withExtension(docs)
+                          .summary("First operation")
+                          .operationId("first"));
               routes.get(
                   "/second",
                   shared,
-                  e -> e.withExtension(docs).summary("Second operation").operationId("second"));
+                  lifecycle ->
+                      lifecycle
+                          .withExtension(docs)
+                          .summary("Second operation")
+                          .operationId("second"));
               routes.get("/openapi.json", docs.handler());
             });
 
@@ -168,6 +180,7 @@ class OpenApiTest {
               Json31.mapper()
                   .readTree(test.send(request -> request.path("/openapi.json")).body())
                   .path("paths");
+
           assertEquals(
               "First operation", paths.path("/first").path("get").path("summary").asString());
           assertEquals(
@@ -196,25 +209,31 @@ class OpenApiTest {
             routes -> {
               routes.post(
                   "/text",
-                  (ignored2, ignored3) -> {},
-                  e -> e.withExtension(docs).requestBody(body));
+                  (ignoredRequest, ignoredResponse) -> {},
+                  lifecycle -> lifecycle.withExtension(docs).requestBody(body));
               routes.get("/openapi.json", docs.handler());
             });
 
         try (var test = TestServer.start(app)) {
           var content =
-              Json31.mapper()
-                  .readTree(test.send(request -> request.path("/openapi.json")).body())
-                  .path("paths")
-                  .path("/text")
-                  .path("post")
-                  .path("requestBody")
-                  .path("content");
+              createContentForPermitsNativeRequestMediaDeclarationsWithoutInventingASchema(test);
+
           assertTrue(content.has("text/plain"));
           assertFalse(content.path("text/plain").has("schema"));
         }
       }
     }
+  }
+
+  private JsonNode createContentForPermitsNativeRequestMediaDeclarationsWithoutInventingASchema(
+      TestServer test) throws JacksonException, IOException, InterruptedException {
+    return Json31.mapper()
+        .readTree(test.send(request -> request.path("/openapi.json")).body())
+        .path("paths")
+        .path("/text")
+        .path("post")
+        .path("requestBody")
+        .path("content");
   }
 
   @Test
@@ -232,18 +251,23 @@ class OpenApiTest {
         app.withExtension(docs).routes().get("/openapi.json", docs.handler());
 
         try (var test = TestServer.start(app)) {
-          var schema =
-              Json31.mapper()
-                  .readTree(test.send(request -> request.path("/openapi.json")).body())
-                  .path("components")
-                  .path("schemas")
-                  .path("Node");
+          var schema = createSchemaForPreservesValidRecursiveSchemaReferences(test);
+
           assertEquals(
               "#/components/schemas/Node",
               schema.path("properties").path("next").path("$ref").asString());
         }
       }
     }
+  }
+
+  private JsonNode createSchemaForPreservesValidRecursiveSchemaReferences(TestServer test)
+      throws JacksonException, IOException, InterruptedException {
+    return Json31.mapper()
+        .readTree(test.send(request -> request.path("/openapi.json")).body())
+        .path("components")
+        .path("schemas")
+        .path("Node");
   }
 
   @Test
@@ -262,16 +286,22 @@ class OpenApiTest {
 
         try (var test = TestServer.start(app)) {
           var example =
-              Json31.mapper()
-                  .readTree(test.send(request -> request.path("/openapi.json")).body())
-                  .path("components")
-                  .path("schemas")
-                  .path("Example")
-                  .path("example");
+              createExampleForTreatsReferenceStringsInsideExampleDataAsLiteralPayload(test);
+
           assertEquals("#/components/schemas/Missing", example.path("$ref").asString());
         }
       }
     }
+  }
+
+  private JsonNode createExampleForTreatsReferenceStringsInsideExampleDataAsLiteralPayload(
+      TestServer test) throws JacksonException, IOException, InterruptedException {
+    return Json31.mapper()
+        .readTree(test.send(request -> request.path("/openapi.json")).body())
+        .path("components")
+        .path("schemas")
+        .path("Example")
+        .path("example");
   }
 
   @Test
@@ -291,9 +321,10 @@ class OpenApiTest {
             routes -> {
               routes.post(
                   "/users",
-                  (ignored4, ignored5) -> {},
-                  e ->
-                      e.withExtension(docs)
+                  (ignoredRequest, ignoredResponse) -> {},
+                  lifecycle ->
+                      lifecycle
+                          .withExtension(docs)
                           .operationId("createUser")
                           .queryParameter(
                               "dryRun",
@@ -313,6 +344,7 @@ class OpenApiTest {
           var document =
               Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
           var operation = document.path("paths").path("/users").path("post");
+
           assertEquals("createUser", operation.path("operationId").asString());
           assertEquals("query", operation.path("parameters").path(0).path("in").asString());
           assertEquals("header", operation.path("parameters").path(1).path("in").asString());
@@ -350,17 +382,18 @@ class OpenApiTest {
                   group -> {
                     group.get(
                         "/anonymous",
-                        (ignored6, ignored7) -> {},
-                        e -> e.withExtension(docs).anonymous());
-                    group.get("/documented", (ignored8, ignored9) -> {});
+                        (ignoredRequest, ignoredResponse) -> {},
+                        lifecycle -> lifecycle.withExtension(docs).anonymous());
+                    group.get("/documented", (ignoredRequest, ignoredResponse) -> {});
                   },
-                  e -> e.withExtension(docs).security("basic"));
+                  lifecycle -> lifecycle.withExtension(docs).security("basic"));
               routes.get("/openapi.json", docs.handler());
             });
 
         try (var test = TestServer.start(app)) {
           var document =
               Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
+
           assertEquals(
               0, document.path("paths").path("/api/anonymous").path("get").path("security").size());
           assertEquals(
@@ -392,13 +425,14 @@ class OpenApiTest {
             routes -> {
               routes.get(
                   "/users/{id:[0-9]+}",
-                  (ignored10, ignored11) -> {},
-                  e -> e.withExtension(docs).pathParameter("id", "ID"));
+                  (ignoredRequest, ignoredResponse) -> {},
+                  lifecycle -> lifecycle.withExtension(docs).pathParameter("id", "ID"));
               routes.get(
                   "/users/{id}",
-                  (ignored12, ignored13) -> {},
-                  e -> e.withExtension(docs).pathParameter("id", "ID"));
+                  (ignoredRequest, ignoredResponse) -> {},
+                  lifecycle -> lifecycle.withExtension(docs).pathParameter("id", "ID"));
             });
+
         var failure = assertThrows(IllegalArgumentException.class, app::start);
         assertEquals("Conflicting OpenAPI operation: GET /users/{id}", failure.getMessage());
       }
@@ -420,8 +454,9 @@ class OpenApiTest {
             routes -> {
               routes.get(
                   "/users/{id:[0-9]{1,32}}",
-                  (ignored14, ignored15) -> {},
-                  e -> e.withExtension(docs).pathParameter("id", "User identifier"));
+                  (ignoredRequest, ignoredResponse) -> {},
+                  lifecycle ->
+                      lifecycle.withExtension(docs).pathParameter("id", "User identifier"));
               routes.get("/openapi.json", docs.handler());
             });
 
@@ -431,6 +466,7 @@ class OpenApiTest {
                   .readTree(test.send(request -> request.path("/openapi.json")).body())
                   .path("paths");
           var parameter = paths.path("/users/{id}").path("get").path("parameters").path(0);
+
           assertEquals("id", parameter.path("name").asString());
           assertEquals("path", parameter.path("in").asString());
           assertTrue(parameter.path("required").asBoolean());
@@ -456,22 +492,16 @@ class OpenApiTest {
             routes -> {
               routes.get(
                   "/users/{id:[0-9]+}",
-                  (ignored16, ignored17) -> {},
-                  e -> e.withExtension(docs).parameter(parameter));
+                  (ignoredRequest, ignoredResponse) -> {},
+                  lifecycle -> lifecycle.withExtension(docs).parameter(parameter));
               routes.get("/openapi.json", docs.handler());
             });
 
         try (var test = TestServer.start(app)) {
           var intersection =
-              Json31.mapper()
-                  .readTree(test.send(request -> request.path("/openapi.json")).body())
-                  .path("paths")
-                  .path("/users/{id}")
-                  .path("get")
-                  .path("parameters")
-                  .path(0)
-                  .path("schema")
-                  .path("allOf");
+              createIntersectionForIntersectsDeclaredSchemaPatternWithRouteConstraintWithoutMutatingCallerSchema(
+                  test);
+
           assertEquals(2, intersection.size());
           assertEquals("string", intersection.path(0).path("type").asString());
           assertEquals("^1", intersection.path(0).path("pattern").asString());
@@ -484,6 +514,20 @@ class OpenApiTest {
         }
       }
     }
+  }
+
+  private JsonNode
+      createIntersectionForIntersectsDeclaredSchemaPatternWithRouteConstraintWithoutMutatingCallerSchema(
+          TestServer test) throws JacksonException, IOException, InterruptedException {
+    return Json31.mapper()
+        .readTree(test.send(request -> request.path("/openapi.json")).body())
+        .path("paths")
+        .path("/users/{id}")
+        .path("get")
+        .path("parameters")
+        .path(0)
+        .path("schema")
+        .path("allOf");
   }
 
   @Test
@@ -502,9 +546,10 @@ class OpenApiTest {
             routes -> {
               routes.get(
                   "/users",
-                  (ignored18, ignored19) -> {},
-                  e ->
-                      e.withExtension(docs)
+                  (ignoredRequest, ignoredResponse) -> {},
+                  lifecycle ->
+                      lifecycle
+                          .withExtension(docs)
                           .response(200, "Users", MediaType.APPLICATION_JSON, user));
               routes.get("/openapi.json", docs.handler());
             });
@@ -512,6 +557,7 @@ class OpenApiTest {
         try (var test = TestServer.start(app)) {
           var original = test.send(request -> request.path("/openapi.json")).body();
           var document = Json31.mapper().readTree(original);
+
           assertEquals(
               "#/components/schemas/User",
               document
@@ -535,9 +581,13 @@ class OpenApiTest {
                   .path("name")
                   .path("type")
                   .size());
+
           schema.addProperty("password", new JsonSchema().types(Set.of("string")));
+
           assertArrayEquals(original, test.send(request -> request.path("/openapi.json")).body());
+
           var late = new JsonSchema();
+
           assertThrows(IllegalStateException.class, () -> docs.schema("Late", late));
         }
       }
@@ -559,20 +609,22 @@ class OpenApiTest {
                   group -> {
                     group.get(
                         "/first",
-                        (ignored20, ignored21) -> {},
-                        e ->
-                            e.withExtension(docs)
+                        (ignoredRequest, ignoredResponse) -> {},
+                        lifecycle ->
+                            lifecycle
+                                .withExtension(docs)
                                 .summary("First")
                                 .tag("first")
                                 .response(200, "Child response", MediaType.TEXT_PLAIN));
-                    group.get("/second", (ignored22, ignored23) -> {});
+                    group.get("/second", (ignoredRequest, ignoredResponse) -> {});
                     group.get(
                         "/hidden",
-                        (ignored24, ignored25) -> {},
-                        e -> e.withExtension(docs).hidden());
+                        (ignoredRequest, ignoredResponse) -> {},
+                        lifecycle -> lifecycle.withExtension(docs).hidden());
                   },
-                  e ->
-                      e.withExtension(docs)
+                  lifecycle ->
+                      lifecycle
+                          .withExtension(docs)
                           .summary("Group")
                           .description("Shared description")
                           .tag("group")
@@ -588,6 +640,7 @@ class OpenApiTest {
                   .path("paths");
           var first = paths.path("/api/first").path("get");
           var second = paths.path("/api/second").path("get");
+
           assertEquals("First", first.path("summary").asString());
           assertEquals("Shared description", first.path("description").asString());
           assertEquals("group", first.path("tags").path(0).asString());
@@ -622,17 +675,20 @@ class OpenApiTest {
                   group -> {
                     group.get(
                         "/users",
-                        (ignored26, response) -> response.text("users"),
-                        e -> e.withExtension(docs).summary("List users"));
-                    group.get("/internal", (ignored27, ignored28) -> {});
+                        (ignoredRequest, response) -> response.text("users"),
+                        lifecycle -> lifecycle.withExtension(docs).summary("List users"));
+                    group.get("/internal", (ignoredRequest, ignoredResponse) -> {});
                   });
               routes.get("/openapi.json", docs.handler());
             });
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/openapi.json"));
+
           assertEquals(200, result.statusCode());
+
           var document = Json31.mapper().readTree(result.body());
+
           assertEquals("3.1.1", document.path("openapi").asString());
           assertEquals("Users API", document.path("info").path("title").asString());
           assertEquals(

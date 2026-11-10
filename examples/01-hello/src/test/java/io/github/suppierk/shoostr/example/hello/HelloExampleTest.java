@@ -15,6 +15,7 @@ class HelloExampleTest {
     try (var test = TestServer.start(HelloExample.application())) {
       var response =
           test.send(request -> request.path("/hello"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("Hello, Shoostr!", response.body()),

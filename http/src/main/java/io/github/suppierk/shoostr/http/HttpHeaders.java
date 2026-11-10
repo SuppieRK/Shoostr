@@ -2821,61 +2821,12 @@ public final class HttpHeaders {
       return Optional.empty();
     }
 
-    for (int i = 0; i < value.length(); i++) {
-      if (value.charAt(i) > 127) {
+    for (int index = 0; index < value.length(); index++) {
+      if (value.charAt(index) > 127) {
         return Optional.empty();
       }
     }
     return Optional.ofNullable(BY_VALUE.get(value.toLowerCase(Locale.ROOT)));
-  }
-
-  /**
-   * Returns the registered spelling for use as an HTTP field name.
-   *
-   * @return field name, for example {@code Content-Type}
-   */
-  public String value() {
-    return value;
-  }
-
-  /**
-   * Compares this header's wire name with a possibly null name, ignoring ASCII case.
-   *
-   * @param name HTTP field name, or null; whitespace is not trimmed
-   * @return true for the same wire name, or false for null, non-ASCII, or a different name
-   */
-  public boolean equalsIgnoreCase(@Nullable String name) {
-    if (name == null) {
-      return false;
-    }
-
-    for (int i = 0; i < name.length(); i++) {
-      if (name.charAt(i) > 127) {
-        return false;
-      }
-    }
-    return value.equalsIgnoreCase(name);
-  }
-
-  /**
-   * Compares field names without case sensitivity, as required by HTTP.
-   *
-   * @param other candidate value
-   * @return true when both values have equivalent field names
-   */
-  @Override
-  public boolean equals(Object other) {
-    return other instanceof HttpHeaders header && value.equalsIgnoreCase(header.value);
-  }
-
-  /**
-   * Hashes the field name without case sensitivity.
-   *
-   * @return hash consistent with {@link #equals(Object)}
-   */
-  @Override
-  public int hashCode() {
-    return value.toLowerCase(Locale.ROOT).hashCode();
   }
 
   /**
@@ -3149,5 +3100,54 @@ public final class HttpHeaders {
       result.put(header.value.toLowerCase(Locale.ROOT), header);
     }
     return Map.copyOf(result);
+  }
+
+  /**
+   * Returns the registered spelling for use as an HTTP field name.
+   *
+   * @return field name, for example {@code Content-Type}
+   */
+  public String value() {
+    return value;
+  }
+
+  /**
+   * Compares this header's wire name with a possibly null name, ignoring ASCII case.
+   *
+   * @param name HTTP field name, or null; whitespace is not trimmed
+   * @return true for the same wire name, or false for null, non-ASCII, or a different name
+   */
+  public boolean equalsIgnoreCase(@Nullable String name) {
+    if (name == null) {
+      return false;
+    }
+
+    for (int index = 0; index < name.length(); index++) {
+      if (name.charAt(index) > 127) {
+        return false;
+      }
+    }
+    return value.equalsIgnoreCase(name);
+  }
+
+  /**
+   * Compares field names without case sensitivity, as required by HTTP.
+   *
+   * @param other candidate value
+   * @return true when both values have equivalent field names
+   */
+  @Override
+  public boolean equals(Object other) {
+    return other instanceof HttpHeaders header && value.equalsIgnoreCase(header.value);
+  }
+
+  /**
+   * Hashes the field name without case sensitivity.
+   *
+   * @return hash consistent with {@link #equals(Object)}
+   */
+  @Override
+  public int hashCode() {
+    return value.toLowerCase(Locale.ROOT).hashCode();
   }
 }

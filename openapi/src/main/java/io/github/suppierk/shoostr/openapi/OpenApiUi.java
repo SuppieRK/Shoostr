@@ -8,10 +8,13 @@ import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jspecify.annotations.Nullable;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * Exact startup-prepared UI URL allowlist, not a classpath/filesystem server or route registrar.
@@ -19,15 +22,7 @@ import org.jspecify.annotations.Nullable;
  * so startup preparation preserves equality and hashing.
  */
 final class OpenApiUi implements Handler {
-  private static final String HTML =
-      """
-      <!doctype html>
-      <html lang="en">
-      <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>API documentation</title><link rel="stylesheet" href="swagger-ui.css"></head>
-      <body><div id="swagger-ui"></div><script src="swagger-ui-bundle.js"></script>
-      <script src="swagger-initializer.js"></script></body></html>
-      """;
+  private static final String HTML = htmlPage();
   private final String basePath;
   private final String specPath;
   private final AtomicReference<@Nullable Map<String, Resource>> resources;
@@ -79,17 +74,47 @@ final class OpenApiUi implements Handler {
    * @param bundle packaged browser bundle
    */
   void prepare(byte[] css, byte[] bundle) {
-    var config =
-        Json31.mapper()
-            .createObjectNode()
-            .put("url", specPath)
-            .put("dom_id", "#swagger-ui")
-            .putNull("validatorUrl")
-            .put("persistAuthorization", false);
-    var initializer =
-        "window.addEventListener('load', () => { window.ui = SwaggerUIBundle(Object.assign("
-            + Json31.mapper().writeValueAsString(config)
-            + """
+    var config = uiConfiguration();
+    var initializer = initializationScript(config);
+    var prepared = new HashMap<String, Resource>();
+    prepared.put(
+        basePath, new Resource("text/html; charset=utf-8", HTML.getBytes(StandardCharsets.UTF_8)));
+    prepared.put(basePath + "swagger-ui.css", new Resource("text/css; charset=utf-8", css));
+    prepared.put(
+        basePath + "swagger-ui-bundle.js", new Resource("text/javascript; charset=utf-8", bundle));
+    prepared.put(
+        basePath + "swagger-initializer.js",
+        new Resource(
+            "text/javascript; charset=utf-8", initializer.getBytes(StandardCharsets.UTF_8)));
+
+    resources.set(Map.copyOf(prepared));
+  }
+
+  /**
+   * Configures the local specification URL and browser UI behavior.
+   *
+   * @return startup-only Swagger UI settings
+   */
+  private ObjectNode uiConfiguration() {
+    return Json31.mapper()
+        .createObjectNode()
+        .put("url", specPath)
+        .put("dom_id", "#swagger-ui")
+        .putNull("validatorUrl")
+        .put("persistAuthorization", false);
+  }
+
+  /**
+   * Serializes the UI settings and restricts credentials on operation requests.
+   *
+   * @param config startup-only browser settings
+   * @return the browser initialization script
+   * @throws JacksonException if the step fails
+   */
+  private String initializationScript(ObjectNode config) throws JacksonException {
+    return "window.addEventListener('load', () => { window.ui = SwaggerUIBundle(Object.assign("
+        + Json31.mapper().writeValueAsString(config)
+        + """
             , {requestInterceptor: request => {
               if (!request.loadSpec) {
                 request.credentials = 'omit';
@@ -97,17 +122,22 @@ final class OpenApiUi implements Handler {
               return request;
             }})); });
             """;
-    resources.set(
-        Map.of(
-            basePath,
-            new Resource("text/html; charset=utf-8", HTML.getBytes(StandardCharsets.UTF_8)),
-            basePath + "swagger-ui.css",
-            new Resource("text/css; charset=utf-8", css),
-            basePath + "swagger-ui-bundle.js",
-            new Resource("text/javascript; charset=utf-8", bundle),
-            basePath + "swagger-initializer.js",
-            new Resource(
-                "text/javascript; charset=utf-8", initializer.getBytes(StandardCharsets.UTF_8))));
+  }
+
+  /**
+   * Supplies the fixed page that loads the packaged Swagger UI assets.
+   *
+   * @return page contents shared by UI instances
+   */
+  private static String htmlPage() {
+    return """
+      <!doctype html>
+      <html lang="en">
+      <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>API documentation</title><link rel="stylesheet" href="swagger-ui.css"></head>
+      <body><div id="swagger-ui"></div><script src="swagger-ui-bundle.js"></script>
+      <script src="swagger-initializer.js"></script></body></html>
+      """;
   }
 
   /**

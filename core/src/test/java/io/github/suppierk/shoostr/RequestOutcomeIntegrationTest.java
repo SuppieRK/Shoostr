@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.http.exceptions.ForbiddenException;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
@@ -19,6 +20,7 @@ import java.time.Duration;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.websocket.api.Session;
@@ -43,26 +45,16 @@ class RequestOutcomeIntegrationTest {
         app.afterRequest(outcomes::add);
         app.routes()
             .websocket(
-                "/socket/{id}", (ignored, ignored2) -> new Session.Listener.AutoDemanding() {});
+                "/socket/{id}",
+                (ignored, ignoredServerUpgradeResponse) -> new Session.Listener.AutoDemanding() {});
         app.start();
         var socket =
-            client
-                .newWebSocketBuilder()
-                .connectTimeout(Duration.ofSeconds(3))
-                .header("Authorization", "Bearer private-token-" + "y".repeat(1024))
-                .header("Cookie", "session=private-cookie-" + "z".repeat(1024))
-                .buildAsync(
-                    URI.create(
-                        "ws://127.0.0.1:"
-                            + app.port()
-                            + "/socket/"
-                            + privateId
-                            + "?secret=private-query"),
-                    new WebSocket.Listener() {})
-                .get(3, TimeUnit.SECONDS);
+            createSocketForReportsAcceptedWebSocketUpgradeWithItsRegisteredTemplate(
+                client, app, privateId);
 
         try {
           var outcome = outcomes.poll(3, TimeUnit.SECONDS);
+
           assertNotNull(outcome);
           assertEquals("GET", outcome.method());
           assertEquals("/socket/{id}", outcome.routePattern());
@@ -77,6 +69,21 @@ class RequestOutcomeIntegrationTest {
     }
 
     assertTrue(outcomes.isEmpty());
+  }
+
+  private WebSocket createSocketForReportsAcceptedWebSocketUpgradeWithItsRegisteredTemplate(
+      HttpClient client, Shoostr app, String privateId)
+      throws InterruptedException, ExecutionException, TimeoutException {
+    return client
+        .newWebSocketBuilder()
+        .connectTimeout(Duration.ofSeconds(3))
+        .header("Authorization", "Bearer private-token-" + "y".repeat(1024))
+        .header("Cookie", "session=private-cookie-" + "z".repeat(1024))
+        .buildAsync(
+            URI.create(
+                "ws://127.0.0.1:" + app.port() + "/socket/" + privateId + "?secret=private-query"),
+            new WebSocket.Listener() {})
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -96,41 +103,29 @@ class RequestOutcomeIntegrationTest {
           var client = HttpClient.newHttpClient()) {
         app.afterRequest(outcomes::add);
         app.beforeRouteHandler(
-            (ignored3, ignored4) -> {
+            (ignoredRequest, ignoredResponse) -> {
               throw new ForbiddenException("private failure details");
             });
         app.routes()
             .websocket(
                 "/socket/{id}",
-                (ignored5, ignored6) -> {
+                (ignoredRequest, ignoredServerUpgradeResponse) -> {
                   factoryCalls.incrementAndGet();
+
                   return new Session.Listener.AutoDemanding() {};
                 });
         app.start();
 
         var rejection =
-            assertThrows(
-                ExecutionException.class,
-                () ->
-                    client
-                        .newWebSocketBuilder()
-                        .connectTimeout(Duration.ofSeconds(3))
-                        .header("Authorization", "Bearer private-token-" + "y".repeat(1024))
-                        .header("Cookie", "session=private-cookie-" + "z".repeat(1024))
-                        .buildAsync(
-                            URI.create(
-                                "ws://127.0.0.1:"
-                                    + app.port()
-                                    + "/socket/"
-                                    + privateId
-                                    + "?secret=private-query"),
-                            new WebSocket.Listener() {})
-                        .get(3, TimeUnit.SECONDS));
+            assertRejectionForReportsDeniedWebSocketUpgradeWithoutInvokingTheListenerFactory(
+                client, app, privateId);
+
         var handshake = assertInstanceOf(WebSocketHandshakeException.class, rejection.getCause());
         assertEquals(403, handshake.getResponse().statusCode());
         assertEquals(0, factoryCalls.get());
 
         var outcome = outcomes.poll(3, TimeUnit.SECONDS);
+
         assertNotNull(outcome);
         assertEquals("GET", outcome.method());
         assertEquals("/socket/{id}", outcome.routePattern());
@@ -142,6 +137,28 @@ class RequestOutcomeIntegrationTest {
     }
 
     assertTrue(outcomes.isEmpty());
+  }
+
+  private ExecutionException
+      assertRejectionForReportsDeniedWebSocketUpgradeWithoutInvokingTheListenerFactory(
+          HttpClient client, Shoostr app, String privateId) {
+    return assertThrows(
+        ExecutionException.class,
+        () ->
+            client
+                .newWebSocketBuilder()
+                .connectTimeout(Duration.ofSeconds(3))
+                .header("Authorization", "Bearer private-token-" + "y".repeat(1024))
+                .header("Cookie", "session=private-cookie-" + "z".repeat(1024))
+                .buildAsync(
+                    URI.create(
+                        "ws://127.0.0.1:"
+                            + app.port()
+                            + "/socket/"
+                            + privateId
+                            + "?secret=private-query"),
+                    new WebSocket.Listener() {})
+                .get(3, TimeUnit.SECONDS));
   }
 
   @Test
@@ -156,16 +173,14 @@ class RequestOutcomeIntegrationTest {
     try (var test = TestServer.start(app)) {
       for (var id : new String[] {"first-private-id", "second-private-id"}) {
         var response =
-            test.send(
-                request ->
-                    request
-                        .path("/orders/" + id + "?secret=" + id)
-                        .header("Authorization", "Bearer private-token")
-                        .header("Cookie", "session=private-cookie"),
-                HttpResponse.BodyHandlers.ofString());
+            sendResponseForReportsTheSameComposedTemplateAcrossDifferentIdentifiersAndQueries(
+                test, id);
+
         assertEquals(200, response.statusCode());
         assertEquals("ready", response.body());
+
         var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+
         assertNotNull(outcome);
         assertEquals("GET", outcome.method());
         assertEquals("/orders/{id}", outcome.routePattern());
@@ -178,6 +193,18 @@ class RequestOutcomeIntegrationTest {
     assertTrue(outcomes.isEmpty());
   }
 
+  private HttpResponse<String>
+      sendResponseForReportsTheSameComposedTemplateAcrossDifferentIdentifiersAndQueries(
+          TestServer test, String id) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/orders/" + id + "?secret=" + id)
+                .header("Authorization", "Bearer private-token")
+                .header("Cookie", "session=private-cookie"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void retainsTheSelectedTemplateAndDiagnosticFailureAfterTheHandlerThrows() throws Exception {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
@@ -185,7 +212,7 @@ class RequestOutcomeIntegrationTest {
     app.routes()
         .get(
             "/orders/{id}",
-            (ignored, ignored2) -> {
+            (ignored, ignoredResponse) -> {
               throw new IllegalStateException("private failure details");
             });
 
@@ -194,7 +221,9 @@ class RequestOutcomeIntegrationTest {
           500,
           test.send(request -> request.path("/orders/private-id?secret=private-query"))
               .statusCode());
+
       var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+
       assertNotNull(outcome);
       assertEquals("/orders/{id}", outcome.routePattern());
       assertEquals(500, outcome.statusCode());
@@ -217,7 +246,9 @@ class RequestOutcomeIntegrationTest {
           404,
           test.send(request -> request.path("/missing-private-path?secret=private-query"))
               .statusCode());
+
       var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+
       assertNotNull(outcome);
       assertNull(outcome.routePattern());
       assertEquals(404, outcome.statusCode());

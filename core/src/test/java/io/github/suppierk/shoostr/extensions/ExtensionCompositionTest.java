@@ -25,13 +25,8 @@ class ExtensionCompositionTest {
     var calls = new AtomicInteger();
     var groupCalls = new AtomicInteger();
     var auth =
-        new AuthenticationExtension() {
-          @Override
-          public void handle(Request request, Response response) {
-            calls.incrementAndGet();
-            request.principal(() -> "alice");
-          }
-        };
+        createAuthForInheritsIndependentMetadataAndAuthenticationWithoutReplayingGroupConfiguration(
+            calls);
     var docs = new Documentation();
     var otherDocs = new Documentation();
     var retained = new AtomicReference<Description>();
@@ -51,21 +46,22 @@ class ExtensionCompositionTest {
                     users.get(
                         "/{id}",
                         shared,
-                        e -> retained.set(e.withExtension(docs).summary("One user")));
+                        lifecycle ->
+                            retained.set(lifecycle.withExtension(docs).summary("One user")));
                     users.get("/search", shared);
                   },
-                  e -> {
+                  lifecycle -> {
                     groupCalls.incrementAndGet();
-                    e.withExtension(auth);
-                    e.withExtension(docs).tag("users").summary("Users");
-                    e.withExtension(otherDocs).tag("public").summary("Other document");
+                    lifecycle.withExtension(auth);
+                    lifecycle.withExtension(docs).tag("users").summary("Users");
+                    lifecycle.withExtension(otherDocs).tag("public").summary("Other document");
                   });
               routes.get(
                   "/openapi.json",
                   docs.handler(),
-                  e -> {
-                    e.withExtension(auth);
-                    e.withExtension(docs).summary("API description");
+                  lifecycle -> {
+                    lifecycle.withExtension(auth);
+                    lifecycle.withExtension(docs).summary("API description");
                   });
             });
 
@@ -82,7 +78,9 @@ class ExtensionCompositionTest {
                       request -> request.path("/users/search"),
                       HttpResponse.BodyHandlers.ofString())
                   .body());
+
           retained.get().summary("Changed after startup");
+
           assertEquals(
               "GET /users/{id} users One user\nGET /users/search users Users\nGET /openapi.json  API description",
               test.send(
@@ -100,6 +98,18 @@ class ExtensionCompositionTest {
     }
   }
 
+  private AuthenticationExtension
+      createAuthForInheritsIndependentMetadataAndAuthenticationWithoutReplayingGroupConfiguration(
+          AtomicInteger calls) {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        calls.incrementAndGet();
+        request.principal(() -> "alice");
+      }
+    };
+  }
+
   private static final class Documentation implements TestExtension<Description> {
     private final List<String> operations;
 
@@ -110,6 +120,7 @@ class ExtensionCompositionTest {
     @Override
     public Description configure(Lifecycle endpoint, Description inherited) {
       var description = new Description(inherited);
+
       assertSame(
           endpoint,
           endpoint.onRoute(
@@ -122,6 +133,7 @@ class ExtensionCompositionTest {
                           + description.tag
                           + " "
                           + description.summary)));
+
       return description;
     }
 

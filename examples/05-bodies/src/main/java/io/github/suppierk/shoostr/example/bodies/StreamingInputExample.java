@@ -26,7 +26,6 @@ public final class StreamingInputExample {
                       var digest = MessageDigest.getInstance("SHA-256");
 
                       // Selecting input() excludes buffered-body access and hashes incrementally.
-
                       try (var input = new DigestInputStream(request.input(), digest)) {
                         input.transferTo(OutputStream.nullOutputStream());
                       }

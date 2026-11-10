@@ -87,6 +87,7 @@ class PathPatternsExampleTest {
 
       try (Closeable appCleanup = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () -> routes.get(pattern, (ignored, response) -> response.text("unused")));
@@ -102,9 +103,10 @@ class PathPatternsExampleTest {
 
       try (Closeable appCleanup1 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
-            () -> routes.get(pattern, (ignored2, response) -> response.text("unused")));
+            () -> routes.get(pattern, (ignoredRequest, response) -> response.text("unused")));
       }
     }
   }

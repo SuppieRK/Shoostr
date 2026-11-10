@@ -47,10 +47,12 @@ class MethodsExampleTest {
           test.send(
               request -> request.path("/notes").method("HEAD"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals("", head.body());
       assertEquals("metadata", head.headers().firstValue("X-Notes-Mode").orElseThrow());
 
       var options = test.send(request -> request.path("/notes").method("OPTIONS"));
+
       assertEquals(204, options.statusCode());
       assertEquals(
           Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"),
@@ -63,10 +65,12 @@ class MethodsExampleTest {
 
     try (var test = TestServer.start(MethodsExample.application())) {
       var missing = test.send(request -> request.path("/missing"));
+
       assertEquals(404, missing.statusCode());
       assertTrue(missing.headers().firstValue("Allow").isEmpty());
 
       var unsupported = test.send(request -> request.path("/notes").method("TRACE"));
+
       assertEquals(405, unsupported.statusCode());
       assertEquals(
           Set.of("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"),
@@ -101,6 +105,7 @@ class MethodsExampleTest {
               test.send(
                   request -> request.path("/string-method").method("PROPFIND"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("registered", response.body());
         }
@@ -116,10 +121,12 @@ class MethodsExampleTest {
 
       try (Closeable appCleanup1 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
-                routes.route(method, "/invalid", (ignored2, response) -> response.text("unused")));
+                routes.route(
+                    method, "/invalid", (ignoredRequest, response) -> response.text("unused")));
       }
     }
   }

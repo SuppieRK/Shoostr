@@ -26,15 +26,7 @@ class CatchAllRoutingTest {
     configuredOptions.setMultipart(MultipartOptions.defaults());
 
     {
-      var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+      var app = createAppForCapturesOneOrManyPathSegmentsButNotAnEmptyTail(configuredOptions);
 
       try (Closeable appCleanup = app::close) {
         app.routes()
@@ -73,6 +65,18 @@ class CatchAllRoutingTest {
     }
   }
 
+  private Shoostr createAppForCapturesOneOrManyPathSegmentsButNotAnEmptyTail(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
   @Test
   void prefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder() throws Exception {
     for (boolean catchAllFirst : new boolean[] {true, false}) {
@@ -85,33 +89,14 @@ class CatchAllRoutingTest {
 
       {
         var app =
-            new Shoostr(configuredOptions)
-                .modifyServer(
-                    nativeServer -> {
-                      var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                      nativeConnector.setHost("127.0.0.1");
-                      nativeConnector.setPort(0);
-                      nativeConnector.setIdleTimeout(5000);
-                    });
+            createAppForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder(
+                configuredOptions);
 
         try (Closeable appCleanup1 = app::close) {
           Consumer<Routes> catchAll =
-              routes -> {
-                routes.get(
-                    "/{*path}",
-                    (request, response) ->
-                        response.text("tail:" + request.pathParam("path").orElseThrow()));
-                routes.post("/{*path}", (ignored, response) -> response.text("post-tail"));
-              };
+              createCatchAllForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder();
           Consumer<Routes> specific =
-              routes -> {
-                routes.get("/fixed", (ignored2, response) -> response.text("literal"));
-                routes.get(
-                    "/{id}",
-                    (request, response) ->
-                        response.text("segment:" + request.pathParam("id").orElseThrow()));
-                routes.get("/fixed/end", (ignored3, response) -> response.text("literal-end"));
-              };
+              createSpecificForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder();
           app.routes()
               .path(
                   "/files",
@@ -162,17 +147,53 @@ class CatchAllRoutingTest {
                                 .method("POST"),
                         HttpResponse.BodyHandlers.ofString())
                     .body());
+
             var wrongMethod =
                 test.send(
                     request ->
                         request.path("/files/fixed").timeout(Duration.ofSeconds(5)).method("PUT"),
                     HttpResponse.BodyHandlers.ofString());
+
             assertEquals(405, wrongMethod.statusCode());
             assertEquals("GET, POST", wrongMethod.headers().firstValue("Allow").orElseThrow());
           }
         }
       }
     }
+  }
+
+  private Shoostr
+      createAppForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder(
+          Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
+  private Consumer<Routes>
+      createCatchAllForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder() {
+    return routes -> {
+      routes.get(
+          "/{*path}",
+          (request, response) -> response.text("tail:" + request.pathParam("path").orElseThrow()));
+      routes.post("/{*path}", (ignored, response) -> response.text("post-tail"));
+    };
+  }
+
+  private Consumer<Routes>
+      createSpecificForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder() {
+    return routes -> {
+      routes.get("/fixed", (ignoredRequest, response) -> response.text("literal"));
+      routes.get(
+          "/{id}",
+          (request, response) -> response.text("segment:" + request.pathParam("id").orElseThrow()));
+      routes.get("/fixed/end", (ignoredRequest, response) -> response.text("literal-end"));
+    };
   }
 
   @Test
@@ -186,14 +207,8 @@ class CatchAllRoutingTest {
 
     {
       var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+          createAppForComposesCatchAllWithParentParametersAndPreservesDecodedTailSpelling(
+              configuredOptions);
 
       try (Closeable appCleanup2 = app::close) {
         app.routes()
@@ -249,6 +264,18 @@ class CatchAllRoutingTest {
     }
   }
 
+  private Shoostr createAppForComposesCatchAllWithParentParametersAndPreservesDecodedTailSpelling(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {
@@ -270,8 +297,10 @@ class CatchAllRoutingTest {
 
       try (Closeable appCleanup3 = app::close) {
         var routes = app.routes();
+
         assertThrows(
-            IllegalArgumentException.class, () -> routes.get(pattern, (ignored4, ignored5) -> {}));
+            IllegalArgumentException.class,
+            () -> routes.get(pattern, (ignoredRequest, ignoredResponse) -> {}));
       }
     }
   }
@@ -286,11 +315,13 @@ class CatchAllRoutingTest {
 
       try (Closeable appCleanup4 = app::close) {
         var routes = app.routes();
-        routes.get("/files/{*path}", (ignored6, ignored7) -> {});
+        routes.get("/files/{*path}", (ignoredRequest, ignoredResponse) -> {});
+
         assertThrows(
             IllegalArgumentException.class,
-            () -> routes.get("/files/{*rest}", (ignored8, ignored9) -> {}));
-        routes.post("/files/{*rest}", (ignored10, ignored11) -> {});
+            () -> routes.get("/files/{*rest}", (ignoredRequest, ignoredResponse) -> {}));
+
+        routes.post("/files/{*rest}", (ignoredRequest, ignoredResponse) -> {});
       }
     }
   }
@@ -305,15 +336,7 @@ class CatchAllRoutingTest {
     configuredOptions.setMultipart(MultipartOptions.defaults());
 
     {
-      var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+      var app = createAppForServerSentEventRouteUsesTheSameCatchAllCapture(configuredOptions);
 
       try (Closeable appCleanup5 = app::close) {
         app.routes()
@@ -328,6 +351,7 @@ class CatchAllRoutingTest {
               test.send(
                   request -> request.path("/events/a/b").timeout(Duration.ofSeconds(5)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("data: a/b\n\n", result.body());
           assertEquals(
@@ -341,6 +365,18 @@ class CatchAllRoutingTest {
     }
   }
 
+  private Shoostr createAppForServerSentEventRouteUsesTheSameCatchAllCapture(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
   @Test
   void keepsCaseAndTrailingSeparatorsDistinctWithoutReadingAnUnusedCapture() throws Exception {
     var configuredOptions = new Options();
@@ -352,14 +388,8 @@ class CatchAllRoutingTest {
 
     {
       var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+          createAppForKeepsCaseAndTrailingSeparatorsDistinctWithoutReadingAnUnusedCapture(
+              configuredOptions);
 
       try (Closeable appCleanup6 = app::close) {
         app.routes()
@@ -397,5 +427,17 @@ class CatchAllRoutingTest {
         }
       }
     }
+  }
+
+  private Shoostr createAppForKeepsCaseAndTrailingSeparatorsDistinctWithoutReadingAnUnusedCapture(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
   }
 }

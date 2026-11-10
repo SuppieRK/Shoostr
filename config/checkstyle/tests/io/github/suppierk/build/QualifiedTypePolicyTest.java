@@ -9,11 +9,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.w3c.dom.Document;
 
 class QualifiedTypePolicyTest {
   @TempDir Path temporaryDirectory;
@@ -100,16 +102,23 @@ class QualifiedTypePolicyTest {
     var factory = DocumentBuilderFactory.newInstance();
     factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
     var rules = factory.newDocumentBuilder().parse(Path.of("config/checkstyle", profile).toFile());
-    var query =
-        XPathFactory.newInstance()
-            .newXPath()
-            .evaluate(
-                "/module/module/module[@name='MatchXpath'][property[@name='id' and @value='qualifiedAnnotation']]/property[@name='query']/@value",
-                rules);
+    var query = createQueryForAnnotationViolations(rules);
+
     assertFalse(query.isBlank(), "The configured annotation import rule must exist");
+
     var rule = new DefaultConfiguration("MatchXpath");
     rule.addProperty("query", query);
+
     return violations(source, name, rule);
+  }
+
+  private String createQueryForAnnotationViolations(Document rules)
+      throws XPathExpressionException {
+    return XPathFactory.newInstance()
+        .newXPath()
+        .evaluate(
+            "/module/module/module[@name='MatchXpath'][property[@name='id' and @value='qualifiedAnnotation']]/property[@name='query']/@value",
+            rules);
   }
 
   private int violations(String source) throws Exception {
@@ -129,6 +138,7 @@ class QualifiedTypePolicyTest {
       configuration.addChild(walker);
       checker.setModuleClassLoader(QualifiedTypePolicyTest.class.getClassLoader());
       checker.configure(configuration);
+
       return checker.process(List.of(file.toFile()));
     } finally {
       checker.destroy();

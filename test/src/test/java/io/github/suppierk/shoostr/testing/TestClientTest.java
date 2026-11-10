@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.List;
@@ -32,6 +33,7 @@ class TestClientTest {
       var reply =
           test.send(
               request -> request.path("/echo").method("POST").body(new byte[] {0, 1, (byte) 255}));
+
       assertEquals(200, reply.statusCode());
       assertArrayEquals(new byte[] {0, 1, (byte) 255}, reply.body());
     }
@@ -53,10 +55,11 @@ class TestClientTest {
   @Test
   void preservesEncodedPathAndRawQueryInTheOutgoingRequest() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/value/{id}", (ignored2, response) -> response.text("ok"));
+    app.routes().get("/value/{id}", (ignoredRequest, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/value/hello%20world?q=a%2Bb&x=a+b"));
+
       assertEquals(200, reply.statusCode());
       assertEquals("/value/hello%20world", reply.request().uri().getRawPath());
       assertEquals("q=a%2Bb&x=a+b", reply.request().uri().getRawQuery());
@@ -66,20 +69,26 @@ class TestClientTest {
   @Test
   void appendsRepeatedHeadersAndAcceptsExistingHeaderNames() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/headers", (ignored3, response) -> response.text("ok"));
+    app.routes().get("/headers", (ignoredRequest, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
-      var reply =
-          test.send(
-              request ->
-                  request
-                      .path("/headers")
-                      .header("X-Value", "first")
-                      .header("X-Value", "second")
-                      .header(HttpHeaders.ACCEPT, "text/plain"));
+      var reply = sendReplyRequestForAppendsRepeatedHeadersAndAcceptsExistingHeaderNames(test);
+
       assertEquals(List.of("first", "second"), reply.request().headers().allValues("X-Value"));
       assertEquals("text/plain", reply.request().headers().firstValue("Accept").orElseThrow());
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendReplyRequestForAppendsRepeatedHeadersAndAcceptsExistingHeaderNames(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/headers")
+                .header("X-Value", "first")
+                .header("X-Value", "second")
+                .header(HttpHeaders.ACCEPT, "text/plain"));
   }
 
   @ParameterizedTest
@@ -88,10 +97,11 @@ class TestClientTest {
       names = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD", "BASELINE_CONTROL"})
   void usesTheRegisteredMethodsWireValue(HttpMethods method) throws Exception {
     var app = new Shoostr();
-    app.routes().route(method, "/method", (ignored4, response) -> response.status(204));
+    app.routes().route(method, "/method", (ignoredRequest, response) -> response.status(204));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/method").method(method));
+
       assertEquals(204, reply.statusCode());
       assertEquals(method.value(), reply.request().method());
     }
@@ -100,10 +110,11 @@ class TestClientTest {
   @Test
   void acceptsACustomMethodToken() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/method", (ignored5, response) -> response.text("registered GET"));
+    app.routes().get("/method", (ignoredRequest, response) -> response.text("registered GET"));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/method").method("CUSTOM"));
+
       assertEquals("CUSTOM", reply.request().method());
       assertEquals(405, reply.statusCode());
     }
@@ -135,14 +146,19 @@ class TestClientTest {
     var bytes = new byte[] {1, 2};
 
     try (var test = TestServer.start(app)) {
-      var reply =
-          test.send(
-              request -> {
-                request.path("/echo").method("POST").body(bytes);
-                bytes[0] = 9;
-              });
+      var reply = sendReplyRequestForCopiesBodyBytesBeforeTheCallerCanModifyThem(test, bytes);
+
       assertArrayEquals(new byte[] {1, 2}, reply.body());
     }
+  }
+
+  private HttpResponse<byte[]> sendReplyRequestForCopiesBodyBytesBeforeTheCallerCanModifyThem(
+      TestServer test, byte[] bytes) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/echo").method("POST").body(bytes);
+          bytes[0] = 9;
+        });
   }
 
   @Test
@@ -155,6 +171,7 @@ class TestClientTest {
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/default"));
+
       assertEquals("GET", reply.request().method());
       assertArrayEquals(new byte[0], reply.body());
       assertEquals(Duration.ofSeconds(10), reply.request().timeout().orElseThrow());
@@ -164,10 +181,11 @@ class TestClientTest {
   @Test
   void overridesTheRequestTimeout() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/value", (ignored6, response) -> response.text("ok"));
+    app.routes().get("/value", (ignoredRequest, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/value").timeout(Duration.ofSeconds(2)));
+
       assertEquals(Duration.ofSeconds(2), reply.request().timeout().orElseThrow());
     }
   }
@@ -192,11 +210,11 @@ class TestClientTest {
   @Test
   void requiresAnExplicitPathForEachSend() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/value", (ignored7, response) -> response.text("ok"));
+    app.routes().get("/value", (ignoredRequest, response) -> response.text("ok"));
 
     try (var test = TestServer.start(app)) {
       assertEquals(200, test.send(request -> request.path("/value")).statusCode());
-      assertThrows(IllegalStateException.class, () -> test.send(ignored8 -> {}));
+      assertThrows(IllegalStateException.class, () -> test.send(ignoredTestRequest -> {}));
     }
   }
 
@@ -207,24 +225,36 @@ class TestClientTest {
 
     try (var test = TestServer.start(new Shoostr())) {
       var failure =
-          assertThrows(
-              IllegalArgumentException.class,
-              () ->
-                  test.send(
-                      request -> {
-                        retained.set(request);
-                        throw expected;
-                      }));
+          assertClientFailureForPropagatesConfigurationFailureAndClosesItsRequestConfiguration(
+              test, retained, expected);
+
       assertSame(expected, failure);
+
       var configuration = retained.get();
+
       assertThrows(IllegalStateException.class, () -> configuration.path("/late"));
     }
+  }
+
+  private IllegalArgumentException
+      assertClientFailureForPropagatesConfigurationFailureAndClosesItsRequestConfiguration(
+          TestServer test,
+          AtomicReference<TestRequest> retained,
+          IllegalArgumentException expected) {
+    return assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            test.send(
+                request -> {
+                  retained.set(request);
+                  throw expected;
+                }));
   }
 
   @Test
   void startsEachSendWithFreshMethodHeadersAndBody() throws Exception {
     var app = new Shoostr();
-    app.routes().post("/write", (ignored9, response) -> response.text("written"));
+    app.routes().post("/write", (ignoredRequest, response) -> response.text("written"));
     app.routes()
         .get(
             "/read",
@@ -240,6 +270,7 @@ class TestClientTest {
                   .method("POST")
                   .header("X-Value", "first")
                   .body(new byte[] {1}));
+
       assertEquals(
           "absent:0",
           test.send(request -> request.path("/read"), HttpResponse.BodyHandlers.ofString()).body());
@@ -280,7 +311,7 @@ class TestClientTest {
   @Test
   void closesRequestConfigurationAfterSuccessfulSending() throws Exception {
     var app = new Shoostr();
-    app.routes().get("/value", (ignored10, response) -> response.text("ok"));
+    app.routes().get("/value", (ignoredRequest, response) -> response.text("ok"));
     var retained = new AtomicReference<TestRequest>();
 
     try (var test = TestServer.start(app)) {
@@ -290,6 +321,7 @@ class TestClientTest {
             request.path("/value");
           });
       var configuration = retained.get();
+
       assertThrows(IllegalStateException.class, () -> configuration.header("X-Late", "no"));
     }
   }

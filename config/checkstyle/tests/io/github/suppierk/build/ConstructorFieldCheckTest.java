@@ -25,8 +25,11 @@ class ConstructorFieldCheckTest {
   @Test
   void reportsTheFieldTargetLocationInsteadOfTheInitializer() throws Exception {
     var diagnostics = check("class Example {\n  int count;\n  Example() { count = 1; }\n}");
+
     assertEquals(1, diagnostics.size());
+
     var error = diagnostics.getFirst();
+
     assertEquals(Diagnostic.Kind.ERROR, error.getKind());
     assertEquals(3, error.getLineNumber());
     assertEquals(15, error.getColumnNumber());
@@ -38,6 +41,7 @@ class ConstructorFieldCheckTest {
   @MethodSource("unqualifiedFields")
   void rejectsEverySourceWrittenConstructorFieldWrite(String source) throws Exception {
     var diagnostics = check(source);
+
     assertEquals(1, diagnostics.size());
     assertEquals(Diagnostic.Kind.ERROR, diagnostics.getFirst().getKind());
     assertTrue(diagnostics.getFirst().getMessage(Locale.ROOT).contains("explicit this receiver"));
@@ -57,6 +61,7 @@ class ConstructorFieldCheckTest {
     Files.writeString(
         dependency,
         "package dependency; public class Base { protected int inherited; protected static int shared; }");
+
     assertEquals(
         0,
         ToolProvider.getSystemJavaCompiler()
@@ -70,9 +75,18 @@ class ConstructorFieldCheckTest {
                 "-d",
                 classes.toString(),
                 dependency.toString()));
-    var source =
-        write(
-            """
+
+    var source = createSourceForResolvesInheritedFieldsFromACompiledDependency();
+    var diagnostics = ConstructorFieldCheck.check(List.of(source), classes.toString());
+
+    assertEquals(1, diagnostics.size());
+    assertEquals(3, diagnostics.getFirst().getLineNumber());
+    assertTrue(diagnostics.getFirst().getMessage(Locale.ROOT).contains("receiver: inherited"));
+  }
+
+  private Path createSourceForResolvesInheritedFieldsFromACompiledDependency() throws Exception {
+    return write(
+        """
         class Example extends dependency.Base {
           Example() {
             inherited = 1;
@@ -80,16 +94,13 @@ class ConstructorFieldCheckTest {
           }
         }
         """);
-    var diagnostics = ConstructorFieldCheck.check(List.of(source), classes.toString());
-    assertEquals(1, diagnostics.size());
-    assertEquals(3, diagnostics.getFirst().getLineNumber());
-    assertTrue(diagnostics.getFirst().getMessage(Locale.ROOT).contains("receiver: inherited"));
   }
 
   @Test
   void reportsEveryTargetOfAChainedAssignment() throws Exception {
     var diagnostics =
         check("class Example { int first, second; Example() { first = second = 1; } }");
+
     assertEquals(2, diagnostics.size());
     assertTrue(diagnostics.get(0).getMessage(Locale.ROOT).contains("receiver: first"));
     assertTrue(diagnostics.get(1).getMessage(Locale.ROOT).contains("receiver: second"));
@@ -98,6 +109,7 @@ class ConstructorFieldCheckTest {
   @Test
   void returnsAttributionErrorsInsteadOfSilentlyAcceptingUnresolvedCode() throws Exception {
     var diagnostics = check("class Example { int count; Example() { count = unknown; } }");
+
     assertTrue(diagnostics.stream().anyMatch(item -> item.getKind() == Diagnostic.Kind.ERROR));
     assertTrue(
         diagnostics.stream().anyMatch(item -> item.getMessage(Locale.ROOT).contains("unknown")));
@@ -122,10 +134,13 @@ class ConstructorFieldCheckTest {
     Files.writeString(sources, source.toString(), StandardCharsets.UTF_8);
     Files.writeString(classpath, "", StandardCharsets.UTF_8);
     var arguments = new String[] {sources.toString(), classpath.toString(), report.toString()};
+
     assertThrows(IllegalStateException.class, () -> ConstructorFieldCheck.main(arguments));
     assertTrue(Files.readString(report).contains("receiver: count"));
+
     Files.writeString(source, "class Example { int count; Example() { this.count = 1; } }");
     ConstructorFieldCheck.main(arguments);
+
     assertTrue(Files.readString(report).contains("passed for 1 source files"));
   }
 
@@ -196,6 +211,7 @@ class ConstructorFieldCheckTest {
   private Path write(String source) throws Exception {
     var file = directory.resolve("Example.java");
     Files.writeString(file, source, StandardCharsets.UTF_8);
+
     return file;
   }
 }

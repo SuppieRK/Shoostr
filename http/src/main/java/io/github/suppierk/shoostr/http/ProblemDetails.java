@@ -144,6 +144,7 @@ public final class ProblemDetails {
     }
 
     result.putAll(extensions);
+
     return result;
   }
 
@@ -172,59 +173,6 @@ public final class ProblemDetails {
   @Override
   public int hashCode() {
     return Objects.hash(type, title, status, detail, instance, extensions);
-  }
-
-  /**
-   * Copies map values and list elements recursively, leaving other objects and keys untouched.
-   *
-   * @param value supplied extension value
-   * @param ancestors containers on the current traversal path
-   * @return structurally copied value, or the original non-container reference
-   * @throws IllegalArgumentException if map/list values contain a cycle or map entries collapse
-   *     under ordinary key equality
-   */
-  private static @Nullable Object copyValue(@Nullable Object value, Set<Object> ancestors) {
-    if (value instanceof Map<?, ?> map) {
-      enterContainer(map, ancestors);
-
-      try {
-        var copy = new LinkedHashMap<@Nullable Object, @Nullable Object>();
-        map.forEach((key, nested) -> copy.put(key, copyValue(nested, ancestors)));
-        if (copy.size() != map.size()) {
-          throw new IllegalArgumentException(
-              "Custom member map keys must not collapse when copied");
-        }
-
-        return Collections.unmodifiableMap(copy);
-      } finally {
-        ancestors.remove(map);
-      }
-    }
-
-    if (value instanceof List<?> list) {
-      enterContainer(list, ancestors);
-
-      try {
-        return list.stream().map(nested -> copyValue(nested, ancestors)).toList();
-      } finally {
-        ancestors.remove(list);
-      }
-    }
-
-    return value;
-  }
-
-  /**
-   * Rejects repeated identities on one traversal path without rejecting shared acyclic values.
-   *
-   * @param container container being entered
-   * @param ancestors containers on the current path
-   * @throws IllegalArgumentException if the container is already an ancestor
-   */
-  private static void enterContainer(Object container, Set<Object> ancestors) {
-    if (!ancestors.add(container)) {
-      throw new IllegalArgumentException("Custom member map/list values must not contain cycles");
-    }
   }
 
   /**
@@ -340,6 +288,59 @@ public final class ProblemDetails {
       var copy = copyValue(value, Collections.newSetFromMap(new IdentityHashMap<>()));
       extensions.put(name, copy);
       return this;
+    }
+
+    /**
+     * Copies map values and list elements recursively, leaving other objects and keys untouched.
+     *
+     * @param value supplied extension value
+     * @param ancestors containers on the current traversal path
+     * @return structurally copied value, or the original non-container reference
+     * @throws IllegalArgumentException if map/list values contain a cycle or map entries collapse
+     *     under ordinary key equality
+     */
+    private static @Nullable Object copyValue(@Nullable Object value, Set<Object> ancestors) {
+      if (value instanceof Map<?, ?> map) {
+        enterContainer(map, ancestors);
+
+        try {
+          var copy = new LinkedHashMap<@Nullable Object, @Nullable Object>();
+          map.forEach((key, nested) -> copy.put(key, copyValue(nested, ancestors)));
+          if (copy.size() != map.size()) {
+            throw new IllegalArgumentException(
+                "Custom member map keys must not collapse when copied");
+          }
+
+          return Collections.unmodifiableMap(copy);
+        } finally {
+          ancestors.remove(map);
+        }
+      }
+
+      if (value instanceof List<?> list) {
+        enterContainer(list, ancestors);
+
+        try {
+          return list.stream().map(nested -> copyValue(nested, ancestors)).toList();
+        } finally {
+          ancestors.remove(list);
+        }
+      }
+
+      return value;
+    }
+
+    /**
+     * Rejects repeated identities on one traversal path without rejecting shared acyclic values.
+     *
+     * @param container container being entered
+     * @param ancestors containers on the current path
+     * @throws IllegalArgumentException if the container is already an ancestor
+     */
+    private static void enterContainer(Object container, Set<Object> ancestors) {
+      if (!ancestors.add(container)) {
+        throw new IllegalArgumentException("Custom member map/list values must not contain cycles");
+      }
     }
 
     /**

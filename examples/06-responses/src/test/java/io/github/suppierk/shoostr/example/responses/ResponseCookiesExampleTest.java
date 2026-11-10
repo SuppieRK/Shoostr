@@ -31,11 +31,13 @@ class ResponseCookiesExampleTest {
                 "/scope-check",
                 (ignored, response) -> {
                   response.cookie("theme", "root").cookie(scoped).cookie(replacement);
+
                   assertEquals(
                       List.of(
                           "theme=root; Path=/",
                           "theme=new; Path=/preferences; Domain=example.test"),
                       response.headers("Set-Cookie"));
+
                   response.removeCookie(scoped).text("checked");
                 });
 
@@ -43,6 +45,7 @@ class ResponseCookiesExampleTest {
           var response =
               test.send(
                   request -> request.path("/scope-check"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("checked", response.body());
           assertEquals(
@@ -58,6 +61,7 @@ class ResponseCookiesExampleTest {
   @Test
   void keepsExplicitExpiryAlongsideTheRequestedMaxAge() {
     var cookie = new Cookie("theme", "dark").withMaxAge(3600).withExpires(Instant.EPOCH);
+
     assertEquals(3600, cookie.maxAge());
     assertEquals(Instant.EPOCH, cookie.expires());
     assertEquals(
@@ -69,11 +73,14 @@ class ResponseCookiesExampleTest {
   void validatesEveryImmutableCopyBeforeTheNextChange() {
     var original = new Cookie("theme", "dark");
     var scoped = original.withPath("/preferences");
+
     assertEquals("/", original.path());
     assertEquals("/preferences", scoped.path());
     assertThrows(IllegalArgumentException.class, () -> original.withSameSite(Cookie.SameSite.NONE));
     assertFalse(original.secure());
+
     var secure = Cookie.secure("__Host-theme", "dark");
+
     assertThrows(IllegalArgumentException.class, () -> secure.withPath("/preferences"));
     assertTrue(secure.secure());
     assertEquals("/", secure.path());
@@ -84,11 +91,14 @@ class ResponseCookiesExampleTest {
 
     try (var test = TestServer.start(ResponseCookiesExample.application())) {
       var set = test.send(request -> request.path("/secure-preference").method("POST"));
+
       assertEquals(204, set.statusCode());
       assertEquals(
           List.of("__Host-theme=dark; Path=/; Secure; HttpOnly; SameSite=None"),
           set.headers().allValues("Set-Cookie"));
+
       var deleted = test.send(request -> request.path("/secure-preference").method("DELETE"));
+
       assertEquals(204, deleted.statusCode());
       assertEquals(
           List.of(
@@ -107,7 +117,9 @@ class ResponseCookiesExampleTest {
                   request -> request.path("/preferences/theme"),
                   HttpResponse.BodyHandlers.ofString())
               .body());
+
       var set = test.send(request -> request.path("/preferences/theme").method("POST"));
+
       assertEquals(204, set.statusCode());
       assertEquals(
           List.of("theme=dark; Path=/preferences; Max-Age=3600; SameSite=Lax"),
@@ -123,7 +135,9 @@ class ResponseCookiesExampleTest {
           "light",
           test.send(request -> request.path("/outside"), HttpResponse.BodyHandlers.ofString())
               .body());
+
       var deleted = test.send(request -> request.path("/preferences/theme").method("DELETE"));
+
       assertEquals(204, deleted.statusCode());
       assertEquals(
           List.of(

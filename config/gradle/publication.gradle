@@ -18,12 +18,15 @@ configure(libraries.collect { project(":${it}") }) { library ->
 		if (!(target in libraries) || pinnedVersion.isBlank()) {
 			throw new GradleException('Shoostr dependency requires a known library and explicit version')
 		}
+
 		library.publicationDependencies[target] = pinnedVersion
 		if (binaryDependencies && library.name in selected) {
 			return "io.github.suppierk:shoostr-${target}:${pinnedVersion}"
 		}
+
 		return project(":${target}")
 	}
+
 	if (binaryDependencies && library.name in selected) {
 		repositories {
 			maven {
@@ -40,10 +43,17 @@ tasks.register('publicationProjects') {
 	doLast {
 		def output = layout.buildDirectory.file('publication/projects.json').get().asFile
 		output.parentFile.mkdirs()
+
 		output.text = JsonOutput.prettyPrint(JsonOutput.toJson(libraries.collect { name ->
 			def library = project(":${name}")
-			[name: name, group: library.group.toString(), artifact: "shoostr-${name}",
-				version: library.version.toString(), dependencies: library.publicationDependencies]
+			def coordinates = [:]
+			coordinates.put('name', name)
+			coordinates.put('group', library.group.toString())
+			coordinates.put('artifact', "shoostr-${name}")
+			coordinates.put('version', library.version.toString())
+			coordinates.put('dependencies', library.publicationDependencies)
+
+			return coordinates
 		})) + '\n'
 	}
 }

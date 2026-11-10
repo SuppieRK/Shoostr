@@ -3,8 +3,19 @@ def checkerClasspath = bootstrap ? sourceSets.main.output :
 		files(rootProject.file('buildSrc/build/libs/buildSrc.jar'))
 
 sourceSets.configureEach { sourceSet ->
+	def verification = registerConstructorVerification(sourceSet, checkerClasspath)
+
+	tasks.named('check') { dependsOn verification }
+	if (bootstrap) {
+		// The checker first compiles normally, then verifies its own build sources.
+		tasks.named('jar') { finalizedBy verification }
+	}
+}
+
+private def registerConstructorVerification(sourceSet, checkerClasspath) {
 	def authoredJava = sourceSet.allSource.matching { include '**/*.java' }
-	def verification = tasks.register("verifyConstructorFields${sourceSet.name.capitalize()}", JavaExec) {
+
+	return tasks.register("verifyConstructorFields${sourceSet.name.capitalize()}", JavaExec) {
 		group = 'verification'
 		description = "Requires explicit this receivers for ${sourceSet.name} constructor field assignments."
 		classpath = checkerClasspath
@@ -18,18 +29,15 @@ sourceSets.configureEach { sourceSet ->
 		doFirst {
 			def sources = new File(temporaryDir, 'sources.txt')
 			def dependencies = new File(temporaryDir, 'classpath.txt')
+
 			sources.setText(authoredJava.files*.absolutePath.sort().join('\n'), 'UTF-8')
 			dependencies.setText(sourceSet.compileClasspath.files*.absolutePath.join('\n'), 'UTF-8')
+
 			setArgs([
 				sources.absolutePath,
 				dependencies.absolutePath,
 				report.get().asFile.absolutePath
 			])
 		}
-	}
-	tasks.named('check') { dependsOn verification }
-	if (bootstrap) {
-		// The checker first compiles normally, then verifies its own build sources.
-		tasks.named('jar') { finalizedBy verification }
 	}
 }

@@ -17,6 +17,7 @@ class McpLimitsYamlTest {
   @Test
   void partialSessionLimitsPreserveTheExistingDefaults() {
     var limits = new Yaml().loadAs("maxSessions: 8", McpSessionLimits.class);
+
     assertEquals(8, limits.maxSessions());
     assertEquals(32, limits.maxSessionsPerOwner());
     assertEquals(Duration.ofMinutes(30), limits.idleTimeout());
@@ -24,18 +25,23 @@ class McpLimitsYamlTest {
 
   @Test
   void allSessionLimitsLoadWithAnApplicationOwnedDurationDescription() {
-    var limits =
-        yaml()
-            .loadAs(
-                """
+    var limits = createLimitsForAllSessionLimitsLoadWithAnApplicationOwnedDurationDescription();
+
+    assertEquals(12, limits.maxSessions());
+    assertEquals(3, limits.maxSessionsPerOwner());
+    assertEquals(Duration.ofMinutes(2), limits.idleTimeout());
+  }
+
+  private McpSessionLimits
+      createLimitsForAllSessionLimitsLoadWithAnApplicationOwnedDurationDescription() {
+    return yaml()
+        .loadAs(
+            """
         maxSessions: 12
         maxSessionsPerOwner: 3
         idleTimeout: PT2M
         """,
-                McpSessionLimits.class);
-    assertEquals(12, limits.maxSessions());
-    assertEquals(3, limits.maxSessionsPerOwner());
-    assertEquals(Duration.ofMinutes(2), limits.idleTimeout());
+            McpSessionLimits.class);
   }
 
   @Test
@@ -43,6 +49,7 @@ class McpLimitsYamlTest {
     for (var source :
         new String[] {"{}", "maxSessions: null\nmaxSessionsPerOwner: null\nidleTimeout: null"}) {
       var limits = yaml().loadAs(source, McpSessionLimits.class);
+
       assertEquals(1024, limits.maxSessions());
       assertEquals(32, limits.maxSessionsPerOwner());
       assertEquals(Duration.ofMinutes(30), limits.idleTimeout());
@@ -51,6 +58,7 @@ class McpLimitsYamlTest {
     limits.setMaxSessions(null);
     limits.setMaxSessionsPerOwner(null);
     limits.setIdleTimeout(null);
+
     assertEquals(1024, limits.maxSessions());
     assertEquals(32, limits.maxSessionsPerOwner());
     assertEquals(Duration.ofMinutes(30), limits.idleTimeout());
@@ -59,6 +67,7 @@ class McpLimitsYamlTest {
   @Test
   void rejectedValuesKeepThePreviouslyValidLimits() {
     var limits = new McpSessionLimits(4, 2, Duration.ofSeconds(1));
+
     assertThrows(IllegalArgumentException.class, () -> limits.setMaxSessions(0));
     assertThrows(IllegalArgumentException.class, () -> limits.setMaxSessionsPerOwner(-1));
     assertThrows(IllegalArgumentException.class, () -> limits.setIdleTimeout(Duration.ZERO));
@@ -84,6 +93,7 @@ class McpLimitsYamlTest {
             return Duration.parse(scalar.getValue());
           }
         });
+
     return new Yaml(constructor);
   }
 }

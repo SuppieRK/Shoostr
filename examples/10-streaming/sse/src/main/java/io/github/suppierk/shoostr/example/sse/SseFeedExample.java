@@ -25,10 +25,13 @@ public final class SseFeedExample {
                         "/events",
                         (ignored, response) -> {
                           var events = response.startEventStream();
+
                           events.send("starting");
+
                           // Comments and heartbeats keep activity without delivering data events.
                           events.comment("ready");
                           events.heartbeat();
+
                           // IDs and retry values guide reconnects; replay remains
                           // application-owned.
                           events.send(

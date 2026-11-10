@@ -126,6 +126,17 @@ public final class ApplicationCallbacks {
   }
 
   /**
+   * Rejects registration after installation finishes.
+   *
+   * @throws IllegalStateException if installation has returned or thrown
+   */
+  private void requireMutable() {
+    if (closed) {
+      throw new IllegalStateException("Extension installation has finished");
+    }
+  }
+
+  /**
    * Adds a validated callback while the caller holds this collector's monitor.
    *
    * @param handlers target lifecycle phase
@@ -136,16 +147,5 @@ public final class ApplicationCallbacks {
     requireMutable();
     handlers.add(Objects.requireNonNull(handler));
     return this;
-  }
-
-  /**
-   * Rejects registration after installation finishes.
-   *
-   * @throws IllegalStateException if installation has returned or thrown
-   */
-  private void requireMutable() {
-    if (closed) {
-      throw new IllegalStateException("Extension installation has finished");
-    }
   }
 }

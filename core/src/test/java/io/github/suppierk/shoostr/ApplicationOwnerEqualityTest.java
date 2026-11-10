@@ -18,7 +18,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,6 +30,7 @@ import nl.jqno.equalsverifier.EqualsVerifier;
 import nl.jqno.equalsverifier.Warning;
 import nl.jqno.equalsverifier.api.ConfiguredEqualsVerifier;
 import org.eclipse.jetty.compression.server.CompressionHandler;
+import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.session.SessionHandler;
@@ -70,7 +73,9 @@ class ApplicationOwnerEqualityTest {
                     (request, response) -> {
                       exchanges.add(Map.entry(request, response));
                       entered.get(position).countDown();
+
                       assertTrue(release.get(position).await(5, TimeUnit.SECONDS));
+
                       response.text("done");
                     });
           }
@@ -80,11 +85,8 @@ class ApplicationOwnerEqualityTest {
             var servers = List.of(firstServer, secondServer);
             for (int index = 0; index < servers.size(); index++) {
               var response =
-                  client.sendAsync(
-                      HttpRequest.newBuilder(servers.get(index).baseUri().resolve("/same"))
-                          .GET()
-                          .build(),
-                      HttpResponse.BodyHandlers.ofString());
+                  sendResponseForRetainsApplicationHandlerTaskAndCompletionIdentityThroughExecutionAndShutdown(
+                      client, servers, index);
 
               try {
                 assertTrue(entered.get(index).await(3, TimeUnit.SECONDS));
@@ -94,7 +96,9 @@ class ApplicationOwnerEqualityTest {
                 tasks.add(task);
                 hashes.put(task, task.hashCode());
                 var observation = field(task, "observation");
+
                 assertNotNull(observation);
+
                 observations.add(observation);
                 hashes.put(observation, observation.hashCode());
               } finally {
@@ -108,88 +112,34 @@ class ApplicationOwnerEqualityTest {
             }
             var handlerType = Class.forName(Shoostr.class.getName() + "$ApplicationHandler");
             var firstHandler =
-                nativeServers
-                    .get(0)
-                    .getDescendant(handlerType.asSubclass(org.eclipse.jetty.server.Handler.class));
+                nativeServers.get(0).getDescendant(handlerType.asSubclass(Handler.class));
             var secondHandler =
-                nativeServers
-                    .get(1)
-                    .getDescendant(handlerType.asSubclass(org.eclipse.jetty.server.Handler.class));
+                nativeServers.get(1).getDescendant(handlerType.asSubclass(Handler.class));
+
             assertNotNull(firstHandler);
             assertNotNull(secondHandler);
+
             hashes.put(firstHandler, firstHandler.hashCode());
             hashes.put(secondHandler, secondHandler.hashCode());
+
             assertNotEquals(first, second);
             assertNotEquals(firstHandler, secondHandler);
             assertNotEquals(tasks.get(0), tasks.get(1));
             assertNotEquals(observations.get(0), observations.get(1));
-            var configuration =
-                EqualsVerifier.configure()
-                    .withPrefabValues(Shoostr.class, first, second)
-                    .withPrefabValues(Routes.class, first.routes(), second.routes())
-                    .withPrefabValues(
-                        Request.class, exchanges.get(0).getKey(), exchanges.get(1).getKey())
-                    .withPrefabValues(
-                        Response.class, exchanges.get(0).getValue(), exchanges.get(1).getValue())
-                    .withPrefabValues(Server.class, nativeServers.get(0), nativeServers.get(1))
-                    .withPrefabValues(
-                        ServerConnector.class,
-                        (ServerConnector) nativeServers.get(0).getConnectors()[0],
-                        (ServerConnector) nativeServers.get(1).getConnectors()[0])
-                    .withPrefabValues(
-                        org.eclipse.jetty.server.Handler.class, firstHandler, secondHandler)
-                    .withPrefabValues(
-                        RadixRoutes.class,
-                        RadixRoutes.from(
-                            List.of(
-                                RadixRoutes.endpoint(
-                                    HttpMethods.GET, "/first", (request, response) -> {}))),
-                        RadixRoutes.from(
-                            List.of(
-                                RadixRoutes.endpoint(
-                                    HttpMethods.POST, "/second", (request, response) -> {}))))
-                    .withPrefabValues(
-                        RadixRoutes.Endpoint.class,
-                        RadixRoutes.endpoint(HttpMethods.GET, "/first", (request, response) -> {}),
-                        RadixRoutes.endpoint(
-                            HttpMethods.POST, "/second", (request, response) -> {}))
-                    .withPrefabValues(
-                        TrustedProxy.class,
-                        new TrustedProxy(InetAddress::isLoopbackAddress, ForwardedHeaders.RFC7239),
-                        new TrustedProxy(
-                            InetAddress::isSiteLocalAddress, ForwardedHeaders.X_FORWARDED))
-                    .withPrefabValues(
-                        Extension.class,
-                        new Cors(CorsPolicy.builder().origins("https://first.example").build()),
-                        new Cors(CorsPolicy.builder().origins("https://second.example").build()))
-                    .withPrefabValues(
-                        SessionHandler.class, new SessionHandler(), new SessionHandler())
-                    .withPrefabValues(
-                        CompressionHandler.class,
-                        new CompressionHandler(),
-                        new CompressionHandler())
-                    .withPrefabValues(
-                        WebSocketRuntime.class,
-                        new WebSocketRuntime(firstExecutor),
-                        new WebSocketRuntime(secondExecutor))
-                    .withPrefabValues(ExecutorService.class, firstExecutor, secondExecutor)
-                    .withPrefabValues(
-                        SslContextFactory.Server.class,
-                        new SslContextFactory.Server(),
-                        new SslContextFactory.Server())
-                    .withPrefabValues(AutoLock.class, new AutoLock(), new AutoLock())
-                    .withPrefabValues(
-                        Thread.class, new Thread(() -> {}, "first"), new Thread(() -> {}, "second"))
-                    .withPrefabValues(
-                        Csrf.class,
-                        new Csrf(Set.of("https://first.example")),
-                        new Csrf(Set.of("https://second.example")))
-                    .withPrefabValues(
-                        Throwable.class,
-                        new IllegalStateException("first"),
-                        new IllegalStateException("second"))
-                    .suppress(
-                        Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED);
+
+            var configuration = EqualsVerifier.configure();
+
+            configuration =
+                identityConfiguration(
+                    configuration,
+                    first,
+                    second,
+                    exchanges,
+                    nativeServers,
+                    firstHandler,
+                    secondHandler,
+                    firstExecutor,
+                    secondExecutor);
             configuration = prefab(configuration, handlerType, firstHandler, secondHandler);
             configuration =
                 prefab(configuration, tasks.getFirst().getClass(), tasks.get(0), tasks.get(1));
@@ -213,7 +163,83 @@ class ApplicationOwnerEqualityTest {
       assertEquals(entry.getValue().intValue(), entry.getKey().hashCode());
       assertTrue(owners.remove(entry.getKey()));
     }
+
     assertTrue(owners.isEmpty());
+  }
+
+  private CompletableFuture<HttpResponse<String>>
+      sendResponseForRetainsApplicationHandlerTaskAndCompletionIdentityThroughExecutionAndShutdown(
+          HttpClient client, List<TestServer> servers, int index) {
+    return client.sendAsync(
+        HttpRequest.newBuilder(servers.get(index).baseUri().resolve("/same")).GET().build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private ConfiguredEqualsVerifier identityConfiguration(
+      ConfiguredEqualsVerifier configuration,
+      Shoostr first,
+      Shoostr second,
+      ArrayList<Entry<Request, Response>> exchanges,
+      ArrayList<Server> nativeServers,
+      Handler firstHandler,
+      Handler secondHandler,
+      ExecutorService firstExecutor,
+      ExecutorService secondExecutor) {
+    return configuration
+        .withPrefabValues(Shoostr.class, first, second)
+        .withPrefabValues(Routes.class, first.routes(), second.routes())
+        .withPrefabValues(Request.class, exchanges.get(0).getKey(), exchanges.get(1).getKey())
+        .withPrefabValues(Response.class, exchanges.get(0).getValue(), exchanges.get(1).getValue())
+        .withPrefabValues(Server.class, nativeServers.get(0), nativeServers.get(1))
+        .withPrefabValues(
+            ServerConnector.class,
+            (ServerConnector) nativeServers.get(0).getConnectors()[0],
+            (ServerConnector) nativeServers.get(1).getConnectors()[0])
+        .withPrefabValues(Handler.class, firstHandler, secondHandler)
+        .withPrefabValues(
+            RadixRoutes.class,
+            RadixRoutes.from(
+                List.of(
+                    RadixRoutes.endpoint(HttpMethods.GET, "/first", (request, response) -> {}))),
+            RadixRoutes.from(
+                List.of(
+                    RadixRoutes.endpoint(HttpMethods.POST, "/second", (request, response) -> {}))))
+        .withPrefabValues(
+            RadixRoutes.Endpoint.class,
+            RadixRoutes.endpoint(HttpMethods.GET, "/first", (request, response) -> {}),
+            RadixRoutes.endpoint(HttpMethods.POST, "/second", (request, response) -> {}))
+        .withPrefabValues(
+            TrustedProxy.class,
+            new TrustedProxy(InetAddress::isLoopbackAddress, ForwardedHeaders.RFC7239),
+            new TrustedProxy(InetAddress::isSiteLocalAddress, ForwardedHeaders.X_FORWARDED))
+        .withPrefabValues(
+            Extension.class,
+            new Cors(CorsPolicy.builder().origins("https://first.example").build()),
+            new Cors(CorsPolicy.builder().origins("https://second.example").build()))
+        .withPrefabValues(SessionHandler.class, new SessionHandler(), new SessionHandler())
+        .withPrefabValues(
+            CompressionHandler.class, new CompressionHandler(), new CompressionHandler())
+        .withPrefabValues(
+            WebSocketRuntime.class,
+            new WebSocketRuntime(firstExecutor),
+            new WebSocketRuntime(secondExecutor))
+        .withPrefabValues(ExecutorService.class, firstExecutor, secondExecutor)
+        .withPrefabValues(
+            SslContextFactory.Server.class,
+            new SslContextFactory.Server(),
+            new SslContextFactory.Server())
+        .withPrefabValues(AutoLock.class, new AutoLock(), new AutoLock())
+        .withPrefabValues(
+            Thread.class, new Thread(() -> {}, "first"), new Thread(() -> {}, "second"))
+        .withPrefabValues(
+            Csrf.class,
+            new Csrf(Set.of("https://first.example")),
+            new Csrf(Set.of("https://second.example")))
+        .withPrefabValues(
+            Throwable.class,
+            new IllegalStateException("first"),
+            new IllegalStateException("second"))
+        .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED);
   }
 
   private static Object pendingTask(Shoostr app) throws ReflectiveOperationException {
@@ -226,6 +252,7 @@ class ApplicationOwnerEqualityTest {
   private static Object field(Object owner, String name) throws ReflectiveOperationException {
     var field = owner.getClass().getDeclaredField(name);
     field.setAccessible(true);
+
     return field.get(owner);
   }
 

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.http.HttpResponse;
@@ -40,12 +41,14 @@ class SessionTest {
                 (request, response) -> {
                   assertTrue(request.getSession().isEmpty());
                   assertThrows(IllegalStateException.class, request::getOrCreateSession);
+
                   response.text("disabled");
                 });
 
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/peek"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals("disabled", result.body());
           assertFalse(result.headers().firstValue("Set-Cookie").isPresent());
         }
@@ -84,15 +87,19 @@ class SessionTest {
 
           var absent =
               test.send(request -> request.path("/peek"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, absent.statusCode());
           assertEquals("absent", absent.body());
           assertFalse(absent.headers().firstValue("Set-Cookie").isPresent());
 
           var created =
               test.send(request -> request.path("/create"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, created.statusCode());
+
           var setCookie = created.headers().firstValue("Set-Cookie").orElseThrow();
           var cookie = setCookie.split(";", 2)[0];
+
           assertTrue(cookie.startsWith("JSESSIONID="));
           assertTrue(setCookie.contains("Path=/"));
           assertTrue(setCookie.contains("HttpOnly"));
@@ -104,6 +111,7 @@ class SessionTest {
               test.send(
                   request -> request.path("/peek").header("Cookie", cookie),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, reused.statusCode());
           assertEquals("alice", reused.body());
           assertFalse(reused.headers().firstValue("Set-Cookie").isPresent());
@@ -141,18 +149,16 @@ class SessionTest {
                 client ->
                     client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
 
-          var oldCookie =
-              test.send(request -> request.path("/create"), HttpResponse.BodyHandlers.ofString())
-                  .headers()
-                  .firstValue("Set-Cookie")
-                  .orElseThrow()
-                  .split(";", 2)[0];
+          var oldCookie = requestSessionCookie(test);
           var renewed =
               test.send(
                   request -> request.path("/renew").header("Cookie", oldCookie),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, renewed.statusCode());
+
           var newCookie = renewed.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+
           assertNotEquals(oldCookie, newCookie);
           assertEquals(
               "absent",
@@ -206,12 +212,14 @@ class SessionTest {
                           request.path("/peek").header("Cookie", "JSESSIONID=chosen-by-attacker"),
                       HttpResponse.BodyHandlers.ofString())
                   .body());
+
           var created =
               test.send(
                   request ->
                       request.path("/create").header("Cookie", "JSESSIONID=chosen-by-attacker"),
                   HttpResponse.BodyHandlers.ofString());
           var cookie = created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+
           assertFalse(cookie.contains("chosen-by-attacker"));
           assertEquals(
               "present",
@@ -264,6 +272,7 @@ class SessionTest {
                   .headers()
                   .firstValue("Set-Cookie")
                   .orElseThrow();
+
           assertTrue(cookie.startsWith("WEBSESSION="));
           assertTrue(cookie.contains("Path=/"));
           assertTrue(cookie.contains("HttpOnly"));
@@ -304,12 +313,14 @@ class SessionTest {
                   .firstValue("Set-Cookie")
                   .orElseThrow()
                   .split(";", 2)[0];
+
           assertEquals(
               "present",
               test.send(
                       request -> request.path("/peek").header("Cookie", cookie),
                       HttpResponse.BodyHandlers.ofString())
                   .body());
+
           await()
               .pollDelay(Duration.ofMillis(1200))
               .pollInterval(Duration.ofMillis(1200))
@@ -381,6 +392,7 @@ class SessionTest {
                   .firstValue("Set-Cookie")
                   .orElseThrow()
                   .split(";", 2)[0];
+
           assertTrue(sessionHandler.get().isStarted());
           assertEquals(
               1,
@@ -390,7 +402,9 @@ class SessionTest {
     }
 
     assertTrue(sessionHandler.get().isStopped());
+
     var cache = (DefaultSessionCache) sessionHandler.get().getSessionCache();
+
     assertTrue(cache.isStopped());
     assertEquals(0, cache.getSessionsCurrent());
 
@@ -431,7 +445,7 @@ class SessionTest {
         app.sessions();
         app.exception(
             IllegalArgumentException.class,
-            (ignored, ignored2, response) -> response.status(409).text("handled"));
+            (ignored, ignoredRequest, response) -> response.status(409).text("handled"));
         app.routes()
             .get(
                 "/start",
@@ -456,8 +470,11 @@ class SessionTest {
 
           var failed =
               test.send(request -> request.path("/start"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(409, failed.statusCode());
+
           var cookie = failed.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+
           assertEquals(1, failed.headers().allValues("Set-Cookie").size());
           assertEquals(
               "alice",
@@ -555,7 +572,9 @@ class SessionTest {
                     client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
           var result =
               test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
+
           cookie = result.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
           token = result.body();
         }
@@ -573,8 +592,9 @@ class SessionTest {
             .routes()
             .path(
                 "/",
-                routes -> routes.post("/submit", (ignored3, response) -> response.text("accepted")),
-                e -> e.withExtension(csrf));
+                routes ->
+                    routes.post("/submit", (ignoredRequest, response) -> response.text("accepted")),
+                lifecycle -> lifecycle.withExtension(csrf));
 
         try (var test =
             TestServer.start(
@@ -582,20 +602,29 @@ class SessionTest {
                 client ->
                     client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
           var response =
-              test.send(
-                  request ->
-                      request
-                          .path("/submit")
-                          .header("Cookie", cookie)
-                          .header("Origin", "http://127.0.0.1:" + restarted.port())
-                          .header("X-CSRF-Token", token)
-                          .method("POST"),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResponseForPersistsCsrfTokenWithJettyStoreAcrossApplicationInstances(
+                  test, cookie, restarted, token);
+
           assertEquals(200, response.statusCode());
           assertEquals("accepted", response.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForPersistsCsrfTokenWithJettyStoreAcrossApplicationInstances(
+          TestServer test, String cookie, Shoostr restarted, String token)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/submit")
+                .header("Cookie", cookie)
+                .header("Origin", "http://127.0.0.1:" + restarted.port())
+                .header("X-CSRF-Token", token)
+                .method("POST"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -637,12 +666,7 @@ class SessionTest {
                 app,
                 client ->
                     client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
-          var cookie =
-              test.send(request -> request.path("/create"), HttpResponse.BodyHandlers.ofString())
-                  .headers()
-                  .firstValue("Set-Cookie")
-                  .orElseThrow()
-                  .split(";", 2)[0];
+          var cookie = requestSessionCookie(test);
           var futures = new ArrayList<Future<HttpResponse<String>>>();
           for (int index = 0; index < 8; index++) {
             var path = "/write/" + index;
@@ -686,35 +710,36 @@ class SessionTest {
             .get(
                 "/create",
                 (request, response) -> response.text(request.getOrCreateSession().getId()))
-            .get("/peek", (ignored4, response) -> response.text("handled"));
+            .get("/peek", (ignoredRequest, response) -> response.text("handled"));
 
         try (var test =
             TestServer.start(
                 app,
                 client ->
                     client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
-          var first =
-              test.send(request -> request.path("/create"), HttpResponse.BodyHandlers.ofString())
-                  .headers()
-                  .firstValue("Set-Cookie")
-                  .orElseThrow()
-                  .split(";", 2)[0];
-          var second =
-              test.send(request -> request.path("/create"), HttpResponse.BodyHandlers.ofString())
-                  .headers()
-                  .firstValue("Set-Cookie")
-                  .orElseThrow()
-                  .split(";", 2)[0];
+          var first = requestSessionCookie(test);
+          var second = requestSessionCookie(test);
+
           assertNotEquals(first, second);
+
           var ambiguous =
               test.send(
                   request -> request.path("/peek").header("Cookie", first + "; " + second),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(400, ambiguous.statusCode());
           assertNotEquals("handled", ambiguous.body());
         }
       }
     }
+  }
+
+  private String requestSessionCookie(TestServer test) throws IOException, InterruptedException {
+    return test.send(request -> request.path("/create"), HttpResponse.BodyHandlers.ofString())
+        .headers()
+        .firstValue("Set-Cookie")
+        .orElseThrow()
+        .split(";", 2)[0];
   }
 
   @Test
@@ -729,7 +754,9 @@ class SessionTest {
                 "/stream",
                 (request, response) -> {
                   var stream = response.startStream("text/plain");
+
                   assertThrows(IllegalStateException.class, request::getOrCreateSession);
+
                   stream.write("ok");
                 });
 
@@ -740,6 +767,7 @@ class SessionTest {
                     client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
           var result =
               test.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("ok", result.body());
           assertFalse(result.headers().firstValue("Set-Cookie").isPresent());
@@ -749,10 +777,25 @@ class SessionTest {
   }
 
   private static void fileStore(SessionHandler handler, Path directory) {
+    var store = sessionStore(directory);
+
+    var cache = sessionCache(handler, store);
+
+    handler.setSessionCache(cache);
+  }
+
+  private static FileSessionDataStore sessionStore(Path directory) {
     var store = new FileSessionDataStore();
     store.setStoreDir(directory.toFile());
+
+    return store;
+  }
+
+  private static DefaultSessionCache sessionCache(
+      SessionHandler handler, FileSessionDataStore store) {
     var cache = new DefaultSessionCache(handler);
     cache.setSessionDataStore(store);
-    handler.setSessionCache(cache);
+
+    return cache;
   }
 }

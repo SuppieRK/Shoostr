@@ -198,6 +198,7 @@ public final class Options {
   public void setIdleTimeout(@Nullable Duration value) {
     Duration resolved = value == null ? Duration.ofSeconds(30) : value;
     validateTimeout(resolved);
+
     idleTimeout = resolved;
   }
 
@@ -219,7 +220,29 @@ public final class Options {
   public void setShutdownTimeout(@Nullable Duration value) {
     Duration resolved = value == null ? Duration.ofSeconds(5) : value;
     validateTimeout(resolved);
+
     shutdownTimeout = resolved;
+  }
+
+  /**
+   * Rejects durations that cannot represent a positive whole-millisecond transport timeout.
+   *
+   * @param value resolved nonnull timeout
+   * @throws IllegalArgumentException if precision, sign or range is invalid
+   */
+  private static void validateTimeout(Duration value) {
+    if (!value.equals(value.truncatedTo(ChronoUnit.MILLIS))) {
+      throw new IllegalArgumentException("Timeouts must be positive whole milliseconds");
+    }
+
+    try {
+      if (value.toMillis() < 1) {
+        throw new IllegalArgumentException("Timeouts must be positive whole milliseconds");
+      }
+    } catch (ArithmeticException failure) {
+      throw new IllegalArgumentException(
+          "Timeout exceeds the supported millisecond range", failure);
+    }
   }
 
   /**
@@ -344,26 +367,5 @@ public final class Options {
    */
   public void setVirtualThreads(@Nullable Boolean value) {
     virtualThreads = value != null && value;
-  }
-
-  /**
-   * Rejects durations that cannot represent a positive whole-millisecond transport timeout.
-   *
-   * @param value resolved nonnull timeout
-   * @throws IllegalArgumentException if precision, sign or range is invalid
-   */
-  private static void validateTimeout(Duration value) {
-    if (!value.equals(value.truncatedTo(ChronoUnit.MILLIS))) {
-      throw new IllegalArgumentException("Timeouts must be positive whole milliseconds");
-    }
-
-    try {
-      if (value.toMillis() < 1) {
-        throw new IllegalArgumentException("Timeouts must be positive whole milliseconds");
-      }
-    } catch (ArithmeticException failure) {
-      throw new IllegalArgumentException(
-          "Timeout exceeds the supported millisecond range", failure);
-    }
   }
 }

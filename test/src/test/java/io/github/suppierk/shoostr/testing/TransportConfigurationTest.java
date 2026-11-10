@@ -9,12 +9,14 @@ import io.github.suppierk.shoostr.MultipartOptions;
 import io.github.suppierk.shoostr.Options;
 import io.github.suppierk.shoostr.Shoostr;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -58,9 +60,12 @@ class TransportConfigurationTest {
       assertEquals(app.port(), test.baseUri().getPort());
       assertNotEquals(
           listeners.get().getFirst().getLocalPort(), listeners.get().getLast().getLocalPort());
+
       for (var listener : listeners.get()) {
         assertEquals("127.0.0.1", listener.getHost());
+
         var target = URI.create("http://127.0.0.1:" + listener.getLocalPort() + "/value");
+
         assertEquals(
             "both listeners",
             client
@@ -99,6 +104,7 @@ class TransportConfigurationTest {
 
         assertEquals(19001, listeners.get().getFirst().getPort());
         assertEquals(19002, listeners.get().getLast().getPort());
+
         for (var listener : listeners.get()) {
           assertEquals("0.0.0.0", listener.getHost());
           assertEquals(-1, listener.getLocalPort());
@@ -113,10 +119,11 @@ class TransportConfigurationTest {
     configuredOptions.setHttp2(true);
 
     var app = new Shoostr(configuredOptions);
-    app.routes().get("/value", (ignored2, response) -> response.text("http2"));
+    app.routes().get("/value", (ignoredRequest, response) -> response.text("http2"));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/value"));
+
       assertEquals(200, reply.statusCode());
       assertEquals(HttpClient.Version.HTTP_2, reply.version());
     }
@@ -132,20 +139,26 @@ class TransportConfigurationTest {
     configuredOptions.setMultipart(MultipartOptions.defaults());
 
     var app =
-        new Shoostr(configuredOptions)
-            .modifyServer(
-                nativeServer -> {
-                  var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                  nativeConnector.setHost("0.0.0.0");
-                  nativeConnector.setPort(8080);
-                  nativeConnector.setIdleTimeout(30000);
-                });
-    app.routes().post("/body", (ignored3, response) -> response.text("accepted"));
+        createAppForPreservesApplicationBodyLimitsWhileChangingItsTestAddress(configuredOptions);
+    app.routes().post("/body", (ignoredRequest, response) -> response.text("accepted"));
 
     try (var test = TestServer.start(app)) {
       var reply = test.send(request -> request.path("/body").method("POST").body(new byte[17]));
+
       assertEquals(413, reply.statusCode());
     }
+  }
+
+  private Shoostr createAppForPreservesApplicationBodyLimitsWhileChangingItsTestAddress(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("0.0.0.0");
+              nativeConnector.setPort(8080);
+              nativeConnector.setIdleTimeout(30000);
+            });
   }
 
   @Test
@@ -158,31 +171,7 @@ class TransportConfigurationTest {
             "bin",
             System.getProperty("os.name").startsWith("Windows") ? "keytool.exe" : "keytool");
     var generator =
-        new ProcessBuilder(
-                keytool.toString(),
-                "-genkeypair",
-                "-alias",
-                "local",
-                "-keyalg",
-                "RSA",
-                "-storetype",
-                "PKCS12",
-                "-keystore",
-                storePath.toString(),
-                "-storepass",
-                "changeit",
-                "-keypass",
-                "changeit",
-                "-dname",
-                "CN=localhost",
-                "-ext",
-                "SAN=ip:127.0.0.1,dns:localhost",
-                "-validity",
-                "1",
-                "-noprompt")
-            .redirectErrorStream(true)
-            .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-            .start();
+        startKeytoolForPreservesVerifiedTlsAndHttp2WithAPreboundRangePort(keytool, storePath);
 
     try {
       assertTrue(generator.waitFor(10, TimeUnit.SECONDS), "keytool must finish within ten seconds");
@@ -197,10 +186,8 @@ class TransportConfigurationTest {
       store.load(input, "changeit".toCharArray());
     }
 
-    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-    trust.init(store);
-    var context = SSLContext.getInstance("TLS");
-    context.init(null, trust.getTrustManagers(), null);
+    var context = createTrustContext(store);
+
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
 
@@ -210,16 +197,61 @@ class TransportConfigurationTest {
           tls.setKeyStore(store);
           tls.setKeyStorePassword("changeit");
         });
-    app.routes().get("/value", (ignored4, response) -> response.text("verified TLS"));
+    app.routes().get("/value", (ignoredRequest, response) -> response.text("verified TLS"));
 
     try (var test =
-        TestServer.startOnPortRange(app, 49152, 65535, client -> client.sslContext(context))) {
+        TestServer.startOnPortRange(
+            app, 49152, 65535, client -> configureTlsClient(client, context))) {
       assertEquals("https", test.baseUri().getScheme());
+
       var reply =
           test.send(request -> request.path("/value"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals("verified TLS", reply.body());
       assertEquals(HttpClient.Version.HTTP_2, reply.version());
       assertTrue(reply.sslSession().isPresent());
     }
+  }
+
+  private Process startKeytoolForPreservesVerifiedTlsAndHttp2WithAPreboundRangePort(
+      Path keytool, Path storePath) throws IOException {
+    return new ProcessBuilder(
+            keytool.toString(),
+            "-genkeypair",
+            "-alias",
+            "local",
+            "-keyalg",
+            "RSA",
+            "-storetype",
+            "PKCS12",
+            "-keystore",
+            storePath.toString(),
+            "-storepass",
+            "changeit",
+            "-keypass",
+            "changeit",
+            "-dname",
+            "CN=localhost",
+            "-ext",
+            "SAN=ip:127.0.0.1,dns:localhost",
+            "-validity",
+            "1",
+            "-noprompt")
+        .redirectErrorStream(true)
+        .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+        .start();
+  }
+
+  private SSLContext createTrustContext(KeyStore identity) throws GeneralSecurityException {
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(identity);
+    var context = SSLContext.getInstance("TLS");
+    context.init(null, trust.getTrustManagers(), null);
+
+    return context;
+  }
+
+  private void configureTlsClient(HttpClient.Builder client, SSLContext context) {
+    client.sslContext(context);
   }
 }

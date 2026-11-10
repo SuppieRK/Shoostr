@@ -3,6 +3,7 @@ package io.github.suppierk.shoostr.example.json;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
@@ -16,20 +17,25 @@ class JsonCodecExampleTest {
   void leavesMediaEnforcementToTheHandlerRatherThanTheCodec() throws Exception {
 
     try (var test = TestServer.start(JsonCodecExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/users")
-                      .method("POST")
-                      .header("Content-Type", "text/plain")
-                      .header("Accept", "application/xml")
-                      .body("{\"name\":\"Ada\"}".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForLeavesMediaEnforcementToTheHandlerRatherThanTheCodec(test);
+
       assertEquals(201, response.statusCode());
       assertEquals("application/json", response.headers().firstValue("Content-Type").orElseThrow());
       assertEquals("{\"name\":\"Ada\"}", response.body());
     }
+  }
+
+  private HttpResponse<String> sendResponseForLeavesMediaEnforcementToTheHandlerRatherThanTheCodec(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/users")
+                .method("POST")
+                .header("Content-Type", "text/plain")
+                .header("Accept", "application/xml")
+                .body("{\"name\":\"Ada\"}".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -38,6 +44,7 @@ class JsonCodecExampleTest {
     try (var test = TestServer.start(JsonCodecExample.application())) {
       var response =
           test.send(request -> request.path("/help"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals(
           "text/plain; charset=utf-8", response.headers().firstValue("Content-Type").orElseThrow());
@@ -63,18 +70,24 @@ class JsonCodecExampleTest {
 
     try (var test = TestServer.start(JsonCodecExample.application())) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/users")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .body(body.getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForRejectsMalformedJsonAndInvalidNamesWithASafeJsonError(test, body);
+
       assertEquals(400, response.statusCode());
       assertEquals("application/json", response.headers().firstValue("Content-Type").orElseThrow());
       assertEquals("{\"error\":\"invalid_user\"}", response.body());
     }
+  }
+
+  private HttpResponse<String> sendResponseForRejectsMalformedJsonAndInvalidNamesWithASafeJsonError(
+      TestServer test, String body) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/users")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .body(body.getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -82,17 +95,24 @@ class JsonCodecExampleTest {
 
     try (var test = TestServer.start(JsonCodecExample.application())) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/users")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .body("{\"name\":\"Zoë \\\"Z\\\"\\nLee\"}".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForReturnsAValidatedUserAsJsonWithUnicodeAndEscapedCharacters(test);
+
       assertEquals(201, response.statusCode());
       assertEquals("application/json", response.headers().firstValue("Content-Type").orElseThrow());
       assertEquals("{\"name\":\"Zoë \\\"Z\\\"\\nLee\"}", response.body());
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForReturnsAValidatedUserAsJsonWithUnicodeAndEscapedCharacters(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/users")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .body("{\"name\":\"Zoë \\\"Z\\\"\\nLee\"}".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 }

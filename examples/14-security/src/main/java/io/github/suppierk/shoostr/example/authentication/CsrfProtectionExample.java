@@ -18,6 +18,7 @@ public final class CsrfProtectionExample {
    */
   public static Shoostr application() {
     var csrf = new Csrf();
+
     return new Shoostr()
         .sessions(handler -> handler.setSecureCookies(true))
         .routes(
@@ -47,7 +48,9 @@ public final class CsrfProtectionExample {
                                   .formParam(THEME_ATTRIBUTE)
                                   .filter(value -> "light".equals(value) || "dark".equals(value))
                                   .orElseThrow(BadRequestException::new);
+
                           request.getSession().orElseThrow().setAttribute(THEME_ATTRIBUTE, theme);
+
                           response.text(theme);
                         },
                         lifecycle -> lifecycle.withExtension(csrf))
@@ -55,6 +58,7 @@ public final class CsrfProtectionExample {
                         "/session/renew",
                         (request, response) -> {
                           request.renewSessionId();
+
                           // Return the token for the renewed session binding, not the previous ID.
                           response.setHeader("Cache-Control", "no-store").text(csrf.token(request));
                         },

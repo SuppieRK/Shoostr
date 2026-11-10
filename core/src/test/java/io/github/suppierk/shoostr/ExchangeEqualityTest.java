@@ -63,7 +63,9 @@ class ExchangeEqualityTest {
                   exchanges.add(Map.entry(request, response));
                   hashes.put(request, request.hashCode());
                   hashes.put(response, response.hashCode());
+
                   assertEquals("payload", request.bodyText());
+
                   request.attribute("processed", true);
                   var output = response.startStream("text/plain");
                   outputs.add(output);
@@ -82,23 +84,22 @@ class ExchangeEqualityTest {
         try (var server = TestServer.start(app)) {
           for (int index = 0; index < 2; index++) {
             var response =
-                server.send(
-                    request ->
-                        request
-                            .path("/exchange")
-                            .method("POST")
-                            .body("payload".getBytes(StandardCharsets.UTF_8)),
-                    HttpResponse.BodyHandlers.ofString());
+                sendResponseForPreservesExchangeAndStreamIdentityThroughReadWriteFlushAndCompletion(
+                    server);
+
             assertEquals(200, response.statusCode());
             assertEquals("done", response.body());
             assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+
             var eventResponse =
                 server.send(
                     request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
             assertEquals(200, eventResponse.statusCode());
             assertTrue(eventResponse.body().contains("data: hello"));
             assertNotNull(completed.poll(3, TimeUnit.SECONDS));
           }
+
           assertNotEquals(exchanges.get(0).getKey(), exchanges.get(1).getKey());
           assertNotEquals(exchanges.get(0).getValue(), exchanges.get(1).getValue());
           assertNotEquals(outputs.get(0), outputs.get(1));
@@ -134,7 +135,20 @@ class ExchangeEqualityTest {
       assertEquals(entry.getValue().intValue(), entry.getKey().hashCode());
       assertTrue(retained.remove(entry.getKey()));
     }
+
     assertTrue(retained.isEmpty());
+  }
+
+  private HttpResponse<String>
+      sendResponseForPreservesExchangeAndStreamIdentityThroughReadWriteFlushAndCompletion(
+          TestServer server) throws IOException, InterruptedException {
+    return server.send(
+        request ->
+            request
+                .path("/exchange")
+                .method("POST")
+                .body("payload".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   private <T> SingleTypeEqualsVerifierApi<T> verifier(

@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
+import java.io.IOException;
 import java.lang.reflect.Modifier;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -37,14 +38,8 @@ class TypedCodecTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/greeting")
-                          .method("POST")
-                          .body("Alice".getBytes(StandardCharsets.UTF_8)),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForDecodesConcreteRequestAndEncodesFiniteResponse(test);
+
           assertEquals(201, result.statusCode());
           assertEquals("{\"name\":\"Hello Alice\"}", result.body());
           assertEquals(
@@ -52,6 +47,14 @@ class TypedCodecTest {
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForDecodesConcreteRequestAndEncodesFiniteResponse(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/greeting").method("POST").body("Alice".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -84,6 +87,7 @@ class TypedCodecTest {
                 (request, response) -> {
                   assertEquals(Request.class, request.getClass());
                   assertEquals(Response.class, response.getClass());
+
                   response.text("ordinary");
                 });
 
@@ -102,6 +106,7 @@ class TypedCodecTest {
       try (Closeable appCleanup2 = app::close) {
         app.codec(new TestCodec());
         var second = new TestCodec();
+
         assertThrows(IllegalStateException.class, () -> app.codec(second));
       }
     }
@@ -115,6 +120,7 @@ class TypedCodecTest {
       try (Closeable appCleanup3 = app::close;
           var test = TestServer.start(app)) {
         var codec = new TestCodec();
+
         assertThrows(IllegalStateException.class, () -> app.codec(codec));
         assertEquals(404, test.send(request -> request.path("/missing")).statusCode());
       }
@@ -126,6 +132,7 @@ class TypedCodecTest {
     var app = new Shoostr();
     app.close();
     var codec = new TestCodec();
+
     assertThrows(IllegalStateException.class, () -> app.codec(codec));
   }
 
@@ -137,6 +144,7 @@ class TypedCodecTest {
 
       try (Closeable appCleanup4 = app::close) {
         assertThrows(NullPointerException.class, () -> app.codec(null));
+
         app.codec(new TestCodec())
             .routes()
             .get("/valid", (ignored, response) -> response.text("valid"));
@@ -155,8 +163,11 @@ class TypedCodecTest {
     app.codec(codec);
     app.close();
     app.close();
+
     assertEquals(0, codec.closes);
+
     codec.close();
+
     assertEquals(1, codec.closes);
   }
 
@@ -184,6 +195,7 @@ class TypedCodecTest {
     @Override
     public byte[] write(Object value) {
       var greeting = (Greeting) value;
+
       return ("{\"name\":\"" + greeting.name() + "\"}").getBytes(StandardCharsets.UTF_8);
     }
   }

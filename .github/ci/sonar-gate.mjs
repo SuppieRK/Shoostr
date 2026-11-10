@@ -9,16 +9,22 @@ const project = 'SuppieRK_Shoostr';
 export async function verify({ revision, taskId, pullRequest, branch }, request = sonar) {
   assert(/^[a-f0-9]{40}$/.test(revision ?? ''), 'Invalid expected revision');
   assert(taskId && (pullRequest || branch), 'Missing scanner task or analysis target');
+
   const target = pullRequest ? { pullRequest } : { branch };
   const { task } = await request('ce/task', { id: taskId, additionalFields: 'warnings' });
+
   assert(task?.id === taskId && task.componentKey === project && task.status === 'SUCCESS'
     && typeof task.analysisId === 'string' && task.analysisId, 'Scanner task did not complete for this project');
   assert(Number.isSafeInteger(task.warningCount) && task.warningCount >= 0, 'Invalid analysis warning count');
+
   // The issue query targets mutable PR/branch data; reject a concurrent analysis update.
   await requireRevision();
+
   const issues = await request('issues/search', { componentKeys: project, ...target, resolved: 'false', ps: '1' });
   assert(Number.isSafeInteger(issues.total) && issues.total === 0, 'Sonar must have zero open issues');
+
   await requireRevision();
+
   console.log(`Sonar analysis has zero open issues for ${revision}`);
   console.log(`Sonar analysis warnings: ${Number(task.warningCount)}`);
 
@@ -37,13 +43,17 @@ export async function verify({ revision, taskId, pullRequest, branch }, request 
 
 async function sonar(endpoint, query) {
   assert(process.env.SONAR_TOKEN, 'SONAR_TOKEN is required');
+
   const url = new URL(`https://sonarcloud.io/api/${endpoint}`);
   url.search = new URLSearchParams(query).toString();
+
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${process.env.SONAR_TOKEN}` },
     redirect: 'error', signal: AbortSignal.timeout(30_000),
   });
+
   assert(response.ok, `Sonar request failed: HTTP ${response.status}`);
+
   return response.json();
 }
 

@@ -9,6 +9,7 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
@@ -26,25 +27,32 @@ class McpActivationTest {
 
       try (var server = TestServer.start(app)) {
         var response =
-            server.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .method("POST")
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .body(
-                            """
-                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                      "protocolVersion":"2025-11-25","capabilities":{},
-                      "clientInfo":{"name":"fixture","version":"1"}}}
-                    """
-                                .getBytes(StandardCharsets.UTF_8)),
-                HttpResponse.BodyHandlers.ofString());
+            sendResponseForInheritedSelectionAndHelperReselectionBindTheMountOnce(server);
+
         assertEquals(200, response.statusCode());
         assertFalse(response.headers().firstValue("Mcp-Session-Id").orElseThrow().isBlank());
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForInheritedSelectionAndHelperReselectionBindTheMountOnce(TestServer server)
+          throws IOException, InterruptedException {
+    return server.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(
+                    """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"fixture","version":"1"}}}
+                    """
+                        .getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -67,6 +75,7 @@ class McpActivationTest {
                 .body());
         assertEquals(
             405, server.send(request -> request.path("/ordinary").method("POST")).statusCode());
+
         for (var method : new String[] {"GET", "POST", "DELETE"}) {
           assertEquals(
               404, server.send(request -> request.path("/mcp").method(method)).statusCode());
@@ -83,6 +92,7 @@ class McpActivationTest {
 
     try (Closeable cleanup = app::close) {
       app.routes().path("/first", mcp::routes).path("/second", mcp::routes);
+
       assertEquals(
           "An MCP capability can be mounted only once",
           assertThrows(IllegalStateException.class, app::start).getMessage());
@@ -102,6 +112,7 @@ class McpActivationTest {
 
     try (Closeable cleanup = app::close) {
       app.routes().path("/{tenant}/mcp", mcp::routes);
+
       assertEquals(
           "An MCP mount must be a literal path",
           assertThrows(IllegalArgumentException.class, app::start).getMessage());

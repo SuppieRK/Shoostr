@@ -12,6 +12,7 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.BufferedReader;
 import java.io.ByteArrayInputStream;
 import java.io.Closeable;
+import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
@@ -43,7 +44,9 @@ import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
+import org.pac4j.core.context.CallContext;
 import org.pac4j.core.context.Cookie;
+import org.pac4j.core.credentials.Credentials;
 import org.pac4j.core.credentials.TokenCredentials;
 import org.pac4j.core.credentials.UsernamePasswordCredentials;
 import org.pac4j.core.credentials.authenticator.Authenticator;
@@ -73,9 +76,10 @@ class Pac4jTest {
                 "/me",
                 (request, response) -> {
                   assertTrue(request.getSession().isEmpty());
+
                   response.text(request.principal().orElseThrow().getName());
                 },
-                e -> e.withExtension(auth));
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test =
             TestServer.start(
@@ -84,13 +88,7 @@ class Pac4jTest {
                     client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
 
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/me")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForAuthenticatesWithoutCreatingASessionWhenSessionsAreEnabled(test);
 
           assertEquals(200, result.statusCode());
           assertEquals("alice", result.body());
@@ -98,6 +96,18 @@ class Pac4jTest {
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForAuthenticatesWithoutCreatingASessionWhenSessionsAreEnabled(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me")
+                .timeout(Duration.ofSeconds(3))
+                .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -118,13 +128,14 @@ class Pac4jTest {
                   var existing = request.getSession();
                   if (existing.isPresent()) {
                     assertEquals("handler-owned", existing.orElseThrow().getAttribute("marker"));
+
                     response.text(identity + ":resumed");
                   } else {
                     request.getOrCreateSession().setAttribute("marker", "handler-owned");
                     response.text(identity + ":created");
                   }
                 },
-                e -> e.withExtension(auth));
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test =
             TestServer.start(
@@ -133,29 +144,24 @@ class Pac4jTest {
                     client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
 
           var created =
-              test.send(
-                  request ->
-                      request
-                          .path("/session")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
-                  HttpResponse.BodyHandlers.ofString());
+              sendCreatedSessionRequestForCreatesAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt(
+                  test);
+
           assertEquals(200, created.statusCode());
           assertEquals("alice:created", created.body());
+
           var cookies = created.headers().allValues("Set-Cookie");
+
           assertEquals(1, cookies.size());
+
           var cookie = cookies.getFirst().split(";", 2)[0];
+
           assertTrue(cookie.startsWith("JSESSIONID="));
 
           var resumed =
-              test.send(
-                  request ->
-                      request
-                          .path("/session")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA==")
-                          .header("Cookie", cookie),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResumedRequestForCreatesAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt(
+                  test, cookie);
+
           assertEquals(200, resumed.statusCode());
           assertEquals("alice:resumed", resumed.body());
           assertTrue(resumed.headers().allValues("Set-Cookie").isEmpty());
@@ -164,21 +170,36 @@ class Pac4jTest {
     }
   }
 
+  private HttpResponse<String>
+      sendCreatedSessionRequestForCreatesAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/session")
+                .timeout(Duration.ofSeconds(3))
+                .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String>
+      sendResumedRequestForCreatesAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt(
+          TestServer test, String cookie) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/session")
+                .timeout(Duration.ofSeconds(3))
+                .header("Authorization", "Basic YWxpY2U6Y29ycmVjdA==")
+                .header("Cookie", cookie),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void exposesEveryDuplicateCookieToTheAuthenticationProvider() throws Exception {
     var received = new CompletableFuture<List<String>>();
     var provider =
-        new DirectBasicAuthClient(
-            (context, supplied) -> {
-              received.complete(
-                  context.webContext().getRequestCookies().stream()
-                      .map(cookie -> cookie.getName() + "=" + cookie.getValue())
-                      .toList());
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
-              return Optional.of(supplied);
-            });
+        createProviderForExposesEveryDuplicateCookieToTheAuthenticationProvider(received);
 
     {
       var app = new Shoostr();
@@ -190,7 +211,7 @@ class Pac4jTest {
                 routes.get(
                     "/me",
                     (ignored, response) -> response.text("authenticated"),
-                    e -> e.withExtension(security)));
+                    lifecycle -> lifecycle.withExtension(security)));
 
         try (var test =
             TestServer.start(
@@ -201,14 +222,8 @@ class Pac4jTest {
           var encoded =
               Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/me")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Authorization", "Basic " + encoded)
-                          .header("Cookie", "token=first; token=second; Token=upper"),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForExposesEveryDuplicateCookieToTheAuthenticationProvider(test, encoded);
+
           assertEquals(200, result.statusCode());
           assertEquals(
               List.of("token=first", "token=second", "Token=upper"),
@@ -218,26 +233,40 @@ class Pac4jTest {
     }
   }
 
+  private DirectBasicAuthClient
+      createProviderForExposesEveryDuplicateCookieToTheAuthenticationProvider(
+          CompletableFuture<List<String>> received) {
+    return new DirectBasicAuthClient(
+        (context, supplied) -> {
+          received.complete(
+              context.webContext().getRequestCookies().stream()
+                  .map(cookie -> cookie.getName() + "=" + cookie.getValue())
+                  .toList());
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          supplied.setUserProfile(profile);
+
+          return Optional.of(supplied);
+        });
+  }
+
+  private HttpResponse<String> sendResultForExposesEveryDuplicateCookieToTheAuthenticationProvider(
+      TestServer test, String encoded) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me")
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Basic " + encoded)
+                .header("Cookie", "token=first; token=second; Token=upper"),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void preservesSecurePrefixedCookiesEmittedByTheProvider() throws Exception {
     var expectedPort = new AtomicInteger();
     var provider =
-        new DirectBasicAuthClient(
-            (context, supplied) -> {
-              assertEquals(expectedPort.get(), context.webContext().getServerPort());
-              for (String name : List.of("__Host-token", "__Secure-token")) {
-                var cookie = new Cookie(name, "token");
-                cookie.setPath("/");
-                cookie.setSecure(true);
-                cookie.setHttpOnly(true);
-                cookie.setSameSitePolicy("None");
-                context.webContext().addResponseCookie(cookie);
-              }
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
-              return Optional.of(supplied);
-            });
+        createProviderForPreservesSecurePrefixedCookiesEmittedByTheProvider(expectedPort);
 
     {
       var app = new Shoostr();
@@ -247,8 +276,9 @@ class Pac4jTest {
         app.routes()
             .path(
                 "/",
-                routes -> routes.get("/me", (ignored2, response) -> response.text("authenticated")),
-                e -> e.withExtension(auth));
+                routes ->
+                    routes.get("/me", (ignoredRequest, response) -> response.text("authenticated")),
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
           expectedPort.set(app.port());
@@ -256,13 +286,8 @@ class Pac4jTest {
           var encoded =
               Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/me")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Authorization", "Basic " + encoded),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForPreservesSecurePrefixedCookiesEmittedByTheProvider(test, encoded);
+
           assertEquals(200, result.statusCode());
           assertEquals(
               List.of(
@@ -274,22 +299,42 @@ class Pac4jTest {
     }
   }
 
+  private DirectBasicAuthClient createProviderForPreservesSecurePrefixedCookiesEmittedByTheProvider(
+      AtomicInteger expectedPort) {
+    return new DirectBasicAuthClient(
+        (context, supplied) -> {
+          assertEquals(expectedPort.get(), context.webContext().getServerPort());
+
+          for (String name : List.of("__Host-token", "__Secure-token")) {
+            var cookie = new Cookie(name, "token");
+            cookie.setPath("/");
+            cookie.setSecure(true);
+            cookie.setHttpOnly(true);
+            cookie.setSameSitePolicy("None");
+            context.webContext().addResponseCookie(cookie);
+          }
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          supplied.setUserProfile(profile);
+
+          return Optional.of(supplied);
+        });
+  }
+
+  private HttpResponse<String> sendResultForPreservesSecurePrefixedCookiesEmittedByTheProvider(
+      TestServer test, String encoded) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me")
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Basic " + encoded),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void rejectsAnExpiredProviderProfileBeforeEstablishingAPrincipal() throws Exception {
-    var provider =
-        new DirectBasicAuthClient(
-            (ignored3, supplied) -> {
-              var profile =
-                  new CommonProfile() {
-                    @Override
-                    public boolean isExpired() {
-                      return true;
-                    }
-                  };
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
-              return Optional.of(supplied);
-            });
+    var provider = expiredProfileClient();
 
     {
       var app = new Shoostr();
@@ -297,27 +342,23 @@ class Pac4jTest {
       try (Closeable appCleanup4 = app::close) {
         app.exception(
             AuthenticationRequiredException.class,
-            (ignored4, request, response) ->
+            (ignoredFailure, request, response) ->
                 response.text(request.principal().map(Object::toString).orElse("null")));
         var auth = new Pac4j(provider, "Basic");
         app.routes()
             .path(
                 "/",
-                routes -> routes.get("/me", (ignored5, response) -> response.text("private")),
-                e -> e.withExtension(auth));
+                routes -> routes.get("/me", (ignoredRequest, response) -> response.text("private")),
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
 
           var encoded =
               Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/me")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Authorization", "Basic " + encoded),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForRejectsAnExpiredProviderProfileBeforeEstablishingAPrincipal(
+                  test, encoded);
+
           assertEquals(401, result.statusCode());
           assertEquals("null", result.body());
         }
@@ -325,11 +366,45 @@ class Pac4jTest {
     }
   }
 
+  private DirectBasicAuthClient expiredProfileClient() {
+    return new DirectBasicAuthClient(
+        (ignoredCallContext, supplied) -> {
+          var profile =
+              createProfileForRejectsAnExpiredProviderProfileBeforeEstablishingAPrincipal();
+          profile.setId("alice");
+          supplied.setUserProfile(profile);
+
+          return Optional.of(supplied);
+        });
+  }
+
+  private CommonProfile
+      createProfileForRejectsAnExpiredProviderProfileBeforeEstablishingAPrincipal() {
+    return new CommonProfile() {
+      @Override
+      public boolean isExpired() {
+        return true;
+      }
+    };
+  }
+
+  private HttpResponse<String>
+      sendResultForRejectsAnExpiredProviderProfileBeforeEstablishingAPrincipal(
+          TestServer test, String encoded) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me")
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Basic " + encoded),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void mapsProviderFailuresToServerErrorsWithoutLeakingDetailsOrChallenges() throws Exception {
     var provider =
         new DirectBasicAuthClient(
-            (ignored6, ignored7) -> {
+            (ignoredCallContext, ignoredCredentials) -> {
               throw new IllegalStateException("sensitive identity-store diagnostic");
             });
 
@@ -341,21 +416,17 @@ class Pac4jTest {
         app.routes()
             .path(
                 "/",
-                routes -> routes.get("/me", (ignored8, response) -> response.text("private")),
-                e -> e.withExtension(auth));
+                routes -> routes.get("/me", (ignoredRequest, response) -> response.text("private")),
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
 
           var encoded =
               Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/me")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Authorization", "Basic " + encoded),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForMapsProviderFailuresToServerErrorsWithoutLeakingDetailsOrChallenges(
+                  test, encoded);
+
           assertEquals(500, result.statusCode());
           assertEquals("Internal Server Error", result.body());
           assertEquals(Optional.empty(), result.headers().firstValue("WWW-Authenticate"));
@@ -364,16 +435,21 @@ class Pac4jTest {
     }
   }
 
+  private HttpResponse<String>
+      sendResultForMapsProviderFailuresToServerErrorsWithoutLeakingDetailsOrChallenges(
+          TestServer test, String encoded) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me")
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Basic " + encoded),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void rejectsAmbiguousAuthorizationHeaders() throws Exception {
-    var provider =
-        new DirectBasicAuthClient(
-            (ignored9, supplied) -> {
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
-              return Optional.of(supplied);
-            });
+    var provider = permissiveAliceClient();
 
     {
       var app = new Shoostr();
@@ -383,44 +459,36 @@ class Pac4jTest {
         app.routes()
             .path(
                 "/",
-                routes -> routes.get("/me", (ignored10, response) -> response.text("private")),
-                e -> e.withExtension(auth));
+                routes -> routes.get("/me", (ignoredRequest, response) -> response.text("private")),
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
 
           var encoded =
               Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/me")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Authorization", "Basic " + encoded)
-                          .header("Authorization", "Basic " + encoded),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForRejectsAmbiguousAuthorizationHeaders(test, encoded);
+
           assertEquals(401, result.statusCode());
         }
       }
     }
   }
 
+  private HttpResponse<String> sendResultForRejectsAmbiguousAuthorizationHeaders(
+      TestServer test, String encoded) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me")
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Basic " + encoded)
+                .header("Authorization", "Basic " + encoded),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void exposesOrderedQueryAndFormValuesToTheConfiguredProvider() throws Exception {
-    var provider =
-        new DirectBasicAuthClient(
-            (context, supplied) -> {
-              var parameters = context.webContext().getRequestParameters();
-              assertArrayEquals(new String[] {"query", "form"}, parameters.get("shared"));
-              assertArrayEquals(new String[] {"query-only"}, parameters.get("query"));
-              assertArrayEquals(new String[] {"form-only"}, parameters.get("form"));
-              assertEquals(
-                  Optional.of("query"), context.webContext().getRequestParameter("shared"));
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
-              return Optional.of(supplied);
-            });
+    var provider = createProviderForExposesOrderedQueryAndFormValuesToTheConfiguredProvider();
 
     {
       var app = new Shoostr();
@@ -431,24 +499,16 @@ class Pac4jTest {
             .path(
                 "/",
                 routes ->
-                    routes.post("/me", (ignored11, response) -> response.text("authenticated")),
-                e -> e.withExtension(auth));
+                    routes.post(
+                        "/me", (ignoredRequest, response) -> response.text("authenticated")),
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
           var encoded =
               Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/me?shared=query&query=query-only")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Authorization", "Basic " + encoded)
-                          .header(
-                              "Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
-                          .method("POST")
-                          .body("shared=form&form=form-only".getBytes(StandardCharsets.UTF_8)),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForExposesOrderedQueryAndFormValuesToTheConfiguredProvider(test, encoded);
+
           assertEquals(200, result.statusCode());
           assertEquals("authenticated", result.body());
         }
@@ -456,18 +516,42 @@ class Pac4jTest {
     }
   }
 
+  private DirectBasicAuthClient
+      createProviderForExposesOrderedQueryAndFormValuesToTheConfiguredProvider() {
+    return new DirectBasicAuthClient(
+        (context, supplied) -> {
+          var parameters = context.webContext().getRequestParameters();
+
+          assertArrayEquals(new String[] {"query", "form"}, parameters.get("shared"));
+          assertArrayEquals(new String[] {"query-only"}, parameters.get("query"));
+          assertArrayEquals(new String[] {"form-only"}, parameters.get("form"));
+          assertEquals(Optional.of("query"), context.webContext().getRequestParameter("shared"));
+
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          supplied.setUserProfile(profile);
+
+          return Optional.of(supplied);
+        });
+  }
+
+  private HttpResponse<String> sendResultForExposesOrderedQueryAndFormValuesToTheConfiguredProvider(
+      TestServer test, String encoded) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me?shared=query&query=query-only")
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Basic " + encoded)
+                .header("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+                .method("POST")
+                .body("shared=form&form=form-only".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void leavesNonFormBodiesAvailableWhileExposingQueryCredentials() throws Exception {
-    var provider =
-        new DirectBasicAuthClient(
-            (context, supplied) -> {
-              assertEquals(Optional.of("query"), context.webContext().getRequestParameter("token"));
-              assertEquals(Optional.empty(), context.webContext().getRequestParameter("other"));
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
-              return Optional.of(supplied);
-            });
+    var provider = createProviderForLeavesNonFormBodiesAvailableWhileExposingQueryCredentials();
 
     {
       var app = new Shoostr();
@@ -479,22 +563,14 @@ class Pac4jTest {
                 "/",
                 routes ->
                     routes.post("/me", (request, response) -> response.text(request.bodyText())),
-                e -> e.withExtension(auth));
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
           var encoded =
               Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/me?token=query")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Authorization", "Basic " + encoded)
-                          .header("Content-Type", "text/plain")
-                          .method("POST")
-                          .body("token=body&other=form".getBytes(StandardCharsets.UTF_8)),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForLeavesNonFormBodiesAvailableWhileExposingQueryCredentials(test, encoded);
+
           assertEquals(200, result.statusCode());
           assertEquals("token=body&other=form", result.body());
         }
@@ -502,22 +578,39 @@ class Pac4jTest {
     }
   }
 
+  private DirectBasicAuthClient
+      createProviderForLeavesNonFormBodiesAvailableWhileExposingQueryCredentials() {
+    return new DirectBasicAuthClient(
+        (context, supplied) -> {
+          assertEquals(Optional.of("query"), context.webContext().getRequestParameter("token"));
+          assertEquals(Optional.empty(), context.webContext().getRequestParameter("other"));
+
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          supplied.setUserProfile(profile);
+
+          return Optional.of(supplied);
+        });
+  }
+
+  private HttpResponse<String>
+      sendResultForLeavesNonFormBodiesAvailableWhileExposingQueryCredentials(
+          TestServer test, String encoded) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me?token=query")
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Basic " + encoded)
+                .header("Content-Type", "text/plain")
+                .method("POST")
+                .body("token=body&other=form".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void exposesProviderRequestMetadataAndRemovesEmptyResponseHeaders() throws Exception {
-    var provider =
-        new DirectBasicAuthClient(
-            (context, supplied) -> {
-              assertEquals("GET", context.webContext().getRequestMethod());
-              context.webContext().setResponseHeader("X-Provider", "present");
-              assertEquals(
-                  Optional.of("present"), context.webContext().getResponseHeader("X-Provider"));
-              context.webContext().setResponseHeader("X-Provider", "");
-              assertEquals(Optional.empty(), context.webContext().getResponseHeader("X-Provider"));
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
-              return Optional.of(supplied);
-            });
+    var provider = createProviderForExposesProviderRequestMetadataAndRemovesEmptyResponseHeaders();
 
     {
       var app = new Shoostr();
@@ -528,20 +621,16 @@ class Pac4jTest {
             .path(
                 "/",
                 routes ->
-                    routes.get("/me", (ignored12, response) -> response.text("authenticated")),
-                e -> e.withExtension(auth));
+                    routes.get("/me", (ignoredRequest, response) -> response.text("authenticated")),
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
           var encoded =
               Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/me")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Authorization", "Basic " + encoded),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForExposesProviderRequestMetadataAndRemovesEmptyResponseHeaders(
+                  test, encoded);
+
           assertEquals(200, result.statusCode());
           assertTrue(result.headers().allValues("X-Provider").isEmpty());
         }
@@ -549,25 +638,44 @@ class Pac4jTest {
     }
   }
 
+  private DirectBasicAuthClient
+      createProviderForExposesProviderRequestMetadataAndRemovesEmptyResponseHeaders() {
+    return new DirectBasicAuthClient(
+        (context, supplied) -> {
+          assertEquals("GET", context.webContext().getRequestMethod());
+
+          context.webContext().setResponseHeader("X-Provider", "present");
+
+          assertEquals(
+              Optional.of("present"), context.webContext().getResponseHeader("X-Provider"));
+
+          context.webContext().setResponseHeader("X-Provider", "");
+
+          assertEquals(Optional.empty(), context.webContext().getResponseHeader("X-Provider"));
+
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          supplied.setUserProfile(profile);
+
+          return Optional.of(supplied);
+        });
+  }
+
+  private HttpResponse<String>
+      sendResultForExposesProviderRequestMetadataAndRemovesEmptyResponseHeaders(
+          TestServer test, String encoded) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me")
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Basic " + encoded),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void supportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits() throws Exception {
-    var provider =
-        new ParameterClient(
-            "token",
-            (Authenticator)
-                (ignored13, supplied) -> {
-                  var credentials = (TokenCredentials) supplied;
-                  if (!"allowed".equals(credentials.getToken())) {
-                    return Optional.empty();
-                  }
-
-                  var profile = new CommonProfile();
-                  profile.setId("alice");
-                  credentials.setUserProfile(profile);
-                  return Optional.of(credentials);
-                });
-    provider.setSupportPostRequest(true);
-    provider.setSupportGetRequest(false);
+    var provider = formClient();
 
     var configuredOptions = new Options();
     configuredOptions.setMaxRequestBytes(16);
@@ -578,14 +686,8 @@ class Pac4jTest {
 
     {
       var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+          createAppForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(
+              configuredOptions);
 
       try (Closeable appCleanup10 = app::close;
           var client = HttpClient.newHttpClient()) {
@@ -595,44 +697,83 @@ class Pac4jTest {
                 "/",
                 routes ->
                     routes.post("/me", (request, response) -> response.text(request.bodyText())),
-                e -> e.withExtension(auth));
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/me")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Content-Type", "application/x-www-form-urlencoded")
-                          .method("POST")
-                          .body("token=allowed".getBytes(StandardCharsets.UTF_8)),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("token=allowed", result.body());
           // An independent publisher preserves the unknown-length body limit under test.
           var oversized =
-              client.send(
-                  HttpRequest.newBuilder(test.baseUri().resolve("/me"))
-                      .timeout(Duration.ofSeconds(5))
-                      .header("Content-Type", "application/x-www-form-urlencoded")
-                      .POST(
-                          HttpRequest.BodyPublishers.ofInputStream(
-                              () ->
-                                  new ByteArrayInputStream(
-                                      ("token=" + "x".repeat(32))
-                                          .getBytes(StandardCharsets.UTF_8))))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString());
+              sendOversizedRequestForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(
+                  client, test);
+
           assertEquals(413, oversized.statusCode());
         }
       }
     }
   }
 
+  private ParameterClient formClient() {
+    var client = new ParameterClient("token", (Authenticator) this::authenticateFormToken);
+    configureFormClient(client);
+
+    return client;
+  }
+
+  private void configureFormClient(ParameterClient client) {
+    client.setSupportPostRequest(true);
+    client.setSupportGetRequest(false);
+  }
+
+  private Shoostr createAppForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
+  private HttpResponse<String>
+      sendResultForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me")
+                .timeout(Duration.ofSeconds(5))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .method("POST")
+                .body("token=allowed".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String>
+      sendOversizedRequestForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(
+          HttpClient client, TestServer test) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(test.baseUri().resolve("/me"))
+            .timeout(Duration.ofSeconds(5))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .POST(
+                HttpRequest.BodyPublishers.ofInputStream(
+                    () ->
+                        new ByteArrayInputStream(
+                            ("token=" + "x".repeat(32)).getBytes(StandardCharsets.UTF_8))))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void rejectsMissingHeaderCredentialsBeforeReadingTheRequestBody() throws Exception {
-    var provider = new DirectBasicAuthClient((ignored14, ignored15) -> Optional.empty());
+    var provider =
+        new DirectBasicAuthClient((ignoredCallContext, ignoredCredentials) -> Optional.empty());
 
     {
       var app =
@@ -648,7 +789,7 @@ class Pac4jTest {
                 routes ->
                     routes.post(
                         "/upload", (request, response) -> response.text(request.bodyText())),
-                e -> e.withExtension(auth));
+                lifecycle -> lifecycle.withExtension(auth));
         app.start();
 
         try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
@@ -669,6 +810,7 @@ class Pac4jTest {
           var reader =
               new BufferedReader(
                   new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+
           assertEquals("HTTP/1.1 401 Unauthorized", reader.readLine());
         }
       }
@@ -677,14 +819,7 @@ class Pac4jTest {
 
   @Test
   void rejectsForgedHttpsAbsoluteTargetOnPlainConnectionWhenTlsIsRequired() throws Exception {
-    var provider =
-        new DirectBasicAuthClient(
-            (ignored16, supplied) -> {
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
-              return Optional.of(supplied);
-            });
+    var provider = permissiveAliceClient();
 
     {
       var app =
@@ -694,12 +829,16 @@ class Pac4jTest {
 
       try (Closeable appCleanup12 = app::close) {
         var auth =
-            new Pac4j(provider, "Basic", (context, ignored17, ignored18) -> context.isSecure());
+            new Pac4j(
+                provider,
+                "Basic",
+                (context, ignoredSessionStore, ignoredList) -> context.isSecure());
         app.routes()
             .path(
                 "/",
-                routes -> routes.get("/secure", (ignored19, response) -> response.text("private")),
-                e -> e.withExtension(auth));
+                routes ->
+                    routes.get("/secure", (ignoredRequest, response) -> response.text("private")),
+                lifecycle -> lifecycle.withExtension(auth));
         app.start();
 
         var encoded =
@@ -719,6 +858,7 @@ class Pac4jTest {
           var reader =
               new BufferedReader(
                   new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+
           assertEquals("HTTP/1.1 403 Forbidden", reader.readLine());
         }
       }
@@ -745,14 +885,7 @@ class Pac4jTest {
       Files.copy(input, keyStorePath);
     }
 
-    var provider =
-        new DirectBasicAuthClient(
-            (ignored20, supplied) -> {
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
-              return Optional.of(supplied);
-            });
+    var provider = permissiveAliceClient();
 
     {
       var app = new Shoostr();
@@ -764,25 +897,23 @@ class Pac4jTest {
               server.setKeyStorePassword("changeit");
             });
         var auth =
-            new Pac4j(provider, "Basic", (context, ignored21, ignored22) -> context.isSecure());
+            new Pac4j(
+                provider,
+                "Basic",
+                (context, ignoredSessionStore, ignoredList) -> context.isSecure());
         app.routes()
             .path(
                 "/",
-                routes -> routes.get("/secure", (ignored23, response) -> response.text("private")),
-                e -> e.withExtension(auth));
+                routes ->
+                    routes.get("/secure", (ignoredRequest, response) -> response.text("private")),
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app, client -> client.sslContext(tls))) {
 
           var encoded =
               Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/secure")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Authorization", "Basic " + encoded),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForAuthorizesActualTlsConnectionWhenTlsIsRequired(test, encoded);
+
           assertEquals(200, result.statusCode());
           assertEquals("private", result.body());
         }
@@ -790,21 +921,32 @@ class Pac4jTest {
     }
   }
 
+  private DirectBasicAuthClient permissiveAliceClient() {
+    return new DirectBasicAuthClient(
+        (ignoredCallContext, supplied) -> {
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          supplied.setUserProfile(profile);
+
+          return Optional.of(supplied);
+        });
+  }
+
+  private HttpResponse<String> sendResultForAuthorizesActualTlsConnectionWhenTlsIsRequired(
+      TestServer test, String encoded) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/secure")
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Basic " + encoded),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void keepsPrincipalsIsolatedAcrossConcurrentRequestsAndPublicRoutes() throws Exception {
     var provider =
-        new DirectBasicAuthClient(
-            (ignored24, supplied) -> {
-              var credentials = (UsernamePasswordCredentials) supplied;
-              if (!"test-password".equals(credentials.getPassword())) {
-                return Optional.empty();
-              }
-
-              var profile = new CommonProfile();
-              profile.setId(credentials.getUsername());
-              credentials.setUserProfile(profile);
-              return Optional.of(credentials);
-            });
+        createProviderForKeepsPrincipalsIsolatedAcrossConcurrentRequestsAndPublicRoutes();
 
     {
       var app = new Shoostr();
@@ -820,7 +962,7 @@ class Pac4jTest {
                         "/me",
                         (request, response) ->
                             response.text(request.principal().orElseThrow().getName())),
-                e -> e.withExtension(auth));
+                lifecycle -> lifecycle.withExtension(auth));
         app.routes()
             .get(
                 "/public",
@@ -850,22 +992,47 @@ class Pac4jTest {
           }
           for (int index = 0; index < requests.size(); index++) {
             var result = requests.get(index).get(5, TimeUnit.SECONDS);
+
             assertEquals(200, result.statusCode());
             assertEquals("user-" + index, result.body());
           }
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/public")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Authorization", "garbage"),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForKeepsPrincipalsIsolatedAcrossConcurrentRequestsAndPublicRoutes(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("null", result.body());
         }
       }
     }
+  }
+
+  private DirectBasicAuthClient
+      createProviderForKeepsPrincipalsIsolatedAcrossConcurrentRequestsAndPublicRoutes() {
+    return new DirectBasicAuthClient(
+        (ignoredCallContext, supplied) -> {
+          var credentials = (UsernamePasswordCredentials) supplied;
+          if (!"test-password".equals(credentials.getPassword())) {
+            return Optional.empty();
+          }
+
+          var profile = new CommonProfile();
+          profile.setId(credentials.getUsername());
+          credentials.setUserProfile(profile);
+
+          return Optional.of(credentials);
+        });
+  }
+
+  private HttpResponse<String>
+      sendResultForKeepsPrincipalsIsolatedAcrossConcurrentRequestsAndPublicRoutes(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/public")
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "garbage"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -896,29 +1063,18 @@ class Pac4jTest {
                         "/me",
                         (request, response) ->
                             response.text(request.principal().orElseThrow().getName())),
-                e -> e.withExtension(auth));
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
 
-          var accepted =
-              test.send(
-                  request ->
-                      request
-                          .path("/me")
-                          .timeout(Duration.ofSeconds(5))
-                          .header("Authorization", "Bearer " + valid),
-                  HttpResponse.BodyHandlers.ofString());
+          var accepted = sendBearerRequest(test, valid);
+
           assertEquals(200, accepted.statusCode());
           assertEquals("alice", accepted.body());
+
           for (var token : List.of(wrongKey, unsigned, expired, "malformed")) {
-            var rejected =
-                test.send(
-                    request ->
-                        request
-                            .path("/me")
-                            .timeout(Duration.ofSeconds(5))
-                            .header("Authorization", "Bearer " + token),
-                    HttpResponse.BodyHandlers.ofString());
+            var rejected = sendBearerRequest(test, token);
+
             assertEquals(401, rejected.statusCode());
             assertEquals("Bearer", rejected.headers().firstValue("WWW-Authenticate").orElseThrow());
           }
@@ -927,24 +1083,25 @@ class Pac4jTest {
     }
   }
 
+  private HttpResponse<String> sendBearerRequest(TestServer test, String token)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me")
+                .timeout(Duration.ofSeconds(5))
+                .header("Authorization", "Bearer " + token),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void distinguishesMissingAndInvalidCredentialsFromDeniedPermissions() throws Exception {
-    var provider =
-        new DirectBasicAuthClient(
-            (ignored25, supplied) -> {
-              var credentials = (UsernamePasswordCredentials) supplied;
-              if (!"alice".equals(credentials.getUsername())
-                  || !"correct".equals(credentials.getPassword())) {
-                return Optional.empty();
-              }
-
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              credentials.setUserProfile(profile);
-              return Optional.of(credentials);
-            });
+    var provider = passwordClient();
     var security =
-        new Pac4j(provider, "Basic realm=\"api\"", (ignored26, ignored27, ignored28) -> false);
+        new Pac4j(
+            provider,
+            "Basic realm=\"api\"",
+            (ignoredWebContext, ignoredSessionStore, ignoredList) -> false);
 
     {
       var app = new Shoostr();
@@ -953,26 +1110,18 @@ class Pac4jTest {
         app.routes()
             .path(
                 "/",
-                routes -> routes.get("/private", (ignored29, response) -> response.text("secret")),
-                e -> e.withExtension(security));
+                routes ->
+                    routes.get("/private", (ignoredRequest, response) -> response.text("secret")),
+                lifecycle -> lifecycle.withExtension(security));
 
         try (var test = TestServer.start(app)) {
 
           for (var credentials : new String[] {"", "alice:wrong", "alice:correct"}) {
 
             var result =
-                test.send(
-                    request -> {
-                      request.path("/private").timeout(Duration.ofSeconds(5));
-                      if (!credentials.isEmpty()) {
-                        request.header(
-                            "Authorization",
-                            "Basic "
-                                + Base64.getEncoder()
-                                    .encodeToString(credentials.getBytes(StandardCharsets.UTF_8)));
-                      }
-                    },
-                    HttpResponse.BodyHandlers.ofString());
+                sendResultForDistinguishesMissingAndInvalidCredentialsFromDeniedPermissions(
+                    test, credentials);
+
             assertEquals("alice:correct".equals(credentials) ? 403 : 401, result.statusCode());
             assertEquals(
                 "alice:correct".equals(credentials)
@@ -985,22 +1134,26 @@ class Pac4jTest {
     }
   }
 
+  private HttpResponse<String>
+      sendResultForDistinguishesMissingAndInvalidCredentialsFromDeniedPermissions(
+          TestServer test, String credentials) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/private").timeout(Duration.ofSeconds(5));
+          if (!credentials.isEmpty()) {
+            request.header(
+                "Authorization",
+                "Basic "
+                    + Base64.getEncoder()
+                        .encodeToString(credentials.getBytes(StandardCharsets.UTF_8)));
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void validatesCredentialsWithPac4jBeforePropagatingThePrincipal() throws Exception {
-    var provider =
-        new DirectBasicAuthClient(
-            (ignored30, supplied) -> {
-              var credentials = (UsernamePasswordCredentials) supplied;
-              if (!"alice".equals(credentials.getUsername())
-                  || !"correct".equals(credentials.getPassword())) {
-                return Optional.empty();
-              }
-
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              credentials.setUserProfile(profile);
-              return Optional.of(credentials);
-            });
+    var provider = passwordClient();
     var security = new Pac4j(provider, "Basic realm=\"api\"");
 
     {
@@ -1015,23 +1168,12 @@ class Pac4jTest {
                         "/me",
                         (request, response) ->
                             response.text(request.principal().orElseThrow().getName())),
-                e -> e.withExtension(security));
+                lifecycle -> lifecycle.withExtension(security));
 
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/me")
-                          .timeout(Duration.ofSeconds(5))
-                          .header(
-                              "Authorization",
-                              "Basic "
-                                  + Base64.getEncoder()
-                                      .encodeToString(
-                                          "alice:correct".getBytes(StandardCharsets.UTF_8))),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForValidatesCredentialsWithPac4jBeforePropagatingThePrincipal(test);
 
           assertEquals(200, result.statusCode());
           assertEquals("alice", result.body());
@@ -1040,9 +1182,42 @@ class Pac4jTest {
     }
   }
 
+  private DirectBasicAuthClient passwordClient() {
+    return new DirectBasicAuthClient(
+        (ignoredCallContext, supplied) -> {
+          var credentials = (UsernamePasswordCredentials) supplied;
+          if (!"alice".equals(credentials.getUsername())
+              || !"correct".equals(credentials.getPassword())) {
+            return Optional.empty();
+          }
+
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          credentials.setUserProfile(profile);
+
+          return Optional.of(credentials);
+        });
+  }
+
+  private HttpResponse<String>
+      sendResultForValidatesCredentialsWithPac4jBeforePropagatingThePrincipal(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/me")
+                .timeout(Duration.ofSeconds(5))
+                .header(
+                    "Authorization",
+                    "Basic "
+                        + Base64.getEncoder()
+                            .encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8))),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   private static DirectBasicAuthClient authenticatedAliceClient() {
     return new DirectBasicAuthClient(
-        (ignored31, supplied) -> {
+        (ignoredCallContext, supplied) -> {
           if (!(supplied instanceof UsernamePasswordCredentials credentials)
               || !"alice".equals(credentials.getUsername())
               || !"correct".equals(credentials.getPassword())) {
@@ -1052,7 +1227,21 @@ class Pac4jTest {
           var profile = new CommonProfile();
           profile.setId("alice");
           credentials.setUserProfile(profile);
+
           return Optional.of(credentials);
         });
+  }
+
+  private Optional<Credentials> authenticateFormToken(CallContext context, Credentials supplied) {
+    var credentials = (TokenCredentials) supplied;
+    if (!"allowed".equals(credentials.getToken())) {
+      return Optional.empty();
+    }
+
+    var profile = new CommonProfile();
+    profile.setId("alice");
+    credentials.setUserProfile(profile);
+
+    return Optional.of(credentials);
   }
 }

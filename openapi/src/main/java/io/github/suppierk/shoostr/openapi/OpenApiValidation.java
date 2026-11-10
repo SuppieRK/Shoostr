@@ -9,19 +9,7 @@ import tools.jackson.databind.JsonNode;
 /** Structural checks on generated documents, not handler output, application models or prose. */
 final class OpenApiValidation {
   private static final Set<String> DATA = Set.of("example", "examples", "default", "enum", "const");
-  private static final Set<String> DICTIONARIES =
-      Set.of(
-          "schemas",
-          "properties",
-          "patternProperties",
-          "dependentSchemas",
-          "$defs",
-          "definitions",
-          "paths",
-          "responses",
-          "headers",
-          "content",
-          "securitySchemes");
+  private static final Set<String> DICTIONARIES = dictionaryFields();
 
   /** Prevents instantiation of stateless document checks. */
   private OpenApiValidation() {}
@@ -41,19 +29,28 @@ final class OpenApiValidation {
       throw new IllegalArgumentException("OpenAPI security schemes require a type");
     }
 
-    boolean valid =
-        switch (scheme.getType()) {
-          case HTTP -> scheme.getScheme() != null && !scheme.getScheme().isBlank();
-          case APIKEY ->
-              scheme.getName() != null && !scheme.getName().isBlank() && scheme.getIn() != null;
-          case OAUTH2 -> scheme.getFlows() != null;
-          case OPENIDCONNECT ->
-              scheme.getOpenIdConnectUrl() != null && !scheme.getOpenIdConnectUrl().isBlank();
-          case MUTUALTLS -> true;
-        };
+    boolean valid = isValidScheme(scheme);
     if (!valid) {
       throw new IllegalArgumentException("Missing required fields in OpenAPI security scheme");
     }
+  }
+
+  /**
+   * Checks the fields required by the selected OpenAPI security-scheme type.
+   *
+   * @param scheme security scheme to validate
+   * @return whether the security scheme supplies its required fields
+   */
+  private static boolean isValidScheme(SecurityScheme scheme) {
+    return switch (scheme.getType()) {
+      case HTTP -> scheme.getScheme() != null && !scheme.getScheme().isBlank();
+      case APIKEY ->
+          scheme.getName() != null && !scheme.getName().isBlank() && scheme.getIn() != null;
+      case OAUTH2 -> scheme.getFlows() != null;
+      case OPENIDCONNECT ->
+          scheme.getOpenIdConnectUrl() != null && !scheme.getOpenIdConnectUrl().isBlank();
+      case MUTUALTLS -> true;
+    };
   }
 
   /**
@@ -115,6 +112,26 @@ final class OpenApiValidation {
         references(value, root, !dictionary && DICTIONARIES.contains(name));
       }
     }
+  }
+
+  /**
+   * Lists schema members whose values are dictionaries rather than schema keywords.
+   *
+   * @return immutable schema dictionary-field names
+   */
+  private static Set<String> dictionaryFields() {
+    return Set.of(
+        "schemas",
+        "properties",
+        "patternProperties",
+        "dependentSchemas",
+        "$defs",
+        "definitions",
+        "paths",
+        "responses",
+        "headers",
+        "content",
+        "securitySchemes");
   }
 
   /**

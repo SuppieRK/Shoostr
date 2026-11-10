@@ -73,18 +73,7 @@ public class StreamBufferBenchmark {
 
     options = defaults;
     growthOptions = configuredOptions;
-    var inbound =
-        (Request)
-            Proxy.newProxyInstance(
-                StreamBufferBenchmark.class.getClassLoader(),
-                new Class<?>[] {Request.class},
-                (ignored, method, ignored2) ->
-                    switch (method.getName()) {
-                      case "getMethod" -> "GET";
-                      case "getHeaders" -> HttpFields.EMPTY;
-                      case "addHttpStreamWrapper" -> null;
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
+    var inbound = nativeRequest();
     nativeRequest = inbound;
     headers = HttpFields.build();
     delegate =
@@ -92,7 +81,7 @@ public class StreamBufferBenchmark {
             Proxy.newProxyInstance(
                 StreamBufferBenchmark.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (ignored3, method, arguments) ->
+                (ignoredObject, method, arguments) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "getHeaders" -> headers;
@@ -101,11 +90,31 @@ public class StreamBufferBenchmark {
                         writes++;
                         submitted = (ByteBuffer) arguments[1];
                         bytesWritten += submitted.remaining();
+
                         ((Callback) arguments[2]).succeeded();
                         yield null;
                       }
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
+  }
+
+  /**
+   * Creates the native request fixture used by the benchmark.
+   *
+   * @return native request fixture
+   */
+  private Request nativeRequest() {
+    return (Request)
+        Proxy.newProxyInstance(
+            StreamBufferBenchmark.class.getClassLoader(),
+            new Class<?>[] {Request.class},
+            (ignored, method, ignoredObjectValues) ->
+                switch (method.getName()) {
+                  case "getMethod" -> "GET";
+                  case "getHeaders" -> HttpFields.EMPTY;
+                  case "addHttpStreamWrapper" -> null;
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
   }
 
   /**
@@ -129,9 +138,13 @@ public class StreamBufferBenchmark {
   public int smallExplicitFlush() throws IOException {
     var response = freshResponse(options);
     var stream = response.startStream(CONTENT_TYPE);
+
     stream.write(small);
+
     stream.flush();
+
     response.complete();
+
     return bytesWritten;
   }
 
@@ -145,12 +158,15 @@ public class StreamBufferBenchmark {
   public int repeatedExplicitFlush() throws IOException {
     var response = freshResponse(options);
     var stream = response.startStream(CONTENT_TYPE);
+
     for (int index = 0; index < CHUNKS; index++) {
       stream.write(kilobyte);
+
       stream.flush();
     }
 
     response.complete();
+
     return bytesWritten;
   }
 
@@ -164,8 +180,11 @@ public class StreamBufferBenchmark {
   public int largeWrite() throws IOException {
     var response = freshResponse(options);
     var stream = response.startStream(CONTENT_TYPE);
+
     stream.write(large);
+
     response.complete();
+
     return bytesWritten;
   }
 
@@ -184,6 +203,7 @@ public class StreamBufferBenchmark {
     }
 
     response.complete();
+
     return bytesWritten;
   }
 
@@ -206,6 +226,7 @@ public class StreamBufferBenchmark {
     }
 
     response.complete();
+
     return bytesWritten;
   }
 
@@ -219,6 +240,7 @@ public class StreamBufferBenchmark {
     bytesWritten = 0;
     writes = 0;
     headers.clear();
+
     return io.github.suppierk.shoostr.Request.create(
             nativeRequest, delegate, selected, Callback.NOOP)
         .response();

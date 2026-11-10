@@ -35,6 +35,7 @@ class UploadEqualityTest {
     var other = new Upload(part("same.txt", "payload"), () -> {});
     var uploads = new HashSet<Upload>();
     var initialHash = upload.hashCode();
+
     assertTrue(uploads.add(upload));
     assertTrue(uploads.add(other));
     assertNotEquals(upload, other);
@@ -47,6 +48,7 @@ class UploadEqualityTest {
       }
 
       var target = directory.resolve("saved.txt");
+
       assertEquals(target, upload.persistTo(target));
       assertEquals("payload", Files.readString(target));
     } finally {

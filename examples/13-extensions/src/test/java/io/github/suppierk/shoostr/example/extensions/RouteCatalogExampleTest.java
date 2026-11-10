@@ -20,6 +20,7 @@ class RouteCatalogExampleTest {
     try (var test = TestServer.start(RouteCatalogExample.application(() -> false))) {
       var response =
           test.send(request -> request.path("/catalog"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals(
           """
@@ -37,11 +38,14 @@ class RouteCatalogExampleTest {
     try (var test = TestServer.start(RouteCatalogExample.application(() -> false))) {
       var health =
           test.send(request -> request.path("/health"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, health.statusCode());
       assertEquals("ok", health.body());
       assertEquals("absent", health.headers().firstValue("X-Route-Catalog").orElse("absent"));
+
       var catalog =
           test.send(request -> request.path("/catalog"), HttpResponse.BodyHandlers.ofString());
+
       assertFalse(catalog.body().contains("/health"));
     }
   }
@@ -59,7 +63,9 @@ class RouteCatalogExampleTest {
         try (Closeable secondCleanup = second::close) {
 
           first.withExtension(catalog);
+
           assertThrows(IllegalStateException.class, () -> second.withExtension(catalog));
+
           first
               .routes()
               .get(
@@ -84,19 +90,19 @@ class RouteCatalogExampleTest {
     var checks = new AtomicInteger();
 
     try (var test =
-        TestServer.start(
-            RouteCatalogExample.application(
-                () -> {
-                  checks.incrementAndGet();
-                  return enabled.get();
-                }))) {
+        openTestForDescribesConditionalAvailabilityWithoutEvaluatingItUntilARequestMatches(
+            checks, enabled)) {
       assertEquals(0, checks.get());
+
       var before =
           test.send(request -> request.path("/catalog"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(0, checks.get());
       assertEquals(404, test.send(request -> request.path("/preview")).statusCode());
       assertEquals(1, checks.get());
+
       enabled.set(true);
+
       assertEquals(200, test.send(request -> request.path("/preview")).statusCode());
       assertEquals(2, checks.get());
       assertEquals(
@@ -104,6 +110,18 @@ class RouteCatalogExampleTest {
           test.send(request -> request.path("/catalog"), HttpResponse.BodyHandlers.ofString())
               .body());
     }
+  }
+
+  private TestServer
+      openTestForDescribesConditionalAvailabilityWithoutEvaluatingItUntilARequestMatches(
+          AtomicInteger checks, AtomicBoolean enabled) throws Exception {
+    return TestServer.start(
+        RouteCatalogExample.application(
+            () -> {
+              checks.incrementAndGet();
+
+              return enabled.get();
+            }));
   }
 
   @Test
@@ -119,15 +137,18 @@ class RouteCatalogExampleTest {
         app.routes()
             .get(
                 "/snapshot",
-                (ignored2, response) -> response.text("ok"),
+                (ignoredRequest, response) -> response.text("ok"),
                 lifecycle -> {
                   var description = lifecycle.withExtension(catalog);
+
                   assertThrows(IllegalArgumentException.class, () -> description.summary(" "));
+
                   retained.set(description.summary("Original"));
                 });
 
         try (var test = TestServer.start(app)) {
           retained.get().summary("Later change");
+
           assertEquals(200, test.send(request -> request.path("/snapshot")).statusCode());
           assertEquals("GET /snapshot — Original", catalog.document());
         }

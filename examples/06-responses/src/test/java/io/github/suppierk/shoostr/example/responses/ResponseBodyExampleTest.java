@@ -30,6 +30,7 @@ class ResponseBodyExampleTest {
 
         try (var test = TestServer.start(app)) {
           var response = test.send(request -> request.path("/empty-check"));
+
           assertEquals(status, response.statusCode());
           assertArrayEquals(new byte[0], response.body());
         }
@@ -49,13 +50,14 @@ class ResponseBodyExampleTest {
         app.routes()
             .get(
                 "/invalid-check",
-                (ignored2, response) -> {
+                (ignoredRequest, response) -> {
                   response.status(status).text("must not escape");
                   staged.set(true);
                 });
 
         try (var test = TestServer.start(app)) {
           var response = test.send(request -> request.path("/invalid-check"));
+
           assertTrue(staged.get());
           assertEquals(500, response.statusCode());
           assertArrayEquals(
@@ -76,7 +78,7 @@ class ResponseBodyExampleTest {
         app.routes()
             .get(
                 "/bounded-check",
-                (ignored3, response) -> {
+                (ignoredRequest, response) -> {
                   response.text("kept");
                   if (accepted) {
                     response.body(MediaType.APPLICATION_OCTET_STREAM, new byte[size]);
@@ -89,6 +91,7 @@ class ResponseBodyExampleTest {
 
         try (var test = TestServer.start(app)) {
           var response = test.send(request -> request.path("/bounded-check"));
+
           assertEquals(200, response.statusCode());
           assertArrayEquals(
               accepted ? new byte[size] : new byte[] {'k', 'e', 'p', 't'}, response.body());
@@ -109,15 +112,17 @@ class ResponseBodyExampleTest {
         app.routes()
             .get(
                 "/copy-check",
-                (ignored4, response) -> {
+                (ignoredRequest, response) -> {
                   var bytes = new byte[] {'o', 'k'};
                   response.body(MediaType.TEXT_PLAIN, bytes);
                   bytes[0] = 'n';
+
                   assertFalse(response.isCommitted());
                 });
 
         try (var test = TestServer.start(app)) {
           var response = test.send(request -> request.path("/copy-check"));
+
           assertEquals(200, response.statusCode());
           assertArrayEquals(new byte[] {'o', 'k'}, response.body());
         }
@@ -130,6 +135,7 @@ class ResponseBodyExampleTest {
 
     try (var test = TestServer.start(ResponseBodyExample.application())) {
       var response = test.send(request -> request.path("/messages").method("DELETE"));
+
       assertEquals(204, response.statusCode());
       assertArrayEquals(new byte[0], response.body());
     }
@@ -141,6 +147,7 @@ class ResponseBodyExampleTest {
     try (var test = TestServer.start(ResponseBodyExample.application())) {
       var get = test.send(request -> request.path("/message"));
       var head = test.send(request -> request.path("/message").method("HEAD"));
+
       assertEquals(200, get.statusCode());
       assertArrayEquals(new byte[] {'c', 'a', 'f', (byte) 0xc3, (byte) 0xa9}, get.body());
       assertEquals(200, head.statusCode());
@@ -156,6 +163,7 @@ class ResponseBodyExampleTest {
 
     try (var test = TestServer.start(ResponseBodyExample.application())) {
       var response = test.send(request -> request.path("/latin1"));
+
       assertEquals(200, response.statusCode());
       assertEquals(
           "text/plain; charset=ISO-8859-1",
@@ -169,6 +177,7 @@ class ResponseBodyExampleTest {
 
     try (var test = TestServer.start(ResponseBodyExample.application())) {
       var response = test.send(request -> request.path("/bytes"));
+
       assertEquals(200, response.statusCode());
       assertEquals(
           "application/octet-stream", response.headers().firstValue("Content-Type").orElseThrow());
@@ -181,6 +190,7 @@ class ResponseBodyExampleTest {
 
     try (var test = TestServer.start(ResponseBodyExample.application())) {
       var response = test.send(request -> request.path("/messages").method("POST"));
+
       assertEquals(201, response.statusCode());
       assertEquals(
           "text/plain; charset=utf-8", response.headers().firstValue("Content-Type").orElseThrow());

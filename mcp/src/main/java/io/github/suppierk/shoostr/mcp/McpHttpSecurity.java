@@ -60,6 +60,7 @@ public record McpHttpSecurity(
         Set.copyOf(Objects.requireNonNull(allowedOrigins)).stream()
             .map(McpHttpSecurity::origin)
             .collect(Collectors.toUnmodifiableSet());
+
     Objects.requireNonNull(identity);
     Objects.requireNonNull(authorize);
     if (resourceMetadata != null) {
@@ -128,6 +129,7 @@ public record McpHttpSecurity(
     scheme = scheme.toLowerCase(Locale.ROOT);
     var port = uri.getPort();
     var defaultPort = HTTPS.equals(scheme) ? 443 : 80;
+
     return scheme
         + "://"
         + uri.getHost().toLowerCase(Locale.ROOT)

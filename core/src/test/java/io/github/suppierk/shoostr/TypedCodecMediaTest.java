@@ -46,6 +46,7 @@ class TypedCodecMediaTest {
               test.send(
                   request -> request.path("/representation").header("Accept", accept),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("application/json".equals(accept) ? "\"hello\"" : "hello", result.body());
           assertEquals(accept, result.headers().firstValue("Content-Type").orElseThrow());
@@ -59,14 +60,7 @@ class TypedCodecMediaTest {
   @ValueSource(strings = {"string", "mediaType", "text"})
   void bypassesCodecForExplicitBytesAndText(String operation) throws Exception {
     var writes = new AtomicInteger();
-    var codec =
-        new TestCodec() {
-          @Override
-          public byte[] write(Object value) throws Exception {
-            writes.incrementAndGet();
-            return super.write(value);
-          }
-        };
+    var codec = createCodecForBypassesCodecForExplicitBytesAndText(writes);
     var bytes = "plain".getBytes(StandardCharsets.UTF_8);
 
     {
@@ -77,7 +71,7 @@ class TypedCodecMediaTest {
             .routes()
             .get(
                 "/raw",
-                (ignored2, response) -> {
+                (ignoredTypedRequest, response) -> {
                   switch (operation) {
                     case "string" -> response.body("text/plain", bytes);
                     case "mediaType" -> response.body(MediaType.TEXT_PLAIN, bytes);
@@ -88,6 +82,7 @@ class TypedCodecMediaTest {
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/raw"));
+
           assertEquals(200, result.statusCode());
           assertArrayEquals(bytes, result.body());
           assertEquals(
@@ -99,18 +94,22 @@ class TypedCodecMediaTest {
     }
   }
 
+  private TestCodec createCodecForBypassesCodecForExplicitBytesAndText(AtomicInteger writes) {
+    return new TestCodec() {
+      @Override
+      public byte[] write(Object value) throws Exception {
+        writes.incrementAndGet();
+
+        return super.write(value);
+      }
+    };
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {true, false})
   void explicitlyReplacesExistingMediaTypeForCodecOutput(boolean typedMedia) throws Exception {
     var writes = new AtomicInteger();
-    var codec =
-        new TestCodec() {
-          @Override
-          public byte[] write(Object value) throws Exception {
-            writes.incrementAndGet();
-            return super.write(value);
-          }
-        };
+    var codec = createCodecForExplicitlyReplacesExistingMediaTypeForCodecOutput(writes);
 
     {
       var app = new Shoostr();
@@ -120,7 +119,7 @@ class TypedCodecMediaTest {
             .routes()
             .get(
                 "/encoded",
-                (ignored3, response) -> {
+                (ignoredTypedRequest, response) -> {
                   response.text("old");
                   if (typedMedia) {
                     response.body(MediaType.APPLICATION_JSON, "Alice");
@@ -132,6 +131,7 @@ class TypedCodecMediaTest {
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/encoded"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals("\"Alice\"", result.body());
           assertEquals(
               "application/json", result.headers().firstValue("Content-Type").orElseThrow());
@@ -139,6 +139,18 @@ class TypedCodecMediaTest {
         }
       }
     }
+  }
+
+  private TestCodec createCodecForExplicitlyReplacesExistingMediaTypeForCodecOutput(
+      AtomicInteger writes) {
+    return new TestCodec() {
+      @Override
+      public byte[] write(Object value) throws Exception {
+        writes.incrementAndGet();
+
+        return super.write(value);
+      }
+    };
   }
 
   @Test
@@ -151,12 +163,13 @@ class TypedCodecMediaTest {
             .routes()
             .get(
                 "/charset",
-                (ignored4, response) ->
+                (ignoredTypedRequest, response) ->
                     response.body(
                         MediaType.TEXT_PLAIN.withCharset(StandardCharsets.ISO_8859_1), "é"));
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/charset"));
+
           assertArrayEquals("\"é\"".getBytes(StandardCharsets.UTF_8), result.body());
           assertEquals(
               "text/plain; charset=ISO-8859-1",
@@ -169,18 +182,7 @@ class TypedCodecMediaTest {
   @Test
   @SuppressWarnings("NullAway") // Invalid inputs must be rejected before user conversion.
   void validatesAvailableInputsBeforeCallingCodec() throws Exception {
-    var codec =
-        new TestCodec() {
-          @Override
-          public <T> T read(byte[] source, Class<T> type) {
-            return fail("Invalid class reached codec");
-          }
-
-          @Override
-          public byte[] write(Object value) {
-            return fail("Invalid response reached codec");
-          }
-        };
+    var codec = createCodecForValidatesAvailableInputsBeforeCallingCodec();
 
     {
       var app = new Shoostr();
@@ -203,6 +205,7 @@ class TypedCodecMediaTest {
                   assertThrows(
                       IllegalArgumentException.class,
                       () -> response.body("application/json\r\nInjected: value", "Alice"));
+
                   response.text("valid");
                 });
 
@@ -211,6 +214,20 @@ class TypedCodecMediaTest {
         }
       }
     }
+  }
+
+  private TestCodec createCodecForValidatesAvailableInputsBeforeCallingCodec() {
+    return new TestCodec() {
+      @Override
+      public <T> T read(byte[] source, Class<T> type) {
+        return fail("Invalid class reached codec");
+      }
+
+      @Override
+      public byte[] write(Object value) {
+        return fail("Invalid response reached codec");
+      }
+    };
   }
 
   @Test
@@ -225,6 +242,7 @@ class TypedCodecMediaTest {
                 "/encoded",
                 (request, response) -> {
                   assertSame(request, request.attribute("name", "Alice"));
+
                   response
                       .status(201)
                       .setHeader("X-Name", "Alice")
@@ -236,6 +254,7 @@ class TypedCodecMediaTest {
               test.send(
                   request -> request.path("/encoded").method("POST"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(201, result.statusCode());
           assertEquals("\"Alice\"", result.body());
           assertEquals("Alice", result.headers().firstValue("X-Name").orElseThrow());
@@ -255,9 +274,11 @@ class TypedCodecMediaTest {
                 .getMethod(method.getName(), method.getParameterTypes())
                 .getReturnType(),
             method.toString());
+
         checked++;
       }
     }
+
     assertTrue(checked > 0);
   }
 
@@ -272,9 +293,11 @@ class TypedCodecMediaTest {
                 .getMethod(method.getName(), method.getParameterTypes())
                 .getReturnType(),
             method.toString());
+
         checked++;
       }
     }
+
     assertTrue(checked > 0);
   }
 }

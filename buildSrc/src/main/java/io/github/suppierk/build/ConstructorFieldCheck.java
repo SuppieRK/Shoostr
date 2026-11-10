@@ -25,7 +25,9 @@ import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.Modifier;
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
+import javax.tools.JavaCompiler;
 import javax.tools.JavaFileObject;
+import javax.tools.StandardJavaFileManager;
 import javax.tools.ToolProvider;
 import org.jspecify.annotations.Nullable;
 
@@ -47,16 +49,19 @@ public final class ConstructorFieldCheck {
       throw new IllegalArgumentException("Expected source list, classpath list and report paths");
     }
 
+    var sourceManifest = Path.of(arguments[0]);
     var sources =
-        Files.readAllLines(Path.of(arguments[0]), StandardCharsets.UTF_8).stream()
-            .map(Path::of)
-            .toList();
+        Files.readAllLines(sourceManifest, StandardCharsets.UTF_8).stream().map(Path::of).toList();
+
+    var classpathManifest = Path.of(arguments[1]);
     var classpath =
         String.join(
-            File.pathSeparator, Files.readAllLines(Path.of(arguments[1]), StandardCharsets.UTF_8));
+            File.pathSeparator, Files.readAllLines(classpathManifest, StandardCharsets.UTF_8));
+
     var diagnostics = check(sources, classpath);
     var errors =
         diagnostics.stream().filter(item -> item.getKind() == Diagnostic.Kind.ERROR).toList();
+
     var report = Path.of(arguments[2]).toAbsolutePath();
     Files.createDirectories(Objects.requireNonNull(report.getParent()));
     var text =
@@ -64,6 +69,7 @@ public final class ConstructorFieldCheck {
             ? "Constructor field qualification passed for " + sources.size() + " source files\n"
             : String.join("\n", errors.stream().map(Object::toString).toList()) + "\n";
     Files.writeString(report, text, StandardCharsets.UTF_8);
+
     if (!errors.isEmpty()) {
       System.err.print(text);
       throw new IllegalStateException("Constructor field verification failed; see " + report);
@@ -96,27 +102,13 @@ public final class ConstructorFieldCheck {
 
     try (var files =
         compiler.getStandardFileManager(diagnostics, Locale.ROOT, StandardCharsets.UTF_8)) {
-      var task =
-          (JavacTask)
-              compiler.getTask(
-                  null,
-                  files,
-                  diagnostics,
-                  List.of(
-                      "--release",
-                      "21",
-                      "-proc:none",
-                      "-implicit:none",
-                      "-Xmaxerrs",
-                      "2147483647",
-                      "-classpath",
-                      classpath),
-                  null,
-                  files.getJavaFileObjectsFromPaths(sources));
+      var task = createCompilerTask(compiler, files, diagnostics, classpath, sources);
+
       var targets = new ArrayList<TreePath>();
       for (var unit : task.parse()) {
         new ConstructorWrites(targets).scan(unit, false);
       }
+
       if (!targets.isEmpty() && !hasErrors(diagnostics)) {
         task.analyze();
         if (!hasErrors(diagnostics)) {
@@ -144,6 +136,40 @@ public final class ConstructorFieldCheck {
     }
 
     return List.copyOf(diagnostics.getDiagnostics());
+  }
+
+  /**
+   * Configures attribution for the constructor-field scan without running annotation processors.
+   *
+   * @param compiler JDK compiler used for attribution
+   * @param files compiler file manager
+   * @param diagnostics collector for source diagnostics
+   * @param classpath attribution dependency classpath
+   * @param sources source files to scan
+   * @return compiler task for the supplied source files
+   */
+  private static JavacTask createCompilerTask(
+      JavaCompiler compiler,
+      StandardJavaFileManager files,
+      DiagnosticCollector<JavaFileObject> diagnostics,
+      String classpath,
+      List<Path> sources) {
+    return (JavacTask)
+        compiler.getTask(
+            null,
+            files,
+            diagnostics,
+            List.of(
+                "--release",
+                "21",
+                "-proc:none",
+                "-implicit:none",
+                "-Xmaxerrs",
+                "2147483647",
+                "-classpath",
+                classpath),
+            null,
+            files.getJavaFileObjectsFromPaths(sources));
   }
 
   /**
@@ -186,6 +212,7 @@ public final class ConstructorFieldCheck {
     @Override
     public @Nullable Void visitAssignment(AssignmentTree node, Boolean inConstructor) {
       collect(node.getVariable(), inConstructor);
+
       return super.visitAssignment(node, inConstructor);
     }
 
@@ -194,6 +221,7 @@ public final class ConstructorFieldCheck {
     public @Nullable Void visitCompoundAssignment(
         CompoundAssignmentTree node, Boolean inConstructor) {
       collect(node.getVariable(), inConstructor);
+
       return super.visitCompoundAssignment(node, inConstructor);
     }
 

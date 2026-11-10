@@ -22,6 +22,7 @@ public final class TrustedProxyExample {
   public static Shoostr application(Set<InetAddress> trustedPeers, ForwardedHeaders family) {
     var peers = Set.copyOf(trustedPeers);
     var selectedFamily = Objects.requireNonNull(family);
+
     return new Shoostr()
         // Check the direct socket peer before accepting forwarding metadata.
         .trustedProxies(peers::contains, selectedFamily)

@@ -23,6 +23,7 @@ import java.net.SocketAddress;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.net.http.HttpClient.Builder;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -101,6 +102,7 @@ class TransportTest {
                 (request, response) -> {
                   assertTrue(request.isSecure());
                   assertEquals("https", request.scheme().orElseThrow());
+
                   response.text("secure");
                 });
         app.start();
@@ -110,6 +112,7 @@ class TransportTest {
                 HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/secure"))
                     .build(),
                 HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, result.statusCode());
         assertEquals("secure", result.body());
         assertEquals(HttpClient.Version.HTTP_1_1, result.version());
@@ -131,22 +134,13 @@ class TransportTest {
 
       try (Closeable appCleanup1 = app::close;
           var client =
-              HttpClient.newBuilder()
-                  .sslContext(context)
-                  .version(HttpClient.Version.HTTP_1_1)
-                  .connectTimeout(Duration.ofSeconds(3))
-                  .build()) {
+              openClientForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(context)) {
         enableMutualTls(app);
         app.routes().get("/secure", (ignored, response) -> response.text("trusted client"));
         app.start();
 
         var result =
-            client.send(
-                HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/secure"))
-                    .timeout(Duration.ofSeconds(3))
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendResultForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(client, app);
 
         assertEquals(200, result.statusCode());
         assertEquals("trusted client", result.body());
@@ -157,6 +151,30 @@ class TransportTest {
             result.sslSession().orElseThrow().getLocalCertificates());
       }
     }
+  }
+
+  private HttpClient openClientForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(
+      SSLContext context) {
+    return clientPropertiesForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(context)
+        .build();
+  }
+
+  private Builder clientPropertiesForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(
+      SSLContext context) {
+    return HttpClient.newBuilder()
+        .sslContext(context)
+        .version(HttpClient.Version.HTTP_1_1)
+        .connectTimeout(Duration.ofSeconds(3));
+  }
+
+  private HttpResponse<String> sendResultForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(
+      HttpClient client, Shoostr app) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/secure"))
+            .timeout(Duration.ofSeconds(3))
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -174,22 +192,15 @@ class TransportTest {
 
       try (Closeable appCleanup2 = app::close;
           var trustedClient =
-              HttpClient.newBuilder()
-                  .sslContext(mutualTlsContext(testKeyStore()))
-                  .version(HttpClient.Version.HTTP_1_1)
-                  .connectTimeout(Duration.ofSeconds(3))
-                  .build()) {
+              openTrustedClientForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake()) {
         enableMutualTls(app);
-        app.routes().get("/control", (ignored2, response) -> response.text("trusted client"));
+        app.routes().get("/control", (ignoredRequest, response) -> response.text("trusted client"));
         app.start();
 
         var control =
-            trustedClient.send(
-                HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/control"))
-                    .timeout(Duration.ofSeconds(3))
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendControlRequestForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake(
+                trustedClient, app);
+
         assertEquals(200, control.statusCode());
         assertEquals("trusted client", control.body());
 
@@ -208,13 +219,42 @@ class TransportTest {
     }
   }
 
+  private HttpClient openTrustedClientForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake()
+      throws Exception {
+    return trustedClientPropertiesForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake()
+        .build();
+  }
+
+  private Builder
+      trustedClientPropertiesForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake()
+          throws Exception {
+    return HttpClient.newBuilder()
+        .sslContext(mutualTlsContext(testKeyStore()))
+        .version(HttpClient.Version.HTTP_1_1)
+        .connectTimeout(Duration.ofSeconds(3));
+  }
+
+  private HttpResponse<String>
+      sendControlRequestForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake(
+          HttpClient trustedClient, Shoostr app) throws IOException, InterruptedException {
+    return trustedClient.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/control"))
+            .timeout(Duration.ofSeconds(3))
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void rejectsAnUntrustedClientCertificateDuringMutualTlsHandshake() throws Exception {
     var identity = untrustedClientKeyStore();
     var trustedCertificate = (X509Certificate) testKeyStore().getCertificate("localhost");
+
     assertNotEquals(trustedCertificate, identity.getCertificate("untrusted"));
+
     var keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
     keys.init(identity, PASSWORD);
+
     var manager = assertInstanceOf(X509KeyManager.class, keys.getKeyManagers()[0]);
     assertEquals(
         "untrusted",
@@ -222,6 +262,7 @@ class TransportTest {
             new String[] {"RSA"},
             new Principal[] {trustedCertificate.getSubjectX500Principal()},
             null));
+
     var context = mutualTlsContext(identity);
 
     {
@@ -233,22 +274,15 @@ class TransportTest {
 
       try (Closeable appCleanup3 = app::close;
           var trustedClient =
-              HttpClient.newBuilder()
-                  .sslContext(mutualTlsContext(testKeyStore()))
-                  .version(HttpClient.Version.HTTP_1_1)
-                  .connectTimeout(Duration.ofSeconds(3))
-                  .build()) {
+              openTrustedClientForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake()) {
         enableMutualTls(app);
-        app.routes().get("/control", (ignored3, response) -> response.text("trusted client"));
+        app.routes().get("/control", (ignoredRequest, response) -> response.text("trusted client"));
         app.start();
 
         var control =
-            trustedClient.send(
-                HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/control"))
-                    .timeout(Duration.ofSeconds(3))
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendControlRequestForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake(
+                trustedClient, app);
+
         assertEquals(200, control.statusCode());
         assertEquals("trusted client", control.body());
 
@@ -265,6 +299,33 @@ class TransportTest {
         }
       }
     }
+  }
+
+  private HttpClient
+      openTrustedClientForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake()
+          throws Exception {
+    return trustedClientPropertiesForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake()
+        .build();
+  }
+
+  private Builder
+      trustedClientPropertiesForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake()
+          throws Exception {
+    return HttpClient.newBuilder()
+        .sslContext(mutualTlsContext(testKeyStore()))
+        .version(HttpClient.Version.HTTP_1_1)
+        .connectTimeout(Duration.ofSeconds(3));
+  }
+
+  private HttpResponse<String>
+      sendControlRequestForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake(
+          HttpClient trustedClient, Shoostr app) throws IOException, InterruptedException {
+    return trustedClient.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/control"))
+            .timeout(Duration.ofSeconds(3))
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -296,7 +357,9 @@ class TransportTest {
                   }
 
                   entered.countDown();
+
                   assertTrue(release.await(3, TimeUnit.SECONDS));
+
                   response.text(
                       request.pathParam("id").orElseThrow()
                           + ":"
@@ -304,6 +367,7 @@ class TransportTest {
                 });
         app.start();
         var base = "https://localhost:" + app.port() + "/parallel/";
+
         assertEquals(
             HttpClient.Version.HTTP_2,
             client
@@ -321,11 +385,14 @@ class TransportTest {
               client.sendAsync(
                   HttpRequest.newBuilder(URI.create(base + "second")).build(),
                   HttpResponse.BodyHandlers.ofString());
+
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+
           release.countDown();
 
           var firstResult = first.get(5, TimeUnit.SECONDS);
           var secondResult = second.get(5, TimeUnit.SECONDS);
+
           assertEquals(HttpClient.Version.HTTP_2, firstResult.version());
           assertEquals(HttpClient.Version.HTTP_2, secondResult.version());
           assertEquals(200, firstResult.statusCode());
@@ -357,48 +424,43 @@ class TransportTest {
         enableTls(app);
 
         app.onRequestHeaders(
-            (request, ignored4) -> peers.add(request.remoteAddress().orElseThrow()));
+            (request, ignoredResponse) -> peers.add(request.remoteAddress().orElseThrow()));
         app.exception(
             IllegalArgumentException.class,
-            (ignored5, ignored6, response) -> response.status(400).text("mapped error"));
+            (ignoredFailure, ignoredRequest, response) ->
+                response.status(400).text("mapped error"));
         app.routes()
             .get(
                 "/error",
-                (ignored7, ignored8) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new IllegalArgumentException("recoverable diagnostic");
                 });
-        app.routes().get("/healthy", (ignored9, response) -> response.text("healthy"));
+        app.routes().get("/healthy", (ignoredRequest, response) -> response.text("healthy"));
         app.start();
         var base = "https://localhost:" + app.port();
 
         var mapped =
-            client.send(
-                HttpRequest.newBuilder(URI.create(base + "/error"))
-                    .timeout(Duration.ofSeconds(3))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendMappedRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+                client, base);
+
         assertEquals(400, mapped.statusCode());
         assertEquals("mapped error", mapped.body());
         assertEquals(HttpClient.Version.HTTP_2, mapped.version());
         assertTrue(mapped.sslSession().isPresent());
 
         var missing =
-            client.send(
-                HttpRequest.newBuilder(URI.create(base + "/missing"))
-                    .timeout(Duration.ofSeconds(3))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendMissingRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+                client, base);
+
         assertEquals(404, missing.statusCode());
         assertEquals("Not found", missing.body());
         assertEquals(HttpClient.Version.HTTP_2, missing.version());
         assertTrue(missing.sslSession().isPresent());
 
         var healthy =
-            client.send(
-                HttpRequest.newBuilder(URI.create(base + "/healthy"))
-                    .timeout(Duration.ofSeconds(3))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendHealthyRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+                client, base);
+
         assertEquals(200, healthy.statusCode());
         assertEquals("healthy", healthy.body());
         assertEquals(HttpClient.Version.HTTP_2, healthy.version());
@@ -409,6 +471,34 @@ class TransportTest {
         assertEquals(peers.getFirst(), peers.get(2));
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendMappedRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+          HttpClient client, String base) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create(base + "/error")).timeout(Duration.ofSeconds(3)).build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String>
+      sendMissingRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+          HttpClient client, String base) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create(base + "/missing"))
+            .timeout(Duration.ofSeconds(3))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String>
+      sendHealthyRequestForMappedErrorsAndNotFoundResponsesKeepTheTlsHttp2ConnectionUsable(
+          HttpClient client, String base) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create(base + "/healthy"))
+            .timeout(Duration.ofSeconds(3))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -448,8 +538,10 @@ class TransportTest {
                 "/upload",
                 (request, response) -> {
                   var upload = request.file("document").orElseThrow();
+
                   assertEquals("document", upload.name());
                   assertEquals(19_456, upload.size());
+
                   response.setHeader(
                       "Content-Disposition", "attachment; filename=\"" + upload.fileName() + "\"");
 
@@ -460,13 +552,7 @@ class TransportTest {
         app.start();
 
         var result =
-            client.send(
-                HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/upload"))
-                    .timeout(Duration.ofSeconds(3))
-                    .header("Content-Type", "multipart/form-data; boundary=http2-upload-boundary")
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()))
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+            sendResultForRoundTripsANamedBinaryMultipartUploadOverTlsHttp2(client, app, body);
 
         assertEquals(200, result.statusCode());
         assertEquals(HttpClient.Version.HTTP_2, result.version());
@@ -479,17 +565,21 @@ class TransportTest {
     }
   }
 
+  private HttpResponse<byte[]> sendResultForRoundTripsANamedBinaryMultipartUploadOverTlsHttp2(
+      HttpClient client, Shoostr app, ByteArrayOutputStream body)
+      throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/upload"))
+            .timeout(Duration.ofSeconds(3))
+            .header("Content-Type", "multipart/form-data; boundary=http2-upload-boundary")
+            .POST(HttpRequest.BodyPublishers.ofByteArray(body.toByteArray()))
+            .build(),
+        HttpResponse.BodyHandlers.ofByteArray());
+  }
+
   @Test
   void roundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion() throws Exception {
-    var content =
-        """
-        {
-          "name": "café",
-          "literal": "\\u20ac",
-          "values": [1, true, null]
-        }
-        """
-            .getBytes(StandardCharsets.UTF_8);
+    var content = createContentForRoundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion();
 
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
@@ -512,13 +602,8 @@ class TransportTest {
         app.start();
 
         var result =
-            client.send(
-                HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/json"))
-                    .timeout(Duration.ofSeconds(3))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofByteArray(content))
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+            sendResultForRoundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion(
+                client, app, content);
 
         assertEquals(200, result.statusCode());
         assertEquals(HttpClient.Version.HTTP_2, result.version());
@@ -527,6 +612,29 @@ class TransportTest {
         assertArrayEquals(content, result.body());
       }
     }
+  }
+
+  private byte[] createContentForRoundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion() {
+    return """
+        {
+          "name": "café",
+          "literal": "\\u20ac",
+          "values": [1, true, null]
+        }
+        """
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForRoundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion(
+          HttpClient client, Shoostr app, byte[] content) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/json"))
+            .timeout(Duration.ofSeconds(3))
+            .header("Content-Type", "application/json")
+            .POST(HttpRequest.BodyPublishers.ofByteArray(content))
+            .build(),
+        HttpResponse.BodyHandlers.ofByteArray());
   }
 
   @ParameterizedTest
@@ -560,7 +668,7 @@ class TransportTest {
                   (ExecutorService)
                       VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
             });
-        app.routes().get("/warmup", (ignored10, response) -> response.text("ready"));
+        app.routes().get("/warmup", (ignoredRequest, response) -> response.text("ready"));
         app.routes()
             .get(
                 "/hold/{id}",
@@ -582,6 +690,7 @@ class TransportTest {
                 });
         app.start();
         var base = "https://localhost:" + app.port();
+
         assertEquals(
             HttpClient.Version.HTTP_2,
             client
@@ -589,6 +698,7 @@ class TransportTest {
                     HttpRequest.newBuilder(URI.create(base + "/warmup")).build(),
                     HttpResponse.BodyHandlers.ofString())
                 .version());
+
         var first =
             client.sendAsync(
                 HttpRequest.newBuilder(URI.create(base + "/hold/one")).build(),
@@ -601,6 +711,7 @@ class TransportTest {
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+
           var graceful = nativeServer.get().getDescendant(GracefulHandler.class);
           closing =
               CompletableFuture.runAsync(
@@ -615,7 +726,9 @@ class TransportTest {
               .pollInterval(Duration.ofMillis(10))
               .atMost(Duration.ofSeconds(3))
               .until(graceful::isShutdown);
+
           assertFalse(closing.isDone());
+
           var late =
               client.sendAsync(
                   HttpRequest.newBuilder(URI.create(base + "/hold/late")).build(),
@@ -628,12 +741,16 @@ class TransportTest {
           }
 
           assertEquals(2, admissions.get());
+
           release.countDown();
+
           assertEquals(
               streaming ? "first-one" : "complete-one", first.get(3, TimeUnit.SECONDS).body());
           assertEquals(
               streaming ? "first-two" : "complete-two", second.get(3, TimeUnit.SECONDS).body());
+
           closing.get(3, TimeUnit.SECONDS);
+
           assertTrue(nativeServer.get().isStopped());
           assertTrue(nativeServer.get().getConnectors()[0].isStopped());
           assertTrue(tlsContext.get().isStopped());
@@ -705,7 +822,7 @@ class TransportTest {
         app.routes()
             .get(
                 "/blocked",
-                (ignored11, response) -> {
+                (ignoredRequest, response) -> {
                   if (streaming) {
                     var stream = response.startStream("text/plain");
                     stream.write("prefix");
@@ -716,7 +833,7 @@ class TransportTest {
                   while (release.getCount() != 0) {
                     try {
                       release.await();
-                    } catch (InterruptedException ignored12) {
+                    } catch (InterruptedException ignoredFailure) {
                       interrupted.countDown();
                     }
                   }
@@ -727,6 +844,7 @@ class TransportTest {
                 });
         app.start();
         var base = "https://localhost:" + app.port();
+
         assertEquals(
             HttpClient.Version.HTTP_2,
             client
@@ -736,6 +854,7 @@ class TransportTest {
                 .version());
         assertEquals(
             1, ((DefaultSessionCache) sessionHandler.get().getSessionCache()).getSessionsCurrent());
+
         var pending =
             client.sendAsync(
                 HttpRequest.newBuilder(URI.create(base + "/blocked")).build(),
@@ -743,17 +862,13 @@ class TransportTest {
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+
           var closing =
-              CompletableFuture.runAsync(
-                  () -> {
-                    try {
-                      app.close();
-                    } catch (IOException failure) {
-                      throw new CompletionException(failure);
-                    }
-                  });
+              createClosingForForcedHttpsHttp2StopInterruptsBlockedWorkAndReleasesTheOwnedExecutor(
+                  app);
           var stopFailure =
-              closing.handle((ignored13, failure) -> failure).get(3, TimeUnit.SECONDS);
+              closing.handle((ignoredVoid, failure) -> failure).get(3, TimeUnit.SECONDS);
+
           assertInstanceOf(IOException.class, stopFailure.getCause());
           assertTrue(interrupted.await(2, TimeUnit.SECONDS));
           assertThrows(ExecutionException.class, () -> pending.get(3, TimeUnit.SECONDS));
@@ -774,6 +889,19 @@ class TransportTest {
         assertNotNull(outcome.get().transportFailure());
       }
     }
+  }
+
+  private CompletableFuture<Void>
+      createClosingForForcedHttpsHttp2StopInterruptsBlockedWorkAndReleasesTheOwnedExecutor(
+          Shoostr app) {
+    return CompletableFuture.runAsync(
+        () -> {
+          try {
+            app.close();
+          } catch (IOException failure) {
+            throw new CompletionException(failure);
+          }
+        });
   }
 
   @ParameterizedTest
@@ -847,20 +975,8 @@ class TransportTest {
                           .getConnectionFactories()
                           .toArray(ConnectionFactory[]::new);
                   var delayed =
-                      new ServerConnector(server, connectionFactories) {
-                        @Override
-                        protected SelectorManager newSelectorManager(
-                            Executor executor, Scheduler scheduler, int selectors) {
-                          return new ServerConnectorManager(executor, scheduler, selectors) {
-                            @Override
-                            public void connectionClosed(Connection connection, Throwable cause) {
-                              cleanupHeld.countDown();
-                              releaseCleanup.join();
-                              super.connectionClosed(connection, cause);
-                            }
-                          };
-                        }
-                      };
+                      createDelayedForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+                          server, connectionFactories, cleanupHeld, releaseCleanup);
                   delayed.setHost("127.0.0.1");
                   delayed.setPort(0);
                   delayed.setShutdownIdleTimeout(0);
@@ -870,44 +986,36 @@ class TransportTest {
         app.routes()
             .get(
                 "/blocked",
-                (ignored14, response) -> {
+                (ignoredRequest, response) -> {
                   entered.countDown();
                   releaseHandler.join();
                   response.text("late");
                 });
         app.start();
         var pending =
-            client.sendAsync(
-                HttpRequest.newBuilder(
-                        URI.create(
-                            "https://localhost:"
-                                + cleanupConnector.get().getLocalPort()
-                                + "/blocked"))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendPendingRequestAsyncForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+                client, cleanupConnector);
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+
           var closing =
-              CompletableFuture.runAsync(
-                  () -> {
-                    try {
-                      app.close();
-                    } catch (IOException failure) {
-                      throw new CompletionException(failure);
-                    }
-                  });
+              createClosingForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+                  app);
+
           var stopFailure =
               assertInstanceOf(
                   CompletionException.class,
-                  closing.handle((ignored15, failure) -> failure).get(3, TimeUnit.SECONDS));
+                  closing.handle((ignoredVoid, failure) -> failure).get(3, TimeUnit.SECONDS));
           assertInstanceOf(IOException.class, stopFailure.getCause());
           assertTrue(cleanupHeld.await(3, TimeUnit.SECONDS));
+
           if (virtual) {
             assertTrue(ownedExecutor.get().isShutdown());
           }
 
           assertNull(cleanupPool.get().getVirtualThreadsExecutor());
+
           releaseCleanup.complete(null);
           releaseHandler.complete(null);
 
@@ -932,6 +1040,52 @@ class TransportTest {
         }
       }
     }
+  }
+
+  private ServerConnector
+      createDelayedForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+          Server server,
+          ConnectionFactory[] connectionFactories,
+          CountDownLatch cleanupHeld,
+          CompletableFuture<Void> releaseCleanup) {
+    return new ServerConnector(server, connectionFactories) {
+      @Override
+      protected SelectorManager newSelectorManager(
+          Executor executor, Scheduler scheduler, int selectors) {
+        return new ServerConnectorManager(executor, scheduler, selectors) {
+          @Override
+          public void connectionClosed(Connection connection, Throwable cause) {
+            cleanupHeld.countDown();
+            releaseCleanup.join();
+            super.connectionClosed(connection, cause);
+          }
+        };
+      }
+    };
+  }
+
+  private CompletableFuture<HttpResponse<String>>
+      sendPendingRequestAsyncForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+          HttpClient client, AtomicReference<ServerConnector> cleanupConnector) {
+    return client.sendAsync(
+        HttpRequest.newBuilder(
+                URI.create(
+                    "https://localhost:" + cleanupConnector.get().getLocalPort() + "/blocked"))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private CompletableFuture<Void>
+      createClosingForForcedHttp2StopStillObservesCleanupDispatchedAfterExecutorShutdown(
+          Shoostr app) {
+    return CompletableFuture.runAsync(
+        () -> {
+          try {
+            app.close();
+          } catch (IOException failure) {
+            throw new CompletionException(failure);
+          }
+        });
   }
 
   @Test
@@ -965,7 +1119,7 @@ class TransportTest {
         app.routes()
             .get(
                 "/hold",
-                (ignored16, response) -> {
+                (ignoredRequest, response) -> {
                   entered.countDown();
                   release.await();
                   response.text("complete");
@@ -976,9 +1130,11 @@ class TransportTest {
             client.send(
                 HttpRequest.newBuilder(URI.create(base + "/session")).build(),
                 HttpResponse.BodyHandlers.ofString());
+
         assertEquals(HttpClient.Version.HTTP_2, created.version());
         assertEquals(
             1, ((DefaultSessionCache) sessionHandler.get().getSessionCache()).getSessionsCurrent());
+
         var pending =
             client.sendAsync(
                 HttpRequest.newBuilder(URI.create(base + "/hold")).build(),
@@ -987,6 +1143,7 @@ class TransportTest {
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+
           closing =
               CompletableFuture.runAsync(
                   () -> {
@@ -1001,10 +1158,15 @@ class TransportTest {
               .pollInterval(Duration.ofMillis(10))
               .atMost(Duration.ofSeconds(3))
               .until(graceful::isShutdown);
+
           assertFalse(closing.isDone());
+
           release.countDown();
+
           assertEquals("complete", pending.get(3, TimeUnit.SECONDS).body());
+
           closing.get(3, TimeUnit.SECONDS);
+
           assertTrue(nativeServer.get().isStopped());
           assertTrue(sessionHandler.get().isStopped());
           assertEquals(
@@ -1036,12 +1198,13 @@ class TransportTest {
 
       try (Closeable appCleanup12 = app::close) {
 
-        app.routes().get("/data", (ignored17, response) -> response.text(payload));
+        app.routes().get("/data", (ignoredRequest, response) -> response.text(payload));
 
         try (var test = TestServer.start(app)) {
 
           var encoded =
               test.send(request -> request.path("/data").header("Accept-Encoding", "gzip"));
+
           assertEquals(200, encoded.statusCode());
           assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
           assertTrue(encoded.headers().allValues("Vary").contains("Accept-Encoding"));
@@ -1054,11 +1217,13 @@ class TransportTest {
               test.send(
                   request ->
                       request.path("/data").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+
           assertEquals(200, gzipOnly.statusCode());
           assertEquals("gzip", gzipOnly.headers().firstValue("Content-Encoding").orElseThrow());
 
           var plain =
               test.send(request -> request.path("/data"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(payload, plain.body());
           assertTrue(plain.headers().firstValue("Content-Encoding").isEmpty());
           assertTrue(plain.headers().allValues("Vary").contains("Accept-Encoding"));
@@ -1067,6 +1232,7 @@ class TransportTest {
               test.send(
                   request -> request.path("/data").header("Accept-Encoding", "gzip;q=0"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(payload, excluded.body());
           assertTrue(excluded.headers().firstValue("Content-Encoding").isEmpty());
 
@@ -1074,6 +1240,7 @@ class TransportTest {
               test.send(
                   request -> request.path("/data").header("Accept-Encoding", "gzip;q=0, *;q=1"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(payload, rejectedWithWildcard.body());
           assertEquals(
               "identity",
@@ -1097,23 +1264,25 @@ class TransportTest {
 
       try (Closeable appCleanup13 = app::close) {
 
-        app.routes().get("/finite", (ignored18, response) -> response.text("body"));
-        app.routes().head("/finite", (ignored19, response) -> response.text("body"));
+        app.routes().get("/finite", (ignoredRequest, response) -> response.text("body"));
+        app.routes().head("/finite", (ignoredRequest, response) -> response.text("body"));
         app.routes()
             .get(
                 "/stream",
-                (ignored20, response) -> {
+                (ignoredRequest, response) -> {
                   var stream = response.startStream("text/plain");
                   stream.write("body");
                   stream.flush();
                 });
-        app.routes().get("/empty", (ignored21, response) -> response.status(204));
+        app.routes().get("/empty", (ignoredRequest, response) -> response.status(204));
         app.routes()
-            .get("/opt-out", (ignored22, response) -> response.disableCompression().text("body"));
+            .get(
+                "/opt-out",
+                (ignoredRequest, response) -> response.disableCompression().text("body"));
         app.routes()
             .get(
                 "/custom",
-                (ignored23, response) ->
+                (ignoredRequest, response) ->
                     response
                         .setHeader("Content-Encoding", "br")
                         .body("application/octet-stream", new byte[] {1}));
@@ -1122,41 +1291,32 @@ class TransportTest {
 
           for (var path : List.of("/finite", "/stream")) {
             var result =
-                test.send(
-                    request ->
-                        request
-                            .path(path)
-                            .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+                sendResultForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+                    test, path);
+
             assertEquals(406, result.statusCode());
             assertEquals(0, result.body().length);
             assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
           }
 
           var empty =
-              test.send(
-                  request ->
-                      request
-                          .path("/empty")
-                          .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+              sendEmptyRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+                  test);
+
           assertEquals(204, empty.statusCode());
 
           var head =
-              test.send(
-                  request ->
-                      request
-                          .path("/finite")
-                          .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
-                          .method("HEAD"));
+              sendHeadRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+                  test);
+
           assertEquals(406, head.statusCode());
           assertEquals(0, head.body().length);
           assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
 
           var custom =
-              test.send(
-                  request ->
-                      request
-                          .path("/custom")
-                          .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+              sendCustomRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+                  test);
+
           assertEquals(200, custom.statusCode());
           assertEquals("br", custom.headers().firstValue("Content-Encoding").orElseThrow());
 
@@ -1164,12 +1324,47 @@ class TransportTest {
               test.send(
                   request ->
                       request.path("/opt-out").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+
           assertEquals(406, optOut.statusCode());
           assertEquals(0, optOut.body().length);
           assertTrue(optOut.headers().allValues("Vary").contains("Accept-Encoding"));
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+          TestServer test, String path) throws IOException, InterruptedException {
+    return test.send(
+        request -> request.path(path).header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+  }
+
+  private HttpResponse<byte[]>
+      sendEmptyRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/empty").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+  }
+
+  private HttpResponse<byte[]>
+      sendHeadRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/finite")
+                .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0")
+                .method("HEAD"));
+  }
+
+  private HttpResponse<byte[]>
+      sendCustomRequestForCompressionReturnsEmptyNotAcceptableWhenGzipAndIdentityAreRejected(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/custom").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
   }
 
   @Test
@@ -1188,17 +1383,12 @@ class TransportTest {
 
       try (Closeable appCleanup14 = app::close) {
 
-        app.routes().get("/file", (ignored24, response) -> response.file(file, "text/plain"));
+        app.routes().get("/file", (ignoredRequest, response) -> response.file(file, "text/plain"));
 
         try (var test = TestServer.start(app)) {
 
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/file")
-                          .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                          .header("Range", "bytes=0-1999"));
+          var result = sendResultForCompressionRejectsRangedFileWhenIdentityIsForbidden(test);
+
           assertEquals(406, result.statusCode());
           assertEquals(0, result.body().length);
           assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
@@ -1206,6 +1396,16 @@ class TransportTest {
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]> sendResultForCompressionRejectsRangedFileWhenIdentityIsForbidden(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/file")
+                .header("Accept-Encoding", "gzip;q=1, identity;q=0")
+                .header("Range", "bytes=0-1999"));
   }
 
   @Test
@@ -1224,28 +1424,31 @@ class TransportTest {
 
         app.exception(
             NotFoundException.class,
-            (ignored25, ignored26, response) -> response.status(200).text("recovered"));
+            (ignoredFailure, ignoredRequest, response) -> response.status(200).text("recovered"));
         app.routes()
             .get(
                 "/failure",
-                (ignored27, ignored28) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new NotFoundException();
                 });
 
         try (var test = TestServer.start(app)) {
 
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/failure")
-                          .header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
+          var result = sendResultForCompressionRejectsUnacceptableExceptionHandlerRecovery(test);
+
           assertEquals(406, result.statusCode());
           assertEquals(0, result.body().length);
           assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]> sendResultForCompressionRejectsUnacceptableExceptionHandlerRecovery(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/failure").header("Accept-Encoding", "gzip;q=0, *;q=1, identity;q=0"));
   }
 
   @Test
@@ -1265,7 +1468,9 @@ class TransportTest {
       try (Closeable appCleanup16 = app::close) {
 
         app.routes()
-            .get("/opt-out", (ignored29, response) -> response.disableCompression().text(payload));
+            .get(
+                "/opt-out",
+                (ignoredRequest, response) -> response.disableCompression().text(payload));
 
         try (var test = TestServer.start(app)) {
 
@@ -1273,6 +1478,7 @@ class TransportTest {
               test.send(
                   request -> request.path("/opt-out").header("Accept-Encoding", "gzip"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(payload, result.body());
           assertEquals("identity", result.headers().firstValue("Content-Encoding").orElseThrow());
           assertTrue(result.headers().allValues("Vary").contains("Accept-Encoding"));
@@ -1281,6 +1487,7 @@ class TransportTest {
               test.send(
                   request -> request.path("/opt-out").header("Accept-Encoding", "gzip;q=0"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(payload, denied.body());
           assertEquals("identity", denied.headers().firstValue("Content-Encoding").orElseThrow());
         }
@@ -1305,20 +1512,16 @@ class TransportTest {
 
       try (Closeable appCleanup17 = app::close) {
 
-        app.routes().get("/file", (ignored30, response) -> response.file(file, "text/plain"));
-        app.routes().head("/file", (ignored31, response) -> response.file(file, "text/plain"));
-        app.routes().get("/empty", (ignored32, response) -> response.status(204));
-        app.routes().head("/empty", (ignored33, response) -> response.status(204));
+        app.routes().get("/file", (ignoredRequest, response) -> response.file(file, "text/plain"));
+        app.routes().head("/file", (ignoredRequest, response) -> response.file(file, "text/plain"));
+        app.routes().get("/empty", (ignoredRequest, response) -> response.status(204));
+        app.routes().head("/empty", (ignoredRequest, response) -> response.status(204));
 
         try (var test = TestServer.start(app)) {
 
           var partial =
-              test.send(
-                  request ->
-                      request
-                          .path("/file")
-                          .header("Accept-Encoding", "gzip")
-                          .header("Range", "bytes=0-1999"));
+              sendPartialRequestForCompressionPreservesHeadBodylessAndPartialFileResponses(test);
+
           assertEquals(206, partial.statusCode());
           assertEquals(
               "bytes 0-1999/3000", partial.headers().firstValue("Content-Range").orElseThrow());
@@ -1331,6 +1534,7 @@ class TransportTest {
               test.send(
                   request ->
                       request.path("/file").header("Accept-Encoding", "gzip").method("HEAD"));
+
           assertEquals(200, head.statusCode());
           assertEquals(0, head.body().length);
           assertTrue(
@@ -1341,6 +1545,7 @@ class TransportTest {
 
           var empty =
               test.send(request -> request.path("/empty").header("Accept-Encoding", "gzip"));
+
           assertEquals(204, empty.statusCode());
           assertEquals(0, empty.body().length);
           assertTrue(empty.headers().firstValue("Content-Encoding").isEmpty());
@@ -1349,6 +1554,7 @@ class TransportTest {
               test.send(
                   request ->
                       request.path("/empty").header("Accept-Encoding", "gzip").method("HEAD"));
+
           assertEquals(204, emptyHead.statusCode());
           assertEquals(0, emptyHead.body().length);
           assertTrue(emptyHead.headers().firstValue("Transfer-Encoding").isEmpty());
@@ -1356,6 +1562,17 @@ class TransportTest {
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendPartialRequestForCompressionPreservesHeadBodylessAndPartialFileResponses(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/file")
+                .header("Accept-Encoding", "gzip")
+                .header("Range", "bytes=0-1999"));
   }
 
   @Test
@@ -1375,17 +1592,17 @@ class TransportTest {
 
       try (Closeable appCleanup18 = app::close) {
 
-        app.routes().get("/head-gzip", (ignored34, response) -> response.file(file, "text/plain"));
-        app.routes().head("/head-gzip", (ignored35, response) -> response.file(file, "text/plain"));
+        app.routes()
+            .get("/head-gzip", (ignoredRequest, response) -> response.file(file, "text/plain"));
+        app.routes()
+            .head("/head-gzip", (ignoredRequest, response) -> response.file(file, "text/plain"));
 
         try (var test = TestServer.start(app)) {
 
           var get =
-              test.send(
-                  request ->
-                      request
-                          .path("/head-gzip")
-                          .header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+              sendGetRequestForAcceptsHeadWhenTheMatchingGetFileCanBeCompressedAndIdentityIsForbidden(
+                  test);
+
           assertEquals(200, get.statusCode());
           assertEquals("gzip", get.headers().firstValue("Content-Encoding").orElseThrow());
 
@@ -1394,12 +1611,9 @@ class TransportTest {
           }
 
           var head =
-              test.send(
-                  request ->
-                      request
-                          .path("/head-gzip")
-                          .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                          .method("HEAD"));
+              sendHeadRequestForAcceptsHeadWhenTheMatchingGetFileCanBeCompressedAndIdentityIsForbidden(
+                  test);
+
           assertEquals(200, head.statusCode());
           assertEquals(0, head.body().length);
           assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
@@ -1407,6 +1621,24 @@ class TransportTest {
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendGetRequestForAcceptsHeadWhenTheMatchingGetFileCanBeCompressedAndIdentityIsForbidden(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request -> request.path("/head-gzip").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+  }
+
+  private HttpResponse<byte[]>
+      sendHeadRequestForAcceptsHeadWhenTheMatchingGetFileCanBeCompressedAndIdentityIsForbidden(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/head-gzip")
+                .header("Accept-Encoding", "gzip;q=1, identity;q=0")
+                .method("HEAD"));
   }
 
   @Test
@@ -1442,7 +1674,7 @@ class TransportTest {
               tls.setKeyStorePath(keyStore.toString());
               tls.setKeyStorePassword("wrong-password");
             });
-        app.routes().get("/", (ignored36, response) -> response.text("never"));
+        app.routes().get("/", (ignoredRequest, response) -> response.text("never"));
 
         assertThrows(Exception.class, app::start);
         assertThrows(IllegalStateException.class, app::start);
@@ -1483,22 +1715,27 @@ class TransportTest {
                   assertTrue(request.isForwarded());
                   assertEquals("https://public.example/metadata?raw=%2B", request.effectiveUrl());
                   assertEquals("raw=%2B", request.queryString().orElseThrow());
+
                   response.text("metadata");
                 });
         app.start();
 
-        var result =
-            client.send(
-                HttpRequest.newBuilder(
-                        URI.create("https://localhost:" + app.port() + "/metadata?raw=%2B"))
-                    .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+        var result = sendResultForEncryptedHttp2PreservesDirectAndTrustedProxyMetadata(client, app);
+
         assertEquals(200, result.statusCode());
         assertEquals(HttpClient.Version.HTTP_2, result.version());
         assertEquals("metadata", result.body());
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForEncryptedHttp2PreservesDirectAndTrustedProxyMetadata(
+      HttpClient client, Shoostr app) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/metadata?raw=%2B"))
+            .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1525,22 +1762,29 @@ class TransportTest {
                   assertEquals("HTTP/2.0", request.protocol());
                   assertTrue(request.isForwarded());
                   assertEquals("https://public.example/metadata?raw=%2B", request.effectiveUrl());
+
                   response.text("h2c");
                 });
         app.start();
 
         var result =
-            client.send(
-                HttpRequest.newBuilder(
-                        URI.create("http://127.0.0.1:" + app.port() + "/metadata?raw=%2B"))
-                    .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendResultForClearTextHttp2KeepsPhysicalSecuritySeparateFromForwardedHttps(client, app);
+
         assertEquals(200, result.statusCode());
         assertEquals(HttpClient.Version.HTTP_2, result.version());
         assertEquals("h2c", result.body());
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForClearTextHttp2KeepsPhysicalSecuritySeparateFromForwardedHttps(
+          HttpClient client, Shoostr app) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/metadata?raw=%2B"))
+            .header("Forwarded", "for=203.0.113.7;host=public.example;proto=https")
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1562,8 +1806,8 @@ class TransportTest {
           var client = secureClient(HttpClient.Version.HTTP_2)) {
         enableTls(app);
 
-        app.routes().get("/data", (ignored37, response) -> response.text(payload));
-        app.routes().head("/data", (ignored38, response) -> response.text(payload));
+        app.routes().get("/data", (ignoredRequest, response) -> response.text(payload));
+        app.routes().head("/data", (ignoredRequest, response) -> response.text(payload));
         app.start();
         var uri = URI.create("https://localhost:" + app.port() + "/data");
 
@@ -1571,6 +1815,7 @@ class TransportTest {
             client.send(
                 HttpRequest.newBuilder(uri).header("Accept-Encoding", "gzip").build(),
                 HttpResponse.BodyHandlers.ofByteArray());
+
         assertEquals(HttpClient.Version.HTTP_2, encoded.version());
         assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
 
@@ -1579,18 +1824,26 @@ class TransportTest {
         }
 
         var head =
-            client.send(
-                HttpRequest.newBuilder(uri)
-                    .header("Accept-Encoding", "gzip")
-                    .method("HEAD", HttpRequest.BodyPublishers.noBody())
-                    .build(),
-                HttpResponse.BodyHandlers.ofByteArray());
+            sendHeadRequestForGzipCompressionWorksOnEncryptedHttp2AndLeavesHeadBodyless(
+                client, uri);
+
         assertEquals(HttpClient.Version.HTTP_2, head.version());
         assertEquals(0, head.body().length);
         assertTrue(head.headers().firstValue("Content-Length").isEmpty());
         assertTrue(head.headers().allValues("Vary").contains("Accept-Encoding"));
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendHeadRequestForGzipCompressionWorksOnEncryptedHttp2AndLeavesHeadBodyless(
+          HttpClient client, URI uri) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(uri)
+            .header("Accept-Encoding", "gzip")
+            .method("HEAD", HttpRequest.BodyPublishers.noBody())
+            .build(),
+        HttpResponse.BodyHandlers.ofByteArray());
   }
 
   @Test
@@ -1620,20 +1873,25 @@ class TransportTest {
                 (request, response) -> response.text(Integer.toString(request.bodyBytes().length)));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/bytes")
-                          .header("Content-Encoding", "gzip")
-                          .method("POST")
-                          .body(encoded.toByteArray()),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForResponseCompressionDoesNotDecodeRequestBodies(test, encoded);
+
           assertEquals(200, result.statusCode());
           assertEquals(Integer.toString(encoded.size()), result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForResponseCompressionDoesNotDecodeRequestBodies(
+      TestServer test, ByteArrayOutputStream encoded) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/bytes")
+                .header("Content-Encoding", "gzip")
+                .method("POST")
+                .body(encoded.toByteArray()),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -1652,14 +1910,18 @@ class TransportTest {
 
       try (Closeable appCleanup24 = app::close) {
 
-        app.routes().get("/image", (ignored39, response) -> response.body("image/png", content));
         app.routes()
-            .get("/events", (ignored40, response) -> response.body("text/event-stream", content));
+            .get("/image", (ignoredRequest, response) -> response.body("image/png", content));
+        app.routes()
+            .get(
+                "/events",
+                (ignoredRequest, response) -> response.body("text/event-stream", content));
 
         try (var test = TestServer.start(app)) {
 
           for (var path : new String[] {"/image", "/events"}) {
             var result = test.send(request -> request.path(path).header("Accept-Encoding", "gzip"));
+
             assertEquals(200, result.statusCode());
             assertEquals(content.length, result.body().length);
             assertTrue(result.headers().firstValue("Content-Encoding").isEmpty());
@@ -1684,7 +1946,8 @@ class TransportTest {
       try (Closeable appCleanup25 = app::close) {
 
         app.routes()
-            .get("/image", (ignored41, response) -> response.body("image/png", new byte[2048]));
+            .get(
+                "/image", (ignoredRequest, response) -> response.body("image/png", new byte[2048]));
 
         try (var test = TestServer.start(app)) {
 
@@ -1715,7 +1978,7 @@ class TransportTest {
 
       try (Closeable appCleanup26 = app::close) {
 
-        app.routes().get("/small", (ignored42, response) -> response.text("tiny"));
+        app.routes().get("/small", (ignoredRequest, response) -> response.text("tiny"));
 
         try (var test = TestServer.start(app)) {
 
@@ -1752,6 +2015,7 @@ class TransportTest {
             server -> {
               var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
               var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
+
               compressor.putConfiguration(
                   "/*",
                   CompressionConfig.builder()
@@ -1760,7 +2024,7 @@ class TransportTest {
                       .compressExcludeMimeType("text/plain")
                       .build());
             });
-        app.routes().get("/text", (ignored43, response) -> response.text(payload));
+        app.routes().get("/text", (ignoredRequest, response) -> response.text(payload));
 
         try (var test = TestServer.start(app)) {
 
@@ -1797,6 +2061,7 @@ class TransportTest {
             server -> {
               var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
               var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
+
               compressor.putConfiguration(
                   "/app/*",
                   CompressionConfig.builder()
@@ -1808,16 +2073,12 @@ class TransportTest {
               context.setHandler(compressor.getHandler());
               compressor.setHandler(context);
             });
-        app.routes().get("/text", (ignored44, response) -> response.text(payload));
+        app.routes().get("/text", (ignoredRequest, response) -> response.text(payload));
 
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/app/text")
-                          .header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+              sendResultForHonorsCompressionConfigurationMatchedOutsideTheApplicationContext(test);
 
           assertEquals(406, result.statusCode());
           assertEquals(0, result.body().length);
@@ -1825,6 +2086,13 @@ class TransportTest {
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForHonorsCompressionConfigurationMatchedOutsideTheApplicationContext(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request -> request.path("/app/text").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
   }
 
   @Test
@@ -1847,27 +2115,19 @@ class TransportTest {
             server -> {
               var graceful = assertInstanceOf(GracefulHandler.class, server.getHandler());
               var compressor = assertInstanceOf(CompressionHandler.class, graceful.getHandler());
+
               compressor.putCompression(new GzipCompression());
               var unselected =
-                  new GzipCompression() {
-                    @Override
-                    public String getEncodingName() {
-                      return UNSELECTED_ENCODING;
-                    }
-                  };
+                  createUnselectedForUsesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden();
               unselected.setMinCompressSize(10000);
               compressor.putCompression(unselected);
             });
-        app.routes().get("/selected", (ignored45, response) -> response.text(payload));
+        app.routes().get("/selected", (ignoredRequest, response) -> response.text(payload));
 
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/selected")
-                          .header("Accept-Encoding", "gzip;q=1, identity;q=0"));
+              sendResultForUsesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden(test);
 
           assertEquals(200, result.statusCode());
           assertEquals("gzip", result.headers().firstValue("Content-Encoding").orElseThrow());
@@ -1878,6 +2138,23 @@ class TransportTest {
         }
       }
     }
+  }
+
+  private GzipCompression
+      createUnselectedForUsesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden() {
+    return new GzipCompression() {
+      @Override
+      public String getEncodingName() {
+        return UNSELECTED_ENCODING;
+      }
+    };
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForUsesOnlyTheSelectedCompressorThresholdWhenIdentityIsForbidden(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request -> request.path("/selected").header("Accept-Encoding", "gzip;q=1, identity;q=0"));
   }
 
   @Test
@@ -1894,23 +2171,29 @@ class TransportTest {
 
       try (Closeable appCleanup30 = app::close) {
 
-        app.routes().put("/data", (ignored46, response) -> response.text("method response"));
+        app.routes().put("/data", (ignoredRequest, response) -> response.text("method response"));
 
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/data")
-                          .header("Accept-Encoding", "gzip;q=1, identity;q=0")
-                          .method("PUT"));
+              sendResultForRejectsForbiddenIdentityWhenNativeMethodExcludesCompression(test);
 
           assertEquals(406, result.statusCode());
           assertEquals(0, result.body().length);
         }
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResultForRejectsForbiddenIdentityWhenNativeMethodExcludesCompression(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/data")
+                .header("Accept-Encoding", "gzip;q=1, identity;q=0")
+                .method("PUT"));
   }
 
   @Test
@@ -1932,7 +2215,7 @@ class TransportTest {
         app.routes()
             .get(
                 "/stream",
-                (ignored47, response) -> {
+                (ignoredRequest, response) -> {
                   var stream = response.startStream("text/plain");
                   stream.write(payload);
                   stream.flush();
@@ -1941,7 +2224,7 @@ class TransportTest {
         app.routes()
             .get(
                 "/plain",
-                (ignored48, response) -> {
+                (ignoredRequest, response) -> {
                   var stream = response.disableCompression().startStream("text/plain");
                   stream.write(payload);
                   stream.flush();
@@ -1952,6 +2235,7 @@ class TransportTest {
 
           var compressed =
               test.send(request -> request.path("/stream").header("Accept-Encoding", "gzip"));
+
           assertEquals("gzip", compressed.headers().firstValue("Content-Encoding").orElseThrow());
 
           try (var gzip = new GZIPInputStream(new ByteArrayInputStream(compressed.body()))) {
@@ -1963,6 +2247,7 @@ class TransportTest {
               test.send(
                   request -> request.path("/plain").header("Accept-Encoding", "gzip"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(payload + payload, plain.body());
           assertEquals("identity", plain.headers().firstValue("Content-Encoding").orElseThrow());
         }
@@ -1988,11 +2273,11 @@ class TransportTest {
 
         app.exception(
             IllegalStateException.class,
-            (ignored49, ignored50, response) -> response.status(200).text(payload));
+            (ignoredFailure, ignoredRequest, response) -> response.status(200).text(payload));
         app.routes()
             .get(
                 "/recover",
-                (ignored51, ignored52) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new IllegalStateException("recoverable");
                 });
 
@@ -2000,6 +2285,7 @@ class TransportTest {
 
           var encoded =
               test.send(request -> request.path("/recover").header("Accept-Encoding", "gzip"));
+
           assertEquals(200, encoded.statusCode());
           assertEquals("gzip", encoded.headers().firstValue("Content-Encoding").orElseThrow());
           assertTrue(encoded.headers().allValues("Vary").contains("Accept-Encoding"));
@@ -2010,6 +2296,7 @@ class TransportTest {
 
           var plain =
               test.send(request -> request.path("/recover"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, plain.statusCode());
           assertEquals(payload, plain.body());
           assertTrue(plain.headers().firstValue("Content-Encoding").isEmpty());
@@ -2041,7 +2328,7 @@ class TransportTest {
 
         app.exception(
             NotFoundException.class,
-            (ignored53, ignored54, ignored55) -> {
+            (ignoredFailure, ignoredRequest, ignoredResponse) -> {
               throw new Error("secret mapper diagnostic");
             });
         app.routes()
@@ -2057,7 +2344,9 @@ class TransportTest {
                 "/good",
                 (request, response) -> {
                   entered.countDown();
+
                   assertTrue(release.await(3, TimeUnit.SECONDS));
+
                   response.text(
                       Integer.toString(
                           ((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort()));
@@ -2065,7 +2354,7 @@ class TransportTest {
         app.routes()
             .get(
                 "/fatal",
-                (ignored56, ignored57) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   if (mapper) {
                     throw new NotFoundException();
                   }
@@ -2078,7 +2367,9 @@ class TransportTest {
             client.send(
                 HttpRequest.newBuilder(URI.create(base + "/warmup")).build(),
                 HttpResponse.BodyHandlers.ofString());
+
         assertEquals(HttpClient.Version.HTTP_2, warmup.version());
+
         var sibling =
             client.sendAsync(
                 HttpRequest.newBuilder(URI.create(base + "/good")).build(),
@@ -2086,16 +2377,20 @@ class TransportTest {
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+
           var failed =
               client.sendAsync(
                   HttpRequest.newBuilder(URI.create(base + "/fatal")).build(),
                   HttpResponse.BodyHandlers.ofString());
+
           assertInstanceOf(
               IOException.class,
               assertThrows(ExecutionException.class, () -> failed.get(5, TimeUnit.SECONDS))
                   .getCause());
+
           release.countDown();
           var result = sibling.get(5, TimeUnit.SECONDS);
+
           assertEquals(200, result.statusCode());
           assertEquals(warmup.body(), result.body());
         } finally {
@@ -2124,19 +2419,21 @@ class TransportTest {
           var client = secureClient(HttpClient.Version.HTTP_2)) {
         enableTls(app);
 
-        app.routes().get("/warmup", (ignored58, response) -> response.text("ready"));
+        app.routes().get("/warmup", (ignoredRequest, response) -> response.text("ready"));
         app.routes()
             .get(
                 "/good",
-                (ignored59, response) -> {
+                (ignoredRequest, response) -> {
                   entered.countDown();
+
                   assertTrue(release.await(3, TimeUnit.SECONDS));
+
                   response.text("survived");
                 });
         app.routes()
             .get(
                 "/fatal",
-                (ignored60, response) -> {
+                (ignoredRequest, response) -> {
                   var stream = response.startStream("text/plain");
                   stream.write("prefix");
                   stream.flush();
@@ -2144,6 +2441,7 @@ class TransportTest {
                 });
         app.start();
         var base = "https://localhost:" + app.port();
+
         assertEquals(
             HttpClient.Version.HTTP_2,
             client
@@ -2151,6 +2449,7 @@ class TransportTest {
                     HttpRequest.newBuilder(URI.create(base + "/warmup")).build(),
                     HttpResponse.BodyHandlers.ofString())
                 .version());
+
         var sibling =
             client.sendAsync(
                 HttpRequest.newBuilder(URI.create(base + "/good")).build(),
@@ -2158,15 +2457,19 @@ class TransportTest {
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+
           var failed =
               client.sendAsync(
                   HttpRequest.newBuilder(URI.create(base + "/fatal")).build(),
                   HttpResponse.BodyHandlers.ofByteArray());
+
           assertInstanceOf(
               IOException.class,
               assertThrows(ExecutionException.class, () -> failed.get(5, TimeUnit.SECONDS))
                   .getCause());
+
           release.countDown();
+
           assertEquals("survived", sibling.get(5, TimeUnit.SECONDS).body());
         } finally {
           release.countDown();
@@ -2202,15 +2505,26 @@ class TransportTest {
 
   private static HttpClient secureClient(HttpClient.Version version) throws Exception {
     var store = testKeyStore();
+    var context = trustedClientContext(store);
+
+    return secureClientProperties(version, context).build();
+  }
+
+  private static SSLContext trustedClientContext(KeyStore store) throws Exception {
     var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
     trust.init(store);
+
     var context = SSLContext.getInstance("TLS");
     context.init(null, trust.getTrustManagers(), null);
+
+    return context;
+  }
+
+  private static Builder secureClientProperties(HttpClient.Version version, SSLContext context) {
     return HttpClient.newBuilder()
         .sslContext(context)
         .version(version)
-        .connectTimeout(Duration.ofSeconds(3))
-        .build();
+        .connectTimeout(Duration.ofSeconds(3));
   }
 
   private static void enableMutualTls(Shoostr app) throws Exception {
@@ -2232,6 +2546,7 @@ class TransportTest {
     trust.init(testKeyStore());
     var context = SSLContext.getInstance("TLS");
     context.init(keys.getKeyManagers(), trust.getTrustManagers(), null);
+
     return context;
   }
 
@@ -2254,34 +2569,7 @@ class TransportTest {
     }
 
     var output = temporary.resolve("keytool.log");
-    var process =
-        new ProcessBuilder(
-                tool.toString(),
-                "-genkeypair",
-                "-alias",
-                "untrusted",
-                "-keyalg",
-                "RSA",
-                "-keysize",
-                "2048",
-                "-dname",
-                "CN=localhost",
-                "-ext",
-                "EKU=clientAuth",
-                "-validity",
-                "1",
-                "-storetype",
-                "PKCS12",
-                "-keystore",
-                path.toString(),
-                "-storepass",
-                String.valueOf(PASSWORD),
-                "-keypass",
-                String.valueOf(PASSWORD),
-                "-noprompt")
-            .redirectErrorStream(true)
-            .redirectOutput(output.toFile())
-            .start();
+    var process = createProcessForUntrustedClientKeyStore(tool, path, output);
 
     try {
       assertTrue(process.waitFor(8, TimeUnit.SECONDS));
@@ -2300,5 +2588,36 @@ class TransportTest {
     }
 
     return store;
+  }
+
+  private Process createProcessForUntrustedClientKeyStore(Path tool, Path path, Path output)
+      throws IOException {
+    return new ProcessBuilder(
+            tool.toString(),
+            "-genkeypair",
+            "-alias",
+            "untrusted",
+            "-keyalg",
+            "RSA",
+            "-keysize",
+            "2048",
+            "-dname",
+            "CN=localhost",
+            "-ext",
+            "EKU=clientAuth",
+            "-validity",
+            "1",
+            "-storetype",
+            "PKCS12",
+            "-keystore",
+            path.toString(),
+            "-storepass",
+            String.valueOf(PASSWORD),
+            "-keypass",
+            String.valueOf(PASSWORD),
+            "-noprompt")
+        .redirectErrorStream(true)
+        .redirectOutput(output.toFile())
+        .start();
   }
 }

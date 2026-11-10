@@ -45,6 +45,7 @@ class NativeExecutionTest {
         app.modifyServer(
             server -> {
               var pool = assertInstanceOf(QueuedThreadPool.class, server.getThreadPool());
+
               pool.setMaxThreads(64);
               if (virtual) {
                 owned.set(
@@ -62,6 +63,7 @@ class NativeExecutionTest {
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/thread"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("virtual=" + virtual, result.body());
         }
@@ -86,16 +88,8 @@ class NativeExecutionTest {
 
       {
         var app =
-            new Shoostr(configuredOptions)
-                .modifyServer(
-                    server -> {
-                      var pool = (QueuedThreadPool) server.getThreadPool();
-                      nativePool.set(pool);
-                      owned.set(
-                          assertInstanceOf(
-                              ExecutorService.class, pool.getVirtualThreadsExecutor()));
-                      pool.setVirtualThreadsExecutor(clear ? null : borrowed);
-                    });
+            createAppForNativeHooksOverrideVirtualOptInAndKeepReplacementExecutorsBorrowed(
+                configuredOptions, nativePool, owned, clear, borrowed);
 
         try (Closeable appCleanup1 = app::close) {
           app.routes()
@@ -107,6 +101,7 @@ class NativeExecutionTest {
           try (var test = TestServer.start(app)) {
             var result =
                 test.send(request -> request.path("/thread"), HttpResponse.BodyHandlers.ofString());
+
             assertEquals(200, result.statusCode());
             assertEquals(clear ? "virtual=false" : "virtual=true", result.body());
           }
@@ -114,6 +109,7 @@ class NativeExecutionTest {
       }
 
       assertTrue(owned.get().isShutdown());
+
       if (clear) {
         assertNull(nativePool.get().getVirtualThreadsExecutor());
       } else {
@@ -123,6 +119,22 @@ class NativeExecutionTest {
       assertFalse(borrowed.isShutdown());
       assertEquals("available", borrowed.submit(() -> "available").get(3, TimeUnit.SECONDS));
     }
+  }
+
+  private Shoostr createAppForNativeHooksOverrideVirtualOptInAndKeepReplacementExecutorsBorrowed(
+      Options configuredOptions,
+      AtomicReference<QueuedThreadPool> nativePool,
+      AtomicReference<ExecutorService> owned,
+      boolean clear,
+      ExecutorService borrowed) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            server -> {
+              var pool = (QueuedThreadPool) server.getThreadPool();
+              nativePool.set(pool);
+              owned.set(assertInstanceOf(ExecutorService.class, pool.getVirtualThreadsExecutor()));
+              pool.setVirtualThreadsExecutor(clear ? null : borrowed);
+            });
   }
 
   @Test
@@ -169,11 +181,14 @@ class NativeExecutionTest {
             var firstServer = TestServer.start(first);
             var secondServer = TestServer.start(second)) {
           first.close();
+
           assertTrue(firstOwned.get().isShutdown());
           assertFalse(secondOwned.get().isShutdown());
+
           var result =
               secondServer.send(
                   request -> request.path("/thread"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("virtual=true", result.body());
         }
@@ -218,7 +233,9 @@ class NativeExecutionTest {
                   .timeout(Duration.ofSeconds(10))
                   .build();
           var warmup = client.send(request, HttpResponse.BodyHandlers.ofString());
+
           assertEquals(HttpClient.Version.HTTP_2, warmup.version());
+
           var connection = warmup.headers().firstValue("X-Client-Port").orElseThrow();
           var pending = new ArrayList<CompletableFuture<HttpResponse<String>>>();
           for (int index = 0; index < 64; index++) {
@@ -229,6 +246,7 @@ class NativeExecutionTest {
               .get(10, TimeUnit.SECONDS);
           for (var future : pending) {
             var result = future.join();
+
             assertEquals(200, result.statusCode());
             assertEquals(HttpClient.Version.HTTP_2, result.version());
             assertEquals(connection, result.headers().firstValue("X-Client-Port").orElseThrow());

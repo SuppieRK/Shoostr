@@ -26,33 +26,43 @@ class MultipartExampleTest {
   void readsAFieldAndUploadedBytes() throws Exception {
 
     try (var test = TestServer.start(MultipartExample.application(directory))) {
-      var response =
-          send(
-              test,
-              multipart(
-                  part("title", null, "Notes".getBytes(StandardCharsets.UTF_8)),
-                  part("document", "notes.txt", new byte[] {'a', 'b', 'c'})));
+      var response = sendResponseForReadsAFieldAndUploadedBytes(test);
+
       assertEquals(200, response.statusCode());
       assertEquals(
           "title=Notes\nfirst=notes.txt\nfiles=1\nfields=1\nbytes=3\nhex=616263", response.body());
     }
   }
 
+  private HttpResponse<String> sendResponseForReadsAFieldAndUploadedBytes(TestServer test)
+      throws Exception {
+    return send(
+        test,
+        multipart(
+            part("title", null, "Notes".getBytes(StandardCharsets.UTF_8)),
+            part("document", "notes.txt", new byte[] {'a', 'b', 'c'})));
+  }
+
   @Test
   void preservesRepeatedFilesBinaryContentAndAnEmptyFilename() throws Exception {
 
     try (var test = TestServer.start(MultipartExample.application(directory))) {
-      var response =
-          send(
-              test,
-              multipart(
-                  part("title", null, "A+B".getBytes(StandardCharsets.UTF_8)),
-                  part("document", "", new byte[] {0, -1}),
-                  part("document", "other.bin", new byte[] {127, -128}),
-                  part("attachment", "extra.txt", new byte[0])));
+      var response = sendResponseForPreservesRepeatedFilesBinaryContentAndAnEmptyFilename(test);
+
       assertEquals(200, response.statusCode());
       assertEquals("title=A+B\nfirst=\nfiles=2\nfields=2\nbytes=4\nhex=00ff7f80", response.body());
     }
+  }
+
+  private HttpResponse<String> sendResponseForPreservesRepeatedFilesBinaryContentAndAnEmptyFilename(
+      TestServer test) throws Exception {
+    return send(
+        test,
+        multipart(
+            part("title", null, "A+B".getBytes(StandardCharsets.UTF_8)),
+            part("document", "", new byte[] {0, -1}),
+            part("document", "other.bin", new byte[] {127, -128}),
+            part("attachment", "extra.txt", new byte[0])));
   }
 
   @ParameterizedTest
@@ -72,8 +82,8 @@ class MultipartExampleTest {
   @CsvSource({"8, 200", "9, 413"})
   void countsEveryMultipartPart(int count, int status) throws Exception {
     var parts = new byte[count][];
-    for (var i = 0; i < count; i++) {
-      parts[i] = part("title", null, new byte[0]);
+    for (var index = 0; index < count; index++) {
+      parts[index] = part("title", null, new byte[0]);
     }
 
     try (var test = TestServer.start(MultipartExample.application(directory))) {
@@ -84,8 +94,8 @@ class MultipartExampleTest {
   @Test
   void rejectsAggregateOverflowEvenWhenEveryPartFits() throws Exception {
     var parts = new byte[8][];
-    for (var i = 0; i < parts.length; i++) {
-      parts[i] = part("document", "data.bin", new byte[1024]);
+    for (var index = 0; index < parts.length; index++) {
+      parts[index] = part("document", "data.bin", new byte[1024]);
     }
 
     try (var test = TestServer.start(MultipartExample.application(directory))) {
@@ -155,20 +165,27 @@ class MultipartExampleTest {
 
         try (var test = TestServer.start(app)) {
           var response =
-              test.send(
-                  request ->
-                      request
-                          .path("/storage")
-                          .method("POST")
-                          .header("Content-Type", "multipart/form-data; boundary=example")
-                          .body(multipart(part("document", "data.bin", new byte[size]))),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResponseForSpillsAboveTheThresholdAndCleansUpAfterTheExchange(test, size);
+
           assertEquals(200, response.statusCode());
           assertEquals(Integer.toString(expectedFiles), response.body());
+
           awaitEmptyDirectory();
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResponseForSpillsAboveTheThresholdAndCleansUpAfterTheExchange(
+      TestServer test, int size) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/storage")
+                .method("POST")
+                .header("Content-Type", "multipart/form-data; boundary=example")
+                .body(multipart(part("document", "data.bin", new byte[size]))),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -182,21 +199,17 @@ class MultipartExampleTest {
                 "/modes",
                 (request, response) -> {
                   request.files();
+
                   assertThrows(IllegalStateException.class, request::bodyBytes);
                   assertThrows(IllegalStateException.class, request::input);
+
                   response.text("checked");
                 });
 
         try (var test = TestServer.start(app)) {
           var response =
-              test.send(
-                  request ->
-                      request
-                          .path("/modes")
-                          .method("POST")
-                          .header("Content-Type", "multipart/form-data; boundary=example")
-                          .body(multipart(part("document", "a.txt", new byte[0]))),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResponseForRejectsBufferedAndStreamingAccessAfterMultipartParsing(test);
+
           assertEquals(200, response.statusCode());
           assertEquals("checked", response.body());
         }
@@ -204,9 +217,23 @@ class MultipartExampleTest {
     }
   }
 
+  private HttpResponse<String>
+      sendResponseForRejectsBufferedAndStreamingAccessAfterMultipartParsing(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/modes")
+                .method("POST")
+                .header("Content-Type", "multipart/form-data; boundary=example")
+                .body(multipart(part("document", "a.txt", new byte[0]))),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void rejectsAFileAsTheStorageDirectoryBeforeStartup() throws Exception {
     var file = Files.createFile(directory.resolve("not-a-directory"));
+
     assertThrows(IOException.class, () -> MultipartExample.application(file));
     assertThrows(NullPointerException.class, () -> MultipartExample.application(null));
   }
@@ -239,6 +266,7 @@ class MultipartExampleTest {
       body.writeBytes(part);
     }
     body.writeBytes("--example--\r\n".getBytes(StandardCharsets.US_ASCII));
+
     return body.toByteArray();
   }
 
@@ -252,6 +280,7 @@ class MultipartExampleTest {
     body.writeBytes((disposition + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
     body.writeBytes(content);
     body.writeBytes("\r\n".getBytes(StandardCharsets.US_ASCII));
+
     return body.toByteArray();
   }
 }

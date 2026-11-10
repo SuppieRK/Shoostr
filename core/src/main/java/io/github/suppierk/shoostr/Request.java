@@ -141,7 +141,7 @@ public sealed class Request permits TypedRequest {
                 codec);
     if (multipartRequest) {
       org.eclipse.jetty.server.Request.addCompletionListener(
-          delegate, ignored2 -> closeMultipart());
+          delegate, ignoredFailure -> closeMultipart());
     }
   }
 
@@ -240,6 +240,7 @@ public sealed class Request permits TypedRequest {
    */
   public String method() {
     check();
+
     return delegate.getMethod();
   }
 
@@ -250,6 +251,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<Session> getSession() {
     check();
+
     return Optional.ofNullable(delegate.getSession(false));
   }
 
@@ -292,6 +294,7 @@ public sealed class Request permits TypedRequest {
     }
 
     response.renewSessionId(session);
+
     return session.getId();
   }
 
@@ -303,6 +306,7 @@ public sealed class Request permits TypedRequest {
    */
   public String path() {
     check();
+
     return org.eclipse.jetty.server.Request.getPathInContext(delegate);
   }
 
@@ -314,6 +318,7 @@ public sealed class Request permits TypedRequest {
    */
   public String url() {
     check();
+
     return HttpURI.build(delegate.getHttpURI()).query(null).fragment(null).asString();
   }
 
@@ -324,6 +329,7 @@ public sealed class Request permits TypedRequest {
    */
   public String fullUrl() {
     check();
+
     return delegate.getHttpURI().asString();
   }
 
@@ -335,6 +341,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<String> scheme() {
     check();
+
     return Optional.ofNullable(delegate.getHttpURI().getScheme());
   }
 
@@ -346,6 +353,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<String> authority() {
     check();
+
     return Optional.ofNullable(delegate.getHttpURI().getAuthority());
   }
 
@@ -356,6 +364,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<String> serverName() {
     check();
+
     return Optional.ofNullable(org.eclipse.jetty.server.Request.getServerName(delegate));
   }
 
@@ -367,6 +376,7 @@ public sealed class Request permits TypedRequest {
    */
   public int serverPort() {
     check();
+
     return org.eclipse.jetty.server.Request.getServerPort(delegate);
   }
 
@@ -377,6 +387,7 @@ public sealed class Request permits TypedRequest {
    */
   public String protocol() {
     check();
+
     return delegate.getConnectionMetaData().getHttpVersion().asString();
   }
 
@@ -388,6 +399,7 @@ public sealed class Request permits TypedRequest {
    */
   public boolean isSecure() {
     check();
+
     return delegate.getConnectionMetaData().getConnection().getEndPoint().isSecure();
   }
 
@@ -401,6 +413,7 @@ public sealed class Request permits TypedRequest {
    */
   public boolean isEffectivelySecure() {
     check();
+
     return forwardedProtocol == null ? isSecure() : "https".equals(forwardedProtocol);
   }
 
@@ -412,6 +425,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<SocketAddress> remoteAddress() {
     check();
+
     return Optional.ofNullable(
         delegate.getConnectionMetaData().getConnection().getEndPoint().getRemoteSocketAddress());
   }
@@ -423,6 +437,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<SocketAddress> localAddress() {
     check();
+
     return Optional.ofNullable(
         delegate.getConnectionMetaData().getConnection().getEndPoint().getLocalSocketAddress());
   }
@@ -434,6 +449,7 @@ public sealed class Request permits TypedRequest {
    */
   public boolean isForwarded() {
     check();
+
     return effectiveUrl != null;
   }
 
@@ -445,7 +461,21 @@ public sealed class Request permits TypedRequest {
    */
   public String effectiveUrl() {
     check();
+
     return effectiveUrl == null ? fullUrl() : effectiveUrl;
+  }
+
+  /**
+   * Publishes validated effective metadata without changing the transport request.
+   *
+   * @param address selected client, or null when undisclosed
+   * @param url full URL preserving the raw path and query
+   * @param protocol selected validated forwarding protocol, or null when absent
+   */
+  void forwarded(@Nullable InetSocketAddress address, String url, @Nullable String protocol) {
+    clientAddress = address;
+    effectiveUrl = url;
+    forwardedProtocol = protocol;
   }
 
   /**
@@ -472,6 +502,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<String> routePattern() {
     check();
+
     return endpoint == null ? Optional.empty() : Optional.of(endpoint.routePattern());
   }
 
@@ -515,12 +546,31 @@ public sealed class Request permits TypedRequest {
   }
 
   /**
+   * Attaches the matched endpoint so parameters can be decoded only when requested.
+   *
+   * @param endpoint selected immutable route metadata
+   */
+  void route(RadixRoutes.Endpoint endpoint) {
+    this.endpoint = endpoint;
+  }
+
+  /**
+   * Reads behavior from the selected immutable endpoint without an extension registry lookup.
+   *
+   * @return local behavior, or null before matching or for routes without local runtime behavior
+   */
+  @Nullable EndpointBehavior behavior() {
+    return endpoint == null ? null : endpoint.behavior();
+  }
+
+  /**
    * Reads the query component without decoding, including its original percent escapes.
    *
    * @return raw query without the question mark, or empty when absent
    */
   public Optional<String> queryString() {
     check();
+
     return Optional.ofNullable(delegate.getHttpURI().getQuery());
   }
 
@@ -532,6 +582,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<String> queryParam(String name) {
     var values = queryParams(name);
+
     return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
   }
 
@@ -571,6 +622,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<String> formParam(String name) throws IOException {
     var values = formParams(name);
+
     return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
   }
 
@@ -629,6 +681,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<String> header(String name) {
     check();
+
     return Optional.ofNullable(nativeHeaders.get(Objects.requireNonNull(name)));
   }
 
@@ -642,6 +695,7 @@ public sealed class Request permits TypedRequest {
     check();
     Objects.requireNonNull(name);
     var snapshot = headers;
+
     return snapshot == null
         ? List.copyOf(nativeHeaders.getValuesList(name))
         : snapshot.getOrDefault(name, List.of());
@@ -655,7 +709,18 @@ public sealed class Request permits TypedRequest {
    */
   public List<String> webSocketProtocols() {
     check();
+
     return webSocketProtocols;
+  }
+
+  /**
+   * Supplies Jetty's parsed offers immediately before invoking the WebSocket listener factory.
+   *
+   * @param protocols client-offered subprotocols
+   */
+  void webSocketProtocols(List<String> protocols) {
+    check();
+    webSocketProtocols = List.copyOf(protocols);
   }
 
   /**
@@ -668,7 +733,43 @@ public sealed class Request permits TypedRequest {
   public Map<String, List<String>> headerMap() {
     check();
     var snapshot = headers;
+
     return snapshot == null ? captureHeaderMap() : snapshot;
+  }
+
+  /**
+   * Publishes the grouped immutable header map after it has been fully initialized.
+   *
+   * @return the single cached header map
+   */
+  private synchronized Map<String, List<String>> captureHeaderMap() {
+    var snapshot = headers;
+    if (snapshot == null) {
+      snapshot = parseHeaders(nativeHeaders);
+      headers = snapshot;
+    }
+
+    return snapshot;
+  }
+
+  /**
+   * Groups effective header fields once while retaining case-insensitive lookup and arrival order.
+   *
+   * @param nativeHeaders immutable transport fields captured after native customization
+   * @return deeply immutable header snapshot
+   */
+  private static Map<String, List<String>> parseHeaders(HttpFields nativeHeaders) {
+    if (nativeHeaders.size() == 0) {
+      return Map.of();
+    }
+
+    Map<String, List<String>> fields = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+    for (var field : nativeHeaders) {
+      fields.computeIfAbsent(field.getName(), ignored -> new ArrayList<>()).add(field.getValue());
+    }
+    fields.replaceAll((ignoredString, values) -> List.copyOf(values));
+
+    return Collections.unmodifiableMap(fields);
   }
 
   /**
@@ -679,6 +780,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<String> cookie(String name) {
     var values = cookies(name);
+
     return values.isEmpty() ? Optional.empty() : Optional.of(values.getFirst());
   }
 
@@ -691,6 +793,7 @@ public sealed class Request permits TypedRequest {
    */
   public List<String> cookies(String name) {
     check();
+
     return cookies.getOrDefault(Objects.requireNonNull(name), List.of());
   }
 
@@ -702,7 +805,31 @@ public sealed class Request permits TypedRequest {
    */
   public Map<String, List<String>> cookieMap() {
     check();
+
     return cookies;
+  }
+
+  /**
+   * Captures native cookie parsing results without exposing transport-owned cached objects.
+   *
+   * @param delegate transport request after native customization
+   * @return repeated values separated by case-sensitive name
+   * @throws org.eclipse.jetty.http.HttpException.RuntimeException if native cookie policy rejects
+   *     malformed input
+   */
+  private static Map<String, List<String>> parseCookies(org.eclipse.jetty.server.Request delegate) {
+    var nativeCookies = org.eclipse.jetty.server.Request.getCookies(delegate);
+    if (nativeCookies.isEmpty()) {
+      return Map.of();
+    }
+
+    var parsed = new LinkedHashMap<String, List<String>>();
+    for (var cookie : nativeCookies) {
+      parsed.computeIfAbsent(cookie.getName(), ignored -> new ArrayList<>()).add(cookie.getValue());
+    }
+    parsed.replaceAll((ignoredString, values) -> List.copyOf(values));
+
+    return Collections.unmodifiableMap(parsed);
   }
 
   /**
@@ -713,6 +840,7 @@ public sealed class Request permits TypedRequest {
    */
   public Optional<Principal> principal() {
     check();
+
     return Optional.ofNullable(principal);
   }
 
@@ -738,6 +866,7 @@ public sealed class Request permits TypedRequest {
   public Optional<Object> attribute(String name) {
     check();
     Objects.requireNonNull(name);
+
     return attributes == null ? Optional.empty() : Optional.ofNullable(attributes.get(name));
   }
 
@@ -775,6 +904,7 @@ public sealed class Request permits TypedRequest {
    */
   public Map<String, Object> attributeMap() {
     check();
+
     return attributes == null ? Map.of() : Map.copyOf(attributes);
   }
 
@@ -800,18 +930,28 @@ public sealed class Request permits TypedRequest {
    * @throws IOException if input fails
    * @throws ContentTooLargeException if the body exceeds the configured limit
    */
-  @SuppressWarnings("ReferenceEquality") // Charset names do not identify trusted JDK instances.
   public String bodyText(Charset charset) throws IOException {
     Objects.requireNonNull(charset);
     // Only these JDK instances can read the private cache; custom decoders receive a copy.
-    boolean standard =
-        charset == StandardCharsets.UTF_8
-            || charset == StandardCharsets.ISO_8859_1
-            || charset == StandardCharsets.US_ASCII
-            || charset == StandardCharsets.UTF_16
-            || charset == StandardCharsets.UTF_16BE
-            || charset == StandardCharsets.UTF_16LE;
+    boolean standard = isStandardCharset(charset);
+
     return new String(standard ? bufferedBody() : bodyBytes(), charset);
+  }
+
+  /**
+   * Identifies JDK decoders that can safely read the private body cache.
+   *
+   * @param charset selected decoder
+   * @return whether the decoder is an exact trusted JDK instance
+   */
+  @SuppressWarnings("ReferenceEquality") // Charset names do not identify trusted JDK instances.
+  private static boolean isStandardCharset(Charset charset) {
+    return charset == StandardCharsets.UTF_8
+        || charset == StandardCharsets.ISO_8859_1
+        || charset == StandardCharsets.US_ASCII
+        || charset == StandardCharsets.UTF_16
+        || charset == StandardCharsets.UTF_16BE
+        || charset == StandardCharsets.UTF_16LE;
   }
 
   /**
@@ -823,6 +963,7 @@ public sealed class Request permits TypedRequest {
    */
   public byte[] bodyBytes() throws IOException {
     var bytes = bufferedBody();
+
     return Arrays.copyOf(bytes, bytes.length);
   }
 
@@ -907,6 +1048,7 @@ public sealed class Request permits TypedRequest {
       @Override
       public int read(byte[] value, int offset, int length) throws IOException {
         Objects.checkFromIndexSize(offset, length, value.length);
+
         return length == 0 ? 0 : super.read(value, offset, length);
       }
     };
@@ -927,140 +1069,6 @@ public sealed class Request permits TypedRequest {
     }
 
     return input;
-  }
-
-  /**
-   * Reads the first multipart upload with the exact field name, or empty when absent. Nonmultipart
-   * requests return empty without reading or claiming their body.
-   *
-   * @param name exact multipart field name
-   * @return first upload, or empty
-   * @throws IOException if multipart input cannot be parsed
-   */
-  public Optional<Upload> file(String name) throws IOException {
-    var selected = files(name);
-    return selected.isEmpty() ? Optional.empty() : Optional.of(selected.getFirst());
-  }
-
-  /**
-   * Reads multipart uploads for the exact field name in arrival order. Nonmultipart requests return
-   * an empty list without reading or claiming their body.
-   *
-   * @param name exact multipart field name
-   * @return immutable uploads, or an empty list
-   * @throws IOException if multipart input cannot be parsed
-   */
-  public List<Upload> files(String name) throws IOException {
-    return files().getOrDefault(Objects.requireNonNull(name), List.of());
-  }
-
-  /**
-   * Reads every multipart upload by field name in arrival order. Nonmultipart requests return an
-   * empty map without reading or claiming their body.
-   *
-   * @return immutable uploads grouped by field name
-   * @throws IOException if multipart input cannot be parsed
-   */
-  public Map<String, List<Upload>> files() throws IOException {
-    check();
-    if (files == null) {
-      if (!isMultipart()) {
-        files = Map.of();
-        return files;
-      }
-
-      var grouped = new LinkedHashMap<String, List<Upload>>();
-      for (var part : parts()) {
-        if (part.getFileName() != null) {
-          var upload = new Upload(part, this::check);
-          uploads.add(upload);
-          grouped.computeIfAbsent(part.getName(), ignored -> new ArrayList<>()).add(upload);
-        }
-      }
-      grouped.replaceAll((ignored3, values) -> List.copyOf(values));
-      files = Collections.unmodifiableMap(grouped);
-    }
-
-    return files;
-  }
-
-  /**
-   * Attaches the matched endpoint so parameters can be decoded only when requested.
-   *
-   * @param endpoint selected immutable route metadata
-   */
-  void route(RadixRoutes.Endpoint endpoint) {
-    this.endpoint = endpoint;
-  }
-
-  /**
-   * Reads behavior from the selected immutable endpoint without an extension registry lookup.
-   *
-   * @return local behavior, or null before matching or for routes without local runtime behavior
-   */
-  @Nullable EndpointBehavior behavior() {
-    return endpoint == null ? null : endpoint.behavior();
-  }
-
-  /**
-   * Identifies the matched upgrade binding without trusting client-supplied Upgrade headers.
-   *
-   * @return whether routing selected a managed or native WebSocket handshake
-   */
-  boolean webSocket() {
-    check();
-    return endpoint != null && endpoint.websocketFactory() != null;
-  }
-
-  /**
-   * Supplies Jetty's parsed offers immediately before invoking the WebSocket listener factory.
-   *
-   * @param protocols client-offered subprotocols
-   */
-  void webSocketProtocols(List<String> protocols) {
-    check();
-    webSocketProtocols = List.copyOf(protocols);
-  }
-
-  /**
-   * Returns the applicable known-length admission limit for this request representation.
-   *
-   * @return buffered-body or multipart aggregate limit
-   */
-  long maxBodyBytes() {
-    return isMultipart() ? multipartOptions.maxBytes() : limit;
-  }
-
-  /**
-   * Publishes validated effective metadata without changing the transport request.
-   *
-   * @param address selected client, or null when undisclosed
-   * @param url full URL preserving the raw path and query
-   * @param protocol selected validated forwarding protocol, or null when absent
-   */
-  void forwarded(@Nullable InetSocketAddress address, String url, @Nullable String protocol) {
-    clientAddress = address;
-    effectiveUrl = url;
-    forwardedProtocol = protocol;
-  }
-
-  /** Revokes access and releases local application state without closing transport-owned input. */
-  void finish() {
-    finished = true;
-    closeInput();
-    attributes = null;
-    principal = null;
-  }
-
-  /** Closes one streamed request input after framework handler finalization. */
-  private void closeInput() {
-    if (input != null) {
-      try {
-        input.close();
-      } catch (IOException ignored4) {
-        // Transport cleanup continues after input-close failure.
-      }
-    }
   }
 
   /**
@@ -1134,18 +1142,86 @@ public sealed class Request permits TypedRequest {
     };
   }
 
-  /** Closes multipart temporary resources after Jetty completes the request exchange. */
-  private void closeMultipart() {
-    synchronized (this) {
-      multipartClosed = true;
-      for (var upload : uploads) {
-        upload.close();
-      }
-
-      if (multipart != null) {
-        multipart.close();
+  /** Closes one streamed request input after framework handler finalization. */
+  private void closeInput() {
+    if (input != null) {
+      try {
+        input.close();
+      } catch (IOException ignoredFailure) {
+        // Transport cleanup continues after input-close failure.
       }
     }
+  }
+
+  /**
+   * Reads the first multipart upload with the exact field name, or empty when absent. Nonmultipart
+   * requests return empty without reading or claiming their body.
+   *
+   * @param name exact multipart field name
+   * @return first upload, or empty
+   * @throws IOException if multipart input cannot be parsed
+   */
+  public Optional<Upload> file(String name) throws IOException {
+    var selected = files(name);
+
+    return selected.isEmpty() ? Optional.empty() : Optional.of(selected.getFirst());
+  }
+
+  /**
+   * Reads multipart uploads for the exact field name in arrival order. Nonmultipart requests return
+   * an empty list without reading or claiming their body.
+   *
+   * @param name exact multipart field name
+   * @return immutable uploads, or an empty list
+   * @throws IOException if multipart input cannot be parsed
+   */
+  public List<Upload> files(String name) throws IOException {
+    return files().getOrDefault(Objects.requireNonNull(name), List.of());
+  }
+
+  /**
+   * Reads every multipart upload by field name in arrival order. Nonmultipart requests return an
+   * empty map without reading or claiming their body.
+   *
+   * @return immutable uploads grouped by field name
+   * @throws IOException if multipart input cannot be parsed
+   */
+  public Map<String, List<Upload>> files() throws IOException {
+    check();
+    if (files == null) {
+      if (!isMultipart()) {
+        files = Map.of();
+
+        return files;
+      }
+
+      var grouped = new LinkedHashMap<String, List<Upload>>();
+      for (var part : parts()) {
+        if (part.getFileName() != null) {
+          var upload = new Upload(part, this::check);
+          uploads.add(upload);
+          grouped.computeIfAbsent(part.getName(), ignored -> new ArrayList<>()).add(upload);
+        }
+      }
+      grouped.replaceAll((ignoredString, values) -> List.copyOf(values));
+      files = Collections.unmodifiableMap(grouped);
+    }
+
+    return files;
+  }
+
+  /**
+   * Reports whether the request declares multipart form data.
+   *
+   * @return whether the Content-Type is multipart/form-data
+   */
+  private boolean isMultipart() {
+    var contentType = header(HttpHeaders.CONTENT_TYPE.value()).orElse("");
+    var separator = contentType.indexOf(';');
+    // Classification must not hide invalid parameters from the multipart parser.
+    var type = separator < 0 ? contentType : contentType.substring(0, separator);
+
+    return "multipart/form-data".equalsIgnoreCase(type.trim());
   }
 
   /**
@@ -1164,7 +1240,8 @@ public sealed class Request permits TypedRequest {
             .add(part.getContentAsString(StandardCharsets.UTF_8));
       }
     }
-    fields.replaceAll((ignored5, values) -> List.copyOf(values));
+    fields.replaceAll((ignoredString, values) -> List.copyOf(values));
+
     return Collections.unmodifiableMap(fields);
   }
 
@@ -1207,6 +1284,7 @@ public sealed class Request permits TypedRequest {
           throw new IOException("Multipart request completed before parsing finished");
         }
       }
+
       return parts;
     } catch (InterruptedException failure) {
       Thread.currentThread().interrupt();
@@ -1214,40 +1292,6 @@ public sealed class Request permits TypedRequest {
     } catch (ExecutionException failure) {
       throw multipartFailure(failure);
     }
-  }
-
-  /**
-   * Preserves transport and parser failure types when an asynchronous multipart parse completes.
-   *
-   * @param failure parser completion failure
-   * @return checked I/O failure to propagate
-   * @throws HttpException if parsing failed due to invalid or excessive input
-   * @throws ContentTooLargeException if the configured multipart limit was exceeded
-   * @throws BadRequestException if multipart syntax or metadata is invalid
-   */
-  private static IOException multipartFailure(ExecutionException failure) {
-    if (failure.getCause() instanceof CompletionException completion
-        && completion.getCause() instanceof HttpException httpFailure) {
-      throw httpFailure;
-    }
-
-    if (failure.getCause() instanceof HttpException httpFailure) {
-      throw httpFailure;
-    }
-
-    if (exceededMultipartLimit(failure)) {
-      throw new ContentTooLargeException();
-    }
-
-    if (failure.getCause() instanceof EOFException) {
-      throw new BadRequestException("Malformed multipart body", failure);
-    }
-
-    if (failure.getCause() instanceof IOException ioFailure) {
-      return ioFailure;
-    }
-
-    throw new BadRequestException("Malformed multipart body", failure);
   }
 
   /**
@@ -1260,6 +1304,7 @@ public sealed class Request permits TypedRequest {
   private synchronized MultiPartFormData.Parts publishMultipart(MultiPartFormData.Parts parts) {
     if (multipartClosed) {
       parts.close();
+
       return parts;
     }
 
@@ -1271,6 +1316,7 @@ public sealed class Request permits TypedRequest {
     }
 
     multipart = parts;
+
     return parts;
   }
 
@@ -1326,19 +1372,61 @@ public sealed class Request permits TypedRequest {
    * @return bounded Jetty parser configuration
    */
   private MultiPartConfig multipartConfig() {
-    var builder =
-        new MultiPartConfig.Builder()
-            .maxSize(multipartOptions.maxBytes())
-            .maxPartSize(multipartOptions.maxFileBytes())
-            .maxParts(multipartOptions.maxParts())
-            .maxHeadersSize(multipartOptions.maxPartHeadersBytes())
-            .maxMemoryPartSize(multipartOptions.maxMemoryPartBytes());
+    var builder = multipartConfigBuilder();
     builder.location(
         multipartOptions.temporaryDirectory() == null
             ? Path.of(System.getProperty("java.io.tmpdir"))
             : multipartOptions.temporaryDirectory());
 
     return builder.build();
+  }
+
+  /**
+   * Creates a parser builder with this request's captured multipart limits.
+   *
+   * @return builder before the temporary-directory setting is applied
+   */
+  private MultiPartConfig.Builder multipartConfigBuilder() {
+    return new MultiPartConfig.Builder()
+        .maxSize(multipartOptions.maxBytes())
+        .maxPartSize(multipartOptions.maxFileBytes())
+        .maxParts(multipartOptions.maxParts())
+        .maxHeadersSize(multipartOptions.maxPartHeadersBytes())
+        .maxMemoryPartSize(multipartOptions.maxMemoryPartBytes());
+  }
+
+  /**
+   * Preserves transport and parser failure types when an asynchronous multipart parse completes.
+   *
+   * @param failure parser completion failure
+   * @return checked I/O failure to propagate
+   * @throws HttpException if parsing failed due to invalid or excessive input
+   * @throws ContentTooLargeException if the configured multipart limit was exceeded
+   * @throws BadRequestException if multipart syntax or metadata is invalid
+   */
+  private static IOException multipartFailure(ExecutionException failure) {
+    if (failure.getCause() instanceof CompletionException completion
+        && completion.getCause() instanceof HttpException httpFailure) {
+      throw httpFailure;
+    }
+
+    if (failure.getCause() instanceof HttpException httpFailure) {
+      throw httpFailure;
+    }
+
+    if (exceededMultipartLimit(failure)) {
+      throw new ContentTooLargeException();
+    }
+
+    if (failure.getCause() instanceof EOFException) {
+      throw new BadRequestException("Malformed multipart body", failure);
+    }
+
+    if (failure.getCause() instanceof IOException ioFailure) {
+      return ioFailure;
+    }
+
+    throw new BadRequestException("Malformed multipart body", failure);
   }
 
   /**
@@ -1366,17 +1454,46 @@ public sealed class Request permits TypedRequest {
     return false;
   }
 
+  /** Closes multipart temporary resources after Jetty completes the request exchange. */
+  private void closeMultipart() {
+    synchronized (this) {
+      multipartClosed = true;
+      for (var upload : uploads) {
+        upload.close();
+      }
+
+      if (multipart != null) {
+        multipart.close();
+      }
+    }
+  }
+
   /**
-   * Reports whether the request declares multipart form data.
+   * Identifies the matched upgrade binding without trusting client-supplied Upgrade headers.
    *
-   * @return whether the Content-Type is multipart/form-data
+   * @return whether routing selected a managed or native WebSocket handshake
    */
-  private boolean isMultipart() {
-    var contentType = header(HttpHeaders.CONTENT_TYPE.value()).orElse("");
-    var separator = contentType.indexOf(';');
-    // Classification must not hide invalid parameters from the multipart parser.
-    var type = separator < 0 ? contentType : contentType.substring(0, separator);
-    return "multipart/form-data".equalsIgnoreCase(type.trim());
+  boolean webSocket() {
+    check();
+
+    return endpoint != null && endpoint.websocketFactory() != null;
+  }
+
+  /**
+   * Returns the applicable known-length admission limit for this request representation.
+   *
+   * @return buffered-body or multipart aggregate limit
+   */
+  long maxBodyBytes() {
+    return isMultipart() ? multipartOptions.maxBytes() : limit;
+  }
+
+  /** Revokes access and releases local application state without closing transport-owned input. */
+  void finish() {
+    finished = true;
+    closeInput();
+    attributes = null;
+    principal = null;
   }
 
   /**
@@ -1449,63 +1566,8 @@ public sealed class Request permits TypedRequest {
       }
     }
 
-    parsed.replaceAll((ignored6, values) -> List.copyOf(values));
-    return Collections.unmodifiableMap(parsed);
-  }
+    parsed.replaceAll((ignoredString, values) -> List.copyOf(values));
 
-  /**
-   * Publishes the grouped immutable header map after it has been fully initialized.
-   *
-   * @return the single cached header map
-   */
-  private synchronized Map<String, List<String>> captureHeaderMap() {
-    var snapshot = headers;
-    if (snapshot == null) {
-      snapshot = parseHeaders(nativeHeaders);
-      headers = snapshot;
-    }
-
-    return snapshot;
-  }
-
-  /**
-   * Groups effective header fields once while retaining case-insensitive lookup and arrival order.
-   *
-   * @param nativeHeaders immutable transport fields captured after native customization
-   * @return deeply immutable header snapshot
-   */
-  private static Map<String, List<String>> parseHeaders(HttpFields nativeHeaders) {
-    if (nativeHeaders.size() == 0) {
-      return Map.of();
-    }
-
-    Map<String, List<String>> fields = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-    for (var field : nativeHeaders) {
-      fields.computeIfAbsent(field.getName(), ignored -> new ArrayList<>()).add(field.getValue());
-    }
-    fields.replaceAll((ignored7, values) -> List.copyOf(values));
-    return Collections.unmodifiableMap(fields);
-  }
-
-  /**
-   * Captures native cookie parsing results without exposing transport-owned cached objects.
-   *
-   * @param delegate transport request after native customization
-   * @return repeated values separated by case-sensitive name
-   * @throws org.eclipse.jetty.http.HttpException.RuntimeException if native cookie policy rejects
-   *     malformed input
-   */
-  private static Map<String, List<String>> parseCookies(org.eclipse.jetty.server.Request delegate) {
-    var nativeCookies = org.eclipse.jetty.server.Request.getCookies(delegate);
-    if (nativeCookies.isEmpty()) {
-      return Map.of();
-    }
-
-    var parsed = new LinkedHashMap<String, List<String>>();
-    for (var cookie : nativeCookies) {
-      parsed.computeIfAbsent(cookie.getName(), ignored -> new ArrayList<>()).add(cookie.getValue());
-    }
-    parsed.replaceAll((ignored8, values) -> List.copyOf(values));
     return Collections.unmodifiableMap(parsed);
   }
 

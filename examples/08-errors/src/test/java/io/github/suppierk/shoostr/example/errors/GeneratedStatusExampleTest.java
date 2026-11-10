@@ -20,6 +20,7 @@ class GeneratedStatusExampleTest {
       var response =
           test.send(
               request -> request.path("/reports/daily"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(404, response.statusCode());
       assertEquals("Report unavailable", response.body());
       assertEquals("no-store", response.headers().firstValue("Cache-Control").orElseThrow());
@@ -34,6 +35,7 @@ class GeneratedStatusExampleTest {
       var response =
           test.send(
               request -> request.path(path).method("POST"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(405, response.statusCode());
       assertEquals("Method unavailable", response.body());
       assertEquals(
@@ -55,6 +57,7 @@ class GeneratedStatusExampleTest {
 
     try (var test = TestServer.start(GeneratedStatusExample.application())) {
       var response = test.send(request -> request.path(path), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(status, response.statusCode());
       assertEquals(body, response.body());
       assertEquals(

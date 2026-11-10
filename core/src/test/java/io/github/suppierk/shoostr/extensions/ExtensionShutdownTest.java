@@ -19,7 +19,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jetty.server.ServerConnector;
@@ -89,9 +91,11 @@ class ExtensionShutdownTest {
         app.routes()
             .get(
                 "/drain",
-                (ignored2, response) -> {
+                (ignoredRequest, response) -> {
                   entered.countDown();
+
                   assertTrue(release.await(5, TimeUnit.SECONDS));
+
                   response.body(
                       "text/plain",
                       resource
@@ -105,20 +109,21 @@ class ExtensionShutdownTest {
 
           try {
             assertTrue(entered.await(5, TimeUnit.SECONDS));
-            var closing =
-                workers.submit(
-                    () -> {
-                      app.close();
-                      return null;
-                    });
+
+            var closing = submitApplicationClose(workers, app);
+
             assertTrue(signalled.await(5, TimeUnit.SECONDS));
             assertTrue(stopping.await(5, TimeUnit.SECONDS));
             assertEquals(0, disposals.get());
+
             release.countDown();
             var response = request.get(5, TimeUnit.SECONDS);
+
             assertEquals(200, response.statusCode());
             assertEquals("resource available", new String(response.body(), StandardCharsets.UTF_8));
+
             closing.get(5, TimeUnit.SECONDS);
+
             assertTrue(scopeUsedResource.await(5, TimeUnit.SECONDS));
             assertTrue(completionUsedResource.await(5, TimeUnit.SECONDS));
             assertEquals(1, disposals.get());
@@ -129,6 +134,15 @@ class ExtensionShutdownTest {
         }
       }
     }
+  }
+
+  private Future<Object> submitApplicationClose(ExecutorService workers, Shoostr app) {
+    return workers.submit(
+        () -> {
+          app.close();
+
+          return null;
+        });
   }
 
   @Test
@@ -152,6 +166,7 @@ class ExtensionShutdownTest {
     try (Closeable appCleanup1 = app::close) {
       app.start();
       app.close();
+
       assertEquals(
           List.of("before-second", "before-first", "server", "close-second", "close-first"),
           events);
@@ -162,24 +177,7 @@ class ExtensionShutdownTest {
   void continuesNativeStopAndCleanupAfterOneShutdownSignalThrows() throws Exception {
     var events = new CopyOnWriteArrayList<String>();
     var rejection = new IllegalStateException("signal failed");
-    ApplicationExtension<Object> broken =
-        new ApplicationExtension<Object>() {
-          @Override
-          public Object configure(Lifecycle lifecycle, Object inherited) {
-            return this;
-          }
-
-          @Override
-          public void beforeStop() {
-            events.add("before-broken");
-            throw rejection;
-          }
-
-          @Override
-          public void close() {
-            events.add("close-broken");
-          }
-        };
+    ApplicationExtension<Object> broken = signalFailingProvider(events, rejection);
 
     {
       var app =
@@ -209,32 +207,32 @@ class ExtensionShutdownTest {
     }
   }
 
+  private ApplicationExtension<Object> signalFailingProvider(
+      CopyOnWriteArrayList<String> events, IllegalStateException rejection) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void beforeStop() {
+        events.add("before-broken");
+        throw rejection;
+      }
+
+      @Override
+      public void close() {
+        events.add("close-broken");
+      }
+    };
+  }
+
   @Test
   void signalsClaimedProvidersAfterSetupFailsWithoutClaimingLaterOnes() throws Exception {
     var events = new CopyOnWriteArrayList<String>();
     var setupFailure = new IllegalArgumentException("setup failed");
-    ApplicationExtension<Object> broken =
-        new ApplicationExtension<Object>() {
-          @Override
-          public Object configure(Lifecycle lifecycle, Object inherited) {
-            return this;
-          }
-
-          @Override
-          public void install(ApplicationCallbacks callbacks) {
-            throw setupFailure;
-          }
-
-          @Override
-          public void beforeStop() {
-            events.add("before-broken");
-          }
-
-          @Override
-          public void close() {
-            events.add("close-broken");
-          }
-        };
+    ApplicationExtension<Object> broken = setupFailingProvider(setupFailure, events);
 
     {
       var app = new Shoostr();
@@ -242,6 +240,7 @@ class ExtensionShutdownTest {
       try (Closeable appCleanup3 = app::close) {
         var first = capability("first", events);
         var last = capability("last", events);
+
         assertSame(
             setupFailure,
             assertThrows(
@@ -253,41 +252,71 @@ class ExtensionShutdownTest {
     }
   }
 
+  private ApplicationExtension<Object> setupFailingProvider(
+      IllegalArgumentException setupFailure, CopyOnWriteArrayList<String> events) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void install(ApplicationCallbacks callbacks) {
+        throw setupFailure;
+      }
+
+      @Override
+      public void beforeStop() {
+        events.add("before-broken");
+      }
+
+      @Override
+      public void close() {
+        events.add("close-broken");
+      }
+    };
+  }
+
   @Test
   void signalsProvidersAfterStartupPreparationFails() throws Exception {
     var events = new CopyOnWriteArrayList<String>();
-    ApplicationExtension<Object> broken =
-        new ApplicationExtension<Object>() {
-          @Override
-          public Object configure(Lifecycle lifecycle, Object inherited) {
-            return this;
-          }
-
-          @Override
-          public void beforeStart() {
-            throw new IllegalArgumentException("startup failed");
-          }
-
-          @Override
-          public void beforeStop() {
-            events.add("before");
-          }
-
-          @Override
-          public void close() {
-            events.add("close");
-          }
-        };
+    ApplicationExtension<Object> broken = preparationFailingProvider(events);
 
     {
       var app = new Shoostr();
 
       try (Closeable appCleanup4 = app::close) {
         app.withExtension(broken);
+
         assertThrows(IllegalArgumentException.class, app::start);
         assertEquals(List.of("before", "close"), events);
       }
     }
+  }
+
+  private ApplicationExtension<Object> preparationFailingProvider(
+      CopyOnWriteArrayList<String> events) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void beforeStart() {
+        throw new IllegalArgumentException("startup failed");
+      }
+
+      @Override
+      public void beforeStop() {
+        events.add("before");
+      }
+
+      @Override
+      public void close() {
+        events.add("close");
+      }
+    };
   }
 
   @Test
@@ -298,33 +327,37 @@ class ExtensionShutdownTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup5 = app::close) {
-        ApplicationExtension<Object> capability =
-            new ApplicationExtension<Object>() {
-              @Override
-              public Object configure(Lifecycle lifecycle, Object inherited) {
-                return this;
-              }
-
-              @Override
-              public void claimOwnership() {
-                assertDoesNotThrow(app::close);
-              }
-
-              @Override
-              public void beforeStop() {
-                events.add("before");
-              }
-
-              @Override
-              public void close() {
-                events.add("close");
-              }
-            };
+        ApplicationExtension<Object> capability = closingClaimProvider(app, events);
 
         assertThrows(IllegalStateException.class, () -> app.withExtension(capability));
         assertEquals(List.of("before", "close"), events);
       }
     }
+  }
+
+  private ApplicationExtension<Object> closingClaimProvider(
+      Shoostr app, CopyOnWriteArrayList<String> events) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void claimOwnership() {
+        assertDoesNotThrow(app::close);
+      }
+
+      @Override
+      public void beforeStop() {
+        events.add("before");
+      }
+
+      @Override
+      public void close() {
+        events.add("close");
+      }
+    };
   }
 
   @Test
@@ -346,6 +379,7 @@ class ExtensionShutdownTest {
               @Override
               public void beforeStop() {
                 signals.incrementAndGet();
+
                 assertDoesNotThrow(app::close);
               }
 
@@ -356,6 +390,7 @@ class ExtensionShutdownTest {
             });
         app.close();
         app.close();
+
         assertEquals(1, signals.get());
         assertEquals(1, disposals.get());
       }
@@ -394,32 +429,45 @@ class ExtensionShutdownTest {
           }
         }
         app.withExtension(new WaitingShutdown());
-        var first =
-            workers.submit(
-                () -> {
-                  app.close();
-                  return null;
-                });
+        var first = submitFirstClose(workers, app);
 
         try {
           assertTrue(entered.await(5, TimeUnit.SECONDS));
-          var second =
-              workers.submit(
-                  () -> {
-                    secondAttempt.countDown();
-                    app.close();
-                    return null;
-                  });
+
+          var second = submitSecondClose(workers, secondAttempt, app);
+
           assertTrue(secondAttempt.await(5, TimeUnit.SECONDS));
+
           release.countDown();
           first.get(5, TimeUnit.SECONDS);
           second.get(5, TimeUnit.SECONDS);
+
           assertEquals(1, signals.get());
         } finally {
           release.countDown();
         }
       }
     }
+  }
+
+  private Future<Object> submitFirstClose(ExecutorService workers, Shoostr app) {
+    return workers.submit(
+        () -> {
+          app.close();
+
+          return null;
+        });
+  }
+
+  private Future<Object> submitSecondClose(
+      ExecutorService workers, CountDownLatch secondAttempt, Shoostr app) {
+    return workers.submit(
+        () -> {
+          secondAttempt.countDown();
+          app.close();
+
+          return null;
+        });
   }
 
   private static ApplicationExtension<Object> capability(String name, List<String> events) {

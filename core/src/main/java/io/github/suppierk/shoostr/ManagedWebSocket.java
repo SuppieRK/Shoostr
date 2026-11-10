@@ -335,6 +335,26 @@ public final class ManagedWebSocket implements Session.Listener {
   }
 
   /**
+   * Dispatches the native message type to its configured application handler.
+   *
+   * @param next complete text or owned binary data
+   * @throws Exception if application handling fails
+   */
+  private void deliver(Object next) throws Exception {
+    if (next instanceof String text) {
+      var handler = configuration.text();
+      if (handler != null) {
+        handler.handle(Objects.requireNonNull(connection), text);
+      }
+    } else if (next instanceof byte[] bytes) {
+      var handler = configuration.binary();
+      if (handler != null) {
+        handler.handle(Objects.requireNonNull(connection), bytes);
+      }
+    }
+  }
+
+  /**
    * Completes active ownership before another item or terminal observer can be admitted.
    *
    * @param pending task completing its actual application work
@@ -376,21 +396,52 @@ public final class ManagedWebSocket implements Session.Listener {
   }
 
   /**
-   * Dispatches the native message type to its configured application handler.
-   *
-   * @param next complete text or owned binary data
-   * @throws Exception if application handling fails
+   * Delivers ready terminal observers without waiting for a future native acknowledgment.
+   * Remembered interruption is restored after both observers, including exceptional exits.
    */
-  private void deliver(Object next) throws Exception {
-    if (next instanceof String text) {
-      var handler = configuration.text();
-      if (handler != null) {
-        handler.handle(Objects.requireNonNull(connection), text);
+  private void notifyTerminal() {
+    boolean restore = Thread.interrupted();
+
+    try {
+      int code;
+      String reason;
+      Throwable failure;
+      boolean ready;
+      synchronized (events) {
+        code = closeCode;
+        reason = closeReason;
+        failure = error;
+        ready = closeReady;
       }
-    } else if (next instanceof byte[] bytes) {
-      var handler = configuration.binary();
-      if (handler != null) {
-        handler.handle(Objects.requireNonNull(connection), bytes);
+
+      try {
+        var observer = configuration.error();
+        if (observer != null && failure != null) {
+          observer.handle(Objects.requireNonNull(connection), failure);
+        }
+      } catch (Exception observerFailure) {
+        if (observerFailure instanceof InterruptedException) {
+          restore = true;
+        }
+
+        LOGGER.warn("WebSocket error observer failed", observerFailure);
+      }
+
+      try {
+        var handler = configuration.close();
+        if (handler != null && ready) {
+          handler.handle(Objects.requireNonNull(connection), code, reason);
+        }
+      } catch (Exception observerFailure) {
+        if (observerFailure instanceof InterruptedException) {
+          restore = true;
+        }
+
+        LOGGER.warn("WebSocket close observer failed", observerFailure);
+      }
+    } finally {
+      if (restore) {
+        Thread.currentThread().interrupt();
       }
     }
   }
@@ -406,7 +457,7 @@ public final class ManagedWebSocket implements Session.Listener {
 
     try {
       opened.close(CloseStatus.SHUTDOWN, "Server stopping", Callback.NOOP);
-    } catch (RuntimeException ignored3) {
+    } catch (RuntimeException ignoredFailure) {
       opened.disconnect();
     }
 
@@ -499,57 +550,6 @@ public final class ManagedWebSocket implements Session.Listener {
     if (worker == null && task != null) {
       task.cancel(false);
       task = null;
-    }
-  }
-
-  /**
-   * Delivers ready terminal observers without waiting for a future native acknowledgment.
-   * Remembered interruption is restored after both observers, including exceptional exits.
-   */
-  private void notifyTerminal() {
-    boolean restore = Thread.interrupted();
-
-    try {
-      int code;
-      String reason;
-      Throwable failure;
-      boolean ready;
-      synchronized (events) {
-        code = closeCode;
-        reason = closeReason;
-        failure = error;
-        ready = closeReady;
-      }
-
-      try {
-        var observer = configuration.error();
-        if (observer != null && failure != null) {
-          observer.handle(Objects.requireNonNull(connection), failure);
-        }
-      } catch (Exception observerFailure) {
-        if (observerFailure instanceof InterruptedException) {
-          restore = true;
-        }
-
-        LOGGER.warn("WebSocket error observer failed", observerFailure);
-      }
-
-      try {
-        var handler = configuration.close();
-        if (handler != null && ready) {
-          handler.handle(Objects.requireNonNull(connection), code, reason);
-        }
-      } catch (Exception observerFailure) {
-        if (observerFailure instanceof InterruptedException) {
-          restore = true;
-        }
-
-        LOGGER.warn("WebSocket close observer failed", observerFailure);
-      }
-    } finally {
-      if (restore) {
-        Thread.currentThread().interrupt();
-      }
     }
   }
 }

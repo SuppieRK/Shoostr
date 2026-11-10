@@ -44,6 +44,7 @@ public final class TypedRequest extends Request {
   public <T> T body(Class<T> type) throws Exception {
     check();
     Objects.requireNonNull(type);
+
     return Objects.requireNonNull(codec.read(bodyBytes(), type), "Codec returned a null value");
   }
 

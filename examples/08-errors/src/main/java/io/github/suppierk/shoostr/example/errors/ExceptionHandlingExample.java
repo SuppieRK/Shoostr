@@ -23,13 +23,13 @@ public final class ExceptionHandlingExample {
         // An application renderer is used only when no scoped exception mapping matches.
         .exception(
             IllegalStateException.class,
-            (ignored, ignored2, response) -> response.text("Request failed"))
+            (ignored, ignoredRequest, response) -> response.text("Request failed"))
         .routes(
             routes ->
                 routes
                     .get(
                         "/checkout",
-                        (ignored3, response) -> {
+                        (ignoredRequest, response) -> {
                           // Failure discards this uncommitted body and header before rendering the
                           // error.
                           response
@@ -48,7 +48,7 @@ public final class ExceptionHandlingExample {
                           group
                               .exception(
                                   IllegalArgumentException.class,
-                                  (ignored4, ignored5, response) ->
+                                  (ignoredFailure, ignoredRequest, response) ->
                                       response.status(409).text("Group input rejected"))
                               .get(INPUT_PATH, ExceptionHandlingExample::readName)
                               .get("/number", ExceptionHandlingExample::readNumber);
@@ -60,19 +60,19 @@ public final class ExceptionHandlingExample {
                     // Built-in HTTP exceptions keep their status, but not private diagnostic text.
                     .get(
                         "/builtin",
-                        (ignored6, ignored7) -> {
+                        (ignoredRequest, ignoredResponse) -> {
                           throw new BadRequestException("Private request diagnostics");
                         })
                     // An unmapped checked exception produces a safe 500 response.
                     .get(
                         "/unhandled",
-                        (ignored8, ignored9) -> {
+                        (ignoredRequest, ignoredResponse) -> {
                           throw new IOException("Private storage diagnostics");
                         })
                     // Selection examines the thrown IOException, not the input error in its cause.
                     .get(
                         "/cause",
-                        (ignored10, ignored11) -> {
+                        (ignoredRequest, ignoredResponse) -> {
                           throw new IOException(
                               "Private wrapper diagnostics",
                               new IllegalArgumentException("Private cause"));
@@ -83,8 +83,9 @@ public final class ExceptionHandlingExample {
                         (request, response) -> {
                           try {
                             var number = Integer.parseInt(request.queryParam("value").orElse(""));
+
                             response.text(Integer.toString(number));
-                          } catch (NumberFormatException ignored12) {
+                          } catch (NumberFormatException ignoredFailure) {
                             response.status(400).text("Use an integer");
                           }
                         })
@@ -94,11 +95,11 @@ public final class ExceptionHandlingExample {
                     // They do not configure just the last endpoint in this fluent chain.
                     .exception(
                         IllegalArgumentException.class,
-                        (ignored13, ignored14, response) ->
+                        (ignoredFailure, ignoredRequest, response) ->
                             response.status(400).text("Invalid input"))
                     .exception(
                         NumberFormatException.class,
-                        (ignored15, ignored16, response) ->
+                        (ignoredFailure, ignoredRequest, response) ->
                             response.status(422).text("Integer required")));
   }
 
@@ -127,6 +128,7 @@ public final class ExceptionHandlingExample {
    */
   private static void readNumber(Request request, Response response) {
     var number = Integer.parseInt(request.queryParam("value").orElse(""));
+
     response.text(Integer.toString(number));
   }
 }

@@ -104,6 +104,7 @@ class HttpStatusCodesTest {
   @EnumSource(HttpStatusCodes.class)
   void classifiesEachStatus(HttpStatusCodes status) {
     int category = status.value() / 100;
+
     assertEquals(category == 1, status.isInformational());
     assertEquals(category == 2, status.isSuccess());
     assertEquals(category == 3, status.isRedirection());

@@ -18,7 +18,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 class AuthorizationChallengeTest {
   private static final String CHALLENGE = "Bearer error=\"insufficient_scope\", scope=\"write\"";
   private static final Handler DENY =
-      (ignored, ignored2) -> {
+      (ignored, ignoredResponse) -> {
         throw new AuthorizationDeniedException(CHALLENGE);
       };
 
@@ -32,11 +32,13 @@ class AuthorizationChallengeTest {
       try (Closeable appCleanup = app::close) {
         if ("app".equals(renderer)) {
           app.exception(
-              ForbiddenException.class, (ignored3, ignored4, response) -> response.text("custom"));
+              ForbiddenException.class,
+              (ignoredFailure, ignoredRequest, response) -> response.text("custom"));
         } else if ("scope".equals(renderer)) {
           app.routes()
               .exception(
-                  Exception.class, (ignored5, ignored6, response) -> response.text("custom"));
+                  Exception.class,
+                  (ignoredFailure, ignoredRequest, response) -> response.text("custom"));
         }
 
         app.routes().get("/denied", DENY);
@@ -44,10 +46,12 @@ class AuthorizationChallengeTest {
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/denied"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(403, result.statusCode());
           assertEquals(
               CHALLENGE,
               result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).orElseThrow());
+
           if (!"builtin".equals(renderer)) {
             assertEquals("custom", result.body());
           }
@@ -64,7 +68,7 @@ class AuthorizationChallengeTest {
       try (Closeable appCleanup1 = app::close) {
         app.exception(
             ForbiddenException.class,
-            (ignored7, ignored8, response) ->
+            (ignoredFailure, ignoredRequest, response) ->
                 response
                     .setHeader(HttpHeaders.WWW_AUTHENTICATE.value(), "Basic realm=\"wrong\"")
                     .text("custom"));
@@ -72,6 +76,7 @@ class AuthorizationChallengeTest {
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/denied"));
+
           assertEquals(
               CHALLENGE,
               result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).orElseThrow());
@@ -89,13 +94,14 @@ class AuthorizationChallengeTest {
         app.routes()
             .exception(
                 AuthorizationDeniedException.class,
-                (ignored9, ignored10, response) ->
+                (ignoredFailure, ignoredRequest, response) ->
                     response.startStream("text/plain").write("streamed denial"))
             .get("/denied", DENY);
 
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/denied"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(403, result.statusCode());
           assertEquals(
               CHALLENGE,
@@ -113,11 +119,13 @@ class AuthorizationChallengeTest {
 
       try (Closeable appCleanup3 = app::close) {
         app.exception(
-            ForbiddenException.class, (ignored11, ignored12, response) -> response.status(404));
+            ForbiddenException.class,
+            (ignoredFailure, ignoredRequest, response) -> response.status(404));
         app.routes().get("/denied", DENY);
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/denied"));
+
           assertEquals(404, result.statusCode());
           assertFalse(
               result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).isPresent());
@@ -135,12 +143,13 @@ class AuthorizationChallengeTest {
         app.routes()
             .get(
                 "/denied",
-                (ignored13, ignored14) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new ForbiddenException();
                 });
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/denied"));
+
           assertEquals(403, result.statusCode());
           assertFalse(
               result.headers().firstValue(HttpHeaders.WWW_AUTHENTICATE.value()).isPresent());

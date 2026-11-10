@@ -31,6 +31,7 @@ class StreamingExampleTest {
     try (var test = TestServer.start(StreamingExample.application())) {
       var response =
           test.send(request -> request.path("/download"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("name\nAda\nGrace\n", response.body()),
@@ -49,6 +50,7 @@ class StreamingExampleTest {
           test.send(
               request -> request.path("/assets/greeting.txt"),
               HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("Hello from a classpath asset!\n", response.body()));

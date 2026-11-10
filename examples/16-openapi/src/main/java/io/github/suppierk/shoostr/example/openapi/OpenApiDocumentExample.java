@@ -30,14 +30,18 @@ public final class OpenApiDocumentExample {
     var docs = new OpenApi("Items API", "1.0").tag(ITEMS_TAG, "Item operations");
     // Each instance owns its own document; route selection decides which receives an operation.
     var internal = new OpenApi("Operations API", "1.0");
+
     // This schema describes input; it does not install runtime validation on the handler.
     var schema = new JsonSchema();
     schema.setTypes(Set.of("object"));
     schema.addProperty("name", new JsonSchema().types(Set.of("string")));
     schema.setRequired(List.of("name"));
+
     var item = docs.schema("Item", schema);
+
     var mapper =
         Json31.mapper().rebuild().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).build();
+
     return new Shoostr()
         .routes(
             routes -> {
@@ -108,7 +112,6 @@ public final class OpenApiDocumentExample {
     JsonNode input;
 
     // These application checks enforce the input contract; publishing the schema does not.
-
     try {
       input = mapper.readTree(body);
     } catch (JacksonException failure) {

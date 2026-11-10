@@ -11,8 +11,10 @@ import java.io.Closeable;
 import java.io.InputStreamReader;
 import java.net.InetAddress;
 import java.net.Socket;
+import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.GeneralSecurityException;
 import java.security.KeyStore;
 import java.util.Arrays;
 import java.util.Objects;
@@ -39,21 +41,8 @@ class Pac4jProxySecurityTest {
     var observed = new AtomicReference<String>();
     var fullUrl = new AtomicReference<String>();
     var provider =
-        new DirectBasicAuthClient(
-            (context, supplied) -> {
-              var web = context.webContext();
-              observed.set(
-                  switch (accessor) {
-                    case "host" -> web.getServerName();
-                    case "port" -> Integer.toString(web.getServerPort());
-                    default -> web.getScheme();
-                  });
-              fullUrl.set(web.getFullRequestURL());
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
-              return Optional.of(supplied);
-            });
+        createProviderForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(
+            observed, accessor, fullUrl);
 
     {
       var app = new Shoostr();
@@ -69,7 +58,7 @@ class Pac4jProxySecurityTest {
             .get(
                 "/metadata",
                 (request, response) -> response.text(request.principal().orElseThrow().getName()),
-                e -> e.withExtension(auth));
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app);
             var socket =
@@ -79,25 +68,17 @@ class Pac4jProxySecurityTest {
                     new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII))) {
           socket.setSoTimeout(5000);
           var forwarded =
-              family == null
-                  ? ""
-                  : family == ForwardedHeaders.RFC7239
-                      ? "Forwarded: for=203.0.113.7;proto=https;host=\"public.example:9443\"\r\n"
-                      : "X-Forwarded-For: 203.0.113.7\r\nX-Forwarded-Proto: https\r\nX-Forwarded-Host: public.example:9443\r\nX-Forwarded-Port: 9443\r\n";
+              createForwardedForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(family);
           var request =
-              "GET /metadata?bad=%GG HTTP/1.1\r\nHost: 127.0.0.1:"
-                  + test.baseUri().getPort()
-                  + "\r\nAuthorization: Basic YWxpY2U6Y29ycmVjdA==\r\n"
-                  + forwarded
-                  + "Connection: close\r\n\r\n";
+              createRequestForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(test, forwarded);
           socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+
           assertEquals("HTTP/1.1 200 OK", reader.readLine());
+
           var expected =
-              switch (accessor) {
-                case "host" -> family == null ? "127.0.0.1" : "public.example";
-                case "port" -> family == null ? Integer.toString(test.baseUri().getPort()) : "9443";
-                default -> family == null ? "http" : "https";
-              };
+              createExpectedForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(
+                  accessor, family, test);
+
           assertEquals(expected, observed.get());
           assertEquals(
               (family == null
@@ -108,6 +89,53 @@ class Pac4jProxySecurityTest {
         }
       }
     }
+  }
+
+  private DirectBasicAuthClient createProviderForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(
+      AtomicReference<String> observed, String accessor, AtomicReference<String> fullUrl) {
+    return new DirectBasicAuthClient(
+        (context, supplied) -> {
+          var web = context.webContext();
+          observed.set(
+              switch (accessor) {
+                case "host" -> web.getServerName();
+                case "port" -> Integer.toString(web.getServerPort());
+                default -> web.getScheme();
+              });
+          fullUrl.set(web.getFullRequestURL());
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          supplied.setUserProfile(profile);
+
+          return Optional.of(supplied);
+        });
+  }
+
+  private String createForwardedForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(
+      ForwardedHeaders family) {
+    return family == null
+        ? ""
+        : family == ForwardedHeaders.RFC7239
+            ? "Forwarded: for=203.0.113.7;proto=https;host=\"public.example:9443\"\r\n"
+            : "X-Forwarded-For: 203.0.113.7\r\nX-Forwarded-Proto: https\r\nX-Forwarded-Host: public.example:9443\r\nX-Forwarded-Port: 9443\r\n";
+  }
+
+  private String createRequestForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(
+      TestServer test, String forwarded) {
+    return "GET /metadata?bad=%GG HTTP/1.1\r\nHost: 127.0.0.1:"
+        + test.baseUri().getPort()
+        + "\r\nAuthorization: Basic YWxpY2U6Y29ycmVjdA==\r\n"
+        + forwarded
+        + "Connection: close\r\n\r\n";
+  }
+
+  private String createExpectedForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(
+      String accessor, ForwardedHeaders family, TestServer test) {
+    return switch (accessor) {
+      case "host" -> family == null ? "127.0.0.1" : "public.example";
+      case "port" -> family == null ? Integer.toString(test.baseUri().getPort()) : "9443";
+      default -> family == null ? "http" : "https";
+    };
   }
 
   private static Stream<Arguments> metadataSources() {
@@ -131,6 +159,7 @@ class Pac4jProxySecurityTest {
           test.send(
               request -> forwarding(authorized(request), family, "https"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals("https", scheme.get());
       assertEquals(200, response.statusCode());
       assertEquals("private", response.body());
@@ -144,6 +173,7 @@ class Pac4jProxySecurityTest {
 
     try (var test = TestServer.start(application(family, false, scheme))) {
       var response = test.send(request -> forwarding(authorized(request), family, "https"));
+
       assertEquals("http", scheme.get());
       assertEquals(403, response.statusCode());
     }
@@ -176,6 +206,7 @@ class Pac4jProxySecurityTest {
       var reader =
           new BufferedReader(
               new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+
       assertEquals("HTTP/1.1 403 Forbidden", reader.readLine());
       assertEquals("https", scheme.get());
     }
@@ -192,10 +223,8 @@ class Pac4jProxySecurityTest {
       identity.load(input, "changeit".toCharArray());
     }
 
-    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-    trust.init(identity);
-    var tls = SSLContext.getInstance("TLS");
-    tls.init(null, trust.getTrustManagers(), null);
+    var tls = createTrustContext(identity);
+
     var scheme = new AtomicReference<String>();
 
     {
@@ -208,14 +237,17 @@ class Pac4jProxySecurityTest {
               server.setKeyStorePassword("changeit");
             });
 
-        try (var test = TestServer.start(app, client -> client.sslContext(tls))) {
+        try (var test = TestServer.start(app, client -> configureTlsClient(client, tls))) {
           var denied = test.send(request -> forwarding(authorized(request), family, "http"));
+
           assertEquals("http", scheme.get());
           assertEquals(403, denied.statusCode());
+
           var allowed =
               test.send(
                   request -> forwarding(authorized(request), family, ""),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals("https", scheme.get());
           assertEquals(200, allowed.statusCode());
           assertEquals("private", allowed.body());
@@ -225,29 +257,48 @@ class Pac4jProxySecurityTest {
     }
   }
 
+  private SSLContext createTrustContext(KeyStore identity) throws GeneralSecurityException {
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(identity);
+    var context = SSLContext.getInstance("TLS");
+    context.init(null, trust.getTrustManagers(), null);
+
+    return context;
+  }
+
+  private void configureTlsClient(HttpClient.Builder client, SSLContext context) {
+    client.sslContext(context);
+  }
+
   private static Shoostr application(
       ForwardedHeaders family, boolean trusted, AtomicReference<String> scheme) {
-    var provider =
-        new DirectBasicAuthClient(
-            (context, supplied) -> {
-              scheme.set(context.webContext().getScheme());
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              supplied.setUserProfile(profile);
-              return Optional.of(supplied);
-            });
+    var provider = createProviderForApplication(scheme);
     var app =
         new Shoostr()
             .modifyServer(
                 nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-    var auth = new Pac4j(provider, "Basic", (context, ignored, ignored2) -> context.isSecure());
+    var auth = new Pac4j(provider, "Basic", (context, ignored, ignoredList) -> context.isSecure());
     app.trustedProxies(address -> trusted && address.isLoopbackAddress(), family)
         .routes()
         .get(
             "/secure",
-            (ignored3, response) -> response.text("private"),
-            e -> e.withExtension(auth));
+            (ignoredRequest, response) -> response.text("private"),
+            lifecycle -> lifecycle.withExtension(auth));
+
     return app;
+  }
+
+  private static DirectBasicAuthClient createProviderForApplication(
+      AtomicReference<String> scheme) {
+    return new DirectBasicAuthClient(
+        (context, supplied) -> {
+          scheme.set(context.webContext().getScheme());
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          supplied.setUserProfile(profile);
+
+          return Optional.of(supplied);
+        });
   }
 
   private static TestRequest authorized(TestRequest request) {

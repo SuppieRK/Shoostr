@@ -20,32 +20,7 @@ public final class RouteAuthenticationExample {
    * @return unstarted, caller-owned application
    */
   public static Shoostr application() {
-    var authentication =
-        new AuthenticationExtension() {
-          /** {@inheritDoc} */
-          @Override
-          public void handle(Request request, Response response) {
-            request.principal(null);
-            var values = request.headers("Authorization");
-            if (values.size() != 1) {
-              throw new AuthenticationRequiredException(CHALLENGE);
-            }
-
-            var fields = values.getFirst().split(" +", 2);
-            if (fields.length != 2 || !"Bearer".equalsIgnoreCase(fields[0])) {
-              throw new AuthenticationRequiredException(CHALLENGE);
-            }
-
-            // Fixed tokens are local demonstration credentials, not a production credential store.
-            var name =
-                switch (fields[1]) {
-                  case "reader-demo-token" -> "reader";
-                  case "admin-demo-token" -> "admin";
-                  default -> throw new AuthenticationRequiredException(CHALLENGE);
-                };
-            request.principal(() -> name);
-          }
-        };
+    var authentication = authentication();
 
     return new Shoostr()
         .routes(
@@ -73,5 +48,48 @@ public final class RouteAuthenticationExample {
                                       response.text("admin operation allowed");
                                     }),
                         lifecycle -> lifecycle.withExtension(authentication)));
+  }
+
+  /**
+   * Configures the identity checks used by the protected example endpoints.
+   *
+   * @return authentication selected by the application
+   */
+  private static AuthenticationExtension authentication() {
+    return new AuthenticationExtension() {
+      /** {@inheritDoc} */
+      @Override
+      public void handle(Request request, Response response) {
+        request.principal(null);
+        var values = request.headers("Authorization");
+        if (values.size() != 1) {
+          throw new AuthenticationRequiredException(CHALLENGE);
+        }
+
+        var fields = values.getFirst().split(" +", 2);
+        if (fields.length != 2 || !"Bearer".equalsIgnoreCase(fields[0])) {
+          throw new AuthenticationRequiredException(CHALLENGE);
+        }
+
+        // Fixed tokens are local demonstration credentials, not a production credential store.
+        var name = authenticatedName(fields);
+        request.principal(() -> name);
+      }
+    };
+  }
+
+  /**
+   * Resolves an accepted demonstration bearer token to its account name.
+   *
+   * @param fields validated bearer authorization fields
+   * @return authenticated account name
+   * @throws AuthenticationRequiredException if the token does not identify a demonstration account
+   */
+  private static String authenticatedName(String[] fields) {
+    return switch (fields[1]) {
+      case "reader-demo-token" -> "reader";
+      case "admin-demo-token" -> "admin";
+      default -> throw new AuthenticationRequiredException(CHALLENGE);
+    };
   }
 }

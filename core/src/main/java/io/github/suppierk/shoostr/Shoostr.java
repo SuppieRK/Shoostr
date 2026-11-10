@@ -211,6 +211,21 @@ public final class Shoostr {
   }
 
   /**
+   * Registers routes through the pre-created root scope and returns this application for fluent
+   * startup. The callback runs immediately without holding the registration lock. Startup rejects
+   * an active callback; an exception propagates without undoing routes already registered.
+   *
+   * @param registration callback receiving the same scope as {@link #routes()}
+   * @return this application
+   * @throws IllegalStateException if registration has ended
+   * @throws NullPointerException if registration is null
+   */
+  public Shoostr routes(Consumer<Routes> registration) {
+    routes.register(registration);
+    return this;
+  }
+
+  /**
    * Selects the app's one caller-owned codec and returns an opt-in typed registration view.
    * Ordinary routes retain their byte-level handler types. Configure the shared, thread-safe codec
    * before startup; the application never closes it or infers representation metadata.
@@ -226,6 +241,7 @@ public final class Shoostr {
     }
 
     this.codec = Objects.requireNonNull(codec);
+
     return new TypedShoostr(this, codec);
   }
 
@@ -369,21 +385,6 @@ public final class Shoostr {
   }
 
   /**
-   * Registers routes through the pre-created root scope and returns this application for fluent
-   * startup. The callback runs immediately without holding the registration lock. Startup rejects
-   * an active callback; an exception propagates without undoing routes already registered.
-   *
-   * @param registration callback receiving the same scope as {@link #routes()}
-   * @return this application
-   * @throws IllegalStateException if registration has ended
-   * @throws NullPointerException if registration is null
-   */
-  public Shoostr routes(Consumer<Routes> registration) {
-    routes.register(registration);
-    return this;
-  }
-
-  /**
    * Enables RFC7239 forwarding from explicitly trusted IP peers. Configure before startup. The
    * shared predicate must be thread-safe and nonblocking; it must identify actual proxy addresses.
    * Proxies must remove untrusted input or append truthful forwarding entries.
@@ -487,6 +488,25 @@ public final class Shoostr {
    */
   public synchronized Shoostr afterResponseFlush(Handler handler) {
     return register(afterFlushHandlers, handler, "After-flush hooks");
+  }
+
+  /**
+   * Registers one live lifecycle callback before the application begins serving requests.
+   *
+   * @param handlers ordered callback collection
+   * @param handler callback to add
+   * @param name stage description used in validation messages
+   * @return this application
+   * @throws IllegalStateException if startup has begun or the app is closed
+   * @throws NullPointerException if handler is null
+   */
+  private Shoostr register(List<Handler> handlers, Handler handler, String name) {
+    if (started || closed) {
+      throw new IllegalStateException(name + " must be registered before startup");
+    }
+
+    handlers.add(Objects.requireNonNull(handler));
+    return this;
   }
 
   /**
@@ -698,485 +718,6 @@ public final class Shoostr {
   }
 
   /**
-   * Returns the bound port, including an ephemeral port selected by the OS.
-   *
-   * @return listening port
-   * @throws IllegalStateException if the application is not running
-   */
-  public synchronized int port() {
-    if (closed || connector == null || server == null || !server.isStarted()) {
-      throw new IllegalStateException("Shoostr is not running");
-    }
-
-    return connector.getLocalPort();
-  }
-
-  /**
-   * Signals installed extensions before draining and stopping Jetty using its configured native
-   * timeouts, then interrupts remaining framework-created virtual tasks and removes the shutdown
-   * hook. Does not wait indefinitely for application code that ignores interruption. Repeated calls
-   * are harmless, including a call before startup. Caller-owned endpoint executors are never closed
-   * or interrupted. Unstarted selected requests are canceled after draining; running handlers may
-   * finish and release their resources after this method returns. The caller must coordinate their
-   * completion before closing supplied dependencies. Final extension resource cleanup follows
-   * native drain; ordinary signalling failures are collected without skipping subsequent shutdown
-   * or cleanup.
-   *
-   * <p>Application beforeClose callbacks run in written order after closure guards are established
-   * and before framework resource disposal. Application afterClose callbacks run in reverse order
-   * after extension cleanup. Both run synchronously while this method holds the application
-   * monitor; do not wait on another thread that needs a synchronized application operation. Runtime
-   * callback failures join the collected IOException without skipping remaining callbacks. An Error
-   * stops its callback list, but framework cleanup and the separate afterClose phase still run. The
-   * first Error is rethrown after cleanup; other failures remain suppressed. During provider
-   * installation, an Error takes precedence over an ordinary installation failure. Reentrant
-   * closure during provider setup defers final callbacks until that setup unwinds and completes
-   * provider cleanup.
-   *
-   * @throws IOException if resources cannot be closed without an Error
-   * @throws Error if a shutdown callback or cleanup fails fatally
-   */
-  @SuppressWarnings("java:S1181") // Retain fatal failures while completing the shutdown phases.
-  public synchronized void close() throws IOException {
-    if (closed) {
-      return;
-    }
-
-    closed = true;
-    synchronized (pendingMatches) {
-      stoppingMatches = true;
-    }
-    routes.endRegistration();
-    Throwable failure = null;
-
-    try {
-      failure = runCloseCallbacks(beforeCloseCallbacks, null, "Could not run beforeClose callback");
-    } finally {
-      try {
-        var cleanup = closeResources(failure instanceof IOException ordinary ? ordinary : null);
-        if (failure instanceof Error) {
-          if (cleanup != null) {
-            failure = mergeCloseFailure(failure, cleanup);
-          }
-        } else {
-          failure = cleanup;
-        }
-      } catch (Error cleanup) {
-        // closeResources already retains its ordinary aggregate, including an incoming IOException.
-        failure = mergeCloseFailure(failure, cleanup);
-      } finally {
-        if (!installing) {
-          failure =
-              runCloseCallbacks(
-                  afterCloseCallbacks.reversed(), failure, "Could not run afterClose callback");
-        }
-      }
-    }
-
-    if (failure instanceof Error fatal) {
-      throw fatal;
-    }
-
-    if (failure instanceof IOException ordinary) {
-      throw ordinary;
-    }
-  }
-
-  /**
-   * Disposes framework-owned resources while retaining ordinary failures before an Error.
-   *
-   * @param failure earlier ordinary callback failures, or null
-   * @return accumulated ordinary failure, or null
-   * @throws Error if resource disposal fails fatally, with earlier ordinary failures suppressed
-   */
-  @SuppressWarnings("java:S1181") // Preserve earlier ordinary failures when disposal throws Error.
-  private @Nullable IOException closeResources(@Nullable IOException failure) {
-    Error fatal = null;
-
-    try {
-      exceptionHandlers.clear();
-      statusHandlers.clear();
-      requestHeaderHandlers.clear();
-      routeMatchedHandlers.clear();
-      beforeHandlers.clear();
-      afterRouteHandlers.clear();
-      beforeFlushHandlers.clear();
-      afterFlushHandlers.clear();
-      afterHandlers.clear();
-      observationFactories.clear();
-      failure = closeRouteResources(failure);
-
-      serverConfigurations.clear();
-      httpConfigurations.clear();
-      tlsConfiguration = null;
-      sessionConfiguration = null;
-
-      failure = signalManagedWebSocketsBeforeStop(failure);
-
-      failure = signalExtensionsBeforeStop(failure);
-
-    } catch (Error signallingFailure) {
-      if (failure != null) {
-        mergeCloseFailure(signallingFailure, failure);
-        failure = null;
-      }
-
-      fatal = signallingFailure;
-    } finally {
-      try {
-        stopServer();
-      } catch (Exception stopFailure) {
-        if (stopFailure instanceof InterruptedException) {
-          Thread.currentThread().interrupt();
-        }
-
-        failure = appendCloseFailure(failure, "Could not stop HTTP server", stopFailure);
-      } catch (Error stopFailure) {
-        if (failure != null) {
-          mergeCloseFailure(stopFailure, failure);
-          failure = null;
-        }
-
-        fatal = (Error) mergeCloseFailure(fatal, stopFailure);
-      } finally {
-        try {
-          failure = finishManagedWebSocketDispatch(failure);
-          failure = closeStaticResources(failure);
-          failure = closeOwnedVirtualThreads(failure);
-          failure = cancelPendingMatches(failure);
-
-          removeShutdownHook();
-          failure = closeExtensions(failure);
-        } catch (Error cleanupFailure) {
-          if (failure != null) {
-            mergeCloseFailure(cleanupFailure, failure);
-            failure = null;
-          }
-
-          fatal = (Error) mergeCloseFailure(fatal, cleanupFailure);
-        }
-      }
-    }
-
-    if (fatal != null) {
-      if (failure != null) {
-        mergeCloseFailure(fatal, failure);
-      }
-
-      throw fatal;
-    }
-
-    return failure;
-  }
-
-  /**
-   * Stops the native server when startup acquired one.
-   *
-   * @throws Exception if native shutdown fails
-   */
-  private void stopServer() throws Exception {
-    if (server != null) {
-      server.stop();
-    }
-  }
-
-  /**
-   * Detaches and interrupts the owned executor while leaving borrowed executors untouched.
-   *
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  private @Nullable IOException closeOwnedVirtualThreads(@Nullable IOException failure) {
-    if (ownedVirtualThreads != null) {
-      try {
-        if (server != null
-            && server.getThreadPool() instanceof QueuedThreadPool pool
-            && ownedVirtualThreads.equals(pool.getVirtualThreadsExecutor())) {
-          // Let native late cleanup use Jetty's policy instead of a closed virtual delegate.
-          pool.setVirtualThreadsExecutor(null);
-        }
-
-        ownedVirtualThreads.shutdownNow();
-      } catch (RuntimeException executorFailure) {
-        return appendCloseFailure(failure, "Could not close HTTP executor", executorFailure);
-      }
-    }
-
-    return failure;
-  }
-
-  /**
-   * Closes static resources without preventing later shutdown cleanup.
-   *
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  private @Nullable IOException closeStaticResources(@Nullable IOException failure) {
-    if (router != null) {
-      try {
-        router.close();
-      } catch (RuntimeException closeFailure) {
-        failure = appendCloseFailure(failure, "Could not close static resources", closeFailure);
-      } finally {
-        router = null;
-      }
-    }
-
-    return failure;
-  }
-
-  /**
-   * Runs and releases ordered application callbacks, collecting ordinary failures independently.
-   *
-   * @param callbacks callbacks in invocation order, owned by this shutdown operation
-   * @param failure previously collected shutdown failure, or null
-   * @param message context for a callback failure
-   * @return aggregated failure, or null if shutdown has not failed
-   */
-  @SuppressWarnings("java:S1181") // An Error stops this phase while its caller performs cleanup.
-  private static @Nullable Throwable runCloseCallbacks(
-      List<Runnable> callbacks, @Nullable Throwable failure, String message) {
-    try {
-      for (var callback : callbacks) {
-        try {
-          callback.run();
-        } catch (RuntimeException callbackFailure) {
-          failure =
-              failure instanceof Error
-                  ? mergeCloseFailure(failure, callbackFailure)
-                  : appendCloseFailure((IOException) failure, message, callbackFailure);
-        } catch (Error callbackFailure) {
-          failure = mergeCloseFailure(failure, callbackFailure);
-          break;
-        }
-      }
-      return failure;
-    } finally {
-      callbacks.clear();
-    }
-  }
-
-  /**
-   * Keeps the first Error primary, or preserves the first ordinary failure.
-   *
-   * @param current earlier failure, or null
-   * @param additional next observed failure
-   * @return primary failure retaining the other distinct failure as suppressed
-   */
-  @SuppressWarnings("ReferenceEquality") // One Throwable instance cannot suppress itself.
-  private static Throwable mergeCloseFailure(@Nullable Throwable current, Throwable additional) {
-    if (current == null || current == additional) {
-      return additional;
-    }
-
-    if (additional instanceof Error && !(current instanceof Error)) {
-      var earlier = current;
-      current = additional;
-      additional = earlier;
-    }
-
-    for (var retained : current.getSuppressed()) {
-      if (retained == additional) {
-        return current;
-      }
-    }
-    current.addSuppressed(additional);
-    return current;
-  }
-
-  /**
-   * Stops managed WebSocket work without skipping subsequent shutdown on signalling failure.
-   *
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  private @Nullable IOException signalManagedWebSocketsBeforeStop(@Nullable IOException failure) {
-    if (managedWebSockets != null) {
-      try {
-        managedWebSockets.stop();
-      } catch (IOException | RuntimeException stopFailure) {
-        return appendCloseFailure(failure, "Could not signal managed WebSockets", stopFailure);
-      }
-    }
-
-    return failure;
-  }
-
-  /**
-   * Permanently closes managed dispatch after native stop, including failed shutdown.
-   *
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  private @Nullable IOException finishManagedWebSocketDispatch(@Nullable IOException failure) {
-    if (managedWebSockets != null) {
-      try {
-        managedWebSockets.finishStop();
-      } catch (IOException | RuntimeException stopFailure) {
-        return appendCloseFailure(
-            failure, "Could not finish managed WebSocket dispatch", stopFailure);
-      }
-    }
-
-    return failure;
-  }
-
-  /**
-   * Signals extensions in reverse ownership order without skipping subsequent shutdown on failure.
-   *
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  @SuppressWarnings("java:S1181") // Retain ordinary failures before propagating Error.
-  private @Nullable IOException signalExtensionsBeforeStop(@Nullable IOException failure) {
-    try {
-      for (int index = extensions.size() - 1; index >= 0; index--) {
-        failure = signalExtensionBeforeStop(extensions.get(index), failure);
-      }
-      return failure;
-    } catch (Error fatal) {
-      if (failure != null) {
-        mergeCloseFailure(fatal, failure);
-      }
-
-      throw fatal;
-    }
-  }
-
-  /**
-   * Signals one extension while retaining an ordinary failure for the enclosing phase.
-   *
-   * @param extension owned extension being signalled
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  private static @Nullable IOException signalExtensionBeforeStop(
-      Extension extension, @Nullable IOException failure) {
-    try {
-      extension.beforeStop();
-      return failure;
-    } catch (RuntimeException stopFailure) {
-      return appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
-    }
-  }
-
-  /**
-   * Closes and releases owned extensions in reverse order without skipping ordinary failures.
-   *
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  @SuppressWarnings("java:S1181") // Preserve earlier extension failures before propagating Error.
-  private @Nullable IOException closeExtensions(@Nullable IOException failure) {
-    try {
-      for (int index = extensions.size() - 1; index >= 0; index--) {
-        failure = closeExtension(extensions.get(index), failure);
-      }
-      extensions.clear();
-      return failure;
-    } catch (Error fatal) {
-      if (failure != null) {
-        mergeCloseFailure(fatal, failure);
-      }
-
-      throw fatal;
-    }
-  }
-
-  /**
-   * Closes one extension while retaining an ordinary failure for the enclosing phase.
-   *
-   * @param extension owned extension being closed
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  private static @Nullable IOException closeExtension(
-      Extension extension, @Nullable IOException failure) {
-    try {
-      extension.close();
-      return failure;
-    } catch (IOException | RuntimeException closeFailure) {
-      return appendCloseFailure(failure, "Could not close extension", closeFailure);
-    }
-  }
-
-  /**
-   * Cancels unstarted exchanges independently of executor queue wrappers, leaving workers alone.
-   *
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  @SuppressWarnings("java:S1181") // Retain ordinary failures before propagating Error.
-  private @Nullable IOException cancelPendingMatches(@Nullable IOException failure) {
-    try {
-      List<ApplicationHandler.MatchedTask> pending;
-      synchronized (pendingMatches) {
-        pending = List.copyOf(pendingMatches);
-      }
-      for (var task : pending) {
-        failure = cancelPendingMatch(task, failure);
-      }
-      return failure;
-    } catch (Error fatal) {
-      if (failure != null) {
-        mergeCloseFailure(fatal, failure);
-      }
-
-      throw fatal;
-    }
-  }
-
-  /**
-   * Cancels one queued exchange while retaining an ordinary failure for the enclosing phase.
-   *
-   * @param task pending matched request
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  private static @Nullable IOException cancelPendingMatch(
-      ApplicationHandler.MatchedTask task, @Nullable IOException failure) {
-    try {
-      task.cancel();
-      return failure;
-    } catch (RuntimeException cancellationFailure) {
-      return appendCloseFailure(failure, "Could not cancel queued request", cancellationFailure);
-    }
-  }
-
-  /**
-   * Releases pending route resources without skipping subsequent shutdown phases on failure.
-   *
-   * @param failure previously collected shutdown failure, or null
-   * @return aggregated failure, or null if shutdown has not failed
-   */
-  private @Nullable IOException closeRouteResources(@Nullable IOException failure) {
-    try {
-      routes.disposeRegistration();
-      return failure;
-    } catch (RuntimeException closeFailure) {
-      return appendCloseFailure(failure, "Could not close route resources", closeFailure);
-    }
-  }
-
-  /**
-   * Adds one independent shutdown failure without skipping later cleanup.
-   *
-   * @param current previously observed cleanup failure, or null
-   * @param message context for the first failure
-   * @param additional subsequent cleanup failure
-   * @return aggregated failure
-   */
-  private static IOException appendCloseFailure(
-      @Nullable IOException current, String message, Exception additional) {
-    if (current == null) {
-      return new IOException(message, additional);
-    }
-
-    current.addSuppressed(additional);
-    return current;
-  }
-
-  /**
    * Creates the configured native transport, installs dispatch, and binds the listener. Fields
    * retain each acquired resource so start's failure path can clean it up.
    *
@@ -1259,6 +800,7 @@ public final class Shoostr {
     }
 
     httpConfigurations.clear();
+
     return http;
   }
 
@@ -1289,6 +831,7 @@ public final class Shoostr {
       var h2 = new HTTP2ServerConnectionFactory(http);
       var alpn = new ALPNServerConnectionFactory();
       alpn.setDefaultProtocol(http11.getProtocol());
+
       return new ServerConnector(
           server, new SslConnectionFactory(context, alpn.getProtocol()), alpn, h2, http11);
     }
@@ -1382,6 +925,520 @@ public final class Shoostr {
   }
 
   /**
+   * Returns the bound port, including an ephemeral port selected by the OS.
+   *
+   * @return listening port
+   * @throws IllegalStateException if the application is not running
+   */
+  public synchronized int port() {
+    if (closed || connector == null || server == null || !server.isStarted()) {
+      throw new IllegalStateException("Shoostr is not running");
+    }
+
+    return connector.getLocalPort();
+  }
+
+  /**
+   * Signals installed extensions before draining and stopping Jetty using its configured native
+   * timeouts, then interrupts remaining framework-created virtual tasks and removes the shutdown
+   * hook. Does not wait indefinitely for application code that ignores interruption. Repeated calls
+   * are harmless, including a call before startup. Caller-owned endpoint executors are never closed
+   * or interrupted. Unstarted selected requests are canceled after draining; running handlers may
+   * finish and release their resources after this method returns. The caller must coordinate their
+   * completion before closing supplied dependencies. Final extension resource cleanup follows
+   * native drain; ordinary signalling failures are collected without skipping subsequent shutdown
+   * or cleanup.
+   *
+   * <p>Application beforeClose callbacks run in written order after closure guards are established
+   * and before framework resource disposal. Application afterClose callbacks run in reverse order
+   * after extension cleanup. Both run synchronously while this method holds the application
+   * monitor; do not wait on another thread that needs a synchronized application operation. Runtime
+   * callback failures join the collected IOException without skipping remaining callbacks. An Error
+   * stops its callback list, but framework cleanup and the separate afterClose phase still run. The
+   * first Error is rethrown after cleanup; other failures remain suppressed. During provider
+   * installation, an Error takes precedence over an ordinary installation failure. Reentrant
+   * closure during provider setup defers final callbacks until that setup unwinds and completes
+   * provider cleanup.
+   *
+   * @throws IOException if resources cannot be closed without an Error
+   * @throws Error if a shutdown callback or cleanup fails fatally
+   */
+  @SuppressWarnings("java:S1181") // Retain fatal failures while completing the shutdown phases.
+  public synchronized void close() throws IOException {
+    if (closed) {
+      return;
+    }
+
+    closed = true;
+    synchronized (pendingMatches) {
+      stoppingMatches = true;
+    }
+    routes.endRegistration();
+    Throwable failure = null;
+
+    try {
+      failure = runCloseCallbacks(beforeCloseCallbacks, null, "Could not run beforeClose callback");
+    } finally {
+      try {
+        var cleanup = closeResources(failure instanceof IOException ordinary ? ordinary : null);
+        if (failure instanceof Error) {
+          if (cleanup != null) {
+            failure = mergeCloseFailure(failure, cleanup);
+          }
+        } else {
+          failure = cleanup;
+        }
+      } catch (Error cleanup) {
+        // closeResources already retains its ordinary aggregate, including an incoming IOException.
+        failure = mergeCloseFailure(failure, cleanup);
+      } finally {
+        if (!installing) {
+          failure =
+              runCloseCallbacks(
+                  afterCloseCallbacks.reversed(), failure, "Could not run afterClose callback");
+        }
+      }
+    }
+
+    if (failure instanceof Error fatal) {
+      throw fatal;
+    }
+
+    if (failure instanceof IOException ordinary) {
+      throw ordinary;
+    }
+  }
+
+  /**
+   * Runs and releases ordered application callbacks, collecting ordinary failures independently.
+   *
+   * @param callbacks callbacks in invocation order, owned by this shutdown operation
+   * @param failure previously collected shutdown failure, or null
+   * @param message context for a callback failure
+   * @return aggregated failure, or null if shutdown has not failed
+   */
+  @SuppressWarnings("java:S1181") // An Error stops this phase while its caller performs cleanup.
+  private static @Nullable Throwable runCloseCallbacks(
+      List<Runnable> callbacks, @Nullable Throwable failure, String message) {
+    try {
+      for (var callback : callbacks) {
+        try {
+          callback.run();
+        } catch (RuntimeException callbackFailure) {
+          failure =
+              failure instanceof Error
+                  ? mergeCloseFailure(failure, callbackFailure)
+                  : appendCloseFailure((IOException) failure, message, callbackFailure);
+        } catch (Error callbackFailure) {
+          failure = mergeCloseFailure(failure, callbackFailure);
+          break;
+        }
+      }
+      return failure;
+    } finally {
+      callbacks.clear();
+    }
+  }
+
+  /**
+   * Disposes framework-owned resources while retaining ordinary failures before an Error.
+   *
+   * @param failure earlier ordinary callback failures, or null
+   * @return accumulated ordinary failure, or null
+   * @throws Error if resource disposal fails fatally, with earlier ordinary failures suppressed
+   */
+  @SuppressWarnings("java:S1181") // Preserve earlier ordinary failures when disposal throws Error.
+  private @Nullable IOException closeResources(@Nullable IOException failure) {
+    Error fatal = null;
+
+    try {
+      exceptionHandlers.clear();
+      statusHandlers.clear();
+      requestHeaderHandlers.clear();
+      routeMatchedHandlers.clear();
+      beforeHandlers.clear();
+      afterRouteHandlers.clear();
+      beforeFlushHandlers.clear();
+      afterFlushHandlers.clear();
+      afterHandlers.clear();
+      observationFactories.clear();
+      failure = closeRouteResources(failure);
+
+      serverConfigurations.clear();
+      httpConfigurations.clear();
+      tlsConfiguration = null;
+      sessionConfiguration = null;
+
+      failure = signalManagedWebSocketsBeforeStop(failure);
+
+      failure = signalExtensionsBeforeStop(failure);
+
+    } catch (Error signallingFailure) {
+      if (failure != null) {
+        mergeCloseFailure(signallingFailure, failure);
+        failure = null;
+      }
+
+      fatal = signallingFailure;
+    } finally {
+      try {
+        stopServer();
+      } catch (Exception stopFailure) {
+        if (stopFailure instanceof InterruptedException) {
+          Thread.currentThread().interrupt();
+        }
+
+        failure = appendCloseFailure(failure, "Could not stop HTTP server", stopFailure);
+      } catch (Error stopFailure) {
+        if (failure != null) {
+          mergeCloseFailure(stopFailure, failure);
+          failure = null;
+        }
+
+        fatal = (Error) mergeCloseFailure(fatal, stopFailure);
+      } finally {
+        try {
+          failure = finishManagedWebSocketDispatch(failure);
+          failure = closeStaticResources(failure);
+          failure = closeOwnedVirtualThreads(failure);
+          failure = cancelPendingMatches(failure);
+
+          removeShutdownHook();
+          failure = closeExtensions(failure);
+        } catch (Error cleanupFailure) {
+          if (failure != null) {
+            mergeCloseFailure(cleanupFailure, failure);
+            failure = null;
+          }
+
+          fatal = (Error) mergeCloseFailure(fatal, cleanupFailure);
+        }
+      }
+    }
+
+    if (fatal != null) {
+      if (failure != null) {
+        mergeCloseFailure(fatal, failure);
+      }
+
+      throw fatal;
+    }
+
+    return failure;
+  }
+
+  /**
+   * Releases pending route resources without skipping subsequent shutdown phases on failure.
+   *
+   * @param failure previously collected shutdown failure, or null
+   * @return aggregated failure, or null if shutdown has not failed
+   */
+  private @Nullable IOException closeRouteResources(@Nullable IOException failure) {
+    try {
+      routes.disposeRegistration();
+
+      return failure;
+    } catch (RuntimeException closeFailure) {
+      return appendCloseFailure(failure, "Could not close route resources", closeFailure);
+    }
+  }
+
+  /**
+   * Stops managed WebSocket work without skipping subsequent shutdown on signalling failure.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException signalManagedWebSocketsBeforeStop(@Nullable IOException failure) {
+    if (managedWebSockets != null) {
+      try {
+        managedWebSockets.stop();
+      } catch (IOException | RuntimeException stopFailure) {
+        return appendCloseFailure(failure, "Could not signal managed WebSockets", stopFailure);
+      }
+    }
+
+    return failure;
+  }
+
+  /**
+   * Signals extensions in reverse ownership order without skipping subsequent shutdown on failure.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  @SuppressWarnings("java:S1181") // Retain ordinary failures before propagating Error.
+  private @Nullable IOException signalExtensionsBeforeStop(@Nullable IOException failure) {
+    try {
+      for (int index = extensions.size() - 1; index >= 0; index--) {
+        failure = signalExtensionBeforeStop(extensions.get(index), failure);
+      }
+      return failure;
+    } catch (Error fatal) {
+      if (failure != null) {
+        mergeCloseFailure(fatal, failure);
+      }
+
+      throw fatal;
+    }
+  }
+
+  /**
+   * Signals one extension while retaining an ordinary failure for the enclosing phase.
+   *
+   * @param extension owned extension being signalled
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private static @Nullable IOException signalExtensionBeforeStop(
+      Extension extension, @Nullable IOException failure) {
+    try {
+      extension.beforeStop();
+
+      return failure;
+    } catch (RuntimeException stopFailure) {
+      return appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
+    }
+  }
+
+  /**
+   * Stops the native server when startup acquired one.
+   *
+   * @throws Exception if native shutdown fails
+   */
+  private void stopServer() throws Exception {
+    if (server != null) {
+      server.stop();
+    }
+  }
+
+  /**
+   * Permanently closes managed dispatch after native stop, including failed shutdown.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException finishManagedWebSocketDispatch(@Nullable IOException failure) {
+    if (managedWebSockets != null) {
+      try {
+        managedWebSockets.finishStop();
+      } catch (IOException | RuntimeException stopFailure) {
+        return appendCloseFailure(
+            failure, "Could not finish managed WebSocket dispatch", stopFailure);
+      }
+    }
+
+    return failure;
+  }
+
+  /**
+   * Closes static resources without preventing later shutdown cleanup.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException closeStaticResources(@Nullable IOException failure) {
+    if (router != null) {
+      try {
+        router.close();
+      } catch (RuntimeException closeFailure) {
+        failure = appendCloseFailure(failure, "Could not close static resources", closeFailure);
+      } finally {
+        router = null;
+      }
+    }
+
+    return failure;
+  }
+
+  /**
+   * Detaches and interrupts the owned executor while leaving borrowed executors untouched.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private @Nullable IOException closeOwnedVirtualThreads(@Nullable IOException failure) {
+    if (ownedVirtualThreads != null) {
+      try {
+        if (server != null
+            && server.getThreadPool() instanceof QueuedThreadPool pool
+            && ownedVirtualThreads.equals(pool.getVirtualThreadsExecutor())) {
+          // Let native late cleanup use Jetty's policy instead of a closed virtual delegate.
+          pool.setVirtualThreadsExecutor(null);
+        }
+
+        ownedVirtualThreads.shutdownNow();
+      } catch (RuntimeException executorFailure) {
+        return appendCloseFailure(failure, "Could not close HTTP executor", executorFailure);
+      }
+    }
+
+    return failure;
+  }
+
+  /**
+   * Cancels unstarted exchanges independently of executor queue wrappers, leaving workers alone.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  @SuppressWarnings("java:S1181") // Retain ordinary failures before propagating Error.
+  private @Nullable IOException cancelPendingMatches(@Nullable IOException failure) {
+    try {
+      List<ApplicationHandler.MatchedTask> pending;
+      synchronized (pendingMatches) {
+        pending = List.copyOf(pendingMatches);
+      }
+      for (var task : pending) {
+        failure = cancelPendingMatch(task, failure);
+      }
+      return failure;
+    } catch (Error fatal) {
+      if (failure != null) {
+        mergeCloseFailure(fatal, failure);
+      }
+
+      throw fatal;
+    }
+  }
+
+  /**
+   * Cancels one queued exchange while retaining an ordinary failure for the enclosing phase.
+   *
+   * @param task pending matched request
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private static @Nullable IOException cancelPendingMatch(
+      ApplicationHandler.MatchedTask task, @Nullable IOException failure) {
+    try {
+      task.cancel();
+
+      return failure;
+    } catch (RuntimeException cancellationFailure) {
+      return appendCloseFailure(failure, "Could not cancel queued request", cancellationFailure);
+    }
+  }
+
+  /**
+   * Releases the runtime's reference to this app after explicit cleanup. During JVM shutdown the
+   * runtime rejects hook removal; the already-running hook will observe the closed app instead.
+   */
+  private void removeShutdownHook() {
+    if (shutdownHook == null) {
+      return;
+    }
+
+    try {
+      Runtime.getRuntime().removeShutdownHook(shutdownHook);
+    } catch (IllegalStateException ignoredFailure) {
+      // Hooks cannot be removed once JVM shutdown has begun.
+    } finally {
+      shutdownHook = null;
+    }
+  }
+
+  /**
+   * Closes and releases owned extensions in reverse order without skipping ordinary failures.
+   *
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  @SuppressWarnings("java:S1181") // Preserve earlier extension failures before propagating Error.
+  private @Nullable IOException closeExtensions(@Nullable IOException failure) {
+    try {
+      for (int index = extensions.size() - 1; index >= 0; index--) {
+        failure = closeExtension(extensions.get(index), failure);
+      }
+      extensions.clear();
+
+      return failure;
+    } catch (Error fatal) {
+      if (failure != null) {
+        mergeCloseFailure(fatal, failure);
+      }
+
+      throw fatal;
+    }
+  }
+
+  /**
+   * Closes one extension while retaining an ordinary failure for the enclosing phase.
+   *
+   * @param extension owned extension being closed
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private static @Nullable IOException closeExtension(
+      Extension extension, @Nullable IOException failure) {
+    try {
+      extension.close();
+
+      return failure;
+    } catch (IOException | RuntimeException closeFailure) {
+      return appendCloseFailure(failure, "Could not close extension", closeFailure);
+    }
+  }
+
+  /**
+   * Keeps the first Error primary, or preserves the first ordinary failure.
+   *
+   * @param current earlier failure, or null
+   * @param additional next observed failure
+   * @return primary failure retaining the other distinct failure as suppressed
+   */
+  @SuppressWarnings("ReferenceEquality") // One Throwable instance cannot suppress itself.
+  private static Throwable mergeCloseFailure(@Nullable Throwable current, Throwable additional) {
+    if (current == null || current == additional) {
+      return additional;
+    }
+
+    if (additional instanceof Error && !(current instanceof Error)) {
+      var earlier = current;
+      current = additional;
+      additional = earlier;
+    }
+
+    for (var retained : current.getSuppressed()) {
+      if (retained == additional) {
+        return current;
+      }
+    }
+    current.addSuppressed(additional);
+
+    return current;
+  }
+
+  /**
+   * Adds one independent shutdown failure without skipping later cleanup.
+   *
+   * @param current previously observed cleanup failure, or null
+   * @param message context for the first failure
+   * @param additional subsequent cleanup failure
+   * @return aggregated failure
+   */
+  private static IOException appendCloseFailure(
+      @Nullable IOException current, String message, Exception additional) {
+    if (current == null) {
+      return new IOException(message, additional);
+    }
+
+    current.addSuppressed(additional);
+
+    return current;
+  }
+
+  /** Runs idempotent cleanup from the JVM hook and logs failures that cannot reach a caller. */
+  private void shutdown() {
+    try {
+      close();
+    } catch (IOException failure) {
+      System.getLogger(Shoostr.class.getName())
+          .log(System.Logger.Level.ERROR, "Shoostr shutdown failed", failure);
+    }
+  }
+
+  /**
    * Hands a matched upgrade to Jetty while keeping factory rejection inside its creator callback.
    * Jetty owns the response callback whenever this method returns true.
    *
@@ -1415,6 +1472,7 @@ public final class Shoostr {
       Callback callback,
       WebSocketRuntime runtime) {
     var factory = Objects.requireNonNull(endpoint.websocketFactory());
+
     return container.upgrade(
         (upgradeRequest, upgradeResponse, upgradeCallback) -> {
           try {
@@ -1422,6 +1480,7 @@ public final class Shoostr {
             var listener =
                 Objects.requireNonNull(factory.create(request, upgradeResponse, runtime));
             response.protectRequiredHeaders();
+
             return listener;
           } catch (Exception failure) {
             if (observation != null) {
@@ -1436,6 +1495,7 @@ public final class Shoostr {
               }
 
               response.fail();
+
               upgradeCallback.failed(new AbortException(writeFailure));
             }
 
@@ -1543,6 +1603,25 @@ public final class Shoostr {
   }
 
   /**
+   * Finds the closest registered class without unwrapping causes or depending on map order.
+   *
+   * @param errors immutable application-wide callbacks
+   * @param failure directly thrown failure
+   * @return closest matching callback, or null for built-in handling
+   */
+  private static @Nullable ExceptionHandler<Exception> exceptionHandler(
+      Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors, Throwable failure) {
+    for (Class<?> type = failure.getClass(); type != null; type = type.getSuperclass()) {
+      var handler = errors.get(type);
+      if (handler != null) {
+        return handler;
+      }
+    }
+
+    return null;
+  }
+
+  /**
    * Resolves gzip and identity availability using explicit quality values before Jetty's wildcard
    * negotiation. A response with another explicitly chosen content coding remains
    * application-owned.
@@ -1587,25 +1666,6 @@ public final class Shoostr {
     response.encodingUnacceptable(
         !(gzipSpecified ? gzipAccepted : wildcardAccepted)
             && !(identitySpecified ? identityAccepted : !wildcardSpecified || wildcardAccepted));
-  }
-
-  /**
-   * Finds the closest registered class without unwrapping causes or depending on map order.
-   *
-   * @param errors immutable application-wide callbacks
-   * @param failure directly thrown failure
-   * @return closest matching callback, or null for built-in handling
-   */
-  private static @Nullable ExceptionHandler<Exception> exceptionHandler(
-      Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors, Throwable failure) {
-    for (Class<?> type = failure.getClass(); type != null; type = type.getSuperclass()) {
-      var handler = errors.get(type);
-      if (handler != null) {
-        return handler;
-      }
-    }
-
-    return null;
   }
 
   /**
@@ -1682,53 +1742,6 @@ public final class Shoostr {
      */
     private FlushFailure(Exception cause) {
       super(cause);
-    }
-  }
-
-  /**
-   * Registers one live lifecycle callback before the application begins serving requests.
-   *
-   * @param handlers ordered callback collection
-   * @param handler callback to add
-   * @param name stage description used in validation messages
-   * @return this application
-   * @throws IllegalStateException if startup has begun or the app is closed
-   * @throws NullPointerException if handler is null
-   */
-  private Shoostr register(List<Handler> handlers, Handler handler, String name) {
-    if (started || closed) {
-      throw new IllegalStateException(name + " must be registered before startup");
-    }
-
-    handlers.add(Objects.requireNonNull(handler));
-    return this;
-  }
-
-  /** Runs idempotent cleanup from the JVM hook and logs failures that cannot reach a caller. */
-  private void shutdown() {
-    try {
-      close();
-    } catch (IOException failure) {
-      System.getLogger(Shoostr.class.getName())
-          .log(System.Logger.Level.ERROR, "Shoostr shutdown failed", failure);
-    }
-  }
-
-  /**
-   * Releases the runtime's reference to this app after explicit cleanup. During JVM shutdown the
-   * runtime rejects hook removal; the already-running hook will observe the closed app instead.
-   */
-  private void removeShutdownHook() {
-    if (shutdownHook == null) {
-      return;
-    }
-
-    try {
-      Runtime.getRuntime().removeShutdownHook(shutdownHook);
-    } catch (IllegalStateException ignored2) {
-      // Hooks cannot be removed once JVM shutdown has begun.
-    } finally {
-      shutdownHook = null;
     }
   }
 
@@ -1845,13 +1858,7 @@ public final class Shoostr {
         org.eclipse.jetty.server.Request rawRequest,
         org.eclipse.jetty.server.Response rawResponse,
         Callback callback) {
-      boolean preflight =
-          interceptPreflights
-              && HttpMethods.OPTIONS.value().equals(rawRequest.getMethod())
-              && rawRequest.getHeaders().contains(HttpHeaders.ORIGIN.value())
-              && rawRequest
-                  .getHeaders()
-                  .contains(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
+      boolean preflight = isCorsPreflight(rawRequest);
       var targetMethod =
           preflight
               ? rawRequest.getHeaders().get(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value())
@@ -1868,11 +1875,25 @@ public final class Shoostr {
           return applicationSessions.handle(rawRequest, rawResponse, callback);
         } catch (Exception failure) {
           callback.failed(failure);
+
           return true;
         }
       }
 
       return dispatch(rawRequest, rawResponse, callback);
+    }
+
+    /**
+     * Recognizes an OPTIONS request carrying CORS preflight metadata.
+     *
+     * @param rawRequest native HTTP request
+     * @return whether CORS preflight dispatch applies
+     */
+    private boolean isCorsPreflight(org.eclipse.jetty.server.Request rawRequest) {
+      return interceptPreflights
+          && HttpMethods.OPTIONS.value().equals(rawRequest.getMethod())
+          && rawRequest.getHeaders().contains(HttpHeaders.ORIGIN.value())
+          && rawRequest.getHeaders().contains(HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value());
     }
 
     /**
@@ -2058,11 +2079,13 @@ public final class Shoostr {
       response.disableFlushHooksAfterBeforeFailure();
       if (failure instanceof Error || response.committed()) {
         response.fail();
+
         return failure;
       }
 
       try {
         renderFailure(errors, failure, request, response, observation);
+
         return null;
       } catch (Throwable writeFailure) {
         if (observation != null && writeFailure != failure) {
@@ -2070,6 +2093,7 @@ public final class Shoostr {
         }
 
         response.fail();
+
         return writeFailure;
       }
     }
@@ -2146,6 +2170,7 @@ public final class Shoostr {
       if (prepareRequest(request, response, observation)) {
         response.preflight();
         response.complete();
+
         return false;
       }
 
@@ -2159,6 +2184,7 @@ public final class Shoostr {
         handleUnmatched(request, response);
       } else if (endpoint.executor() != null) {
         submitMatched(endpoint, responseCallback, request, response, observation);
+
         return true;
       } else if (handleMatched(
           endpoint, rawRequest, rawResponse, responseCallback, request, response, observation)) {
@@ -2166,236 +2192,8 @@ public final class Shoostr {
       }
 
       response.complete();
+
       return false;
-    }
-
-    /**
-     * Transfers matched ownership to a worker, reclaiming it for rejected-submission recovery.
-     *
-     * @param endpoint selected endpoint
-     * @param responseCallback native completion
-     * @param request live input
-     * @param response live output
-     * @param observation optional terminal observation
-     * @throws RuntimeException if submission is rejected before another owner claims the request
-     */
-    @SuppressWarnings("java:S1181") // Submission errors must reclaim and finalize the exchange too.
-    private void submitMatched(
-        RadixRoutes.Endpoint endpoint,
-        Callback responseCallback,
-        Request request,
-        Response response,
-        @Nullable Completion observation) {
-      request.route(endpoint);
-      if (observation != null && endpoint.behavior() != null) {
-        observation.localObservers = endpoint.behavior().observers();
-      }
-
-      if (observation != null) {
-        observation.closeScopes();
-      }
-
-      request.releaseOwnership();
-      var task = new MatchedTask(this, endpoint, request, response, responseCallback, observation);
-      boolean accepted;
-      synchronized (pendingMatches) {
-        accepted = !stoppingMatches;
-        if (accepted) {
-          pendingMatches.add(task);
-        }
-      }
-
-      try {
-        if (!accepted) {
-          throw new RejectedExecutionException("Application stopped");
-        }
-
-        Objects.requireNonNull(endpoint.executor()).execute(task);
-      } catch (RuntimeException | Error failure) {
-        if (!task.claim(false)) {
-          return;
-        }
-
-        task.discard(this);
-        request.acquireOwnership();
-        configureFlushHooks(request, response, endpoint.behavior());
-        if (observation != null) {
-          observation.attachScopes();
-        }
-
-        throw failure;
-      }
-    }
-
-    /**
-     * Removes a finalized task without acquiring the app monitor held during graceful shutdown.
-     *
-     * @param task finalized matched exchange
-     */
-    private void forgetTask(MatchedTask task) {
-      synchronized (pendingMatches) {
-        pendingMatches.remove(task);
-      }
-    }
-
-    /** One selected exchange; canceled queue tombstones retain no app or request references. */
-    private static final class MatchedTask implements Runnable {
-      private @Nullable ApplicationHandler owner;
-      private RadixRoutes.@Nullable Endpoint endpoint;
-      private @Nullable Request request;
-      private @Nullable Response response;
-      private @Nullable Callback callback;
-      private @Nullable Completion observation;
-      private @Nullable Thread admission;
-      private boolean claimed;
-
-      /**
-       * Retains the exchange only until worker processing or queued cancellation finishes.
-       *
-       * @param owner dispatch implementation for this exchange
-       * @param endpoint selected endpoint
-       * @param request ownership-released input
-       * @param response paired output
-       * @param callback native completion
-       * @param observation optional terminal observation
-       */
-      private MatchedTask(
-          ApplicationHandler owner,
-          RadixRoutes.Endpoint endpoint,
-          Request request,
-          Response response,
-          Callback callback,
-          @Nullable Completion observation) {
-        this.owner = owner;
-        this.endpoint = endpoint;
-        this.request = request;
-        this.response = response;
-        this.callback = callback;
-        this.observation = observation;
-        this.admission = Thread.currentThread();
-      }
-
-      /**
-       * Runs the entire matched lifecycle, including mapped failures and finalization.
-       *
-       * @throws RejectedExecutionException if the executor runs work on the submitting thread
-       */
-      @Override
-      @SuppressWarnings("java:S1181") // Every exchange must finalize fatal application failures.
-      public void run() {
-        if (!claim(true)) {
-          return;
-        }
-
-        var activeOwner = Objects.requireNonNull(owner);
-        var selectedEndpoint = Objects.requireNonNull(endpoint);
-        var activeRequest = Objects.requireNonNull(request);
-        var activeResponse = Objects.requireNonNull(response);
-        var completionCallback = Objects.requireNonNull(callback);
-        var activeObservation = observation;
-        activeRequest.acquireOwnership();
-        Throwable applicationFailure = null;
-        Throwable terminalFailure = null;
-
-        try {
-          if (activeObservation != null) {
-            activeObservation.attachScopes();
-          }
-
-          if (!activeOwner.handleMatched(
-              selectedEndpoint,
-              activeRequest.nativeRequest(),
-              activeResponse.nativeResponse(),
-              completionCallback,
-              activeRequest,
-              activeResponse,
-              activeObservation)) {
-            activeResponse.complete();
-          }
-        } catch (Throwable failure) {
-          applicationFailure = flushFailure(failure);
-          terminalFailure =
-              activeOwner.recoverFailure(
-                  applicationFailure, activeRequest, activeResponse, activeObservation);
-        } finally {
-          try {
-            activeOwner.finishRequest(
-                activeRequest,
-                activeResponse,
-                activeObservation,
-                completionCallback,
-                applicationFailure,
-                terminalFailure);
-          } finally {
-            discard(activeOwner);
-          }
-        }
-      }
-
-      /** Cancels only unstarted work, never interrupting a borrowed executor's running worker. */
-      private void cancel() {
-        if (!claim(false)) {
-          return;
-        }
-
-        var activeOwner = Objects.requireNonNull(owner);
-        var activeRequest = Objects.requireNonNull(request);
-        var activeResponse = Objects.requireNonNull(response);
-        var completionCallback = Objects.requireNonNull(callback);
-        var activeObservation = observation;
-        activeRequest.acquireOwnership();
-        var failure = new RejectedExecutionException("Application stopped");
-
-        try {
-          activeResponse.fail();
-          activeOwner.finishRequest(
-              activeRequest,
-              activeResponse,
-              activeObservation,
-              completionCallback,
-              failure,
-              failure);
-        } finally {
-          discard(activeOwner);
-        }
-      }
-
-      /**
-       * Selects one worker or cancellation owner without a second per-request atomic object.
-       *
-       * @param running whether this is an executor invocation rather than cancellation or recovery
-       * @return whether this invocation owns processing
-       * @throws RejectedExecutionException if work runs inline on the submitting thread
-       */
-      private synchronized boolean claim(boolean running) {
-        if (claimed) {
-          return false;
-        }
-
-        if (running && Thread.currentThread() == admission) {
-          throw new RejectedExecutionException(
-              "Endpoint executor must not run on the submitting thread");
-        }
-
-        claimed = true;
-        return true;
-      }
-
-      /**
-       * Releases all framework references even if an executor retains a canceled queue wrapper.
-       *
-       * @param owner dispatch implementation whose task registry must release this exchange
-       */
-      private synchronized void discard(ApplicationHandler owner) {
-        owner.forgetTask(this);
-        this.owner = null;
-        endpoint = null;
-        request = null;
-        response = null;
-        callback = null;
-        observation = null;
-        admission = null;
-      }
     }
 
     /**
@@ -2590,6 +2388,7 @@ public final class Shoostr {
           "Upgrade required",
           request,
           response);
+
       return false;
     }
 
@@ -2647,6 +2446,7 @@ public final class Shoostr {
           if (!condition.test(request)) {
             response.setHeader(HttpHeader.CACHE_CONTROL.asString(), "no-store");
             generated(statuses, HttpStatusCodes.NOT_FOUND.value(), "Not found", request, response);
+
             return false;
           }
         }
@@ -2688,6 +2488,237 @@ public final class Shoostr {
         }
       } finally {
         response.gating(false);
+      }
+    }
+
+    /**
+     * Transfers matched ownership to a worker, reclaiming it for rejected-submission recovery.
+     *
+     * @param endpoint selected endpoint
+     * @param responseCallback native completion
+     * @param request live input
+     * @param response live output
+     * @param observation optional terminal observation
+     * @throws RuntimeException if submission is rejected before another owner claims the request
+     */
+    @SuppressWarnings("java:S1181") // Submission errors must reclaim and finalize the exchange too.
+    private void submitMatched(
+        RadixRoutes.Endpoint endpoint,
+        Callback responseCallback,
+        Request request,
+        Response response,
+        @Nullable Completion observation) {
+      request.route(endpoint);
+      if (observation != null && endpoint.behavior() != null) {
+        observation.localObservers = endpoint.behavior().observers();
+      }
+
+      if (observation != null) {
+        observation.closeScopes();
+      }
+
+      request.releaseOwnership();
+      var task = new MatchedTask(this, endpoint, request, response, responseCallback, observation);
+      boolean accepted;
+      synchronized (pendingMatches) {
+        accepted = !stoppingMatches;
+        if (accepted) {
+          pendingMatches.add(task);
+        }
+      }
+
+      try {
+        if (!accepted) {
+          throw new RejectedExecutionException("Application stopped");
+        }
+
+        Objects.requireNonNull(endpoint.executor()).execute(task);
+      } catch (RuntimeException | Error failure) {
+        if (!task.claim(false)) {
+          return;
+        }
+
+        task.discard(this);
+        request.acquireOwnership();
+        configureFlushHooks(request, response, endpoint.behavior());
+        if (observation != null) {
+          observation.attachScopes();
+        }
+
+        throw failure;
+      }
+    }
+
+    /**
+     * Removes a finalized task without acquiring the app monitor held during graceful shutdown.
+     *
+     * @param task finalized matched exchange
+     */
+    private void forgetTask(MatchedTask task) {
+      synchronized (pendingMatches) {
+        pendingMatches.remove(task);
+      }
+    }
+
+    /** One selected exchange; canceled queue tombstones retain no app or request references. */
+    private static final class MatchedTask implements Runnable {
+      private @Nullable ApplicationHandler owner;
+      private RadixRoutes.@Nullable Endpoint endpoint;
+      private @Nullable Request request;
+      private @Nullable Response response;
+      private @Nullable Callback callback;
+      private @Nullable Completion observation;
+      private @Nullable Thread admission;
+      private boolean claimed;
+
+      /**
+       * Retains the exchange only until worker processing or queued cancellation finishes.
+       *
+       * @param owner dispatch implementation for this exchange
+       * @param endpoint selected endpoint
+       * @param request ownership-released input
+       * @param response paired output
+       * @param callback native completion
+       * @param observation optional terminal observation
+       */
+      private MatchedTask(
+          ApplicationHandler owner,
+          RadixRoutes.Endpoint endpoint,
+          Request request,
+          Response response,
+          Callback callback,
+          @Nullable Completion observation) {
+        this.owner = owner;
+        this.endpoint = endpoint;
+        this.request = request;
+        this.response = response;
+        this.callback = callback;
+        this.observation = observation;
+        this.admission = Thread.currentThread();
+      }
+
+      /**
+       * Runs the entire matched lifecycle, including mapped failures and finalization.
+       *
+       * @throws RejectedExecutionException if the executor runs work on the submitting thread
+       */
+      @Override
+      @SuppressWarnings("java:S1181") // Every exchange must finalize fatal application failures.
+      public void run() {
+        if (!claim(true)) {
+          return;
+        }
+
+        var activeOwner = Objects.requireNonNull(owner);
+        var selectedEndpoint = Objects.requireNonNull(endpoint);
+        var activeRequest = Objects.requireNonNull(request);
+        var activeResponse = Objects.requireNonNull(response);
+        var completionCallback = Objects.requireNonNull(callback);
+        var activeObservation = observation;
+        activeRequest.acquireOwnership();
+        Throwable applicationFailure = null;
+        Throwable terminalFailure = null;
+
+        try {
+          if (activeObservation != null) {
+            activeObservation.attachScopes();
+          }
+
+          if (!activeOwner.handleMatched(
+              selectedEndpoint,
+              activeRequest.nativeRequest(),
+              activeResponse.nativeResponse(),
+              completionCallback,
+              activeRequest,
+              activeResponse,
+              activeObservation)) {
+            activeResponse.complete();
+          }
+        } catch (Throwable failure) {
+          applicationFailure = flushFailure(failure);
+          terminalFailure =
+              activeOwner.recoverFailure(
+                  applicationFailure, activeRequest, activeResponse, activeObservation);
+        } finally {
+          try {
+            activeOwner.finishRequest(
+                activeRequest,
+                activeResponse,
+                activeObservation,
+                completionCallback,
+                applicationFailure,
+                terminalFailure);
+          } finally {
+            discard(activeOwner);
+          }
+        }
+      }
+
+      /** Cancels only unstarted work, never interrupting a borrowed executor's running worker. */
+      private void cancel() {
+        if (!claim(false)) {
+          return;
+        }
+
+        var activeOwner = Objects.requireNonNull(owner);
+        var activeRequest = Objects.requireNonNull(request);
+        var activeResponse = Objects.requireNonNull(response);
+        var completionCallback = Objects.requireNonNull(callback);
+        var activeObservation = observation;
+        activeRequest.acquireOwnership();
+        var failure = new RejectedExecutionException("Application stopped");
+
+        try {
+          activeResponse.fail();
+
+          activeOwner.finishRequest(
+              activeRequest,
+              activeResponse,
+              activeObservation,
+              completionCallback,
+              failure,
+              failure);
+        } finally {
+          discard(activeOwner);
+        }
+      }
+
+      /**
+       * Selects one worker or cancellation owner without a second per-request atomic object.
+       *
+       * @param running whether this is an executor invocation rather than cancellation or recovery
+       * @return whether this invocation owns processing
+       * @throws RejectedExecutionException if work runs inline on the submitting thread
+       */
+      private synchronized boolean claim(boolean running) {
+        if (claimed) {
+          return false;
+        }
+
+        if (running && Thread.currentThread() == admission) {
+          throw new RejectedExecutionException(
+              "Endpoint executor must not run on the submitting thread");
+        }
+
+        claimed = true;
+
+        return true;
+      }
+
+      /**
+       * Releases all framework references even if an executor retains a canceled queue wrapper.
+       *
+       * @param owner dispatch implementation whose task registry must release this exchange
+       */
+      private synchronized void discard(ApplicationHandler owner) {
+        owner.forgetTask(this);
+        this.owner = null;
+        endpoint = null;
+        request = null;
+        response = null;
+        callback = null;
+        observation = null;
+        admission = null;
       }
     }
   }
@@ -2743,20 +2774,7 @@ public final class Shoostr {
      * @return immutable request-dispatch configuration
      */
     private static DispatchConfiguration capture(Shoostr app) {
-      var dispatch =
-          new DispatchConfiguration(
-              Objects.requireNonNull(app.router),
-              app.exceptionHandlers,
-              app.statusHandlers,
-              app.beforeHandlers,
-              app.requestHeaderHandlers,
-              app.routeMatchedHandlers,
-              app.afterRouteHandlers,
-              app.beforeFlushHandlers,
-              app.afterFlushHandlers,
-              app.afterHandlers,
-              app.observationFactories,
-              app.routes.localObservers());
+      var dispatch = captureExtendedDispatch(app);
       app.observationFactories.clear();
       app.afterHandlers.clear();
       app.beforeHandlers.clear();
@@ -2767,7 +2785,30 @@ public final class Shoostr {
       app.afterFlushHandlers.clear();
       app.exceptionHandlers.clear();
       app.statusHandlers.clear();
+
       return dispatch;
+    }
+
+    /**
+     * Snapshots the completed route registrations and their lifecycle callbacks.
+     *
+     * @param app application whose completed registrations are captured
+     * @return immutable dispatch configuration
+     */
+    private static DispatchConfiguration captureExtendedDispatch(Shoostr app) {
+      return new DispatchConfiguration(
+          Objects.requireNonNull(app.router),
+          app.exceptionHandlers,
+          app.statusHandlers,
+          app.beforeHandlers,
+          app.requestHeaderHandlers,
+          app.routeMatchedHandlers,
+          app.afterRouteHandlers,
+          app.beforeFlushHandlers,
+          app.afterFlushHandlers,
+          app.afterHandlers,
+          app.observationFactories,
+          app.routes.localObservers());
     }
   }
 
@@ -2956,6 +2997,7 @@ public final class Shoostr {
       }
 
       notified = true;
+
       return new RequestOutcome(
           method,
           routePattern,

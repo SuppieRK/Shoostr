@@ -20,6 +20,7 @@ class McpValueEqualityTest {
   void securityComparesItsValidatedOriginsCallbacksAndMetadata() {
     var first = identity("first");
     var second = identity("second");
+
     EqualsVerifier.forClass(McpHttpSecurity.class)
         .withPrefabValuesForField(
             "allowedOrigins", Set.of("https://first.example"), Set.of("https://second.example"))

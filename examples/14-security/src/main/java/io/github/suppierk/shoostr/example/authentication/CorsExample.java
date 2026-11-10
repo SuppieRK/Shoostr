@@ -21,24 +21,11 @@ public final class CorsExample {
    */
   public static Shoostr application() {
     // Credentialed sharing names an exact origin; CORS does not authenticate that origin's users.
-    var policy =
-        CorsPolicy.builder()
-            .origins("https://app.example")
-            .methods(HttpMethods.GET, HttpMethods.POST)
-            .allowedHeaders(HttpHeaders.CONTENT_TYPE, HttpHeaders.AUTHORIZATION)
-            .credentials(true)
-            .exposedHeaders(REQUEST_ID)
-            .maxAgeSeconds(600)
-            .build();
+    var policy = browserPolicy();
     var cors = new Cors(policy);
     var reportHeader = HttpHeaders.of("X-Report-Format");
-    var reports =
-        CorsPolicy.builder()
-            .origins("https://reports.example")
-            .allowedHeaders(reportHeader)
-            .credentials(false)
-            .maxAgeSeconds(0)
-            .build();
+    var reports = reportsPolicy(reportHeader);
+
     return new Shoostr()
         .withExtension(cors)
         .routes(
@@ -73,5 +60,36 @@ public final class CorsExample {
                         // Replace the complete policy; parent origins and headers do not carry
                         // forward.
                         lifecycle -> lifecycle.withExtension(cors).policy(reports)));
+  }
+
+  /**
+   * Configures browser access to the public example endpoints.
+   *
+   * @return independent browser-origin policy
+   */
+  private static CorsPolicy browserPolicy() {
+    return CorsPolicy.builder()
+        .origins("https://app.example")
+        .methods(HttpMethods.GET, HttpMethods.POST)
+        .allowedHeaders(HttpHeaders.CONTENT_TYPE, HttpHeaders.AUTHORIZATION)
+        .credentials(true)
+        .exposedHeaders(REQUEST_ID)
+        .maxAgeSeconds(600)
+        .build();
+  }
+
+  /**
+   * Configures the report endpoint's origin and allowed request headers.
+   *
+   * @param reportHeader request header permitted during preflight
+   * @return independent report policy
+   */
+  private static CorsPolicy reportsPolicy(HttpHeaders reportHeader) {
+    return CorsPolicy.builder()
+        .origins("https://reports.example")
+        .allowedHeaders(reportHeader)
+        .credentials(false)
+        .maxAgeSeconds(0)
+        .build();
   }
 }

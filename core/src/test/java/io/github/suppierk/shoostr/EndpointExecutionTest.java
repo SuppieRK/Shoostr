@@ -61,7 +61,9 @@ class EndpointExecutionTest {
             Thread.currentThread().interrupt();
           }
         });
+
     assertTrue(occupied.await(5, TimeUnit.SECONDS));
+
     var invoked = new AtomicBoolean();
     var completed = new CompletableFuture<RequestOutcome>();
     var completions = new AtomicInteger();
@@ -79,7 +81,7 @@ class EndpointExecutionTest {
             .get(
                 "/queued",
                 workers,
-                (ignored2, response) -> {
+                (ignoredRequest, response) -> {
                   invoked.set(true);
                   response.text("wrong");
                 },
@@ -95,12 +97,15 @@ class EndpointExecutionTest {
           await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 1);
           app.close();
           var outcome = completed.get(5, TimeUnit.SECONDS);
+
           assertEquals("/queued", outcome.routePattern());
           assertInstanceOf(RejectedExecutionException.class, outcome.applicationFailure());
           assertFalse(invoked.get());
           assertEquals(1, completions.get());
           assertFalse(workers.isShutdown());
+
           release.countDown();
+
           assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
           assertFalse(invoked.get());
           assertEquals(1, completions.get());
@@ -122,25 +127,20 @@ class EndpointExecutionTest {
   void rejectsWrappedCallerRunsWithoutInvokingTheEndpoint() throws Exception {
     var occupied = new CountDownLatch(1);
     var release = new CountDownLatch(1);
-    var pool =
-        new ThreadPoolExecutor(
-            1,
-            1,
-            0,
-            TimeUnit.SECONDS,
-            new SynchronousQueue<>(),
-            new ThreadPoolExecutor.CallerRunsPolicy());
+    var pool = createPoolForRejectsWrappedCallerRunsWithoutInvokingTheEndpoint();
     pool.execute(
         () -> {
           occupied.countDown();
 
           try {
             release.await();
-          } catch (InterruptedException ignored3) {
+          } catch (InterruptedException ignoredFailure) {
             Thread.currentThread().interrupt();
           }
         });
+
     assertTrue(occupied.await(5, TimeUnit.SECONDS));
+
     var invoked = new AtomicBoolean();
     var workers = Executors.unconfigurableExecutorService(pool);
 
@@ -150,12 +150,12 @@ class EndpointExecutionTest {
       try (Closeable appCleanup1 = app::close) {
         app.exception(
             RejectedExecutionException.class,
-            (ignored4, ignored5, response) -> response.status(503).text("rejected"));
+            (ignoredFailure, ignoredRequest, response) -> response.status(503).text("rejected"));
         app.routes()
             .get(
                 "/inline",
                 workers,
-                (ignored6, response) -> {
+                (ignoredRequest, response) -> {
                   invoked.set(true);
                   response.text("wrong");
                 });
@@ -169,6 +169,16 @@ class EndpointExecutionTest {
       release.countDown();
       pool.shutdownNow();
     }
+  }
+
+  private ThreadPoolExecutor createPoolForRejectsWrappedCallerRunsWithoutInvokingTheEndpoint() {
+    return new ThreadPoolExecutor(
+        1,
+        1,
+        0,
+        TimeUnit.SECONDS,
+        new SynchronousQueue<>(),
+        new ThreadPoolExecutor.CallerRunsPolicy());
   }
 
   @Test
@@ -188,17 +198,18 @@ class EndpointExecutionTest {
                     routes.get(
                         "/hidden",
                         workers,
-                        (ignored7, ignored8) -> invoked.set(true),
+                        (ignoredRequest, ignoredResponse) -> invoked.set(true),
                         extensions ->
                             extensions.status(
                                 404,
-                                (ignored9, response) ->
+                                (ignoredRequest, response) ->
                                     response.text(
                                         "local:" + owned.contains(Thread.currentThread())))));
 
         try (var test = TestServer.start(app)) {
           var response =
               test.send(request -> request.path("/hidden"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(404, response.statusCode());
           assertEquals("local:true", response.body());
           assertEquals("no-store", response.headers().firstValue("Cache-Control").orElseThrow());
@@ -216,7 +227,7 @@ class EndpointExecutionTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup3 = app::close) {
-        app.onRequestHeaders((request, ignored10) -> request.attribute("value", "original"));
+        app.onRequestHeaders((request, ignoredResponse) -> request.attribute("value", "original"));
         app.routes()
             .get(
                 "/attributes",
@@ -244,12 +255,12 @@ class EndpointExecutionTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup4 = app::close) {
-        app.onRequestHeaders((ignored11, ignored12) -> context.set("admission-only"));
+        app.onRequestHeaders((ignoredRequest, ignoredResponse) -> context.set("admission-only"));
         app.routes()
             .get(
                 "/context",
                 workers,
-                (ignored13, response) ->
+                (ignoredRequest, response) ->
                     response.text(context.get() == null ? "absent" : "copied"));
 
         try (var test = TestServer.start(app)) {
@@ -273,17 +284,18 @@ class EndpointExecutionTest {
       try (Closeable appCleanup5 = app::close) {
         app.exception(
             RejectedExecutionException.class,
-            (ignored14, ignored15, response) -> response.status(503).text("app"));
+            (ignoredFailure, ignoredRequest, response) -> response.status(503).text("app"));
         app.routes()
             .path(
                 "/rejected",
                 routes -> {
                   routes.exception(
                       RejectedExecutionException.class,
-                      (ignored16, ignored17, response) -> response.status(503).text("local"));
+                      (ignoredFailure, ignoredRequest, response) ->
+                          response.status(503).text("local"));
                   routes.get(
                       workers,
-                      (ignored18, response) -> {
+                      (ignoredRequest, response) -> {
                         invoked.set(true);
                         response.text("endpoint");
                       });
@@ -293,6 +305,7 @@ class EndpointExecutionTest {
           workers.shutdown();
           var response =
               test.send(request -> request.path("/rejected"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(503, response.statusCode());
           assertEquals("local", response.body());
           assertFalse(invoked.get());
@@ -321,23 +334,23 @@ class EndpointExecutionTest {
       try (Closeable appCleanup6 = app::close) {
         appRegistration.accept(
             app,
-            (ignored19, ignored20) -> {
+            (ignoredRequest, ignoredResponse) -> {
               callbackThreads.add(Thread.currentThread());
               events.add("app");
             });
-        app.afterRequest(ignored21 -> finished.complete(null));
+        app.afterRequest(ignoredRequestOutcome -> finished.complete(null));
         app.routes()
             .get(
                 "/callbacks",
                 workers,
-                (ignored22, response) -> {
+                (ignoredRequest, response) -> {
                   callbackThreads.add(Thread.currentThread());
                   response.text("ok");
                 },
                 extensions ->
                     localRegistration.accept(
                         extensions,
-                        (ignored23, ignored24) -> {
+                        (ignoredRequest, ignoredResponse) -> {
                           callbackThreads.add(Thread.currentThread());
                           events.add("local");
                         }));
@@ -346,8 +359,11 @@ class EndpointExecutionTest {
           var response =
               test.send(
                   request -> request.path("/callbacks"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals("ok", response.body());
+
           finished.get(5, TimeUnit.SECONDS);
+
           assertEquals(List.of("local", "app"), events, phase);
           assertEquals(3, callbackThreads.size());
           assertTrue(owned.containsAll(callbackThreads), executorType);
@@ -360,7 +376,7 @@ class EndpointExecutionTest {
   void keepsSseHandlerAndStreamWritesOnSelectedPlatformThread() throws Exception {
     var owned = ConcurrentHashMap.<Thread>newKeySet();
     Handler endpoint =
-        (ignored25, response) ->
+        (ignoredRequest, response) ->
             response
                 .startEventStream()
                 .send(Boolean.toString(owned.contains(Thread.currentThread())));
@@ -375,6 +391,7 @@ class EndpointExecutionTest {
         try (var test = TestServer.start(app)) {
           var response =
               test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("data: true\n\n", response.body());
         }
@@ -390,7 +407,7 @@ class EndpointExecutionTest {
     var admissionRestored = new AtomicBoolean();
     var workerRestored = new AtomicBoolean();
     Handler endpoint =
-        (ignored26, response) -> response.text(Objects.requireNonNull(context.get()));
+        (ignoredRequest, response) -> response.text(Objects.requireNonNull(context.get()));
     var workers = Executors.newFixedThreadPool(1);
 
     try (workers) {
@@ -398,15 +415,17 @@ class EndpointExecutionTest {
 
       try (Closeable appCleanup8 = app::close) {
         app.observe(
-            ignored27 -> {
+            ignoredRequest -> {
               var admission = Thread.currentThread();
               context.set("server-context");
+
               return new RequestObservation() {
                 @Override
                 public AutoCloseable attach() {
                   var owner = Thread.currentThread();
                   context.set("server-context");
                   events.add("worker-attach");
+
                   return () -> {
                     context.remove();
                     workerRestored.set(Thread.currentThread() == owner && context.get() == null);
@@ -434,6 +453,7 @@ class EndpointExecutionTest {
         try (var test = TestServer.start(app)) {
           var response =
               test.send(request -> request.path("/scoped"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals("server-context", response.body());
           assertEquals(200, completed.get(5, TimeUnit.SECONDS).statusCode());
           assertTrue(admissionRestored.get());
@@ -449,7 +469,7 @@ class EndpointExecutionTest {
   void handlesSelectedEndpointOnPlatformThread() throws Exception {
     var owned = ConcurrentHashMap.<Thread>newKeySet();
     Handler endpoint =
-        (ignored28, response) ->
+        (ignoredRequest, response) ->
             response.text(Boolean.toString(owned.contains(Thread.currentThread())));
     var workers = executor("platform", owned);
 
@@ -462,6 +482,7 @@ class EndpointExecutionTest {
         try (var test = TestServer.start(app)) {
           var response =
               test.send(request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("true", response.body());
         }
@@ -470,15 +491,8 @@ class EndpointExecutionTest {
   }
 
   private static ExecutorService executor(String type, Set<Thread> owned) {
-    ThreadFactory factory =
-        task -> {
-          var thread =
-              "virtual".equals(type)
-                  ? Thread.ofVirtual().unstarted(task)
-                  : Thread.ofPlatform().unstarted(task);
-          owned.add(thread);
-          return thread;
-        };
+    ThreadFactory factory = createFactoryForExecutor(type, owned);
+
     return switch (type) {
       case "platform" -> Executors.newFixedThreadPool(1, factory);
       case "virtual" -> Executors.newThreadPerTaskExecutor(factory);
@@ -488,12 +502,25 @@ class EndpointExecutionTest {
     };
   }
 
+  private static ThreadFactory createFactoryForExecutor(String type, Set<Thread> owned) {
+    return task -> {
+      var thread =
+          "virtual".equals(type)
+              ? Thread.ofVirtual().unstarted(task)
+              : Thread.ofPlatform().unstarted(task);
+      owned.add(thread);
+
+      return thread;
+    };
+  }
+
   private static ForkJoinPool forkJoin(Set<Thread> owned) {
     return new ForkJoinPool(
         1,
         pool -> {
           var worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
           owned.add(worker);
+
           return worker;
         },
         null,

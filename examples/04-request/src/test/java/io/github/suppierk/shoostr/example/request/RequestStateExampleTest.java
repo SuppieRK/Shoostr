@@ -33,10 +33,14 @@ class RequestStateExampleTest {
                 (request, response) -> {
                   assertTrue(request.attribute("notes").isEmpty());
                   assertTrue(request.attribute("Locale").isEmpty());
+
                   var notes = new ArrayList<>(List.of("initial"));
                   request.attribute("notes", notes).attribute("remove", "original");
+
                   assertSame(notes, request.attribute("notes").orElseThrow());
+
                   var snapshot = request.attributeMap();
+
                   assertThrows(UnsupportedOperationException.class, snapshot::clear);
 
                   request.attribute("notes", List.of("replacement")).attribute("remove", null);
@@ -47,7 +51,9 @@ class RequestStateExampleTest {
                   assertEquals("original", snapshot.get("remove"));
                   assertEquals(List.of("replacement"), request.attribute("notes").orElseThrow());
                   assertTrue(request.attribute("remove").isEmpty());
+
                   retained.set(snapshot);
+
                   response.text("checked");
                 });
 
@@ -56,6 +62,7 @@ class RequestStateExampleTest {
             var response =
                 test.send(
                     request -> request.path("/attributes"), HttpResponse.BodyHandlers.ofString());
+
             assertEquals(200, response.statusCode());
             assertEquals("checked", response.body());
             assertEquals(List.of("initial", "later"), retained.get().get("notes"));
@@ -94,6 +101,7 @@ class RequestStateExampleTest {
                   }
 
                   assertEquals("en", request.attribute("locale").orElseThrow());
+
                   response.text("checked");
                 });
 
@@ -102,6 +110,7 @@ class RequestStateExampleTest {
               test.send(
                   request -> request.path("/ownership").header("X-Value", "kept"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("checked", response.body());
           assertEquals(List.of("kept"), retained.get().get("X-VALUE"));
@@ -111,6 +120,7 @@ class RequestStateExampleTest {
               test.send(
                   request -> request.path("/greeting").header("X-Value", "different"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, next.statusCode());
           assertEquals("Hello", next.body());
           assertEquals(List.of("kept"), retained.get().get("x-value"));
@@ -133,8 +143,10 @@ class RequestStateExampleTest {
       assertEquals("Bonjour", french.body());
       assertEquals(200, english.statusCode());
       assertEquals("Hello", english.body());
+
       var frenchId = UUID.fromString(french.headers().firstValue("X-Request-Id").orElseThrow());
       var englishId = UUID.fromString(english.headers().firstValue("X-Request-Id").orElseThrow());
+
       assertNotEquals(frenchId, englishId);
     }
   }

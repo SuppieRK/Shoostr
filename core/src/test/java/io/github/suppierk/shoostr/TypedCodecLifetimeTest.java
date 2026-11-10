@@ -46,6 +46,7 @@ class TypedCodecLifetimeTest {
 
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/retain")).statusCode());
+
           var retainedRequest = savedRequest.get();
           var retainedResponse = savedResponse.get();
           var originalThread = handlerThread.get();
@@ -63,6 +64,7 @@ class TypedCodecLifetimeTest {
                         () -> retainedResponse.body(MediaType.APPLICATION_JSON, "late"));
                   })
               .get(5, TimeUnit.SECONDS);
+
           assertEquals(0, codec.reads.get());
           assertEquals(0, codec.writes.get());
         }
@@ -119,6 +121,7 @@ class TypedCodecLifetimeTest {
                 "/stream",
                 (ignored, response) -> {
                   response.startStream("text/plain").write("streamed");
+
                   assertThrows(
                       IllegalStateException.class,
                       () -> response.body(MediaType.APPLICATION_JSON, "late"));
@@ -127,6 +130,7 @@ class TypedCodecLifetimeTest {
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals("streamed", result.body());
           assertEquals(0, codec.writes.get());
         }
@@ -149,8 +153,9 @@ class TypedCodecLifetimeTest {
             .routes()
             .get(
                 "/file",
-                (ignored2, response) -> {
+                (ignoredTypedRequest, response) -> {
                   response.file(file, "text/plain");
+
                   assertThrows(
                       IllegalStateException.class, () -> response.body("application/json", "late"));
                 });
@@ -158,6 +163,7 @@ class TypedCodecLifetimeTest {
         try (var test = TestServer.start(app)) {
           var result =
               test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals("file body", result.body());
           assertEquals(0, codec.writes.get());
         }
@@ -179,7 +185,9 @@ class TypedCodecLifetimeTest {
                 "/input",
                 (request, response) -> {
                   request.input();
+
                   assertThrows(IllegalStateException.class, () -> request.body(String.class));
+
                   response.text("guarded");
                 });
 
@@ -207,10 +215,10 @@ class TypedCodecLifetimeTest {
             .routes()
             .get(
                 "/flush",
-                (ignored3, response) -> response.text("plain"),
+                (ignoredTypedRequest, response) -> response.text("plain"),
                 extensions ->
                     extensions.afterResponseFlush(
-                        (ignored4, response) -> {
+                        (ignoredRequest, response) -> {
                           try {
                             rejection.complete(
                                 assertThrows(
@@ -225,7 +233,9 @@ class TypedCodecLifetimeTest {
 
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/flush")).statusCode());
+
           rejection.get(5, TimeUnit.SECONDS);
+
           assertEquals(0, codec.writes.get());
         }
       }
@@ -244,12 +254,14 @@ class TypedCodecLifetimeTest {
     @Override
     public <T> T read(byte[] source, Class<T> type) throws Exception {
       reads.incrementAndGet();
+
       return super.read(source, type);
     }
 
     @Override
     public byte[] write(Object value) throws Exception {
       writes.incrementAndGet();
+
       return super.write(value);
     }
   }

@@ -20,6 +20,7 @@ class ExtensionRequestBenchmarkTest {
 
     try {
       benchmark.setup();
+
       assertTrue(benchmark.request().startsWith("HTTP/1.1 200"));
     } finally {
       benchmark.close();
@@ -37,8 +38,10 @@ class ExtensionRequestBenchmarkTest {
 
     try {
       benchmark.setup();
+
       String expected =
           "missed".equals(outcome) ? "404" : "wrongMethod".equals(outcome) ? "405" : "200";
+
       assertTrue(benchmark.request().startsWith("HTTP/1.1 " + expected));
     } finally {
       benchmark.close();

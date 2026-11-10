@@ -26,14 +26,7 @@ public record Cors(CorsPolicy policy)
     implements ApplicationExtension<Cors.Configuration>, RouteExtension<Cors.Configuration> {
   private static final Map<String, String> VARIATION =
       Map.of(HttpHeaders.VARY.value(), HttpHeaders.ORIGIN.value());
-  static final Map<String, String> OPTIONS_VARIATION =
-      Map.of(
-          HttpHeaders.VARY.value(),
-          String.join(
-              ", ",
-              HttpHeaders.ORIGIN.value(),
-              HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value(),
-              HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value()));
+  static final Map<String, String> OPTIONS_VARIATION = optionsVariation();
 
   /**
    * Creates immutable sharing behavior from validated permissions.
@@ -58,44 +51,6 @@ public record Cors(CorsPolicy policy)
   @Override
   public Configuration configure(Lifecycle endpoint, @Nullable Configuration inherited) {
     return new Configuration(endpoint, this, inherited);
-  }
-
-  /** Scope-local complete policy replacement for one installed owner. */
-  public static final class Configuration {
-    private final Lifecycle endpoint;
-    private final Cors cors;
-    private CorsPolicy policy;
-
-    /**
-     * Creates an independent selection.
-     *
-     * @param endpoint contribution scope
-     * @param cors installed owner
-     * @param inherited enclosing configuration, or null
-     */
-    private Configuration(Lifecycle endpoint, Cors cors, @Nullable Configuration inherited) {
-      this.endpoint = Objects.requireNonNull(endpoint);
-      this.cors = Objects.requireNonNull(cors);
-      this.policy = inherited == null ? cors.policy : inherited.policy;
-      endpoint.cors(cors, policy);
-    }
-
-    /**
-     * Replaces the complete policy without changing the selected owner.
-     *
-     * @param contribution complete replacement copied before publication
-     * @return this configuration
-     * @throws IllegalStateException if registration has finished
-     * @throws IllegalArgumentException if the resolved permissions are invalid
-     */
-    public Configuration policy(CorsPolicy contribution) {
-      endpoint.requireMutable();
-      var combined = new CorsPolicy(Objects.requireNonNull(contribution));
-      endpoint.cors(cors, combined);
-
-      policy = combined;
-      return this;
-    }
   }
 
   /**
@@ -129,6 +84,7 @@ public record Cors(CorsPolicy policy)
     boolean options = HttpMethods.OPTIONS.value().equals(request.method());
     var variation = options ? OPTIONS_VARIATION : VARIATION;
     response.corsHeaders(variation);
+
     var incomingOrigins = request.headers(HttpHeaders.ORIGIN.value());
     if (incomingOrigins.isEmpty()) {
       return false;
@@ -170,7 +126,23 @@ public record Cors(CorsPolicy policy)
 
     populateResponseHeaders(policy, fields, request, method, preflight);
     response.corsHeaders(Map.copyOf(fields));
+
     return preflight;
+  }
+
+  /**
+   * Builds the preflight variation fields once before any request is served.
+   *
+   * @return immutable preflight variation
+   */
+  private static Map<String, String> optionsVariation() {
+    return Map.of(
+        HttpHeaders.VARY.value(),
+        String.join(
+            ", ",
+            HttpHeaders.ORIGIN.value(),
+            HttpHeaders.ACCESS_CONTROL_REQUEST_METHOD.value(),
+            HttpHeaders.ACCESS_CONTROL_REQUEST_HEADERS.value()));
   }
 
   /**
@@ -269,6 +241,7 @@ public record Cors(CorsPolicy policy)
         names.add(name.toLowerCase(Locale.ROOT));
       }
     }
+
     if (!values.isEmpty() && names.isEmpty()) {
       throw new BadRequestException();
     }
@@ -286,6 +259,44 @@ public record Cors(CorsPolicy policy)
     if (!HttpCharacters.isValidHttpToken(token)) {
       throw new BadRequestException(
           new IllegalArgumentException("HTTP field name must be an RFC 9110 token"));
+    }
+  }
+
+  /** Scope-local complete policy replacement for one installed owner. */
+  public static final class Configuration {
+    private final Lifecycle endpoint;
+    private final Cors cors;
+    private CorsPolicy policy;
+
+    /**
+     * Creates an independent selection.
+     *
+     * @param endpoint contribution scope
+     * @param cors installed owner
+     * @param inherited enclosing configuration, or null
+     */
+    private Configuration(Lifecycle endpoint, Cors cors, @Nullable Configuration inherited) {
+      this.endpoint = Objects.requireNonNull(endpoint);
+      this.cors = Objects.requireNonNull(cors);
+      this.policy = inherited == null ? cors.policy : inherited.policy;
+      endpoint.cors(cors, policy);
+    }
+
+    /**
+     * Replaces the complete policy without changing the selected owner.
+     *
+     * @param contribution complete replacement copied before publication
+     * @return this configuration
+     * @throws IllegalStateException if registration has finished
+     * @throws IllegalArgumentException if the resolved permissions are invalid
+     */
+    public Configuration policy(CorsPolicy contribution) {
+      endpoint.requireMutable();
+      var combined = new CorsPolicy(Objects.requireNonNull(contribution));
+      endpoint.cors(cors, combined);
+
+      policy = combined;
+      return this;
     }
   }
 }

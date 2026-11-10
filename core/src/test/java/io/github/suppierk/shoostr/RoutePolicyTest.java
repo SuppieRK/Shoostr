@@ -30,9 +30,12 @@ class RoutePolicyTest {
       try (Closeable appCleanup = app::close) {
         var routes = app.routes();
         app.close();
+
         assertThrows(
             IllegalStateException.class,
-            () -> routes.get("/", (ignored, ignored2) -> {}, ignored3 -> invoked.set(true)));
+            () ->
+                routes.get(
+                    "/", (ignored, ignoredResponse) -> {}, ignoredLifecycle -> invoked.set(true)));
         assertFalse(invoked.get());
       }
     }
@@ -51,8 +54,8 @@ class RoutePolicyTest {
               .routes()
               .path(
                   "/api//",
-                  routes -> routes.get("", (ignored4, response) -> response.text("plain")));
-          var admission = new AdmissionExtension((ignored5, ignored6) -> {});
+                  routes -> routes.get("", (ignoredRequest, response) -> response.text("plain")));
+          var admission = new AdmissionExtension((ignoredRequest, ignoredResponse) -> {});
           guarded
               .routes()
               .path(
@@ -60,8 +63,8 @@ class RoutePolicyTest {
                   routes ->
                       routes.get(
                           "",
-                          (ignored7, response) -> response.text("guarded"),
-                          e -> e.withExtension(admission)));
+                          (ignoredRequest, response) -> response.text("guarded"),
+                          lifecycle -> lifecycle.withExtension(admission)));
 
           try (var plainTest = TestServer.start(plain);
               var guardedTest = TestServer.start(guarded)) {
@@ -102,10 +105,11 @@ class RoutePolicyTest {
 
   @Test
   void runsInheritedExtensionAdmissionInSelectionOrderBeforeTheHandler() throws Exception {
-    var outer = new AdmissionExtension((request, ignored8) -> request.attribute("order", "outer"));
+    var outer =
+        new AdmissionExtension((request, ignoredResponse) -> request.attribute("order", "outer"));
     var inner =
         new AdmissionExtension(
-            (request, ignored9) ->
+            (request, ignoredResponse) ->
                 request.attribute("order", request.attribute("order").orElseThrow() + ",inner"));
 
     {
@@ -120,8 +124,8 @@ class RoutePolicyTest {
                         "/order",
                         (request, response) ->
                             response.text(request.attribute("order").orElseThrow() + ",handler"),
-                        e -> e.withExtension(inner)),
-                e -> e.withExtension(outer));
+                        lifecycle -> lifecycle.withExtension(inner)),
+                lifecycle -> lifecycle.withExtension(outer));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -139,7 +143,7 @@ class RoutePolicyTest {
   void preventsExtensionAdmissionFromStartingAStream() throws Exception {
     var admission =
         new AdmissionExtension(
-            (ignored10, response) ->
+            (ignoredRequest, response) ->
                 assertThrows(
                     IllegalStateException.class, () -> response.startStream("text/plain")));
 
@@ -150,8 +154,8 @@ class RoutePolicyTest {
         app.routes()
             .get(
                 "/stream",
-                (ignored11, response) -> response.text("finite"),
-                e -> e.withExtension(admission));
+                (ignoredRequest, response) -> response.text("finite"),
+                lifecycle -> lifecycle.withExtension(admission));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -173,19 +177,13 @@ class RoutePolicyTest {
       try (Closeable appCleanup3 = app::close) {
         app.exception(
             AuthenticationRequiredException.class,
-            (ignored12, ignored13, response) -> response.text("login required"));
-        var auth =
-            new AuthenticationExtension() {
-              @Override
-              public void handle(Request request, Response response) {
-                throw new AuthenticationRequiredException("Bearer realm=\"api\"");
-              }
-            };
+            (ignoredFailure, ignoredRequest, response) -> response.text("login required"));
+        var auth = createAuthForRetainsAuthenticationChallengesThroughGlobalErrorRendering();
         app.routes()
             .get(
                 "/private",
-                (ignored14, response) -> response.text("secret"),
-                e -> e.withExtension(auth));
+                (ignoredRequest, response) -> response.text("secret"),
+                lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
 
@@ -193,6 +191,7 @@ class RoutePolicyTest {
               test.send(
                   request -> request.path("/private").timeout(Duration.ofSeconds(5)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(401, result.statusCode());
           assertEquals("login required", result.body());
           assertEquals(
@@ -201,6 +200,16 @@ class RoutePolicyTest {
         }
       }
     }
+  }
+
+  private AuthenticationExtension
+      createAuthForRetainsAuthenticationChallengesThroughGlobalErrorRendering() {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        throw new AuthenticationRequiredException("Bearer realm=\"api\"");
+      }
+    };
   }
 
   @Test
@@ -213,14 +222,14 @@ class RoutePolicyTest {
       try (Closeable appCleanup4 = app::close) {
         var admission =
             new AdmissionExtension(
-                (ignored15, ignored16) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new ForbiddenException();
                 });
         app.routes()
             .path(
                 "/",
                 secured -> secured.staticFiles("/files", directory),
-                e -> e.withExtension(admission));
+                lifecycle -> lifecycle.withExtension(admission));
 
         try (var test = TestServer.start(app)) {
 
@@ -243,7 +252,7 @@ class RoutePolicyTest {
       try (Closeable appCleanup5 = app::close) {
         var admission =
             new AdmissionExtension(
-                (ignored17, ignored18) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new ForbiddenException();
                 });
         app.routes()
@@ -252,9 +261,9 @@ class RoutePolicyTest {
                 routes -> {
                   routes.get(
                       "/private",
-                      (ignored19, response) -> response.text("secret"),
-                      e -> e.withExtension(admission));
-                  routes.get("/public", (ignored20, response) -> response.text("public"));
+                      (ignoredRequest, response) -> response.text("secret"),
+                      lifecycle -> lifecycle.withExtension(admission));
+                  routes.get("/public", (ignoredRequest, response) -> response.text("public"));
                 });
 
         try (var test = TestServer.start(app)) {

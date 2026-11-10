@@ -27,13 +27,16 @@ class ScopedExtensionsTest {
                 routes -> routes.get("/child", (request, response) -> response.text("child")),
                 extensions -> {
                   var lifecycle = extensions;
+
                   assertSame(lifecycle, extensions);
+
                   retained.set(lifecycle);
                   lifecycle.beforeRouteHandler(
                       (request, response) -> response.setHeader("X-Scope", "parent"));
                 })
             .get("/sibling", (request, response) -> response.text("sibling"));
         var lifecycle = retained.get();
+
         assertThrows(
             IllegalStateException.class,
             () -> lifecycle.beforeRouteHandler((request, response) -> response.text("late")));

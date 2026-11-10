@@ -26,11 +26,13 @@ public final class NegotiationExample {
                           response.negotiate(
                               MediaType.APPLICATION_JSON,
                               MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
+
                       // Negotiation selects metadata only, so generate the matching bytes here.
                       var content =
                           MediaType.APPLICATION_JSON.equals(selected)
                               ? "{\"message\":\"café\"}"
                               : "café";
+
                       response.body(selected, content.getBytes(StandardCharsets.UTF_8));
                     }));
   }

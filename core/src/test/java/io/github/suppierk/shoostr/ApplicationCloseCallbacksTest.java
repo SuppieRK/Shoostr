@@ -32,6 +32,7 @@ import java.util.function.Function;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.component.LifeCycle;
+import org.eclipse.jetty.util.component.LifeCycle.Listener;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -50,6 +51,7 @@ class ApplicationCloseCallbacksTest {
       try (Closeable appCleanup = app::close) {
         Function<Runnable, Shoostr> register =
             BEFORE_CLOSE.equals(phase) ? app::beforeClose : app::afterClose;
+
         assertSame(app, register.apply(() -> {}));
       }
     }
@@ -64,6 +66,7 @@ class ApplicationCloseCallbacksTest {
       try (Closeable appCleanup1 = app::close) {
         Consumer<Runnable> register =
             BEFORE_CLOSE.equals(phase) ? app::beforeClose : app::afterClose;
+
         assertThrows(NullPointerException.class, () -> register.accept(null));
       }
     }
@@ -82,6 +85,7 @@ class ApplicationCloseCallbacksTest {
         app.start();
         Consumer<Runnable> register =
             BEFORE_CLOSE.equals(phase) ? app::beforeClose : app::afterClose;
+
         assertThrows(IllegalStateException.class, () -> register.accept(() -> {}));
       }
     }
@@ -97,6 +101,7 @@ class ApplicationCloseCallbacksTest {
         app.close();
         Consumer<Runnable> register =
             BEFORE_CLOSE.equals(phase) ? app::beforeClose : app::afterClose;
+
         assertThrows(IllegalStateException.class, () -> register.accept(() -> {}));
       }
     }
@@ -175,6 +180,7 @@ class ApplicationCloseCallbacksTest {
         register.accept(
             () -> {
               invoked.incrementAndGet();
+
               assertDoesNotThrow(app::close);
             });
       }
@@ -247,6 +253,7 @@ class ApplicationCloseCallbacksTest {
         app.beforeClose(() -> invoked.add("stop"));
         app.afterClose(() -> invoked.add("dispose"));
         var extension = new FailingInstallation(rejected);
+
         assertSame(
             rejected,
             assertThrows(IllegalStateException.class, () -> app.withExtension(extension)));
@@ -291,16 +298,8 @@ class ApplicationCloseCallbacksTest {
       try (Closeable appCleanup12 = app::close) {
         app.afterClose(() -> invoked.add("registry"));
         var extension =
-            new ClaimingExtension(
-                () -> assertDoesNotThrow(app::close),
-                () -> {
-                  invoked.add("beforeStop");
-                  throw stopping;
-                },
-                () -> {
-                  invoked.add("extension");
-                  throw cleanup;
-                });
+            createExtensionForPreservesClaimCleanupFailuresBeforeDisposingApplicationResources(
+                app, invoked, stopping, cleanup);
 
         var failure = assertThrows(IllegalStateException.class, () -> app.withExtension(extension));
         assertArrayEquals(new Throwable[] {stopping, cleanup}, failure.getSuppressed());
@@ -308,6 +307,24 @@ class ApplicationCloseCallbacksTest {
     }
 
     assertEquals(List.of("beforeStop", "extension", "registry"), invoked);
+  }
+
+  private ClaimingExtension
+      createExtensionForPreservesClaimCleanupFailuresBeforeDisposingApplicationResources(
+          Shoostr app,
+          ArrayList<String> invoked,
+          IllegalArgumentException stopping,
+          IllegalStateException cleanup) {
+    return new ClaimingExtension(
+        () -> assertDoesNotThrow(app::close),
+        () -> {
+          invoked.add("beforeStop");
+          throw stopping;
+        },
+        () -> {
+          invoked.add("extension");
+          throw cleanup;
+        });
   }
 
   @Test
@@ -324,13 +341,8 @@ class ApplicationCloseCallbacksTest {
             new ClaimingExtension(
                 () -> {}, () -> invoked.add("beforeStop"), () -> invoked.add("extension")));
         var extension =
-            new ClaimingExtension(
-                () -> {
-                  assertDoesNotThrow(app::close);
-                  throw rejected;
-                },
-                () -> invoked.add("rejected beforeStop"),
-                () -> invoked.add("rejected extension"));
+            createExtensionForKeepsRejectedClaimCallerOwnedAfterReentrantClosure(
+                app, rejected, invoked);
 
         assertSame(
             rejected,
@@ -339,6 +351,18 @@ class ApplicationCloseCallbacksTest {
     }
 
     assertEquals(List.of("beforeStop", "extension", "registry"), invoked);
+  }
+
+  private ClaimingExtension createExtensionForKeepsRejectedClaimCallerOwnedAfterReentrantClosure(
+      Shoostr app, IllegalArgumentException rejected, ArrayList<String> invoked) {
+    return new ClaimingExtension(
+        () -> {
+          assertDoesNotThrow(app::close);
+
+          throw rejected;
+        },
+        () -> invoked.add("rejected beforeStop"),
+        () -> invoked.add("rejected extension"));
   }
 
   @Test
@@ -358,6 +382,7 @@ class ApplicationCloseCallbacksTest {
             });
 
         var extension = new FailingInstallation(rejected);
+
         var failure =
             assertThrows(IllegalArgumentException.class, () -> app.withExtension(extension));
         assertSame(rejected, failure);
@@ -380,6 +405,7 @@ class ApplicationCloseCallbacksTest {
       try (Closeable appCleanup15 = app::close) {
         app.afterClose(() -> invoked.add("registry"));
         var extension = new ClosingInstallation(app, invoked);
+
         assertThrows(IllegalStateException.class, () -> app.withExtension(extension));
       }
     }
@@ -405,6 +431,7 @@ class ApplicationCloseCallbacksTest {
             ignored -> {
               throw rejected;
             });
+
         assertSame(rejected, assertThrows(IllegalStateException.class, app::start));
       }
     }
@@ -421,7 +448,8 @@ class ApplicationCloseCallbacksTest {
 
       try (Closeable appCleanup17 = app::close) {
         app.afterClose(invoked::incrementAndGet);
-        app.routes(ignored2 -> assertThrows(IllegalStateException.class, app::start));
+        app.routes(ignoredRoutes -> assertThrows(IllegalStateException.class, app::start));
+
         assertEquals(0, invoked.get());
       }
     }
@@ -449,15 +477,18 @@ class ApplicationCloseCallbacksTest {
                           IllegalStateException.class,
                           () ->
                               app.routes(
-                                  routes -> routes.get("/late", (ignored3, ignored4) -> {}))),
+                                  routes ->
+                                      routes.get(
+                                          "/late", (ignoredRequest, ignoredResponse) -> {}))),
                   () ->
                       assertThrows(
                           IllegalStateException.class,
-                          () -> root.get("/late", (ignored5, ignored6) -> {})),
+                          () -> root.get("/late", (ignoredRequest, ignoredResponse) -> {})),
                   () ->
                       assertThrows(
                           IllegalStateException.class,
-                          () -> nested.get("/late", (ignored7, ignored8) -> {})));
+                          () -> nested.get("/late", (ignoredRequest, ignoredResponse) -> {})));
+
               verified.set(true);
             });
       }
@@ -524,6 +555,7 @@ class ApplicationCloseCallbacksTest {
   void stopsOwnedResourcesAndRunsFinalCallbacksBeforeRethrowingABeforeCloseError()
       throws Exception {
     var rejected = assertionFailure("Stop failed");
+
     var nativeServer = new AtomicReference<Server>();
     var executor = new AtomicReference<ExecutorService>();
     var extensionClosed = new AtomicBoolean();
@@ -559,6 +591,7 @@ class ApplicationCloseCallbacksTest {
           var request =
               HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/ready"))
                   .build();
+
           assertEquals(
               200, client.send(request, HttpResponse.BodyHandlers.ofString()).statusCode());
           assertSame(rejected, assertThrows(AssertionError.class, app::close));
@@ -580,8 +613,11 @@ class ApplicationCloseCallbacksTest {
   void preservesTheFirstErrorAndAllEarlierOrdinaryFailuresAcrossShutdownPhases() throws Exception {
     var events = new ArrayList<String>();
     var early = new IllegalStateException("Earlier callback failure");
+
     var primary = assertionFailure("Primary callback error");
+
     var cleanup = new IllegalArgumentException("Earlier cleanup failure");
+
     var cleanupError = assertionFailure("Cleanup error");
     var finalError = assertionFailure("Final callback error");
 
@@ -622,6 +658,7 @@ class ApplicationCloseCallbacksTest {
               events.add("after-error");
               throw finalError;
             });
+
         assertSame(primary, assertThrows(AssertionError.class, app::close));
         assertEquals(
             List.of(
@@ -661,6 +698,7 @@ class ApplicationCloseCallbacksTest {
             () -> {
               throw failure;
             });
+
         assertSame(failure, assertThrows(AssertionError.class, app::close));
         assertEquals(0, failure.getSuppressed().length);
       }
@@ -670,6 +708,7 @@ class ApplicationCloseCallbacksTest {
   @Test
   void retainsAnOrdinaryAggregateOnlyOnceWhenResourceCleanupThrowsError() throws Exception {
     var ordinary = new IllegalStateException("Before callback failure");
+
     var failure = assertionFailure("Extension close failed");
 
     {
@@ -687,6 +726,7 @@ class ApplicationCloseCallbacksTest {
                 () -> {
                   throw failure;
                 }));
+
         assertSame(failure, assertThrows(AssertionError.class, app::close));
         assertEquals(1, failure.getSuppressed().length);
         assertSame(
@@ -698,7 +738,9 @@ class ApplicationCloseCallbacksTest {
   @Test
   void preservesAFatalShutdownFailureOverAnOrdinaryInstallationFailure() throws Exception {
     var installation = new IllegalArgumentException("Install failed");
+
     var fatal = assertionFailure("Signalling failed");
+
     var finalized = new AtomicBoolean();
 
     {
@@ -711,6 +753,7 @@ class ApplicationCloseCallbacksTest {
             });
         app.afterClose(() -> finalized.set(true));
         var extension = new FailingInstallation(installation);
+
         assertSame(fatal, assertThrows(AssertionError.class, () -> app.withExtension(extension)));
         assertArrayEquals(new Throwable[] {installation}, fatal.getSuppressed());
         assertTrue(finalized.get());
@@ -738,17 +781,9 @@ class ApplicationCloseCallbacksTest {
               throw last;
             });
         var extension =
-            new ApplicationExtension<Object>() {
-              @Override
-              public Object configure(Lifecycle lifecycle, Object inherited) {
-                return this;
-              }
+            createExtensionForKeepsTheInstallationErrorPrimaryWhenShutdownAndFinalCallbacksAlsoFail(
+                installation);
 
-              @Override
-              public void install(ApplicationCallbacks callbacks) {
-                throw installation;
-              }
-            };
         assertSame(
             installation, assertThrows(AssertionError.class, () -> app.withExtension(extension)));
         assertArrayEquals(new Throwable[] {shutdown, last}, installation.getSuppressed());
@@ -756,9 +791,26 @@ class ApplicationCloseCallbacksTest {
     }
   }
 
+  private ApplicationExtension<Object>
+      createExtensionForKeepsTheInstallationErrorPrimaryWhenShutdownAndFinalCallbacksAlsoFail(
+          AssertionError installation) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void install(ApplicationCallbacks callbacks) {
+        throw installation;
+      }
+    };
+  }
+
   @Test
   void runsDeferredFinalCallbacksAfterReentrantInstallationCleanupThrowsError() throws Exception {
     var events = new ArrayList<String>();
+
     var fatal = assertionFailure("Signalling failed");
 
     {
@@ -771,30 +823,38 @@ class ApplicationCloseCallbacksTest {
             });
         app.afterClose(() -> events.add("after"));
         var extension =
-            new ApplicationExtension<Object>() {
-              @Override
-              public Object configure(Lifecycle lifecycle, Object inherited) {
-                return this;
-              }
+            createExtensionForRunsDeferredFinalCallbacksAfterReentrantInstallationCleanupThrowsError(
+                app, events);
 
-              @Override
-              public void install(ApplicationCallbacks callbacks) {
-                try {
-                  app.close();
-                } catch (IOException failure) {
-                  throw new UncheckedIOException(failure);
-                }
-              }
-
-              @Override
-              public void close() {
-                events.add("extension");
-              }
-            };
         assertSame(fatal, assertThrows(AssertionError.class, () -> app.withExtension(extension)));
         assertEquals(List.of("extension", "after"), events);
       }
     }
+  }
+
+  private ApplicationExtension<Object>
+      createExtensionForRunsDeferredFinalCallbacksAfterReentrantInstallationCleanupThrowsError(
+          Shoostr app, ArrayList<String> events) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void install(ApplicationCallbacks callbacks) {
+        try {
+          app.close();
+        } catch (IOException failure) {
+          throw new UncheckedIOException(failure);
+        }
+      }
+
+      @Override
+      public void close() {
+        events.add("extension");
+      }
+    };
   }
 
   @Test
@@ -814,6 +874,7 @@ class ApplicationCloseCallbacksTest {
               throw fatal;
             });
         app.start();
+
         assertSame(fatal, assertThrows(AssertionError.class, app::close));
         assertFalse(borrowed.isShutdown());
         assertEquals("available", borrowed.submit(() -> "available").get(2, TimeUnit.SECONDS));
@@ -824,8 +885,11 @@ class ApplicationCloseCallbacksTest {
   @Test
   void stopsNativeResourcesAfterOrdinaryAndFatalExtensionSignals() throws Exception {
     var before = assertionFailure("Before callback failed");
+
     var ordinary = new IllegalStateException("Ordinary signal failed");
+
     var signal = assertionFailure("Fatal signal failed");
+
     var server = new AtomicReference<Server>();
     var workers = new AtomicReference<ExecutorService>();
     var finalized = new AtomicBoolean();
@@ -899,15 +963,12 @@ class ApplicationCloseCallbacksTest {
     var before = assertionFailure("Before callback failed");
     var stopping = assertionFailure("Native stop failed");
     var cleanup = assertionFailure("Extension cleanup failed");
+
     var server = new AtomicReference<Server>();
     var finalized = new AtomicBoolean();
     var listener =
-        new LifeCycle.Listener() {
-          @Override
-          public void lifeCycleStopping(LifeCycle lifeCycle) {
-            throw stopping;
-          }
-        };
+        createListenerForRetainsNativeStopAndCleanupErrorsWithoutReplacingAnEarlierCallbackError(
+            stopping);
 
     {
       var app = new Shoostr();
@@ -938,9 +999,11 @@ class ApplicationCloseCallbacksTest {
 
         try {
           var expected = beforeFails ? before : stopping;
+
           assertSame(expected, assertThrows(AssertionError.class, app::close));
           assertTrue(finalized.get());
           assertArrayEquals(new Throwable[] {cleanup}, stopping.getSuppressed());
+
           if (beforeFails) {
             assertArrayEquals(new Throwable[] {stopping}, before.getSuppressed());
           }
@@ -950,6 +1013,17 @@ class ApplicationCloseCallbacksTest {
         }
       }
     }
+  }
+
+  private Listener
+      createListenerForRetainsNativeStopAndCleanupErrorsWithoutReplacingAnEarlierCallbackError(
+          AssertionError stopping) {
+    return new LifeCycle.Listener() {
+      @Override
+      public void lifeCycleStopping(LifeCycle lifeCycle) {
+        throw stopping;
+      }
+    };
   }
 
   private static AssertionError assertionFailure(String message) {

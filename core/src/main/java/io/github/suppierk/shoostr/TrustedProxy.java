@@ -36,22 +36,8 @@ final class TrustedProxy {
   private static final Pattern IPV6 = Pattern.compile("[0-9A-Fa-f:.]+");
   private static final Pattern OBFUSCATED = Pattern.compile("_[A-Za-z0-9._-]+");
   private static final Pattern DIGITS = Pattern.compile("\\d+");
-  private static final QuotedStringTokenizer PARAMETERS =
-      QuotedStringTokenizer.builder()
-          .delimiters(HttpCharacters.SEMICOLON_SIGN_STRING)
-          .returnDelimiters()
-          .returnQuotes()
-          .allowEmbeddedQuotes()
-          .ignoreOptionalWhiteSpace()
-          .build();
-  private static final QuotedStringTokenizer ELEMENTS =
-      QuotedStringTokenizer.builder()
-          .delimiters(HttpCharacters.COMMA_SIGN_STRING)
-          .returnDelimiters()
-          .returnQuotes()
-          .allowEmbeddedQuotes()
-          .ignoreOptionalWhiteSpace()
-          .build();
+  private static final QuotedStringTokenizer PARAMETERS = parameterTokenizer();
+  private static final QuotedStringTokenizer ELEMENTS = elementTokenizer();
   private final Predicate<InetAddress> trusted;
   private final ForwardedHeaders headers;
 
@@ -148,7 +134,7 @@ final class TrustedProxy {
       }
 
       request.forwarded(addresses.get(selected), uri.asString(), protocol);
-    } catch (IllegalArgumentException ignored2) {
+    } catch (IllegalArgumentException ignoredFailure) {
       throw new BadRequestException();
     }
   }
@@ -213,6 +199,132 @@ final class TrustedProxy {
   }
 
   /**
+   * Builds the element tokenizer once while retaining quoted forwarding fields.
+   *
+   * @return immutable shared tokenization rules
+   */
+  private static QuotedStringTokenizer elementTokenizer() {
+    return QuotedStringTokenizer.builder()
+        .delimiters(HttpCharacters.COMMA_SIGN_STRING)
+        .returnDelimiters()
+        .returnQuotes()
+        .allowEmbeddedQuotes()
+        .ignoreOptionalWhiteSpace()
+        .build();
+  }
+
+  /**
+   * Reads one element using Jetty's quote-aware lexical handling.
+   *
+   * @param value complete element
+   * @return parameter values
+   * @throws IllegalArgumentException if a parameter, delimiter, origin, or node is malformed
+   */
+  private static Map<String, String> parameters(String value) {
+    Map<String, String> fields = new HashMap<>();
+    var tokens = PARAMETERS.tokenize(value);
+    while (tokens.hasNext()) {
+      var token = tokens.next();
+      int equals = token.indexOf(HttpCharacters.EQUALS_SIGN);
+      if (equals < 1) {
+        throw new IllegalArgumentException("Invalid forwarding parameter");
+      }
+
+      var name = token.substring(0, equals).toLowerCase(Locale.ROOT);
+      var raw = token.substring(equals + 1);
+      if (!HttpCharacters.isValidHttpToken(name)
+          || !(HttpCharacters.isValidHttpToken(raw) || validQuoted(raw))
+          || fields.putIfAbsent(name, PARAMETERS.unquote(raw)) != null) {
+        throw new IllegalArgumentException("Invalid forwarding parameter");
+      }
+
+      if (tokens.hasNext()
+          && (!HttpCharacters.SEMICOLON_SIGN_STRING.equals(tokens.next()) || !tokens.hasNext())) {
+        throw new IllegalArgumentException("Invalid forwarding delimiter");
+      }
+    }
+    if (fields.containsKey(PROTO_FIELD)
+        && !"http".equalsIgnoreCase(fields.get(PROTO_FIELD))
+        && !"https".equalsIgnoreCase(fields.get(PROTO_FIELD))) {
+      throw new IllegalArgumentException("Unsupported forwarding scheme");
+    }
+
+    if (fields.containsKey("host")) {
+      host(fields.get("host"));
+    }
+
+    if (fields.containsKey("by")) {
+      node(fields.get("by"));
+    }
+
+    return fields;
+  }
+
+  /**
+   * Builds the parameter tokenizer once while retaining quoted forwarding fields.
+   *
+   * @return immutable shared tokenization rules
+   */
+  private static QuotedStringTokenizer parameterTokenizer() {
+    return QuotedStringTokenizer.builder()
+        .delimiters(HttpCharacters.SEMICOLON_SIGN_STRING)
+        .returnDelimiters()
+        .returnQuotes()
+        .allowEmbeddedQuotes()
+        .ignoreOptionalWhiteSpace()
+        .build();
+  }
+
+  /**
+   * Validates a quoted forwarding value in one pass, including its permitted escape sequences.
+   *
+   * @param value raw parameter value
+   * @return whether the value follows the HTTP quoted-string grammar
+   */
+  private static boolean validQuoted(String value) {
+    if (value.length() < 2
+        || value.charAt(0) != HttpCharacters.DOUBLE_QUOTE
+        || value.charAt(value.length() - 1) != HttpCharacters.DOUBLE_QUOTE) {
+      return false;
+    }
+
+    int end = value.length() - 1;
+    int index = 1;
+    while (index < end) {
+      char character = value.charAt(index);
+      if (character == HttpCharacters.BACKSLASH) {
+        index++;
+        if (index == end || !validQuotedOctet(value.charAt(index), true)) {
+          return false;
+        }
+      } else if (!validQuotedOctet(character, false)) {
+        return false;
+      }
+
+      index++;
+    }
+
+    return true;
+  }
+
+  /**
+   * Checks a quoted-string octet, allowing quote and backslash only after an escape.
+   *
+   * @param character candidate octet
+   * @param escaped whether the preceding octet was a backslash
+   * @return whether the octet is valid in this position
+   */
+  private static boolean validQuotedOctet(char character, boolean escaped) {
+    return character == HttpCharacters.TAB
+        || (character >= 0x20
+            && character <= 0xff
+            && character != 0x7f
+            && (escaped
+                || (character != HttpCharacters.DOUBLE_QUOTE
+                    && character != HttpCharacters.BACKSLASH)));
+  }
+
+  /**
    * Applies strict same-index legacy forwarding assertions from a trusted peer.
    *
    * @param request live request on the handler thread
@@ -235,7 +347,7 @@ final class TrustedProxy {
       }
 
       validateLegacyOrigins(hosts, protocols, ports);
-    } catch (IllegalArgumentException ignored3) {
+    } catch (IllegalArgumentException ignoredFailure) {
       throw new BadRequestException();
     }
 
@@ -256,7 +368,7 @@ final class TrustedProxy {
       }
 
       request.forwarded(addresses.get(selected), uri.asString(), protocol);
-    } catch (IllegalArgumentException ignored4) {
+    } catch (IllegalArgumentException ignoredFailure) {
       throw new BadRequestException();
     }
   }
@@ -284,6 +396,23 @@ final class TrustedProxy {
     for (int index = 0; index < hosts.size(); index++) {
       host(authority(hosts.get(index), ports.isEmpty() ? null : ports.get(index)));
     }
+  }
+
+  /**
+   * Returns an absent legacy list or rejects one that cannot align with client identities.
+   *
+   * @param lines repeated header lines
+   * @param expected required list length
+   * @return an empty or exactly aligned list
+   * @throws BadRequestException if supplied values do not align
+   */
+  private static List<String> aligned(List<String> lines, int expected) {
+    var values = values(lines);
+    if (!values.isEmpty() && values.size() != expected) {
+      throw new BadRequestException();
+    }
+
+    return values;
   }
 
   /**
@@ -352,119 +481,6 @@ final class TrustedProxy {
       }
     }
     return result;
-  }
-
-  /**
-   * Returns an absent legacy list or rejects one that cannot align with client identities.
-   *
-   * @param lines repeated header lines
-   * @param expected required list length
-   * @return an empty or exactly aligned list
-   * @throws BadRequestException if supplied values do not align
-   */
-  private static List<String> aligned(List<String> lines, int expected) {
-    var values = values(lines);
-    if (!values.isEmpty() && values.size() != expected) {
-      throw new BadRequestException();
-    }
-
-    return values;
-  }
-
-  /**
-   * Reads one element using Jetty's quote-aware lexical handling.
-   *
-   * @param value complete element
-   * @return parameter values
-   * @throws IllegalArgumentException if a parameter, delimiter, origin, or node is malformed
-   */
-  private static Map<String, String> parameters(String value) {
-    Map<String, String> fields = new HashMap<>();
-    var tokens = PARAMETERS.tokenize(value);
-    while (tokens.hasNext()) {
-      var token = tokens.next();
-      int equals = token.indexOf(HttpCharacters.EQUALS_SIGN);
-      if (equals < 1) {
-        throw new IllegalArgumentException("Invalid forwarding parameter");
-      }
-
-      var name = token.substring(0, equals).toLowerCase(Locale.ROOT);
-      var raw = token.substring(equals + 1);
-      if (!HttpCharacters.isValidHttpToken(name)
-          || !(HttpCharacters.isValidHttpToken(raw) || validQuoted(raw))
-          || fields.putIfAbsent(name, PARAMETERS.unquote(raw)) != null) {
-        throw new IllegalArgumentException("Invalid forwarding parameter");
-      }
-
-      if (tokens.hasNext()
-          && (!HttpCharacters.SEMICOLON_SIGN_STRING.equals(tokens.next()) || !tokens.hasNext())) {
-        throw new IllegalArgumentException("Invalid forwarding delimiter");
-      }
-    }
-    if (fields.containsKey(PROTO_FIELD)
-        && !"http".equalsIgnoreCase(fields.get(PROTO_FIELD))
-        && !"https".equalsIgnoreCase(fields.get(PROTO_FIELD))) {
-      throw new IllegalArgumentException("Unsupported forwarding scheme");
-    }
-
-    if (fields.containsKey("host")) {
-      host(fields.get("host"));
-    }
-
-    if (fields.containsKey("by")) {
-      node(fields.get("by"));
-    }
-
-    return fields;
-  }
-
-  /**
-   * Validates a quoted forwarding value in one pass, including its permitted escape sequences.
-   *
-   * @param value raw parameter value
-   * @return whether the value follows the HTTP quoted-string grammar
-   */
-  private static boolean validQuoted(String value) {
-    if (value.length() < 2
-        || value.charAt(0) != HttpCharacters.DOUBLE_QUOTE
-        || value.charAt(value.length() - 1) != HttpCharacters.DOUBLE_QUOTE) {
-      return false;
-    }
-
-    int end = value.length() - 1;
-    int index = 1;
-    while (index < end) {
-      char character = value.charAt(index);
-      if (character == HttpCharacters.BACKSLASH) {
-        index++;
-        if (index == end || !validQuotedOctet(value.charAt(index), true)) {
-          return false;
-        }
-      } else if (!validQuotedOctet(character, false)) {
-        return false;
-      }
-
-      index++;
-    }
-
-    return true;
-  }
-
-  /**
-   * Checks a quoted-string octet, allowing quote and backslash only after an escape.
-   *
-   * @param character candidate octet
-   * @param escaped whether the preceding octet was a backslash
-   * @return whether the octet is valid in this position
-   */
-  private static boolean validQuotedOctet(char character, boolean escaped) {
-    return character == HttpCharacters.TAB
-        || (character >= 0x20
-            && character <= 0xff
-            && character != 0x7f
-            && (escaped
-                || (character != HttpCharacters.DOUBLE_QUOTE
-                    && character != HttpCharacters.BACKSLASH)));
   }
 
   /**

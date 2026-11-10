@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.URI;
@@ -40,6 +41,7 @@ class ServingOptionsTest {
       try (Closeable appCleanup = app::close;
           var client = HttpClient.newHttpClient()) {
         app.start();
+
         assertEquals(port, app.port());
         assertEquals("ready", get(client, app.port(), "").body());
       }
@@ -62,6 +64,7 @@ class ServingOptionsTest {
             var client = HttpClient.newHttpClient()) {
           first.start();
           second.start();
+
           assertTrue(first.port() > 0);
           assertNotEquals(first.port(), second.port());
           assertEquals("ready", get(client, first.port(), "").body());
@@ -96,27 +99,43 @@ class ServingOptionsTest {
             first.start();
             second.start();
             var firstResponse =
-                client.send(
-                    HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + first.port() + "/echo"))
-                        .timeout(Duration.ofSeconds(3))
-                        .POST(HttpRequest.BodyPublishers.ofString("four"))
-                        .build(),
-                    HttpResponse.BodyHandlers.ofString());
+                sendFirstResponseRequestForSnapshotsSettingsAtConstructionAndLetsSubsequentApplicationsCaptureChanges(
+                    client, first);
+
             assertEquals(200, firstResponse.statusCode());
             assertEquals("four", firstResponse.body());
+
             var secondResponse =
-                client.send(
-                    HttpRequest.newBuilder(
-                            URI.create("http://127.0.0.1:" + second.port() + "/echo"))
-                        .timeout(Duration.ofSeconds(3))
-                        .POST(HttpRequest.BodyPublishers.ofString("four"))
-                        .build(),
-                    HttpResponse.BodyHandlers.discarding());
+                sendSecondResponseRequestForSnapshotsSettingsAtConstructionAndLetsSubsequentApplicationsCaptureChanges(
+                    client, second);
+
             assertEquals(413, secondResponse.statusCode());
           }
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendFirstResponseRequestForSnapshotsSettingsAtConstructionAndLetsSubsequentApplicationsCaptureChanges(
+          HttpClient client, Shoostr first) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + first.port() + "/echo"))
+            .timeout(Duration.ofSeconds(3))
+            .POST(HttpRequest.BodyPublishers.ofString("four"))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<Void>
+      sendSecondResponseRequestForSnapshotsSettingsAtConstructionAndLetsSubsequentApplicationsCaptureChanges(
+          HttpClient client, Shoostr second) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + second.port() + "/echo"))
+            .timeout(Duration.ofSeconds(3))
+            .POST(HttpRequest.BodyPublishers.ofString("four"))
+            .build(),
+        HttpResponse.BodyHandlers.discarding());
   }
 
   @Test
@@ -134,6 +153,7 @@ class ServingOptionsTest {
           var client = HttpClient.newHttpClient()) {
         app.beforeRouteHandler((request, response) -> handled.incrementAndGet());
         app.start();
+
         assertEquals(431, get(client, app.port(), "x".repeat(2048)).statusCode());
         assertEquals(0, handled.get());
         assertEquals(200, get(client, app.port(), "small").statusCode());
@@ -159,15 +179,18 @@ class ServingOptionsTest {
         app.modifyHttpConfiguration(
             http -> {
               assertEquals(256, http.getRequestHeaderSize());
+
               http.setRequestHeaderSize(4096);
             });
         app.modifyServer(
             server -> {
               var connector = (ServerConnector) server.getConnectors()[0];
+
               assertEquals("localhost", connector.getHost());
               assertEquals(9090, connector.getPort());
               assertEquals(12_000, connector.getIdleTimeout());
               assertEquals(2000, server.getStopTimeout());
+
               connector.setHost("127.0.0.1");
               connector.setPort(0);
               connector.setIdleTimeout(15_000);
@@ -176,10 +199,12 @@ class ServingOptionsTest {
         app.modifyServer(
             server -> {
               var connector = (ServerConnector) server.getConnectors()[0];
+
               assertEquals(15_000, connector.getIdleTimeout());
               assertEquals(3000, server.getStopTimeout());
             });
         app.start();
+
         assertEquals(200, get(client, app.port(), "x".repeat(1024)).statusCode());
       }
     }

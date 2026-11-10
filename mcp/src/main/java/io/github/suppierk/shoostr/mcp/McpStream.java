@@ -57,6 +57,7 @@ final class McpStream implements McpStreamableServerTransport {
       response.setHeader("Cache-Control", "no-cache");
       var output = response.startEventStream();
       output.heartbeat();
+
       while (true) {
         Frame frame;
         boolean done;
@@ -108,6 +109,7 @@ final class McpStream implements McpStreamableServerTransport {
   private static void send(Response.EventStream output, Frame frame) throws IOException {
     try {
       output.send(frame.event());
+
       frame.acknowledgment().success();
     } catch (IOException | RuntimeException error) {
       frame.acknowledgment().error(error);
@@ -166,6 +168,7 @@ final class McpStream implements McpStreamableServerTransport {
   @Override
   public Mono<Void> sendMessage(McpSchema.JSONRPCMessage message, @Nullable String messageId) {
     Objects.requireNonNull(message);
+
     return Mono.create(
         sink -> {
           if (expiresAt != null && !expiresAt.isAfter(Instant.now())) {
@@ -243,8 +246,8 @@ final class McpStream implements McpStreamableServerTransport {
 
   /** Releases pending acknowledgments outside mailbox synchronization. */
   private void discardPending() {
-    Frame frame;
     while (true) {
+      Frame frame;
       lock.lock();
 
       try {

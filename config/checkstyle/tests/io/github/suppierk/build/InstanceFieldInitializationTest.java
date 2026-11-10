@@ -82,7 +82,9 @@ class InstanceFieldInitializationTest {
             .newXPath()
             .evaluate(
                 "/module/module/module[@name='MatchXpath']/property[@name='query']/@value", rules);
+
     assertFalse(query.isBlank(), "The configured field-initialization rule must exist");
+
     var file = Files.createTempFile(temporaryDirectory, "instance-fields-", ".java");
     var checker = new Checker();
 
@@ -96,6 +98,7 @@ class InstanceFieldInitializationTest {
       configuration.addChild(walker);
       checker.setModuleClassLoader(InstanceFieldInitializationTest.class.getClassLoader());
       checker.configure(configuration);
+
       return checker.process(List.of(file.toFile()));
     } finally {
       checker.destroy();

@@ -25,7 +25,9 @@ final class OpenApiPaths {
   static String normalize(String template, Operation operation) {
     var names = new LinkedHashMap<String, String>();
     var normalized = normalizeSegments(template, names);
+
     validateParameters(template, operation, names);
+
     return normalized;
   }
 
@@ -39,8 +41,8 @@ final class OpenApiPaths {
    */
   private static String normalizeSegments(String template, Map<String, String> names) {
     var segments = template.split("/", -1);
-    for (int i = 0; i < segments.length; i++) {
-      var segment = segments[i];
+    for (int segmentIndex = 0; segmentIndex < segments.length; segmentIndex++) {
+      var segment = segments[segmentIndex];
       if (!segment.startsWith("{")) {
         continue;
       }
@@ -53,7 +55,7 @@ final class OpenApiPaths {
       int colon = content.indexOf(':');
       var name = colon < 0 ? content : content.substring(0, colon);
       names.put(name, colon < 0 ? "" : content.substring(colon + 1));
-      segments[i] = "{" + name + "}";
+      segments[segmentIndex] = "{" + name + "}";
     }
 
     return String.join("/", segments);

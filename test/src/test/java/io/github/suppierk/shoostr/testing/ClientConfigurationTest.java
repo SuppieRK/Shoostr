@@ -26,12 +26,13 @@ class ClientConfigurationTest {
         .get(
             "/redirect",
             (ignored, response) -> response.status(302).setHeader("Location", "/target"));
-    app.routes().get("/target", (ignored2, response) -> response.text("target"));
+    app.routes().get("/target", (ignoredRequest, response) -> response.text("target"));
 
     try (var test =
         TestServer.start(app, builder -> builder.followRedirects(HttpClient.Redirect.ALWAYS))) {
       var reply =
           test.send(request -> request.path("/redirect"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, reply.statusCode());
       assertEquals("target", reply.body());
     }
@@ -42,20 +43,26 @@ class ClientConfigurationTest {
     var checked = new AtomicBoolean();
 
     try (var test =
-        TestServer.start(
-            new Shoostr(),
-            builder -> {
-              try (var client = builder.build()) {
-                assertEquals(Duration.ofSeconds(3), client.connectTimeout().orElseThrow());
-                assertEquals(HttpClient.Redirect.NEVER, client.followRedirects());
-                assertEquals(HttpClient.Version.HTTP_2, client.version());
-                assertSame(HttpClient.Builder.NO_PROXY, client.proxy().orElseThrow());
-                assertTrue(client.cookieHandler().isPresent());
-                checked.set(true);
-              }
-            })) {
+        openTestForAppliesTheDefaultClientSettingsWithoutRequiredConfiguration(checked)) {
       assertTrue(checked.get());
       assertEquals(404, test.send(request -> request.path("/missing")).statusCode());
+    }
+  }
+
+  private TestServer openTestForAppliesTheDefaultClientSettingsWithoutRequiredConfiguration(
+      AtomicBoolean checked) throws Exception {
+    return TestServer.start(new Shoostr(), builder -> inspectDefaultClient(builder, checked));
+  }
+
+  private void inspectDefaultClient(HttpClient.Builder builder, AtomicBoolean checked) {
+    try (var client = builder.build()) {
+      assertEquals(Duration.ofSeconds(3), client.connectTimeout().orElseThrow());
+      assertEquals(HttpClient.Redirect.NEVER, client.followRedirects());
+      assertEquals(HttpClient.Version.HTTP_2, client.version());
+      assertSame(HttpClient.Builder.NO_PROXY, client.proxy().orElseThrow());
+      assertTrue(client.cookieHandler().isPresent());
+
+      checked.set(true);
     }
   }
 
@@ -63,7 +70,7 @@ class ClientConfigurationTest {
   void leavesTheConfiguredExecutorOwnedByTheCaller() throws Exception {
     try (var executor = Executors.newSingleThreadExecutor()) {
       var app = new Shoostr();
-      app.routes().get("/value", (ignored3, response) -> response.text("value"));
+      app.routes().get("/value", (ignoredRequest, response) -> response.text("value"));
 
       try (var test = TestServer.start(app, builder -> builder.executor(executor))) {
         assertEquals(200, test.send(request -> request.path("/value")).statusCode());
@@ -81,29 +88,39 @@ class ClientConfigurationTest {
       try (Closeable appCleanup = app::close) {
         var expected = new IllegalArgumentException("invalid client configuration");
         var actual =
-            assertThrows(
-                IllegalArgumentException.class,
-                () ->
-                    TestServer.start(
-                        app,
-                        ignored4 -> {
-                          throw expected;
-                        }));
+            assertConfigurationFailureForClosesTheOwnedApplicationWhenClientConfigurationThrows(
+                app, expected);
+
         assertSame(expected, actual);
         assertThrows(IllegalStateException.class, app::start);
       }
     }
   }
 
+  private IllegalArgumentException
+      assertConfigurationFailureForClosesTheOwnedApplicationWhenClientConfigurationThrows(
+          Shoostr app, IllegalArgumentException expected) {
+    return assertThrows(
+        IllegalArgumentException.class,
+        () ->
+            TestServer.start(
+                app,
+                ignoredClientBuilder -> {
+                  throw expected;
+                }));
+  }
+
   @Test
   void doesNotConfigureTheClientForAnAlreadyClosedApplication() throws Exception {
     var app = new Shoostr();
     app.close();
+
     assertThrows(
         IllegalStateException.class,
         () ->
             TestServer.start(
-                app, ignored5 -> fail("must not configure a client for a rejected app")));
+                app,
+                ignoredClientBuilder -> fail("must not configure a client for a rejected app")));
   }
 
   @Test
@@ -111,6 +128,7 @@ class ClientConfigurationTest {
     var test = TestServer.start(new Shoostr());
     var client = test.httpClient();
     test.close();
+
     assertTrue(client.isTerminated());
     assertThrows(IllegalStateException.class, test::httpClient);
   }

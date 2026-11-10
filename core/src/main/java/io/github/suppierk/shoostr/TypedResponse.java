@@ -49,6 +49,7 @@ public final class TypedResponse extends Response {
   public TypedResponse body(String contentType, Object value) throws Exception {
     requireEncodedBody(contentType);
     Objects.requireNonNull(value);
+
     super.body(
         contentType, Objects.requireNonNull(codec.write(value), "Codec returned null bytes"));
     return this;
@@ -65,6 +66,20 @@ public final class TypedResponse extends Response {
   @SuppressWarnings("java:S112") // User codecs share Handler's checked exception contract.
   public TypedResponse body(MediaType contentType, Object value) throws Exception {
     return body(Objects.requireNonNull(contentType).value(), value);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public TypedResponse body(String contentType, byte[] value) {
+    super.body(contentType, value);
+    return this;
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public TypedResponse body(MediaType contentType, byte[] value) {
+    super.body(contentType, value);
+    return this;
   }
 
   /**
@@ -96,6 +111,20 @@ public final class TypedResponse extends Response {
 
   /** {@inheritDoc} */
   @Override
+  public TypedResponse addHeader(String name, String value) {
+    super.addHeader(name, value);
+    return this;
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public TypedResponse removeHeader(String name) {
+    super.removeHeader(name);
+    return this;
+  }
+
+  /** {@inheritDoc} */
+  @Override
   public TypedResponse text(String value) {
     super.text(value);
     return this;
@@ -105,20 +134,6 @@ public final class TypedResponse extends Response {
   @Override
   public TypedResponse text(String value, Charset charset) {
     super.text(value, charset);
-    return this;
-  }
-
-  /** {@inheritDoc} */
-  @Override
-  public TypedResponse body(String contentType, byte[] value) {
-    super.body(contentType, value);
-    return this;
-  }
-
-  /** {@inheritDoc} */
-  @Override
-  public TypedResponse body(MediaType contentType, byte[] value) {
-    super.body(contentType, value);
     return this;
   }
 
@@ -148,20 +163,6 @@ public final class TypedResponse extends Response {
   @Override
   public TypedResponse disableCompression() {
     super.disableCompression();
-    return this;
-  }
-
-  /** {@inheritDoc} */
-  @Override
-  public TypedResponse addHeader(String name, String value) {
-    super.addHeader(name, value);
-    return this;
-  }
-
-  /** {@inheritDoc} */
-  @Override
-  public TypedResponse removeHeader(String name) {
-    super.removeHeader(name);
     return this;
   }
 

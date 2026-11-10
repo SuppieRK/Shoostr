@@ -158,19 +158,9 @@ class CoreRecordEqualityTest {
     first.onRouteMatched((request, response) -> {});
     second.afterRouteHandler((request, response) -> {});
     BiFunction<Lifecycle, Object, Object> firstConfigure =
-        new BiFunction<>() {
-          @Override
-          public Object apply(Lifecycle scope, Object inherited) {
-            return "first";
-          }
-        };
+        createFirstConfigureForExtensionSelectionComparesConfigurationContributionAndInclusion();
     BiFunction<Lifecycle, Object, Object> secondConfigure =
-        new BiFunction<>() {
-          @Override
-          public Object apply(Lifecycle scope, Object inherited) {
-            return "second";
-          }
-        };
+        createSecondConfigureForExtensionSelectionComparesConfigurationContributionAndInclusion();
     var type = nested(Lifecycle.class, "Selection");
     EqualsVerifier.forExamples(
             constructRecord(type, "first", first, false, firstConfigure),
@@ -179,6 +169,26 @@ class CoreRecordEqualityTest {
         .withNonnullFields("configuration", "contribution", "configure")
         .withPrefabValues(BiFunction.class, firstConfigure, secondConfigure)
         .verify();
+  }
+
+  private BiFunction<Lifecycle, Object, Object>
+      createFirstConfigureForExtensionSelectionComparesConfigurationContributionAndInclusion() {
+    return new BiFunction<>() {
+      @Override
+      public Object apply(Lifecycle scope, Object inherited) {
+        return "first";
+      }
+    };
+  }
+
+  private BiFunction<Lifecycle, Object, Object>
+      createSecondConfigureForExtensionSelectionComparesConfigurationContributionAndInclusion() {
+    return new BiFunction<>() {
+      @Override
+      public Object apply(Lifecycle scope, Object inherited) {
+        return "second";
+      }
+    };
   }
 
   @Test
@@ -215,6 +225,7 @@ class CoreRecordEqualityTest {
             .toArray(Class<?>[]::new);
     var constructor = type.getDeclaredConstructor(signature);
     constructor.setAccessible(true);
+
     return constructor.newInstance(components);
   }
 }

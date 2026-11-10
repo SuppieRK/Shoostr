@@ -7,11 +7,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpClient.SyncSpec;
+import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.common.McpTransportContext;
+import io.modelcontextprotocol.server.McpAsyncServer;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
+import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSchema.Tool;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
@@ -29,46 +34,23 @@ class McpToolTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored2, ignored3) -> {});
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
     var mcp =
-        Mcp.sync(
-            security,
-            transport ->
-                McpServer.sync(transport)
-                    .immediateExecution(immediate)
-                    .requestTimeout(Duration.ofSeconds(3))
-                    .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                    .tools(
-                        McpServerFeatures.SyncToolSpecification.builder()
-                            .tool(tool)
-                            .callHandler(
-                                (exchange, ignored4) -> {
-                                  exchange.ping();
-                                  return McpSchema.CallToolResult.builder()
-                                      .addTextContent("native ping returned")
-                                      .build();
-                                })
-                            .build())
-                    .build());
+        createMcpForCompletesANativePingWithEitherSynchronousExecutionSetting(
+            security, immediate, tool);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app);
-        var client =
-            McpClient.sync(
-                    HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                        .endpoint("/mcp")
-                        .build())
-                .requestTimeout(Duration.ofSeconds(5))
-                .initializationTimeout(Duration.ofSeconds(5))
-                .build()) {
+        var client = openClient(test)) {
       client.initialize();
 
       try {
         var result =
             client.callTool(
                 McpSchema.CallToolRequest.builder("ping-client").arguments(Map.of()).build());
+
         assertEquals(
             "native ping returned",
             assertInstanceOf(McpSchema.TextContent.class, result.content().getFirst()).text());
@@ -78,48 +60,51 @@ class McpToolTest {
     }
   }
 
+  private Mcp<McpSyncServer> createMcpForCompletesANativePingWithEitherSynchronousExecutionSetting(
+      McpHttpSecurity security, boolean immediate, Tool tool) {
+    return Mcp.sync(
+        security,
+        transport ->
+            McpServer.sync(transport)
+                .immediateExecution(immediate)
+                .requestTimeout(Duration.ofSeconds(3))
+                .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
+                .tools(
+                    McpServerFeatures.SyncToolSpecification.builder()
+                        .tool(tool)
+                        .callHandler(
+                            (exchange, ignoredCallToolRequest) -> {
+                              exchange.ping();
+
+                              return McpSchema.CallToolResult.builder()
+                                  .addTextContent("native ping returned")
+                                  .build();
+                            })
+                        .build())
+                .build());
+  }
+
   @Test
   void invokesANativeToolThroughTheOfficialStreamableHttpClient() throws Exception {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            ignored5 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored6, ignored7) -> {});
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var tool =
         McpSchema.Tool.builder("greet", Map.of("type", "object", "properties", Map.of()))
             .description("Returns a greeting")
             .build();
-    var mcp =
-        Mcp.sync(
-            security,
-            transport ->
-                McpServer.sync(transport)
-                    .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                    .tools(
-                        McpServerFeatures.SyncToolSpecification.builder()
-                            .tool(tool)
-                            .callHandler(
-                                (ignored8, ignored9) ->
-                                    McpSchema.CallToolResult.builder()
-                                        .addTextContent("hello from Shoostr")
-                                        .build())
-                            .build())
-                    .build());
+    var mcp = createMcpForInvokesANativeToolThroughTheOfficialStreamableHttpClient(security, tool);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app);
-        var client =
-            McpClient.sync(
-                    HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                        .endpoint("/mcp")
-                        .build())
-                .requestTimeout(Duration.ofSeconds(5))
-                .initializationTimeout(Duration.ofSeconds(5))
-                .build()) {
+        var client = openClient(test)) {
       client.initialize();
       var result =
           client.callTool(McpSchema.CallToolRequest.builder("greet").arguments(Map.of()).build());
+
       assertEquals(
           "hello from Shoostr",
           assertInstanceOf(McpSchema.TextContent.class, result.content().getFirst()).text());
@@ -127,53 +112,85 @@ class McpToolTest {
     }
   }
 
+  private Mcp<McpSyncServer> createMcpForInvokesANativeToolThroughTheOfficialStreamableHttpClient(
+      McpHttpSecurity security, Tool tool) {
+    return Mcp.sync(
+        security,
+        transport ->
+            McpServer.sync(transport)
+                .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
+                .tools(
+                    McpServerFeatures.SyncToolSpecification.builder()
+                        .tool(tool)
+                        .callHandler(
+                            (ignoredMcpSyncServerExchange, ignoredCallToolRequest) ->
+                                McpSchema.CallToolResult.builder()
+                                    .addTextContent("hello from Shoostr")
+                                    .build())
+                        .build())
+                .build());
+  }
+
   @Test
   void invokesAnAsyncNativeToolThroughTheOfficialStreamableHttpClient() throws Exception {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            ignored10 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored11, ignored12) -> {});
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var tool =
         McpSchema.Tool.builder("greet", Map.of("type", "object", "properties", Map.of()))
             .description("Returns a greeting")
             .build();
     var mcp =
-        Mcp.async(
-            security,
-            transport ->
-                McpServer.async(transport)
-                    .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                    .tools(
-                        McpServerFeatures.AsyncToolSpecification.builder()
-                            .tool(tool)
-                            .callHandler(
-                                (ignored13, ignored14) ->
-                                    Mono.just(
-                                        McpSchema.CallToolResult.builder()
-                                            .addTextContent("hello from async Shoostr")
-                                            .build()))
-                            .build())
-                    .build());
+        createMcpForInvokesAnAsyncNativeToolThroughTheOfficialStreamableHttpClient(security, tool);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app);
-        var client =
-            McpClient.sync(
-                    HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                        .endpoint("/mcp")
-                        .build())
-                .requestTimeout(Duration.ofSeconds(5))
-                .initializationTimeout(Duration.ofSeconds(5))
-                .build()) {
+        var client = openClient(test)) {
       client.initialize();
       var result =
           client.callTool(McpSchema.CallToolRequest.builder("greet").arguments(Map.of()).build());
+
       assertEquals(
           "hello from async Shoostr",
           assertInstanceOf(McpSchema.TextContent.class, result.content().getFirst()).text());
       assertTrue(client.closeGracefully());
     }
+  }
+
+  private Mcp<McpAsyncServer>
+      createMcpForInvokesAnAsyncNativeToolThroughTheOfficialStreamableHttpClient(
+          McpHttpSecurity security, Tool tool) {
+    return Mcp.async(
+        security,
+        transport ->
+            McpServer.async(transport)
+                .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
+                .tools(
+                    McpServerFeatures.AsyncToolSpecification.builder()
+                        .tool(tool)
+                        .callHandler(
+                            (ignoredMcpAsyncServerExchange, ignoredCallToolRequest) ->
+                                Mono.just(
+                                    McpSchema.CallToolResult.builder()
+                                        .addTextContent("hello from async Shoostr")
+                                        .build()))
+                        .build())
+                .build());
+  }
+
+  private McpSyncClient openClient(TestServer test) {
+    return clientProperties(test).build();
+  }
+
+  private SyncSpec clientProperties(TestServer test) {
+    return McpClient.sync(
+            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                .endpoint("/mcp")
+                .build())
+        .requestTimeout(Duration.ofSeconds(5))
+        .initializationTimeout(Duration.ofSeconds(5));
   }
 }

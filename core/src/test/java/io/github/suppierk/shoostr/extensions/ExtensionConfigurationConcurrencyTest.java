@@ -10,6 +10,7 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
 import java.net.http.HttpResponse;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import org.eclipse.jetty.server.ServerConnector;
@@ -28,12 +29,13 @@ class ExtensionConfigurationConcurrencyTest {
             .get(
                 "/configured",
                 (ignored, response) -> response.text("registered"),
-                ignored2 -> assertThrows(IllegalStateException.class, app::start));
+                ignoredLifecycle -> assertThrows(IllegalStateException.class, app::start));
 
         try (var test = TestServer.start(app)) {
           var result =
               test.send(
                   request -> request.path("/configured"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals("registered", result.body());
         }
       }
@@ -47,13 +49,14 @@ class ExtensionConfigurationConcurrencyTest {
 
       try (Closeable appCleanup1 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalStateException.class,
             () ->
                 routes.get(
                     "/closed",
-                    (ignored3, ignored4) -> {},
-                    ignored5 -> assertDoesNotThrow(app::close)));
+                    (ignoredRequest, ignoredResponse) -> {},
+                    ignoredLifecycle -> assertDoesNotThrow(app::close)));
         assertThrows(IllegalStateException.class, app::start);
       }
     }
@@ -66,14 +69,17 @@ class ExtensionConfigurationConcurrencyTest {
 
       try (Closeable appCleanup2 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
                 routes.get(
                     "/reserved/{id}",
-                    (ignored6, ignored7) -> {},
-                    ignored8 -> routes.get("/reserved/{other}", (ignored9, ignored10) -> {})));
-        app.routes().get("/reserved/{id}", (ignored11, response) -> response.text("retry"));
+                    (ignoredRequest, ignoredResponse) -> {},
+                    ignoredLifecycle ->
+                        routes.get("/reserved/{other}", (ignoredRequest, ignoredResponse) -> {})));
+
+        app.routes().get("/reserved/{id}", (ignoredRequest, response) -> response.text("retry"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -101,13 +107,17 @@ class ExtensionConfigurationConcurrencyTest {
         app.routes()
             .get(
                 "/first",
-                (ignored12, ignored13) -> {},
-                ignored14 -> {
+                (ignoredRequest, ignoredResponse) -> {},
+                ignoredLifecycle -> {
                   try {
                     assertNotNull(
                         executor
-                            .submit(() -> app.routes().get("/second", (ignored15, ignored16) -> {}))
+                            .submit(
+                                () ->
+                                    app.routes()
+                                        .get("/second", (ignoredRequest, ignoredResponse) -> {}))
                             .get(3, TimeUnit.SECONDS));
+
                     executor
                         .submit(() -> assertThrows(IllegalStateException.class, app::start))
                         .get(3, TimeUnit.SECONDS);
@@ -133,17 +143,19 @@ class ExtensionConfigurationConcurrencyTest {
         var routes = app.routes();
         routes.websocket(
             "/socket",
-            (ignored17, ignored18) -> new Session.Listener.AutoDemanding() {},
-            ignored19 -> {
+            (ignoredRequest, ignoredServerUpgradeResponse) ->
+                new Session.Listener.AutoDemanding() {},
+            ignoredLifecycle -> {
               assertThrows(IllegalStateException.class, app::start);
               assertThrows(
                   IllegalArgumentException.class,
                   () ->
                       routes.websocket(
                           "/socket",
-                          (ignored20, ignored21) -> new Session.Listener.AutoDemanding() {}));
+                          (ignoredRequest, ignoredServerUpgradeResponse) ->
+                              new Session.Listener.AutoDemanding() {}));
             });
-        app.routes().get("/socket", (ignored22, ignored23) -> {});
+        app.routes().get("/socket", (ignoredRequest, ignoredResponse) -> {});
         app.start();
       }
     }
@@ -161,36 +173,41 @@ class ExtensionConfigurationConcurrencyTest {
 
       try (Closeable appCleanup5 = app::close;
           var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-        TestExtension<Object> provider =
-            new TestExtension<>() {
-              @Override
-              public Object configure(Lifecycle endpoint, Object inherited) {
-                if (inherited != null) {
-                  try {
-                    assertNotNull(
-                        executor
-                            .submit(
-                                () -> app.routes().get("/parallel", (ignored24, ignored25) -> {}))
-                            .get(3, TimeUnit.SECONDS));
-                    executor
-                        .submit(() -> assertThrows(IllegalStateException.class, app::start))
-                        .get(3, TimeUnit.SECONDS);
-                  } catch (Exception failure) {
-                    throw new IllegalStateException(failure);
-                  }
-                }
-
-                return new Object();
-              }
-            };
+        TestExtension<Object> provider = blockingInheritedProvider(executor, app);
 
         app.routes()
             .path(
                 "/group",
-                group -> group.get("/child", (ignored26, ignored27) -> {}),
-                e -> e.withExtension(provider));
+                group -> group.get("/child", (ignoredRequest, ignoredResponse) -> {}),
+                lifecycle -> lifecycle.withExtension(provider));
         app.start();
       }
     }
+  }
+
+  private TestExtension<Object> blockingInheritedProvider(ExecutorService executor, Shoostr app) {
+    return new TestExtension<>() {
+      @Override
+      public Object configure(Lifecycle endpoint, Object inherited) {
+        if (inherited != null) {
+          try {
+            assertNotNull(
+                executor
+                    .submit(
+                        () ->
+                            app.routes().get("/parallel", (ignoredRequest, ignoredResponse) -> {}))
+                    .get(3, TimeUnit.SECONDS));
+
+            executor
+                .submit(() -> assertThrows(IllegalStateException.class, app::start))
+                .get(3, TimeUnit.SECONDS);
+          } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+          }
+        }
+
+        return new Object();
+      }
+    };
   }
 }

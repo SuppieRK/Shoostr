@@ -27,9 +27,7 @@ public final class MultipartExample {
         Files.createDirectories(
             Objects.requireNonNull(temporaryDirectory).toAbsolutePath().normalize());
     // Keep large parts in this temporary directory instead of retaining every byte in memory.
-    var multipart = new MultipartOptions(8192, 1024, 8, 1024, 128, storage);
-    var configuredOptions = new Options();
-    configuredOptions.setMultipart(multipart);
+    var configuredOptions = options(storage);
 
     return new Shoostr(configuredOptions)
         .modifyServer(
@@ -44,17 +42,18 @@ public final class MultipartExample {
                       // Repeated file parts keep their order; file() above selects only the first.
                       var documents = request.files("document");
                       var fileFields = request.files();
+
                       long bytes = 0;
                       var hex = new StringBuilder();
                       for (var document : documents) {
                         bytes += document.size();
 
                         // Inspect content before the request ends and its temporary parts expire.
-
                         try (var content = document.content()) {
                           hex.append(HexFormat.of().formatHex(content.readAllBytes()));
                         }
                       }
+
                       response.text(
                           String.join(
                               "\n",
@@ -68,5 +67,19 @@ public final class MultipartExample {
                               "bytes=" + bytes,
                               "hex=" + hex));
                     }));
+  }
+
+  /**
+   * Configures the listener and resource policy used by this application.
+   *
+   * @param storage application setting
+   * @return detached serving options
+   */
+  private static Options options(Path storage) {
+    var multipart = new MultipartOptions(8192, 1024, 8, 1024, 128, storage);
+    var configuredOptions = new Options();
+    configuredOptions.setMultipart(multipart);
+
+    return configuredOptions;
   }
 }

@@ -123,6 +123,15 @@ public final class CorsPolicy {
   }
 
   /**
+   * Returns allowed origins, defaulting to none.
+   *
+   * @return immutable origin set
+   */
+  public Set<String> origins() {
+    return origins;
+  }
+
+  /**
    * Returns allowed methods, defaulting to GET and HEAD.
    *
    * @return configured methods
@@ -138,6 +147,15 @@ public final class CorsPolicy {
    */
   public void setMethods(@Nullable Set<HttpMethods> value) {
     methods = value == null ? Set.of(HttpMethods.GET, HttpMethods.HEAD) : Set.copyOf(value);
+  }
+
+  /**
+   * Returns allowed methods, defaulting to GET and HEAD only when unspecified.
+   *
+   * @return immutable method set; inspect allMethods() to distinguish wildcard from deny-all
+   */
+  public Set<HttpMethods> methods() {
+    return methods;
   }
 
   /**
@@ -157,6 +175,15 @@ public final class CorsPolicy {
    */
   public void setAllMethods(@Nullable Boolean value) {
     allMethods = value != null && value;
+  }
+
+  /**
+   * Returns whether every syntactically valid method token is allowed.
+   *
+   * @return whether the method collection is a wildcard
+   */
+  public boolean allMethods() {
+    return allMethods;
   }
 
   /**
@@ -181,6 +208,15 @@ public final class CorsPolicy {
   }
 
   /**
+   * Returns permitted preflight headers, defaulting to none.
+   *
+   * @return immutable typed header set
+   */
+  public Set<HttpHeaders> allowedHeaders() {
+    return allowedHeaders;
+  }
+
+  /**
    * Returns whether credentialed sharing is allowed.
    *
    * @return configured credentials
@@ -196,6 +232,15 @@ public final class CorsPolicy {
    */
   public void setCredentials(@Nullable Boolean value) {
     credentials = value != null && value;
+  }
+
+  /**
+   * Returns whether credentialed sharing is allowed, defaulting to false.
+   *
+   * @return credential permission
+   */
+  public boolean credentials() {
+    return credentials;
   }
 
   /**
@@ -217,6 +262,15 @@ public final class CorsPolicy {
         wildcard(
             value == null ? Set.of() : Set.copyOf(value),
             HttpHeaders.of(HttpCharacters.ASTERISK_STRING));
+  }
+
+  /**
+   * Returns additional response headers visible to scripts, defaulting to none.
+   *
+   * @return immutable typed header set
+   */
+  public Set<HttpHeaders> exposedHeaders() {
+    return exposedHeaders;
   }
 
   /**
@@ -244,75 +298,21 @@ public final class CorsPolicy {
   }
 
   /**
-   * Creates a builder with standalone defaults.
-   *
-   * @return independent builder
-   */
-  public static Builder builder() {
-    return new Builder();
-  }
-
-  /**
-   * Returns allowed origins, defaulting to none.
-   *
-   * @return immutable origin set
-   */
-  public Set<String> origins() {
-    return origins;
-  }
-
-  /**
-   * Returns allowed methods, defaulting to GET and HEAD only when unspecified.
-   *
-   * @return immutable method set; inspect allMethods() to distinguish wildcard from deny-all
-   */
-  public Set<HttpMethods> methods() {
-    return methods;
-  }
-
-  /**
-   * Returns whether every syntactically valid method token is allowed.
-   *
-   * @return whether the method collection is a wildcard
-   */
-  public boolean allMethods() {
-    return allMethods;
-  }
-
-  /**
-   * Returns permitted preflight headers, defaulting to none.
-   *
-   * @return immutable typed header set
-   */
-  public Set<HttpHeaders> allowedHeaders() {
-    return allowedHeaders;
-  }
-
-  /**
-   * Returns whether credentialed sharing is allowed, defaulting to false.
-   *
-   * @return credential permission
-   */
-  public boolean credentials() {
-    return credentials;
-  }
-
-  /**
-   * Returns additional response headers visible to scripts, defaulting to none.
-   *
-   * @return immutable typed header set
-   */
-  public Set<HttpHeaders> exposedHeaders() {
-    return exposedHeaders;
-  }
-
-  /**
    * Returns the preflight cache lifetime, defaulting to five seconds.
    *
    * @return nonnegative lifetime
    */
   public long maxAgeSeconds() {
     return maxAgeSeconds;
+  }
+
+  /**
+   * Creates a builder with standalone defaults.
+   *
+   * @return independent builder
+   */
+  public static Builder builder() {
+    return new Builder();
   }
 
   /** {@inheritDoc} */

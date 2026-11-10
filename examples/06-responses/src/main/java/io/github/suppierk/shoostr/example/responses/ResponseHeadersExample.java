@@ -16,6 +16,7 @@ public final class ResponseHeadersExample {
    */
   public static Shoostr application() {
     var mode = HttpHeaders.of("X-Mode");
+
     return new Shoostr()
         .routes(
             routes ->
@@ -30,12 +31,15 @@ public final class ResponseHeadersExample {
                               HttpHeaders.LINK.value(),
                               "</next>; rel=\"next\", </last>; rel=\"last\"")
                           .addHeader(HttpHeaders.LINK.value(), "</previous>; rel=\"prev\"");
+
                       // This immutable snapshot keeps the earlier values after later mutations.
                       var before = response.headerMap();
+
                       response
                           .setHeader("x-mode", "ready")
                           .removeHeader("x-temporary")
                           .addHeader(HttpHeaders.LINK.value(), "</first>; rel=\"first\"");
+
                       response.text(
                           String.join(
                               "\n",

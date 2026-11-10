@@ -29,18 +29,24 @@ class ResponseHeadersExampleTest {
                 (ignored, response) -> {
                   assertNull(response.header("Missing"));
                   assertEquals(List.of(), response.headers("Missing"));
+
                   response.addHeader("X-Values", "a,b").addHeader("x-values", "c");
+
                   var values = response.headers("X-VALUES");
                   var snapshot = response.headerMap();
                   var nested = Objects.requireNonNull(snapshot.get("x-values"));
+
                   assertEquals(List.of("a,b", "c"), nested);
                   assertThrows(UnsupportedOperationException.class, () -> values.add("changed"));
                   assertThrows(UnsupportedOperationException.class, () -> nested.add("changed"));
                   assertThrows(UnsupportedOperationException.class, snapshot::clear);
+
                   response.addHeader("X-Values", "d");
+
                   assertEquals(List.of("a,b", "c"), values);
                   assertEquals(List.of("a,b", "c"), snapshot.get("X-VALUES"));
                   assertEquals(List.of("a,b", "c", "d"), response.headers("x-values"));
+
                   response.text("checked");
                 });
 
@@ -48,6 +54,7 @@ class ResponseHeadersExampleTest {
           var response =
               test.send(
                   request -> request.path("/snapshots"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("checked", response.body());
           assertEquals(List.of("a,b", "c", "d"), response.headers().allValues("X-Values"));
@@ -66,16 +73,18 @@ class ResponseHeadersExampleTest {
         app.routes()
             .get(
                 "/framing",
-                (ignored2, response) -> {
+                (ignoredRequest, response) -> {
                   assertThrows(IllegalArgumentException.class, () -> response.setHeader(name, "0"));
                   assertThrows(IllegalArgumentException.class, () -> response.addHeader(name, "0"));
                   assertThrows(IllegalArgumentException.class, () -> response.removeHeader(name));
+
                   response.text("checked");
                 });
 
         try (var test = TestServer.start(app)) {
           var response =
               test.send(request -> request.path("/framing"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("checked", response.body());
           assertEquals("7", response.headers().firstValue("Content-Length").orElseThrow());
@@ -91,6 +100,7 @@ class ResponseHeadersExampleTest {
     try (var test = TestServer.start(ResponseHeadersExample.application())) {
       var response =
           test.send(request -> request.path("/headers"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals(
           List.of(

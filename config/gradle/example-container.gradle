@@ -4,7 +4,9 @@ jib {
 	from {
 		image = 'eclipse-temurin:21-jre@sha256:227118764cccd3c3294617061aaa93a08309c63a395eefa83e6b35032992ea99'
 	}
+
 	to { image = "shoostr/${project.name}:local" }
+
 	jib.container {
 		user = '1000:1000'
 		ports = ['8080']

@@ -26,14 +26,7 @@ class ConstrainedRoutingTest {
 
     {
       var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+          createAppForDispatchesByNamedSegmentConstraintAndExposesItsCapture(configuredOptions);
 
       try (Closeable appCleanup = app::close) {
         app.routes()
@@ -66,6 +59,18 @@ class ConstrainedRoutingTest {
     }
   }
 
+  private Shoostr createAppForDispatchesByNamedSegmentConstraintAndExposesItsCapture(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
   @Test
   void completedRangeEndpointDoesNotStartAnotherRange() throws Exception {
     var configuredOptions = new Options();
@@ -76,15 +81,7 @@ class ConstrainedRoutingTest {
     configuredOptions.setMultipart(MultipartOptions.defaults());
 
     {
-      var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+      var app = createAppForCompletedRangeEndpointDoesNotStartAnotherRange(configuredOptions);
 
       try (Closeable appCleanup1 = app::close) {
         app.routes().get("/letters/{id:[a-c-e]}", (ignored, response) -> response.text("matched"));
@@ -114,6 +111,18 @@ class ConstrainedRoutingTest {
     }
   }
 
+  private Shoostr createAppForCompletedRangeEndpointDoesNotStartAnotherRange(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
   @Test
   void rejectsAnInvalidConstraintAtRegistration() throws Exception {
     {
@@ -124,9 +133,10 @@ class ConstrainedRoutingTest {
 
       try (Closeable appCleanup2 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
-            () -> routes.get("/users/{id:[0-9+}", (ignored2, ignored3) -> {}));
+            () -> routes.get("/users/{id:[0-9+}", (ignoredRequest, ignoredResponse) -> {}));
       }
     }
   }
@@ -142,22 +152,17 @@ class ConstrainedRoutingTest {
 
     {
       var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+          createAppForPrefersLiteralThenConstrainedThenPlainThenCatchAllAndFallsBackByMethod(
+              configuredOptions);
 
       try (Closeable appCleanup3 = app::close) {
-        app.routes().get("/users/{*tail}", (ignored4, response) -> response.text("tail"));
-        app.routes().get("/users/{name}", (ignored5, response) -> response.text("plain"));
+        app.routes().get("/users/{*tail}", (ignoredRequest, response) -> response.text("tail"));
+        app.routes().get("/users/{name}", (ignoredRequest, response) -> response.text("plain"));
         app.routes()
-            .get("/users/{id:[0-9]+}", (ignored6, response) -> response.text("constrained"));
-        app.routes().get("/users/123", (ignored7, response) -> response.text("literal"));
-        app.routes().post("/users/{id:[0-9]+}", (ignored8, response) -> response.text("post"));
+            .get("/users/{id:[0-9]+}", (ignoredRequest, response) -> response.text("constrained"));
+        app.routes().get("/users/123", (ignoredRequest, response) -> response.text("literal"));
+        app.routes()
+            .post("/users/{id:[0-9]+}", (ignoredRequest, response) -> response.text("post"));
 
         try (var test = TestServer.start(app)) {
 
@@ -219,6 +224,19 @@ class ConstrainedRoutingTest {
     }
   }
 
+  private Shoostr
+      createAppForPrefersLiteralThenConstrainedThenPlainThenCatchAllAndFallsBackByMethod(
+          Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
   @Test
   void firstMatchingConstrainedRouteForTheRequestedMethodWins() throws Exception {
     var configuredOptions = new Options();
@@ -230,20 +248,15 @@ class ConstrainedRoutingTest {
 
     {
       var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+          createAppForFirstMatchingConstrainedRouteForTheRequestedMethodWins(configuredOptions);
 
       try (Closeable appCleanup4 = app::close) {
         app.routes()
-            .post("/items/{id:[0-9]+}", (ignored9, response) -> response.text("first-post"));
-        app.routes().get("/items/{id:[0-9]}", (ignored10, response) -> response.text("first-get"));
-        app.routes().get("/items/{id:[0-9]+}", (ignored11, response) -> response.text("later-get"));
+            .post("/items/{id:[0-9]+}", (ignoredRequest, response) -> response.text("first-post"));
+        app.routes()
+            .get("/items/{id:[0-9]}", (ignoredRequest, response) -> response.text("first-get"));
+        app.routes()
+            .get("/items/{id:[0-9]+}", (ignoredRequest, response) -> response.text("later-get"));
 
         try (var test = TestServer.start(app)) {
 
@@ -271,6 +284,18 @@ class ConstrainedRoutingTest {
     }
   }
 
+  private Shoostr createAppForFirstMatchingConstrainedRouteForTheRequestedMethodWins(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
   @Test
   void constraintTestsCanonicalEncodedSegmentBeforePathParameterDecoding() throws Exception {
     var configuredOptions = new Options();
@@ -282,17 +307,12 @@ class ConstrainedRoutingTest {
 
     {
       var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+          createAppForConstraintTestsCanonicalEncodedSegmentBeforePathParameterDecoding(
+              configuredOptions);
 
       try (Closeable appCleanup5 = app::close) {
-        app.routes().get("/users/{id:[0-9]+}", (ignored12, response) -> response.text("digits"));
+        app.routes()
+            .get("/users/{id:[0-9]+}", (ignoredRequest, response) -> response.text("digits"));
         app.routes()
             .get(
                 "/digits/{id:[0-9]+}",
@@ -333,6 +353,18 @@ class ConstrainedRoutingTest {
     }
   }
 
+  private Shoostr createAppForConstraintTestsCanonicalEncodedSegmentBeforePathParameterDecoding(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {
@@ -357,9 +389,10 @@ class ConstrainedRoutingTest {
 
       try (Closeable appCleanup6 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
-            () -> routes.get(pattern, (ignored13, ignored14) -> {}));
+            () -> routes.get(pattern, (ignoredRequest, ignoredResponse) -> {}));
       }
     }
   }
@@ -375,14 +408,8 @@ class ConstrainedRoutingTest {
 
     {
       var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+          createAppForAcceptsBoundedRepetitionAndRejectsEquivalentConstraintShapes(
+              configuredOptions);
 
       try (Closeable appCleanup7 = app::close) {
         var routes = app.routes();
@@ -390,10 +417,13 @@ class ConstrainedRoutingTest {
             "/api",
             nestedRoutes ->
                 nestedRoutes.get(
-                    "/users/{id:[0-9]{1,3}}", (ignored15, response) -> response.text("ok")));
+                    "/users/{id:[0-9]{1,3}}", (ignoredRequest, response) -> response.text("ok")));
+
         assertThrows(
             IllegalArgumentException.class,
-            () -> routes.get("/api/users/{other:[0-9]{1,3}}", (ignored16, ignored17) -> {}));
+            () ->
+                routes.get(
+                    "/api/users/{other:[0-9]{1,3}}", (ignoredRequest, ignoredResponse) -> {}));
 
         try (var test = TestServer.start(app)) {
 
@@ -414,6 +444,18 @@ class ConstrainedRoutingTest {
     }
   }
 
+  private Shoostr createAppForAcceptsBoundedRepetitionAndRejectsEquivalentConstraintShapes(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
   @Test
   void serverSentEventRouteUsesTheSameConstraint() throws Exception {
     var configuredOptions = new Options();
@@ -424,15 +466,7 @@ class ConstrainedRoutingTest {
     configuredOptions.setMultipart(MultipartOptions.defaults());
 
     {
-      var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+      var app = createAppForServerSentEventRouteUsesTheSameConstraint(configuredOptions);
 
       try (Closeable appCleanup8 = app::close) {
         app.routes()
@@ -460,6 +494,17 @@ class ConstrainedRoutingTest {
     }
   }
 
+  private Shoostr createAppForServerSentEventRouteUsesTheSameConstraint(Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
   @Test
   void composesConstrainedSegmentsBeforeAndAfterLiteralSuffixes() throws Exception {
     var configuredOptions = new Options();
@@ -471,14 +516,7 @@ class ConstrainedRoutingTest {
 
     {
       var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+          createAppForComposesConstrainedSegmentsBeforeAndAfterLiteralSuffixes(configuredOptions);
 
       try (Closeable appCleanup9 = app::close) {
         app.routes()
@@ -521,6 +559,18 @@ class ConstrainedRoutingTest {
     }
   }
 
+  private Shoostr createAppForComposesConstrainedSegmentsBeforeAndAfterLiteralSuffixes(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
+  }
+
   @Test
   void simpleRepetitionNeverMatchesAnEmptySegment() throws Exception {
     var configuredOptions = new Options();
@@ -531,15 +581,7 @@ class ConstrainedRoutingTest {
     configuredOptions.setMultipart(MultipartOptions.defaults());
 
     {
-      var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+      var app = createAppForSimpleRepetitionNeverMatchesAnEmptySegment(configuredOptions);
 
       try (Closeable appCleanup10 = app::close) {
         app.routes()
@@ -586,5 +628,17 @@ class ConstrainedRoutingTest {
         }
       }
     }
+  }
+
+  private Shoostr createAppForSimpleRepetitionNeverMatchesAnEmptySegment(
+      Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
   }
 }

@@ -48,10 +48,10 @@ class Http1FramingTest {
 
       try (Closeable appCleanup = app::close) {
         // Jetty 12.1.14's default RFC9110 policy rejects both ambiguous framing forms.
-        app.onRequestHeaders((ignored, ignored2) -> admissions.incrementAndGet());
+        app.onRequestHeaders((ignored, ignoredResponse) -> admissions.incrementAndGet());
         protectedRoute(app, authenticationCalls, protectedCalls);
         app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
-        app.routes().get("/healthy", (ignored3, response) -> response.text("healthy"));
+        app.routes().get("/healthy", (ignoredRequest, response) -> response.text("healthy"));
         app.start();
 
         try (var socket = connect(app.port())) {
@@ -63,6 +63,7 @@ class Http1FramingTest {
                   + "\r\n0\r\n\r\n"
                   + PROTECTED_REQUEST);
           var rejected = receive(input);
+
           assertTrue(rejected.getStatus() >= 400 && rejected.getStatus() < 500);
           assertNull(HttpTester.parseResponse(input));
           assertTrue(input.isEOF());
@@ -83,7 +84,7 @@ class Http1FramingTest {
 
       try (Closeable appCleanup1 = app::close) {
         app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
-        app.routes().get("/healthy", (ignored4, response) -> response.text("healthy"));
+        app.routes().get("/healthy", (ignoredRequest, response) -> response.text("healthy"));
         app.start();
 
         try (var socket = connect(app.port())) {
@@ -101,11 +102,13 @@ class Http1FramingTest {
             \r
             """);
           var body = receive(input);
+
           assertEquals(200, body.getStatus());
           assertEquals("body", body.getContent());
 
           write(socket, "GET /healthy HTTP/1.1\r\nHost: localhost\r\n\r\n");
           var healthy = receive(input);
+
           assertEquals(200, healthy.getStatus());
           assertEquals("healthy", healthy.getContent());
         }
@@ -129,13 +132,15 @@ class Http1FramingTest {
         protectedRoute(app, authenticationCalls, protectedCalls);
         app.exception(
             AuthenticationRequiredException.class,
-            (ignored5, ignored6, response) -> response.text("denied"));
+            (ignoredFailure, ignoredRequest, response) -> response.text("denied"));
         app.routes()
             .get(
                 "/slow",
-                (ignored7, response) -> {
+                (ignoredRequest, response) -> {
                   entered.countDown();
+
                   assertTrue(release.await(3, TimeUnit.SECONDS));
+
                   response.text("first");
                 });
         app.start();
@@ -154,16 +159,23 @@ class Http1FramingTest {
                   \r
                   """
                     + PROTECTED_REQUEST);
+
             assertTrue(entered.await(3, TimeUnit.SECONDS));
+
             release.countDown();
 
             var first = receive(input);
+
             assertEquals(200, first.getStatus());
             assertEquals("first", first.getContent());
+
             var denied = receive(input);
+
             assertEquals(401, denied.getStatus());
             assertEquals("denied", denied.getContent());
+
             var permitted = receive(input);
+
             assertEquals(200, permitted.getStatus());
             assertEquals("permitted", permitted.getContent());
             assertEquals(200, completed(outcomes).statusCode());
@@ -194,21 +206,25 @@ class Http1FramingTest {
       var app = app();
 
       try (Closeable appCleanup3 = app::close) {
-        app.onRequestHeaders((ignored8, ignored9) -> admissions.incrementAndGet());
+        app.onRequestHeaders((ignoredRequest, ignoredResponse) -> admissions.incrementAndGet());
         app.afterRequest(outcomes::add);
         protectedRoute(app, authenticationCalls, protectedCalls);
         app.routes()
             .post(
                 "/body",
-                (request, ignored10) -> {
+                (request, ignoredResponse) -> {
                   var source = request.input();
+
                   assertEquals('a', source.read());
+
                   initialRead.countDown();
+
                   var failure = assertThrows(IOException.class, source::read);
+
                   failures.add(failure);
                   throw failure;
                 });
-        app.routes().get("/healthy", (ignored11, response) -> response.text("healthy"));
+        app.routes().get("/healthy", (ignoredRequest, response) -> response.text("healthy"));
         app.start();
 
         try (var socket = connect(app.port())) {
@@ -223,14 +239,19 @@ class Http1FramingTest {
             1\r
             a\r
             """);
+
           assertTrue(initialRead.await(3, TimeUnit.SECONDS));
+
           write(socket, "Z\r\nmalformed\r\n0\r\n\r\n" + PROTECTED_REQUEST);
 
           var rejected = receive(input);
+
           assertTrue(rejected.getStatus() >= 400 && rejected.getStatus() < 600);
           assertNull(HttpTester.parseResponse(input));
           assertTrue(input.isEOF());
+
           var failure = failures.poll(3, TimeUnit.SECONDS);
+
           assertNotNull(failure);
           assertSame(failure, completed(outcomes).applicationFailure());
           assertNull(outcomes.poll());
@@ -264,16 +285,7 @@ class Http1FramingTest {
 
   private static void protectedRoute(
       Shoostr app, AtomicInteger authenticationCalls, AtomicInteger protectedCalls) {
-    var authentication =
-        new AuthenticationExtension() {
-          @Override
-          public void handle(Request request, Response response) {
-            authenticationCalls.incrementAndGet();
-            if (!"Bearer allowed".equals(request.header("Authorization").orElse(""))) {
-              throw new AuthenticationRequiredException("Bearer realm=\"wire-test\"");
-            }
-          }
-        };
+    var authentication = createAuthenticationForProtectedRoute(authenticationCalls);
 
     app.routes()
         .path(
@@ -281,11 +293,24 @@ class Http1FramingTest {
             routes ->
                 routes.get(
                     "/value",
-                    (ignored12, response) -> {
+                    (ignoredRequest, response) -> {
                       protectedCalls.incrementAndGet();
                       response.text("permitted");
                     }),
             extensions -> extensions.withExtension(authentication));
+  }
+
+  private static AuthenticationExtension createAuthenticationForProtectedRoute(
+      AtomicInteger authenticationCalls) {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        authenticationCalls.incrementAndGet();
+        if (!"Bearer allowed".equals(request.header("Authorization").orElse(""))) {
+          throw new AuthenticationRequiredException("Bearer realm=\"wire-test\"");
+        }
+      }
+    };
   }
 
   private static Socket connect(int port) throws IOException {
@@ -294,6 +319,7 @@ class Http1FramingTest {
     try {
       socket.setSoTimeout(3000);
       socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], port), 3000);
+
       return socket;
     } catch (IOException failure) {
       socket.close();
@@ -308,14 +334,18 @@ class Http1FramingTest {
 
   private static HttpTester.Response receive(HttpTester.Input input) throws IOException {
     var response = HttpTester.parseResponse(input);
+
     assertNotNull(response);
+
     return response;
   }
 
   private static RequestOutcome completed(LinkedBlockingQueue<RequestOutcome> outcomes)
       throws InterruptedException {
     var outcome = outcomes.poll(3, TimeUnit.SECONDS);
+
     assertNotNull(outcome);
+
     return outcome;
   }
 
@@ -323,6 +353,7 @@ class Http1FramingTest {
     try (var socket = connect(app.port())) {
       write(socket, "GET /healthy HTTP/1.1\r\nHost: localhost\r\n\r\n");
       var response = receive(HttpTester.from(socket.getInputStream()));
+
       assertEquals(200, response.getStatus());
       assertEquals("healthy", response.getContent());
     }

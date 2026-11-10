@@ -34,6 +34,7 @@ class OpenApiUiEqualityTest {
       throws ReflectiveOperationException {
     var first = resource("text/plain", new byte[] {1, 2});
     var second = resource("text/plain", new byte[] {1, 2});
+
     assertEquals(first, second);
     assertEquals(first.hashCode(), second.hashCode());
     assertNotEquals(first, resource("application/json", new byte[] {1, 2}));
@@ -45,13 +46,16 @@ class OpenApiUiEqualityTest {
     var document = new OpenApi("Example", "1");
     var ui = document.uiHandler("/docs/", "/openapi.json");
     var sameConfiguration = new OpenApiUi("/docs/", "/openapi.json");
+
     assertEquals(ui, sameConfiguration);
     assertNotEquals(new OpenApiUi("/different/", "/openapi.json"), ui);
     assertNotEquals(new OpenApiUi("/docs/", "/different.json"), ui);
+
     var initialHash = ui.hashCode();
     var handlers = new HashSet<Handler>();
     handlers.add(ui);
     handlers.add(sameConfiguration);
+
     assertEquals(1, handlers.size());
 
     {
@@ -64,8 +68,10 @@ class OpenApiUiEqualityTest {
           assertEquals(sameConfiguration, ui);
           assertEquals(initialHash, ui.hashCode());
           assertTrue(handlers.contains(ui));
+
           var response =
               server.send(request -> request.path("/docs/"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertTrue(response.body().contains("swagger-ui"));
           // Each constrained branch has multiple endpoint ranks; an unknown UI URL still returns
@@ -85,6 +91,7 @@ class OpenApiUiEqualityTest {
     var resource = Class.forName(OpenApiUi.class.getName() + "$Resource");
     var constructor = resource.getDeclaredConstructor(String.class, byte[].class);
     constructor.setAccessible(true);
+
     return constructor.newInstance(type, bytes);
   }
 }

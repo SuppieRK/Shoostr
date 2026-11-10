@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.util.List;
 import java.util.stream.Stream;
@@ -21,6 +22,7 @@ class RouteAuthenticationExampleTest {
 
     try (var test = TestServer.start(RouteAuthenticationExample.application())) {
       var response = test.send(request -> request.path("/private/me"));
+
       assertEquals(401, response.statusCode());
       assertEquals(
           "Bearer realm=\"account\"",
@@ -38,6 +40,7 @@ class RouteAuthenticationExampleTest {
           test.send(
               request -> request.path("/private/me").header("Authorization", "Bearer " + token),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals(name, response.body());
     }
@@ -51,6 +54,7 @@ class RouteAuthenticationExampleTest {
           test.send(
               request -> request.path("/public").header("Authorization", "Bearer unknown"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("public", response.body());
       assertFalse(response.headers().firstValue("WWW-Authenticate").isPresent());
@@ -70,6 +74,7 @@ class RouteAuthenticationExampleTest {
           test.send(
               request -> request.path("/private/admin").header("Authorization", "Bearer " + token),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(status, response.statusCode());
       assertEquals(body, response.body());
       assertFalse(response.headers().firstValue("WWW-Authenticate").isPresent());
@@ -84,11 +89,9 @@ class RouteAuthenticationExampleTest {
     try (var test = TestServer.start(RouteAuthenticationExample.application())) {
       for (var path : List.of("/private/me", "/private/admin")) {
         var response =
-            test.send(
-                request -> {
-                  request.path(path);
-                  values.forEach(value -> request.header("Authorization", value));
-                });
+            sendResponseForRejectsInvalidOrAmbiguousCredentialsOnEveryProtectedRoute(
+                test, path, values);
+
         assertEquals(401, response.statusCode(), path);
         assertEquals(
             "Bearer realm=\"account\"",
@@ -96,6 +99,17 @@ class RouteAuthenticationExampleTest {
         assertFalse(response.headers().firstValue("Set-Cookie").isPresent());
       }
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResponseForRejectsInvalidOrAmbiguousCredentialsOnEveryProtectedRoute(
+          TestServer test, String path, List<String> values)
+          throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path(path);
+          values.forEach(value -> request.header("Authorization", value));
+        });
   }
 
   @ParameterizedTest
@@ -108,6 +122,7 @@ class RouteAuthenticationExampleTest {
           test.send(
               request -> request.path("/private/me").header("Authorization", authorization),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("reader", response.body());
     }

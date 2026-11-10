@@ -20,6 +20,7 @@ import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -44,19 +45,16 @@ class RequestTracingExampleTest {
               withExecutionMode(telemetry, workers, virtualApplication)
                   .afterRequest(outcomes::offer))) {
         var response =
-            test.send(
-                request ->
-                    request
-                        .path("/api/items/42")
-                        .header(
-                            "traceparent",
-                            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
-                HttpResponse.BodyHandlers.ofString());
+            sendResponseForContinuesARemoteParentAndCreatesAChildOnTheSelectedWorker(test);
+
         assertEquals(200, response.statusCode());
         assertEquals("item 42", response.body());
         assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
+
         var spans = exporter.getFinishedSpanItems();
+
         assertEquals(2, spans.size());
+
         var server =
             spans.stream()
                 .filter(span -> span.getKind() == SpanKind.SERVER)
@@ -67,6 +65,7 @@ class RequestTracingExampleTest {
                 .filter(span -> "load-item".equals(span.getName()))
                 .findFirst()
                 .orElseThrow();
+
         assertEquals("GET /api/items/{id}", server.getName());
         assertEquals("4bf92f3577b34da6a3ce929d0e0e4736", server.getTraceId());
         assertEquals("00f067aa0ba902b7", server.getParentSpanId());
@@ -82,6 +81,17 @@ class RequestTracingExampleTest {
                 .get(5, TimeUnit.SECONDS));
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForContinuesARemoteParentAndCreatesAChildOnTheSelectedWorker(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/api/items/42")
+                .header("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -100,6 +110,7 @@ class RequestTracingExampleTest {
                   .afterRequest(outcomes::offer))) {
         var response =
             test.send(request -> request.path("/health"), HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, response.statusCode());
         assertEquals("traced=false", response.body());
         assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
@@ -109,8 +120,10 @@ class RequestTracingExampleTest {
       assertFalse(workers.isShutdown());
       assertFalse(
           workers.submit(() -> Span.current().getSpanContext().isValid()).get(5, TimeUnit.SECONDS));
+
       var span = telemetry.getTracer("application").spanBuilder("still available").startSpan();
       span.end();
+
       assertEquals(1, exporter.getFinishedSpanItems().size());
       assertEquals("still available", exporter.getFinishedSpanItems().getFirst().getName());
     }
@@ -130,21 +143,25 @@ class RequestTracingExampleTest {
           TestServer.start(
               withExecutionMode(telemetry, workers, virtualApplication)
                   .afterRequest(outcomes::offer))) {
-        var response =
-            test.send(
-                request ->
-                    request
-                        .path("/api/items/42")
-                        .header(
-                            "traceparent",
-                            "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"),
-                HttpResponse.BodyHandlers.ofString());
+        var response = sendResponseForHonorsAnUnsampledRemoteParentWithoutChangingTheResponse(test);
+
         assertEquals(200, response.statusCode());
         assertEquals("item 42", response.body());
         assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
         assertTrue(exporter.getFinishedSpanItems().isEmpty());
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForHonorsAnUnsampledRemoteParentWithoutChangingTheResponse(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/api/items/42")
+                .header("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -157,12 +174,8 @@ class RequestTracingExampleTest {
     try (var telemetry = telemetry(exporter);
         var workers = Executors.newSingleThreadExecutor()) {
       var app =
-          withExecutionMode(telemetry, workers, virtualApplication)
-              .beforeRouteHandler(
-                  (ignored, ignored2) -> {
-                    throw new IllegalStateException("private failure");
-                  })
-              .afterRequest(outcomes::offer);
+          createAppForRecordsAServerFailureWithoutLeakingTheExceptionMessage(
+              telemetry, workers, virtualApplication, outcomes);
 
       try (Closeable appCleanup = app::close;
           var test = TestServer.start(app)) {
@@ -176,7 +189,9 @@ class RequestTracingExampleTest {
                 .statusCode());
         assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
         assertEquals(1, exporter.getFinishedSpanItems().size());
+
         var server = exporter.getFinishedSpanItems().getFirst();
+
         assertEquals(SpanKind.SERVER, server.getKind());
         assertEquals(StatusCode.ERROR, server.getStatus().getStatusCode());
         assertEquals(
@@ -193,6 +208,19 @@ class RequestTracingExampleTest {
     }
   }
 
+  private Shoostr createAppForRecordsAServerFailureWithoutLeakingTheExceptionMessage(
+      OpenTelemetrySdk telemetry,
+      ExecutorService workers,
+      boolean virtualApplication,
+      LinkedBlockingQueue<RequestOutcome> outcomes) {
+    return withExecutionMode(telemetry, workers, virtualApplication)
+        .beforeRouteHandler(
+            (ignored, ignoredResponse) -> {
+              throw new IllegalStateException("private failure");
+            })
+        .afterRequest(outcomes::offer);
+  }
+
   private static OpenTelemetrySdk telemetry(InMemorySpanExporter exporter) {
     return OpenTelemetrySdk.builder()
         .setTracerProvider(
@@ -207,6 +235,7 @@ class RequestTracingExampleTest {
       OpenTelemetrySdk telemetry, ExecutorService workers, boolean virtualApplication) {
     var options = new Options();
     options.setVirtualThreads(virtualApplication);
+
     return RequestTracingExample.application(telemetry, workers, options)
         .onRequestHeaders(
             (request, response) ->

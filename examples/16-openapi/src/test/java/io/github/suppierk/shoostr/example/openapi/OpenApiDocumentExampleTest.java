@@ -13,6 +13,7 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import io.swagger.v3.core.util.Json31;
 import io.swagger.v3.oas.models.media.JsonSchema;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Set;
@@ -28,11 +29,16 @@ class OpenApiDocumentExampleTest {
 
     try (var test = TestServer.start(OpenApiDocumentExample.application())) {
       var response = test.send(request -> request.path("/openapi.json"));
+
       assertEquals(200, response.statusCode());
+
       var document = Json31.mapper().readTree(response.body());
+
       assertEquals("3.1.1", document.path("openapi").asString());
       assertEquals("Items API", document.path("info").path("title").asString());
+
       var operation = document.path("paths").path("/api/items/{id}").path("get");
+
       assertEquals("findItem", operation.path("operationId").asString());
       assertEquals("Find an item", operation.path("summary").asString());
       assertEquals("id", operation.path("parameters").get(0).path("name").asString());
@@ -57,7 +63,9 @@ class OpenApiDocumentExampleTest {
               .path("name")
               .path("type")
               .asString());
+
       var item = test.send(request -> request.path("/api/items/42"));
+
       assertEquals(200, item.statusCode());
       assertEquals("Item 42", Json31.mapper().readTree(item.body()).path("name").asString());
     }
@@ -67,20 +75,15 @@ class OpenApiDocumentExampleTest {
   void documentsAndHandlesAnExplicitJsonRequestBody() throws Exception {
 
     try (var test = TestServer.start(OpenApiDocumentExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .method("POST")
-                      .path("/api/items")
-                      .header("Content-Type", "application/json")
-                      .body("{\"name\":\"Notebook\"}".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForDocumentsAndHandlesAnExplicitJsonRequestBody(test);
+
       assertEquals(201, response.statusCode());
       assertEquals("Notebook", Json31.mapper().readTree(response.body()).path("name").asString());
+
       var document =
           Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
       var operation = document.path("paths").path("/api/items").path("post");
+
       assertTrue(operation.path("requestBody").path("required").asBoolean());
       assertEquals(
           "#/components/schemas/Item",
@@ -94,6 +97,18 @@ class OpenApiDocumentExampleTest {
       assertEquals(
           "Created", operation.path("responses").path("201").path("description").asString());
     }
+  }
+
+  private HttpResponse<String> sendResponseForDocumentsAndHandlesAnExplicitJsonRequestBody(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .method("POST")
+                .path("/api/items")
+                .header("Content-Type", "application/json")
+                .body("{\"name\":\"Notebook\"}".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -127,10 +142,13 @@ class OpenApiDocumentExampleTest {
 
     try (var test = TestServer.start(OpenApiDocumentExample.application())) {
       var response = test.send(request -> request.path("/internal-openapi.json"));
+
       assertEquals(200, response.statusCode());
+
       var internal = Json31.mapper().readTree(response.body());
       var external =
           Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
+
       assertEquals("Operations API", internal.path("info").path("title").asString());
       assertTrue(internal.path("paths").has("/operations/status"));
       assertFalse(internal.path("paths").has("/api/items/{id}"));
@@ -159,6 +177,7 @@ class OpenApiDocumentExampleTest {
             .when(
                 () -> {
                   checks.incrementAndGet();
+
                   return false;
                 },
                 preview ->
@@ -173,15 +192,20 @@ class OpenApiDocumentExampleTest {
 
         try (var test = TestServer.start(app)) {
           var first = test.send(request -> request.path("/openapi.json"));
+
           assertEquals(200, first.statusCode());
+
           var document = Json31.mapper().readTree(first.body());
+
           assertTrue(document.path("paths").has("/preview"));
           assertEquals(
               "object",
               document.path("components").path("schemas").path("Snapshot").path("type").asString());
           assertEquals(0, checks.get());
           assertEquals(0, invocations.get());
+
           var configuration = retained.get();
+
           assertThrows(IllegalStateException.class, () -> configuration.summary("Late change"));
           assertArrayEquals(
               first.body(), test.send(request -> request.path("/openapi.json")).body());

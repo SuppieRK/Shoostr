@@ -9,6 +9,7 @@ import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -73,6 +74,7 @@ class HttpCompatibilityTest {
               request ->
                   request.path("/dispatch").timeout(Duration.ofSeconds(3)).method(method.value()),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals(method.value(), response.headers().firstValue("X-Handled-Method").orElseThrow());
       assertEquals(method == HttpMethods.HEAD ? "" : method.value(), response.body());
@@ -90,6 +92,7 @@ class HttpCompatibilityTest {
               request ->
                   request.path(path + "?ignored=/another/path").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals(path, response.body());
       assertEquals(
@@ -115,6 +118,7 @@ class HttpCompatibilityTest {
           test.send(
               request -> request.path("/values/" + raw).timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals(expected, response.body());
       assertEquals(
@@ -157,28 +161,32 @@ class HttpCompatibilityTest {
             "/body",
             (request, response) -> {
               var first = request.bodyBytes();
+
               assertArrayEquals(expected, first);
+
               if (first.length > 0) {
                 first[0] ^= 0x7f;
               }
 
               assertArrayEquals(expected, request.bodyBytes());
               assertEquals(text, request.bodyText());
+
               response.body("application/octet-stream", request.bodyBytes());
             });
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/body")
-                      .timeout(Duration.ofSeconds(3))
-                      .method("POST")
-                      .body(expected));
+      var response = sendResponseForCachesRequestBytesWithoutExposingMutableStorage(test, expected);
+
       assertEquals(200, response.statusCode());
       assertArrayEquals(expected, response.body());
     }
+  }
+
+  private HttpResponse<byte[]> sendResponseForCachesRequestBytesWithoutExposingMutableStorage(
+      TestServer test, byte[] expected) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/body").timeout(Duration.ofSeconds(3)).method("POST").body(expected));
   }
 
   @ParameterizedTest
@@ -205,7 +213,9 @@ class HttpCompatibilityTest {
                 : HttpRequest.BodyPublishers.ofByteArray(bytes);
         var response =
             client.send(request().POST(publisher).build(), HttpResponse.BodyHandlers.ofByteArray());
+
         assertEquals(bytes.length == 16 ? 200 : 413, response.statusCode());
+
         if (bytes.length == 16) {
           assertArrayEquals(atLimit, response.body());
         }
@@ -221,6 +231,7 @@ class HttpCompatibilityTest {
             "/headers",
             (request, response) -> {
               assertTrue(request.header("X-Absent").isEmpty());
+
               response
                   .setHeader("X-Result", "obsolete")
                   .setHeader("x-result", request.header("x-ReQuEsT-vAlUe").orElseThrow())
@@ -229,20 +240,22 @@ class HttpCompatibilityTest {
             });
 
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/headers")
-                      .timeout(Duration.ofSeconds(3))
-                      .header(spelling, "current"),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForReadsAndReplacesHeadersCaseInsensitively(test, spelling);
+
       assertEquals(201, response.statusCode());
       assertEquals(List.of("current"), response.headers().allValues("X-Result"));
       assertEquals("café", response.body());
       assertEquals(
           5, response.headers().firstValueAsLong(HttpHeaders.CONTENT_LENGTH.value()).orElseThrow());
     }
+  }
+
+  private HttpResponse<String> sendResponseForReadsAndReplacesHeadersCaseInsensitively(
+      TestServer test, String spelling) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/headers").timeout(Duration.ofSeconds(3)).header(spelling, "current"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -259,17 +272,20 @@ class HttpCompatibilityTest {
     try (var test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
 
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/tenant")
-                      .timeout(Duration.ofSeconds(3))
-                      .header("x-tenant", "revolut"),
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForCarriesAnApplicationDefinedHeaderThroughRequestAndResponse(test);
 
       assertEquals("revolut", response.headers().firstValue(tenant.value()).orElseThrow());
       assertEquals("ok", response.body());
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForCarriesAnApplicationDefinedHeaderThroughRequestAndResponse(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/tenant").timeout(Duration.ofSeconds(3)).header("x-tenant", "revolut"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   private HttpRequest.Builder request() {

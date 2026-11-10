@@ -69,6 +69,7 @@ class ExtensionOwnershipTest {
 
         try (Closeable rejectedCleanup1 = rejected::close) {
           owner.withExtension(foreign);
+
           assertThrows(
               IllegalStateException.class,
               () -> rejected.withExtension(first).withExtension(foreign).withExtension(unclaimed));
@@ -99,24 +100,7 @@ class ExtensionOwnershipTest {
     var foreign = new OwnedCapability();
     var setups = new AtomicInteger();
     var closes = new AtomicInteger();
-    ApplicationExtension<Object> broken =
-        new ApplicationExtension<Object>() {
-          @Override
-          public Object configure(Lifecycle lifecycle, Object inherited) {
-            return this;
-          }
-
-          @Override
-          public void install(ApplicationCallbacks callbacks) {
-            setups.incrementAndGet();
-            throw new IllegalArgumentException("setup failed");
-          }
-
-          @Override
-          public void close() {
-            closes.incrementAndGet();
-          }
-        };
+    ApplicationExtension<Object> broken = setupFailingProvider(setups, closes);
 
     {
       var owner = new Shoostr();
@@ -126,6 +110,7 @@ class ExtensionOwnershipTest {
 
         try (Closeable rejectedCleanup2 = rejected::close) {
           owner.withExtension(foreign);
+
           assertThrows(
               IllegalArgumentException.class,
               () -> rejected.withExtension(broken).withExtension(foreign));
@@ -137,6 +122,27 @@ class ExtensionOwnershipTest {
     }
 
     assertEquals(1, foreign.closes.get());
+  }
+
+  private ApplicationExtension<Object> setupFailingProvider(
+      AtomicInteger setups, AtomicInteger closes) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void install(ApplicationCallbacks callbacks) {
+        setups.incrementAndGet();
+        throw new IllegalArgumentException("setup failed");
+      }
+
+      @Override
+      public void close() {
+        closes.incrementAndGet();
+      }
+    };
   }
 
   @Test
@@ -199,9 +205,11 @@ class ExtensionOwnershipTest {
           }
 
           var firstWon = firstAttempt.get(5, TimeUnit.SECONDS);
+
           assertEquals(!firstWon, secondAttempt.get(5, TimeUnit.SECONDS));
+
           var owner = firstWon ? first : second;
-          owner.routes().get("/", (ignored2, response) -> response.text("ok"));
+          owner.routes().get("/", (ignoredRequest, response) -> response.text("ok"));
 
           try (var test = TestServer.start(owner)) {
             assertEquals(200, test.send(request -> request.path("/")).statusCode());
@@ -224,7 +232,9 @@ class ExtensionOwnershipTest {
       try (Closeable appCleanup1 = app::close) {
         assertThrows(
             NullPointerException.class, () -> app.withExtension((ApplicationExtension<?>) null));
+
         app.withExtension(capability);
+
         assertThrows(IllegalArgumentException.class, () -> app.withExtension(capability));
       }
     }
@@ -248,6 +258,7 @@ class ExtensionOwnershipTest {
 
         try (Closeable rejectedCleanup3 = rejected::close) {
           owner.withExtension(authentication);
+
           assertThrows(
               IllegalStateException.class,
               () -> rejected.withExtension(prefixAuthentication).withExtension(authentication));
@@ -308,23 +319,7 @@ class ExtensionOwnershipTest {
     var prefix = new OwnedCapability();
     var unclaimed = new OwnedCapability();
     var rejectedCloses = new AtomicInteger();
-    ApplicationExtension<Object> rejected =
-        new ApplicationExtension<Object>() {
-          @Override
-          public Object configure(Lifecycle lifecycle, Object inherited) {
-            return this;
-          }
-
-          @Override
-          public void claimOwnership() {
-            throw new LinkageError("ownership failed");
-          }
-
-          @Override
-          public void close() {
-            rejectedCloses.incrementAndGet();
-          }
-        };
+    ApplicationExtension<Object> rejected = claimFailingProvider(rejectedCloses);
 
     {
       var app = new Shoostr();
@@ -341,6 +336,25 @@ class ExtensionOwnershipTest {
     }
 
     assertEquals(1, prefix.closes.get());
+  }
+
+  private ApplicationExtension<Object> claimFailingProvider(AtomicInteger rejectedCloses) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void claimOwnership() {
+        throw new LinkageError("ownership failed");
+      }
+
+      @Override
+      public void close() {
+        rejectedCloses.incrementAndGet();
+      }
+    };
   }
 
   @Test
@@ -364,7 +378,9 @@ class ExtensionOwnershipTest {
         }
         ApplicationExtension<Object> first = new ReentrantInstallation();
         app.withExtension(first);
-        app.withExtension(nested).routes().get("/", (ignored9, response) -> response.text("ok"));
+        app.withExtension(nested)
+            .routes()
+            .get("/", (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/")).statusCode());
@@ -397,7 +413,9 @@ class ExtensionOwnershipTest {
         }
         ApplicationExtension<Object> first = new ReentrantAuthentication();
         app.withExtension(first);
-        app.withExtension(nested).routes().get("/", (ignored10, response) -> response.text("ok"));
+        app.withExtension(nested)
+            .routes()
+            .get("/", (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/")).statusCode());
@@ -426,7 +444,9 @@ class ExtensionOwnershipTest {
           }
         }
         ApplicationExtension<Object> first = new ReentrantStartup();
-        app.withExtension(first).routes().get("/", (ignored11, response) -> response.text("ok"));
+        app.withExtension(first)
+            .routes()
+            .get("/", (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/")).statusCode());
@@ -443,23 +463,7 @@ class ExtensionOwnershipTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup9 = app::close) {
-        ApplicationExtension<Object> capability =
-            new ApplicationExtension<Object>() {
-              @Override
-              public Object configure(Lifecycle lifecycle, Object inherited) {
-                return this;
-              }
-
-              @Override
-              public void claimOwnership() {
-                assertDoesNotThrow(app::close);
-              }
-
-              @Override
-              public void close() {
-                closes.incrementAndGet();
-              }
-            };
+        ApplicationExtension<Object> capability = closingClaimProvider(app, closes);
 
         assertThrows(IllegalStateException.class, () -> app.withExtension(capability));
         assertEquals(1, closes.get());
@@ -467,6 +471,25 @@ class ExtensionOwnershipTest {
     }
 
     assertEquals(1, closes.get());
+  }
+
+  private ApplicationExtension<Object> closingClaimProvider(Shoostr app, AtomicInteger closes) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void claimOwnership() {
+        assertDoesNotThrow(app::close);
+      }
+
+      @Override
+      public void close() {
+        closes.incrementAndGet();
+      }
+    };
   }
 
   private static AuthenticationExtension owningAuthenticator(OwnedCapability capability) {
@@ -492,12 +515,14 @@ class ExtensionOwnershipTest {
       Shoostr app, OwnedCapability capability, CountDownLatch ready, CountDownLatch release)
       throws InterruptedException {
     ready.countDown();
+
     assertTrue(release.await(5, TimeUnit.SECONDS));
 
     try {
       app.withExtension(capability);
+
       return true;
-    } catch (IllegalStateException ignored12) {
+    } catch (IllegalStateException ignoredFailure) {
       return false;
     }
   }
@@ -555,7 +580,7 @@ class ExtensionOwnershipTest {
     @Override
     public void install(ApplicationCallbacks callbacks) {
       callbacks.beforeRouteHandler(
-          (ignored13, ignored14) -> {
+          (ignoredRequest, ignoredResponse) -> {
             if (closes.get() != 0) {
               throw new IllegalStateException("The owned resource is closed");
             }

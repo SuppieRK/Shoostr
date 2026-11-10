@@ -32,13 +32,16 @@ class HttpExceptionTest {
     second.setStackTrace(first.getStackTrace());
 
     assertNotEquals(first, second);
+
     first.addSuppressed(second);
+
     assertSame(second, first.getSuppressed()[0]);
   }
 
   @Test
   void preservesAuthorizationDenialChallengeAndForbiddenStatus() {
     var exception = new AuthorizationDeniedException("Bearer error=\"insufficient_scope\"");
+
     assertEquals("Bearer error=\"insufficient_scope\"", exception.challenge());
     assertSame(HttpStatusCodes.FORBIDDEN, exception.statusCode());
     assertInstanceOf(ForbiddenException.class, exception);
@@ -67,6 +70,7 @@ class HttpExceptionTest {
   @ValueSource(strings = {"Basic realm=\"api\"", "Basic realm=\"api~\""})
   void preservesTheAuthenticationChallengeAndUnauthorizedStatus(String challenge) {
     var exception = new AuthenticationRequiredException(challenge);
+
     assertEquals(challenge, exception.challenge());
     assertSame(HttpStatusCodes.UNAUTHORIZED, exception.statusCode());
   }
@@ -77,6 +81,7 @@ class HttpExceptionTest {
       HttpStatusCodes status, Class<? extends HttpException> type)
       throws ReflectiveOperationException {
     var exception = type.getConstructor().newInstance();
+
     assertSame(status, exception.statusCode());
     assertEquals(status.reasonPhrase(), exception.getMessage());
     assertNull(exception.getCause());
@@ -85,8 +90,10 @@ class HttpExceptionTest {
         status.isClientError() ? HttpClientException.class : HttpServerException.class,
         type.getSuperclass());
     assertTrue(exception.getStackTrace().length > 0);
+
     var suppressed = new IllegalStateException("cleanup failure");
     exception.addSuppressed(suppressed);
+
     assertSame(suppressed, exception.getSuppressed()[0]);
   }
 
@@ -97,23 +104,32 @@ class HttpExceptionTest {
       throws ReflectiveOperationException {
     var cause = new IllegalArgumentException("internal details");
     var withMessage = type.getConstructor(String.class).newInstance("diagnostic message");
+
     assertSame(status, withMessage.statusCode());
     assertEquals("diagnostic message", withMessage.getMessage());
     assertNull(withMessage.getCause());
+
     var withCause = type.getConstructor(Throwable.class).newInstance(cause);
+
     assertSame(status, withCause.statusCode());
     assertEquals(status.reasonPhrase(), withCause.getMessage());
     assertSame(cause, withCause.getCause());
+
     var withBoth =
         type.getConstructor(String.class, Throwable.class).newInstance("diagnostic message", cause);
+
     assertSame(status, withBoth.statusCode());
     assertEquals("diagnostic message", withBoth.getMessage());
     assertSame(cause, withBoth.getCause());
+
     var withNullMessage =
         type.getConstructor(String.class, Throwable.class).newInstance(null, cause);
+
     assertEquals(status.reasonPhrase(), withNullMessage.getMessage());
     assertSame(cause, withNullMessage.getCause());
+
     var withEmptyMessage = type.getConstructor(String.class).newInstance("");
+
     assertEquals("", withEmptyMessage.getMessage());
   }
 
@@ -147,6 +163,7 @@ class HttpExceptionTest {
             .filter(HttpStatusCodes::isError)
             .collect(Collectors.toSet());
     var actual = errors().map(arguments -> (HttpStatusCodes) arguments.get()[0]).toList();
+
     assertEquals(expected.size(), actual.size());
     assertEquals(expected, new HashSet<>(actual));
   }

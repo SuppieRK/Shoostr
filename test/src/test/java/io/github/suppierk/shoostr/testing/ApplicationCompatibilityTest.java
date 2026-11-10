@@ -22,41 +22,54 @@ class ApplicationCompatibilityTest {
   void preservesInstalledExtensionAndInheritedAuthenticationBehavior() throws Exception {
     @SuppressWarnings("java:S9357") // Extension has no abstract method: it cannot be a lambda.
     var extension =
-        new ApplicationExtension<Object>() {
-          @Override
-          public Object configure(Lifecycle lifecycle, Object inherited) {
-            return this;
-          }
-
-          @Override
-          public void install(ApplicationCallbacks callbacks) {
-            callbacks.beforeRouteHandler(
-                (ignored, response) -> response.setHeader("X-App-Extension", "installed"));
-          }
-        };
+        createExtensionForPreservesInstalledExtensionAndInheritedAuthenticationBehavior();
     var authentication =
-        new AuthenticationExtension() {
-          @Override
-          public void handle(Request request, Response response) {
-            response.setHeader("X-Route-Extension", "selected");
-          }
-        };
+        createAuthenticationForPreservesInstalledExtensionAndInheritedAuthenticationBehavior();
     var app = new Shoostr().withExtension(extension);
     app.routes()
         .path(
             "/api",
-            routes -> routes.get("/value", (ignored2, response) -> response.text("existing")),
+            routes -> routes.get("/value", (ignoredRequest, response) -> response.text("existing")),
             extensions -> extensions.withExtension(authentication));
-    app.routes().get("/plain", (ignored3, response) -> response.text("plain"));
+    app.routes().get("/plain", (ignoredRequest, response) -> response.text("plain"));
 
     try (var test = TestServer.start(app)) {
       var selected = test.send(request -> request.path("/api/value"));
+
       assertEquals("installed", selected.headers().firstValue("X-App-Extension").orElseThrow());
       assertEquals("selected", selected.headers().firstValue("X-Route-Extension").orElseThrow());
+
       var plain = test.send(request -> request.path("/plain"));
+
       assertEquals("installed", plain.headers().firstValue("X-App-Extension").orElseThrow());
       assertTrue(plain.headers().firstValue("X-Route-Extension").isEmpty());
     }
+  }
+
+  private ApplicationExtension<Object>
+      createExtensionForPreservesInstalledExtensionAndInheritedAuthenticationBehavior() {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void install(ApplicationCallbacks callbacks) {
+        callbacks.beforeRouteHandler(
+            (ignored, response) -> response.setHeader("X-App-Extension", "installed"));
+      }
+    };
+  }
+
+  private AuthenticationExtension
+      createAuthenticationForPreservesInstalledExtensionAndInheritedAuthenticationBehavior() {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        response.setHeader("X-Route-Extension", "selected");
+      }
+    };
   }
 
   @Test
@@ -64,14 +77,16 @@ class ApplicationCompatibilityTest {
     var value = new AtomicReference<>("first");
     Supplier<String> repository = value::get;
     var app = new Shoostr();
-    app.routes().get("/value", (ignored4, response) -> response.text(repository.get()));
+    app.routes().get("/value", (ignoredRequest, response) -> response.text(repository.get()));
 
     try (var test = TestServer.start(app)) {
       assertEquals(
           "first",
           test.send(request -> request.path("/value"), HttpResponse.BodyHandlers.ofString())
               .body());
+
       value.set("second");
+
       assertEquals(
           "second",
           test.send(request -> request.path("/value"), HttpResponse.BodyHandlers.ofString())

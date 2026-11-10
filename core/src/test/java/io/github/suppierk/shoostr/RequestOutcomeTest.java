@@ -12,24 +12,25 @@ import org.junit.jupiter.params.provider.ValueSource;
 class RequestOutcomeTest {
   @Test
   void satisfiesEqualsAndHashCodeContract() {
-    var first =
-        new RequestOutcome(
-            "GET",
-            "/first",
-            200,
-            100,
-            new IllegalStateException("first"),
-            new IOException("first"));
-    var second =
-        new RequestOutcome(
-            "POST",
-            "/second",
-            201,
-            200,
-            new IllegalStateException("second"),
-            new IOException("second"));
+    var first = createFirstForSatisfiesEqualsAndHashCodeContract();
+    var second = createSecondForSatisfiesEqualsAndHashCodeContract();
 
     EqualsVerifier.forExamples(first, second).withNonnullFields("method").verify();
+  }
+
+  private RequestOutcome createFirstForSatisfiesEqualsAndHashCodeContract() {
+    return new RequestOutcome(
+        "GET", "/first", 200, 100, new IllegalStateException("first"), new IOException("first"));
+  }
+
+  private RequestOutcome createSecondForSatisfiesEqualsAndHashCodeContract() {
+    return new RequestOutcome(
+        "POST",
+        "/second",
+        201,
+        200,
+        new IllegalStateException("second"),
+        new IOException("second"));
   }
 
   @ParameterizedTest

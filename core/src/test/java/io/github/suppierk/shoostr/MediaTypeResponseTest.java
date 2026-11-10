@@ -9,12 +9,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
@@ -41,24 +44,21 @@ class MediaTypeResponseTest {
                 "/null-additional",
                 (ignored, response) -> {
                   var selected = response.negotiate(MediaType.APPLICATION_JSON, (MediaType[]) null);
+
                   assertSame(MediaType.APPLICATION_JSON, selected);
+
                   response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
                 });
 
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request -> {
-                    request.path("/null-additional").timeout(Duration.ofSeconds(3));
-                    if (!accept.isEmpty()) {
-                      request.header("Accept", accept);
-                    }
-                  },
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForTreatsNullAdditionalCandidatesAsOnlyTheFirstCandidate(test, accept);
+
           assertEquals(status, result.statusCode());
           assertEquals(body, result.body());
           assertEquals(vary, result.headers().allValues("Vary"));
+
           if (status == 200) {
             assertEquals(
                 "application/json", result.headers().firstValue("Content-Type").orElseThrow());
@@ -66,6 +66,18 @@ class MediaTypeResponseTest {
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForTreatsNullAdditionalCandidatesAsOnlyTheFirstCandidate(
+      TestServer test, String accept) throws IOException, InterruptedException {
+    return test.send(
+        request -> {
+          request.path("/null-additional").timeout(Duration.ofSeconds(3));
+          if (!accept.isEmpty()) {
+            request.header("Accept", accept);
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -78,12 +90,13 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/invalid-candidates",
-                (ignored2, response) -> {
+                (ignoredRequest, response) -> {
                   response
                       .status(202)
                       .setHeader("Vary", "Origin")
                       .body(
                           MediaType.APPLICATION_JSON, "\"kept\"".getBytes(StandardCharsets.UTF_8));
+
                   assertThrows(NullPointerException.class, () -> response.negotiate(null));
                   assertThrows(
                       NullPointerException.class,
@@ -97,6 +110,7 @@ class MediaTypeResponseTest {
               test.send(
                   request -> request.path("/invalid-candidates").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(202, result.statusCode());
           assertEquals(
               "application/json", result.headers().firstValue("Content-Type").orElseThrow());
@@ -119,7 +133,7 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/concurrent",
-                (ignored3, response) -> {
+                (ignoredRequest, response) -> {
                   ready.countDown();
                   if (!ready.await(3, TimeUnit.SECONDS)) {
                     throw new IllegalStateException("Requests did not overlap");
@@ -132,26 +146,8 @@ class MediaTypeResponseTest {
 
         try (var test = TestServer.start(app)) {
 
-          var json =
-              testRequests.submit(
-                  () ->
-                      test.send(
-                          request ->
-                              request
-                                  .path("/concurrent")
-                                  .header("Accept", "application/json")
-                                  .timeout(Duration.ofSeconds(5)),
-                          HttpResponse.BodyHandlers.ofString()));
-          var text =
-              testRequests.submit(
-                  () ->
-                      test.send(
-                          request ->
-                              request
-                                  .path("/concurrent")
-                                  .header("Accept", "text/plain")
-                                  .timeout(Duration.ofSeconds(5)),
-                          HttpResponse.BodyHandlers.ofString()));
+          var json = submitJsonForKeepsConcurrentRequestNegotiationIndependent(testRequests, test);
+          var text = submitTextForKeepsConcurrentRequestNegotiationIndependent(testRequests, test);
           var jsonResult = json.get(5, TimeUnit.SECONDS);
           var textResult = text.get(5, TimeUnit.SECONDS);
 
@@ -167,6 +163,32 @@ class MediaTypeResponseTest {
     }
   }
 
+  private Future<HttpResponse<String>> submitJsonForKeepsConcurrentRequestNegotiationIndependent(
+      ExecutorService testRequests, TestServer test) {
+    return testRequests.submit(
+        () ->
+            test.send(
+                request ->
+                    request
+                        .path("/concurrent")
+                        .header("Accept", "application/json")
+                        .timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString()));
+  }
+
+  private Future<HttpResponse<String>> submitTextForKeepsConcurrentRequestNegotiationIndependent(
+      ExecutorService testRequests, TestServer test) {
+    return testRequests.submit(
+        () ->
+            test.send(
+                request ->
+                    request
+                        .path("/concurrent")
+                        .header("Accept", "text/plain")
+                        .timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofString()));
+  }
+
   @Test
   void negotiatesUsingItsBoundRequestHeaderSnapshot() throws Exception {
     var transportHeaders = new AtomicReference<HttpFields.Mutable>();
@@ -178,9 +200,10 @@ class MediaTypeResponseTest {
         app.modifyHttpConfiguration(
             configuration ->
                 configuration.addCustomizer(
-                    (nativeRequest, ignored4) -> {
+                    (nativeRequest, ignoredMutable) -> {
                       var fields = HttpFields.build(nativeRequest.getHeaders());
                       transportHeaders.set(fields);
+
                       return new Wrapper(nativeRequest) {
                         @Override
                         public HttpFields getHeaders() {
@@ -189,25 +212,19 @@ class MediaTypeResponseTest {
                       };
                     }));
         app.onRequestHeaders(
-            (ignored5, ignored6) -> transportHeaders.get().put("Accept", "text/plain"));
+            (ignoredRequest, ignoredResponse) ->
+                transportHeaders.get().put("Accept", "text/plain"));
         app.routes()
             .get(
                 "/bound",
-                (ignored7, response) -> {
+                (ignoredRequest, response) -> {
                   var selected =
                       response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
                   response.body(selected, selected.value().getBytes(StandardCharsets.UTF_8));
                 });
 
         try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/bound")
-                          .header("Accept", "application/json")
-                          .timeout(Duration.ofSeconds(3)),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForNegotiatesUsingItsBoundRequestHeaderSnapshot(test);
 
           assertEquals(200, result.statusCode());
           assertEquals("application/json", result.body());
@@ -217,6 +234,17 @@ class MediaTypeResponseTest {
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForNegotiatesUsingItsBoundRequestHeaderSnapshot(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/bound")
+                .header("Accept", "application/json")
+                .timeout(Duration.ofSeconds(3)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -230,7 +258,7 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/bytes",
-                (ignored8, response) -> {
+                (ignoredRequest, response) -> {
                   var type = response.negotiate(latin, MediaType.APPLICATION_JSON);
                   var bytes = type.equals(latin) ? new byte[] {(byte) 0xe9} : new byte[] {'{', '}'};
                   response.body(type, bytes);
@@ -243,6 +271,7 @@ class MediaTypeResponseTest {
               test.send(
                   request ->
                       request.path("/bytes").header("Accept", "text/plain; charset=iso-8859-1"));
+
           assertEquals(200, result.statusCode());
           assertEquals(
               "text/plain; charset=ISO-8859-1",
@@ -262,7 +291,7 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/merged",
-                (ignored9, response) -> {
+                (ignoredRequest, response) -> {
                   response.addHeader("Vary", "Origin, aCcEpT");
                   response.addHeader("Vary", "User-Agent");
                   var type = response.negotiate(MediaType.APPLICATION_JSON);
@@ -271,7 +300,7 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/wildcard",
-                (ignored10, response) -> {
+                (ignoredRequest, response) -> {
                   response.setHeader("Vary", "*");
                   var type = response.negotiate(MediaType.APPLICATION_JSON);
                   response.body(type, new byte[] {1});
@@ -286,6 +315,7 @@ class MediaTypeResponseTest {
               test.send(
                   request -> request.path("/wildcard").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.discarding());
+
           assertEquals(List.of("Origin, aCcEpT", "User-Agent"), merged.headers().allValues("Vary"));
           assertEquals(List.of("*"), wildcard.headers().allValues("Vary"));
         }
@@ -303,20 +333,25 @@ class MediaTypeResponseTest {
 
         try (var test = TestServer.start(app)) {
 
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/negotiated")
-                          .header("Accept", "application/json;q=0.1")
-                          .header("Accept", "text/plain"),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForReadsRepeatedAcceptFieldsAsOnePreferenceList(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("text/plain", result.body());
           assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForReadsRepeatedAcceptFieldsAsOnePreferenceList(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/negotiated")
+                .header("Accept", "application/json;q=0.1")
+                .header("Accept", "text/plain"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -333,6 +368,7 @@ class MediaTypeResponseTest {
               test.send(
                   request -> request.path("/negotiated").header("Accept", ", text/plain; ;, "),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("text/plain", result.body());
         }
@@ -355,6 +391,7 @@ class MediaTypeResponseTest {
               test.send(
                   request -> request.path("/negotiated").header("Accept", accept),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(406, result.statusCode());
           assertEquals("Accept", result.headers().firstValue("Vary").orElseThrow());
         }
@@ -373,16 +410,24 @@ class MediaTypeResponseTest {
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/negotiated")
-                          .header("Accept", "text/plain;q=0, text/*;charset=utf-8;q=1"),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForRejectsTheExactRepresentationWhenAWildcardWithParametersHasHigherQuality(
+                  test);
+
           assertEquals(406, result.statusCode());
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForRejectsTheExactRepresentationWhenAWildcardWithParametersHasHigherQuality(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/negotiated")
+                .header("Accept", "text/plain;q=0, text/*;charset=utf-8;q=1"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -396,16 +441,23 @@ class MediaTypeResponseTest {
         try (var test = TestServer.start(app)) {
 
           var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/negotiated")
-                          .header("Accept", "text/plain;q=1, text/*;charset=utf-8;q=0"),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForSelectsTheExactRepresentationOverAnExcludedWildcardWithParameters(test);
+
           assertEquals(200, result.statusCode());
         }
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendResultForSelectsTheExactRepresentationOverAnExcludedWildcardWithParameters(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/negotiated")
+                .header("Accept", "text/plain;q=1, text/*;charset=utf-8;q=0"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -418,18 +470,23 @@ class MediaTypeResponseTest {
 
         try (var test = TestServer.start(app)) {
 
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/negotiated")
-                          .header("Accept", "application/json, text/plain;note=\"a\tb\""),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForPermitsTabsInsideQuotedParameters(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("application/json", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForPermitsTabsInsideQuotedParameters(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/negotiated")
+                .header("Accept", "application/json, text/plain;note=\"a\tb\""),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -448,6 +505,7 @@ class MediaTypeResponseTest {
               test.send(
                   request -> request.path("/negotiated").header("Accept", accept),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals(expected.value(), result.body());
           assertEquals(expected.value(), result.headers().firstValue("Content-Type").orElseThrow());
@@ -472,6 +530,7 @@ class MediaTypeResponseTest {
               test.send(
                   request -> request.path("/negotiated").header("Accept", accept),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(400, result.statusCode());
           assertEquals("Bad Request", result.body());
           assertTrue(result.headers().firstValue("Vary").isEmpty());
@@ -491,7 +550,7 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/stream",
-                (ignored11, response) -> {
+                (ignoredRequest, response) -> {
                   response.startStream(MediaType.TEXT_PLAIN).write("ready");
                   failure.set(
                       assertThrows(
@@ -504,6 +563,7 @@ class MediaTypeResponseTest {
               test.send(
                   request -> request.path("/stream").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("ready", result.body());
           assertEquals(IllegalStateException.class, failure.get().getClass());
@@ -521,7 +581,7 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/negotiated",
-                (ignored12, response) -> {
+                (ignoredRequest, response) -> {
                   response.addHeader("Vary", "Origin");
                   var type = response.negotiate(MediaType.APPLICATION_JSON);
                   response.body(type, new byte[] {1});
@@ -534,6 +594,7 @@ class MediaTypeResponseTest {
                   request ->
                       request.path("/negotiated").header("Accept", "*/*;q=1, application/json;q=0"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(406, result.statusCode());
           assertEquals("Not Acceptable", result.body());
           assertEquals(List.of("Origin", "Accept"), result.headers().allValues("Vary"));
@@ -551,20 +612,15 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/negotiated",
-                (ignored13, response) -> {
+                (ignoredRequest, response) -> {
                   var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
                   response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
                 });
 
         try (var test = TestServer.start(app)) {
 
-          var result =
-              test.send(
-                  request ->
-                      request
-                          .path("/negotiated")
-                          .header("Accept", "application/json;q=0.5, text/plain"),
-                  HttpResponse.BodyHandlers.ofString());
+          var result = sendResultForNegotiatesTheHighestWeightedAcceptCandidate(test);
+
           assertEquals(200, result.statusCode());
           assertEquals("text/plain", result.body());
           assertEquals("text/plain", result.headers().firstValue("Content-Type").orElseThrow());
@@ -572,6 +628,14 @@ class MediaTypeResponseTest {
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForNegotiatesTheHighestWeightedAcceptCandidate(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/negotiated").header("Accept", "application/json;q=0.5, text/plain"),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -583,7 +647,7 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/negotiated",
-                (ignored14, response) -> {
+                (ignoredRequest, response) -> {
                   var type = response.negotiate(MediaType.APPLICATION_JSON, MediaType.TEXT_PLAIN);
                   response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
                 });
@@ -593,6 +657,7 @@ class MediaTypeResponseTest {
               test.send(
                   request -> request.path("/negotiated").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("application/json", result.body());
           assertEquals(
@@ -612,7 +677,7 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/latin",
-                (ignored15, response) -> {
+                (ignoredRequest, response) -> {
                   var bytes = new byte[] {(byte) 0xe9};
                   response.body(
                       MediaType.TEXT_PLAIN.withCharset(StandardCharsets.ISO_8859_1), bytes);
@@ -621,6 +686,7 @@ class MediaTypeResponseTest {
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/latin").timeout(Duration.ofSeconds(3)));
+
           assertEquals(200, result.statusCode());
           assertEquals(
               "text/plain; charset=ISO-8859-1",
@@ -643,7 +709,7 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/stream",
-                (ignored16, response) -> {
+                (ignoredRequest, response) -> {
                   var stream =
                       response.startStream(
                           MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
@@ -664,17 +730,21 @@ class MediaTypeResponseTest {
                 test.send(
                     request -> request.path("/stream").timeout(Duration.ofSeconds(3)),
                     HttpResponse.BodyHandlers.ofInputStream());
+
             assertEquals(
                 "text/plain; charset=UTF-8",
                 result.headers().firstValue("Content-Type").orElseThrow());
 
             try (var input = result.body()) {
               assertEquals("first", new String(input.readNBytes(5), StandardCharsets.UTF_8));
+
               release.countDown();
+
               assertEquals("last", new String(input.readAllBytes(), StandardCharsets.UTF_8));
             }
 
             var closedStream = retained.get();
+
             assertThrows(IllegalStateException.class, () -> closedStream.write("late"));
           } finally {
             release.countDown();
@@ -693,11 +763,12 @@ class MediaTypeResponseTest {
         app.routes()
             .get(
                 "/custom",
-                (ignored17, response) ->
+                (ignoredRequest, response) ->
                     response.body("application/example; note=\"a b\"", new byte[] {1, 2, 3}));
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/custom").timeout(Duration.ofSeconds(3)));
+
           assertEquals(
               "application/example; note=\"a b\"",
               result.headers().firstValue("Content-Type").orElseThrow());

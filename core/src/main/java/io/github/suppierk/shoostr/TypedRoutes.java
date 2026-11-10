@@ -43,6 +43,7 @@ public final class TypedRoutes {
   public <E extends Exception> TypedRoutes exception(
       Class<E> type, ExceptionHandler<? super E> handler) {
     routes.exception(type, handler);
+
     return this;
   }
 
@@ -55,7 +56,9 @@ public final class TypedRoutes {
    */
   public TypedRoutes path(String path, Consumer<TypedRoutes> registration) {
     Objects.requireNonNull(registration);
+
     routes.path(path, child -> registration.accept(new TypedRoutes(child, codec)));
+
     return this;
   }
 
@@ -70,7 +73,9 @@ public final class TypedRoutes {
   public TypedRoutes path(
       String path, Consumer<TypedRoutes> registration, Consumer<Lifecycle> configuration) {
     Objects.requireNonNull(registration);
+
     routes.path(path, child -> registration.accept(new TypedRoutes(child, codec)), configuration);
+
     return this;
   }
 
@@ -83,7 +88,9 @@ public final class TypedRoutes {
    */
   public TypedRoutes when(BooleanSupplier condition, Consumer<TypedRoutes> registration) {
     Objects.requireNonNull(registration);
+
     routes.when(condition, child -> registration.accept(new TypedRoutes(child, codec)));
+
     return this;
   }
 
@@ -96,7 +103,9 @@ public final class TypedRoutes {
    */
   public TypedRoutes when(Predicate<Request> condition, Consumer<TypedRoutes> registration) {
     Objects.requireNonNull(registration);
+
     routes.when(condition, child -> registration.accept(new TypedRoutes(child, codec)));
+
     return this;
   }
 
@@ -109,6 +118,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes get(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.get(adapt(handler), configuration);
+
     return this;
   }
 
@@ -122,6 +132,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes get(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.get(path, adapt(handler), configuration);
+
     return this;
   }
 
@@ -133,6 +144,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes get(TypedHandler handler) {
     routes.get(adapt(handler));
+
     return this;
   }
 
@@ -145,6 +157,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes get(String path, TypedHandler handler) {
     routes.get(path, adapt(handler));
+
     return this;
   }
 
@@ -158,6 +171,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes get(String path, ExecutorService executor, TypedHandler handler) {
     routes.get(path, executor, adapt(handler));
+
     return this;
   }
 
@@ -176,6 +190,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.get(path, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -188,6 +203,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes get(ExecutorService executor, TypedHandler handler) {
     routes.get(executor, adapt(handler));
+
     return this;
   }
 
@@ -202,6 +218,7 @@ public final class TypedRoutes {
   public TypedRoutes get(
       ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.get(executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -214,6 +231,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes post(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.post(adapt(handler), configuration);
+
     return this;
   }
 
@@ -227,6 +245,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes post(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.post(path, adapt(handler), configuration);
+
     return this;
   }
 
@@ -238,6 +257,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes post(TypedHandler handler) {
     routes.post(adapt(handler));
+
     return this;
   }
 
@@ -250,6 +270,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes post(String path, TypedHandler handler) {
     routes.post(path, adapt(handler));
+
     return this;
   }
 
@@ -263,6 +284,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes post(String path, ExecutorService executor, TypedHandler handler) {
     routes.post(path, executor, adapt(handler));
+
     return this;
   }
 
@@ -281,6 +303,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.post(path, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -293,6 +316,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes post(ExecutorService executor, TypedHandler handler) {
     routes.post(executor, adapt(handler));
+
     return this;
   }
 
@@ -307,6 +331,7 @@ public final class TypedRoutes {
   public TypedRoutes post(
       ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.post(executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -319,6 +344,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes put(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.put(adapt(handler), configuration);
+
     return this;
   }
 
@@ -332,6 +358,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes put(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.put(path, adapt(handler), configuration);
+
     return this;
   }
 
@@ -343,6 +370,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes put(TypedHandler handler) {
     routes.put(adapt(handler));
+
     return this;
   }
 
@@ -355,6 +383,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes put(String path, TypedHandler handler) {
     routes.put(path, adapt(handler));
+
     return this;
   }
 
@@ -368,6 +397,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes put(String path, ExecutorService executor, TypedHandler handler) {
     routes.put(path, executor, adapt(handler));
+
     return this;
   }
 
@@ -386,6 +416,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.put(path, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -398,6 +429,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes put(ExecutorService executor, TypedHandler handler) {
     routes.put(executor, adapt(handler));
+
     return this;
   }
 
@@ -412,6 +444,7 @@ public final class TypedRoutes {
   public TypedRoutes put(
       ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.put(executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -424,6 +457,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes patch(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.patch(adapt(handler), configuration);
+
     return this;
   }
 
@@ -437,6 +471,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes patch(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.patch(path, adapt(handler), configuration);
+
     return this;
   }
 
@@ -448,6 +483,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes patch(TypedHandler handler) {
     routes.patch(adapt(handler));
+
     return this;
   }
 
@@ -460,6 +496,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes patch(String path, TypedHandler handler) {
     routes.patch(path, adapt(handler));
+
     return this;
   }
 
@@ -473,6 +510,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes patch(String path, ExecutorService executor, TypedHandler handler) {
     routes.patch(path, executor, adapt(handler));
+
     return this;
   }
 
@@ -491,6 +529,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.patch(path, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -503,6 +542,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes patch(ExecutorService executor, TypedHandler handler) {
     routes.patch(executor, adapt(handler));
+
     return this;
   }
 
@@ -517,6 +557,7 @@ public final class TypedRoutes {
   public TypedRoutes patch(
       ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.patch(executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -529,6 +570,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes delete(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.delete(adapt(handler), configuration);
+
     return this;
   }
 
@@ -542,6 +584,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes delete(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.delete(path, adapt(handler), configuration);
+
     return this;
   }
 
@@ -553,6 +596,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes delete(TypedHandler handler) {
     routes.delete(adapt(handler));
+
     return this;
   }
 
@@ -565,6 +609,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes delete(String path, TypedHandler handler) {
     routes.delete(path, adapt(handler));
+
     return this;
   }
 
@@ -578,6 +623,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes delete(String path, ExecutorService executor, TypedHandler handler) {
     routes.delete(path, executor, adapt(handler));
+
     return this;
   }
 
@@ -596,6 +642,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.delete(path, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -608,6 +655,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes delete(ExecutorService executor, TypedHandler handler) {
     routes.delete(executor, adapt(handler));
+
     return this;
   }
 
@@ -622,6 +670,7 @@ public final class TypedRoutes {
   public TypedRoutes delete(
       ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.delete(executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -634,6 +683,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes head(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.head(adapt(handler), configuration);
+
     return this;
   }
 
@@ -647,6 +697,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes head(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.head(path, adapt(handler), configuration);
+
     return this;
   }
 
@@ -658,6 +709,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes head(TypedHandler handler) {
     routes.head(adapt(handler));
+
     return this;
   }
 
@@ -670,6 +722,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes head(String path, TypedHandler handler) {
     routes.head(path, adapt(handler));
+
     return this;
   }
 
@@ -683,6 +736,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes head(String path, ExecutorService executor, TypedHandler handler) {
     routes.head(path, executor, adapt(handler));
+
     return this;
   }
 
@@ -701,6 +755,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.head(path, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -713,6 +768,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes head(ExecutorService executor, TypedHandler handler) {
     routes.head(executor, adapt(handler));
+
     return this;
   }
 
@@ -727,6 +783,7 @@ public final class TypedRoutes {
   public TypedRoutes head(
       ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.head(executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -739,6 +796,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes options(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.options(adapt(handler), configuration);
+
     return this;
   }
 
@@ -752,6 +810,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes options(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.options(path, adapt(handler), configuration);
+
     return this;
   }
 
@@ -763,6 +822,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes options(TypedHandler handler) {
     routes.options(adapt(handler));
+
     return this;
   }
 
@@ -775,6 +835,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes options(String path, TypedHandler handler) {
     routes.options(path, adapt(handler));
+
     return this;
   }
 
@@ -788,6 +849,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes options(String path, ExecutorService executor, TypedHandler handler) {
     routes.options(path, executor, adapt(handler));
+
     return this;
   }
 
@@ -806,6 +868,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.options(path, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -818,6 +881,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes options(ExecutorService executor, TypedHandler handler) {
     routes.options(executor, adapt(handler));
+
     return this;
   }
 
@@ -832,6 +896,7 @@ public final class TypedRoutes {
   public TypedRoutes options(
       ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.options(executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -845,6 +910,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes route(HttpMethods method, String path, TypedHandler handler) {
     routes.route(method, path, adapt(handler));
+
     return this;
   }
 
@@ -860,6 +926,7 @@ public final class TypedRoutes {
   public TypedRoutes route(
       HttpMethods method, String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.route(method, path, adapt(handler), configuration);
+
     return this;
   }
 
@@ -873,6 +940,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes route(String method, String path, TypedHandler handler) {
     routes.route(method, path, adapt(handler));
+
     return this;
   }
 
@@ -888,6 +956,7 @@ public final class TypedRoutes {
   public TypedRoutes route(
       String method, String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.route(method, path, adapt(handler), configuration);
+
     return this;
   }
 
@@ -902,6 +971,7 @@ public final class TypedRoutes {
   public TypedRoutes route(
       HttpMethods method, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.route(method, adapt(handler), configuration);
+
     return this;
   }
 
@@ -915,6 +985,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes route(String method, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.route(method, adapt(handler), configuration);
+
     return this;
   }
 
@@ -927,6 +998,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes route(HttpMethods method, TypedHandler handler) {
     routes.route(method, adapt(handler));
+
     return this;
   }
 
@@ -939,6 +1011,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes route(String method, TypedHandler handler) {
     routes.route(method, adapt(handler));
+
     return this;
   }
 
@@ -954,6 +1027,7 @@ public final class TypedRoutes {
   public TypedRoutes route(
       HttpMethods method, String path, ExecutorService executor, TypedHandler handler) {
     routes.route(method, path, executor, adapt(handler));
+
     return this;
   }
 
@@ -974,6 +1048,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.route(method, path, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -987,6 +1062,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes route(HttpMethods method, ExecutorService executor, TypedHandler handler) {
     routes.route(method, executor, adapt(handler));
+
     return this;
   }
 
@@ -1005,6 +1081,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.route(method, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -1020,6 +1097,7 @@ public final class TypedRoutes {
   public TypedRoutes route(
       String method, String path, ExecutorService executor, TypedHandler handler) {
     routes.route(method, path, executor, adapt(handler));
+
     return this;
   }
 
@@ -1040,6 +1118,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.route(method, path, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -1053,6 +1132,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes route(String method, ExecutorService executor, TypedHandler handler) {
     routes.route(method, executor, adapt(handler));
+
     return this;
   }
 
@@ -1071,6 +1151,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.route(method, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -1195,9 +1276,12 @@ public final class TypedRoutes {
       Consumer<TypedWebSocket> configuration,
       @Nullable Consumer<Lifecycle> extensions) {
     Objects.requireNonNull(configuration);
+
     var callbacks = new TypedWebSocket(codec);
+
     routes.registerManagedWebsocket(
         path, executor, callbacks, ignored -> configuration.accept(callbacks), extensions);
+
     return this;
   }
 
@@ -1210,6 +1294,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes sse(String path, TypedHandler handler) {
     routes.sse(path, adapt(handler));
+
     return this;
   }
 
@@ -1221,6 +1306,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes sse(TypedHandler handler) {
     routes.sse(adapt(handler));
+
     return this;
   }
 
@@ -1234,6 +1320,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes sse(String path, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.sse(path, adapt(handler), configuration);
+
     return this;
   }
 
@@ -1246,6 +1333,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes sse(TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.sse(adapt(handler), configuration);
+
     return this;
   }
 
@@ -1259,6 +1347,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes sse(String path, ExecutorService executor, TypedHandler handler) {
     routes.sse(path, executor, adapt(handler));
+
     return this;
   }
 
@@ -1277,6 +1366,7 @@ public final class TypedRoutes {
       TypedHandler handler,
       Consumer<Lifecycle> configuration) {
     routes.sse(path, executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -1289,6 +1379,7 @@ public final class TypedRoutes {
    */
   public TypedRoutes sse(ExecutorService executor, TypedHandler handler) {
     routes.sse(executor, adapt(handler));
+
     return this;
   }
 
@@ -1303,6 +1394,7 @@ public final class TypedRoutes {
   public TypedRoutes sse(
       ExecutorService executor, TypedHandler handler, Consumer<Lifecycle> configuration) {
     routes.sse(executor, adapt(handler), configuration);
+
     return this;
   }
 
@@ -1314,6 +1406,7 @@ public final class TypedRoutes {
    */
   private static Handler adapt(TypedHandler handler) {
     Objects.requireNonNull(handler);
+
     return (request, response) -> handler.handle((TypedRequest) request, (TypedResponse) response);
   }
 }

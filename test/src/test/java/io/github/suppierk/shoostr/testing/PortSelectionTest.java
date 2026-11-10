@@ -61,7 +61,7 @@ class PortSelectionTest {
       int maximum = available.getLocalPort();
       available.close();
       var app = new Shoostr();
-      app.routes().get("/value", (ignored2, response) -> response.text("range"));
+      app.routes().get("/value", (ignoredRequest, response) -> response.text("range"));
 
       try (var test = TestServer.startOnPortRange(app, minimum, maximum)) {
         assertEquals(maximum, test.baseUri().getPort());
@@ -104,20 +104,26 @@ class PortSelectionTest {
     }
 
     var app = new Shoostr();
-    app.routes().get("/value", (ignored3, response) -> response.text("custom client"));
-    app.routes().get("/redirect", (ignored4, response) -> response.redirect("/value"));
+    app.routes().get("/value", (ignoredRequest, response) -> response.text("custom client"));
+    app.routes().get("/redirect", (ignoredRequest, response) -> response.redirect("/value"));
 
     try (var test =
-        range
-            ? TestServer.startOnPortRange(
-                app, port, port, client -> client.followRedirects(HttpClient.Redirect.ALWAYS))
-            : TestServer.startOnPort(
-                app, port, client -> client.followRedirects(HttpClient.Redirect.ALWAYS))) {
+        openTestForAppliesClientCustomizationForBothNamedPortFactories(range, app, port)) {
       var response =
           test.send(request -> request.path("/redirect"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("custom client", response.body());
     }
+  }
+
+  private TestServer openTestForAppliesClientCustomizationForBothNamedPortFactories(
+      boolean range, Shoostr app, int port) throws Exception {
+    return range
+        ? TestServer.startOnPortRange(
+            app, port, port, client -> client.followRedirects(HttpClient.Redirect.ALWAYS))
+        : TestServer.startOnPort(
+            app, port, client -> client.followRedirects(HttpClient.Redirect.ALWAYS));
   }
 
   @Test
@@ -163,17 +169,7 @@ class PortSelectionTest {
   void keepsCleanupFailuresSuppressedOnTheCheckedBindFailure() throws Exception {
     var expected = new IOException("forced extension cleanup failure");
     var extension =
-        new ApplicationExtension<Object>() {
-          @Override
-          public Object configure(Lifecycle lifecycle, Object inherited) {
-            return this;
-          }
-
-          @Override
-          public void close() throws IOException {
-            throw expected;
-          }
-        };
+        createExtensionForKeepsCleanupFailuresSuppressedOnTheCheckedBindFailure(expected);
 
     try (var occupied = bind(0)) {
       var app = new Shoostr().withExtension(extension);
@@ -187,6 +183,22 @@ class PortSelectionTest {
         assertSame(expected, failure.getSuppressed()[0].getCause());
       }
     }
+  }
+
+  private ApplicationExtension<Object>
+      createExtensionForKeepsCleanupFailuresSuppressedOnTheCheckedBindFailure(
+          IOException expected) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void close() throws IOException {
+        throw expected;
+      }
+    };
   }
 
   @ParameterizedTest
@@ -209,7 +221,7 @@ class PortSelectionTest {
         assertThrows(
             BindException.class,
             () -> {
-              try (var ignored5 = bind(port)) {
+              try (var ignoredServerSocket = bind(port)) {
                 // A successful bind makes assertThrows fail after closing the unexpected socket.
               }
             });
@@ -232,8 +244,9 @@ class PortSelectionTest {
             IllegalArgumentException.class,
             () ->
                 TestServer.startOnPort(
-                    app, port, ignored6 -> fail("must reject before client setup")));
-        app.routes().get("/value", (ignored7, response) -> response.text("not closed"));
+                    app, port, ignoredClientBuilder -> fail("must reject before client setup")));
+
+        app.routes().get("/value", (ignoredRequest, response) -> response.text("not closed"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/value")).statusCode());
@@ -253,8 +266,12 @@ class PortSelectionTest {
             IllegalArgumentException.class,
             () ->
                 TestServer.startOnPortRange(
-                    app, minimum, maximum, ignored8 -> fail("must reject before client setup")));
-        app.routes().get("/value", (ignored9, response) -> response.text("not closed"));
+                    app,
+                    minimum,
+                    maximum,
+                    ignoredClientBuilder -> fail("must reject before client setup")));
+
+        app.routes().get("/value", (ignoredRequest, response) -> response.text("not closed"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/value")).statusCode());
@@ -284,17 +301,20 @@ class PortSelectionTest {
                       @Override
                       public void lifeCycleStarting(LifeCycle event) {
                         var listener = (ServerConnector) server.getConnectors()[0];
+
                         assertEquals(port, listener.getLocalPort());
                         assertThrows(
                             BindException.class,
                             () -> {
-                              try (var ignored10 = bind(port)) {
+                              try (var ignoredServerSocket = bind(port)) {
                                 // A successful bind makes assertThrows fail after socket cleanup.
                               }
                             });
+
                         throw expected;
                       }
                     }));
+
         assertSame(
             expected,
             assertThrows(
@@ -336,6 +356,7 @@ class PortSelectionTest {
     try {
       socket.setReuseAddress(false);
       socket.bind(new InetSocketAddress(InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), port));
+
       return socket;
     } catch (IOException failure) {
       try {

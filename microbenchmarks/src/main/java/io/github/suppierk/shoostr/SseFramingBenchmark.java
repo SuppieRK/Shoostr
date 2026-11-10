@@ -55,6 +55,7 @@ public class SseFramingBenchmark {
   @Setup
   public void setupTrial() {
     options = new Options();
+
     payload =
         "multiline".equals(lineShape)
             ? "x".repeat(payloadBytes / 2) + "\n" + "x".repeat(payloadBytes - payloadBytes / 2 - 1)
@@ -70,20 +71,21 @@ public class SseFramingBenchmark {
             Proxy.newProxyInstance(
                 SseFramingBenchmark.class.getClassLoader(),
                 new Class<?>[] {Request.class},
-                (ignored, method, ignored2) ->
+                (ignored, method, ignoredObjectValues) ->
                     switch (method.getName()) {
                       case "getMethod" -> "GET";
                       case "getHeaders" -> HttpFields.EMPTY;
                       case "addHttpStreamWrapper" -> null;
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
+
     headers = HttpFields.build();
     delegate =
         (org.eclipse.jetty.server.Response)
             Proxy.newProxyInstance(
                 SseFramingBenchmark.class.getClassLoader(),
                 new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (ignored3, method, arguments) ->
+                (ignoredObject, method, arguments) ->
                     switch (method.getName()) {
                       case "getStatus" -> 200;
                       case "getHeaders" -> headers;
@@ -114,6 +116,7 @@ public class SseFramingBenchmark {
   public int send() throws IOException {
     var response = freshResponse();
     var stream = response.startEventStream();
+
     if ("data".equals(eventShape)) {
       stream.send(payload);
     } else {
@@ -121,6 +124,7 @@ public class SseFramingBenchmark {
     }
 
     response.complete();
+
     return bytesWritten + checksum;
   }
 
@@ -134,6 +138,7 @@ public class SseFramingBenchmark {
     checksum = 0;
     writes = 0;
     headers.clear();
+
     return io.github.suppierk.shoostr.Request.create(
             nativeRequest, delegate, options, Callback.NOOP)
         .response();

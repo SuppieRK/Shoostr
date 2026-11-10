@@ -9,6 +9,7 @@ import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.RouteExtension;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.SpanKind;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
@@ -28,29 +29,7 @@ public final class OpenTelemetryTracing
     implements ApplicationExtension<OpenTelemetryTracing>,
         RouteExtension<OpenTelemetryTracing>,
         Function<Request, RequestObservation> {
-  private static final TextMapGetter<Request> HEADERS =
-      new TextMapGetter<>() {
-        /**
-         * Retains header enumeration for propagators that use the deprecated upstream method.
-         *
-         * <p>Deprecation is suppressed because this upstream callback still serves propagators that
-         * enumerate request headers.
-         *
-         * @param carrier request providing the header names
-         * @return incoming header names
-         */
-        @Override
-        @SuppressWarnings("deprecation")
-        public Iterable<String> keys(Request carrier) {
-          return carrier.headerMap().keySet();
-        }
-
-        /** {@inheritDoc} */
-        @Override
-        public @Nullable String get(@Nullable Request carrier, String key) {
-          return carrier == null ? null : carrier.header(key).orElse(null);
-        }
-      };
+  private static final TextMapGetter<Request> HEADERS = headerGetter();
 
   private final OpenTelemetry telemetry;
   private final Tracer tracer;
@@ -116,13 +95,7 @@ public final class OpenTelemetryTracing
     var parent =
         telemetry.getPropagators().getTextMapPropagator().extract(Context.root(), request, HEADERS);
     var method = HttpMethods.httpMethod(request.method()).map(HttpMethods::value).orElse("_OTHER");
-    var span =
-        tracer
-            .spanBuilder(method)
-            .setSpanKind(SpanKind.SERVER)
-            .setParent(parent)
-            .setAttribute("http.request.method", method)
-            .startSpan();
+    var span = startSpan(method, parent);
     var spanContext = parent.with(span);
     Scope scope;
 
@@ -171,6 +144,7 @@ public final class OpenTelemetryTracing
               || outcome.statusCode() >= 500
               || (outcome.statusCode() == 0 && outcome.applicationFailure() != null)) {
             span.setStatus(StatusCode.ERROR);
+
             String errorType;
             if (outcome.transportFailure() != null) {
               errorType = "transport";
@@ -185,6 +159,52 @@ public final class OpenTelemetryTracing
         } finally {
           span.end();
         }
+      }
+    };
+  }
+
+  /**
+   * Starts a server span with the incoming method and propagated parent context.
+   *
+   * @param method HTTP method token
+   * @param parent propagated parent context
+   * @return span completed by the request observation
+   */
+  private Span startSpan(String method, Context parent) {
+    return tracer
+        .spanBuilder(method)
+        .setSpanKind(SpanKind.SERVER)
+        .setParent(parent)
+        .setAttribute("http.request.method", method)
+        .startSpan();
+  }
+
+  /**
+   * Adapts immutable request headers to OpenTelemetry context propagation.
+   *
+   * @return request-header propagation reader
+   */
+  private static TextMapGetter<Request> headerGetter() {
+    return new TextMapGetter<>() {
+      /**
+       * Retains header enumeration for propagators that use the deprecated upstream method.
+       *
+       * <p>Deprecation is suppressed because this upstream callback still serves propagators that
+       * enumerate request headers.
+       *
+       * @param carrier request providing the header names
+       * @return incoming header names
+       */
+      @Override
+      @SuppressWarnings("deprecation")
+      public Iterable<String> keys(Request carrier) {
+        return carrier.headerMap().keySet();
+      }
+
+      /** {@inheritDoc} */
+      @Override
+      public @Nullable String get(@Nullable Request carrier, String key) {
+        return carrier == null ? null : carrier.header(key).orElse(null);
       }
     };
   }
@@ -208,6 +228,7 @@ public final class OpenTelemetryTracing
    */
   private static RequestObservation admissionContext() {
     var captured = Context.current();
+
     return new RequestObservation() {
       /**
        * Replaces unrelated worker context for this invocation only.

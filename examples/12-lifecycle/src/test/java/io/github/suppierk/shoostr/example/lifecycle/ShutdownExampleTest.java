@@ -18,6 +18,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -32,6 +33,7 @@ class ShutdownExampleTest {
     try (var test = TestServer.start(ShutdownExample.application(disposed::incrementAndGet))) {
       var response =
           test.send(request -> request.path("/ready"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("ready", response.body());
       assertEquals(0, disposed.get());
@@ -57,22 +59,32 @@ class ShutdownExampleTest {
                 ((ServerConnector) connector).setPort(0);
               }
             });
-        app.beforeRouteHandler((ignored, ignored2) -> entered.countDown());
+        app.beforeRouteHandler((ignored, ignoredResponse) -> entered.countDown());
+
         app.start();
+
         var response =
-            client.sendAsync(
-                HttpRequest.newBuilder(
-                        URI.create("http://127.0.0.1:" + app.port() + "/wait-for-shutdown"))
-                    .timeout(Duration.ofSeconds(10))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendResponseForSignalsWaitingRequestsBeforeDisposingTheirResources(client, app);
+
         assertTrue(entered.await(5, TimeUnit.SECONDS));
+
         app.close();
+
         assertEquals(200, response.get(5, TimeUnit.SECONDS).statusCode());
         assertEquals("stopping", response.get().body());
         assertEquals(1, disposed.get());
       }
     }
+  }
+
+  private CompletableFuture<HttpResponse<String>>
+      sendResponseForSignalsWaitingRequestsBeforeDisposingTheirResources(
+          HttpClient client, Shoostr app) {
+    return client.sendAsync(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/wait-for-shutdown"))
+            .timeout(Duration.ofSeconds(10))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -85,6 +97,7 @@ class ShutdownExampleTest {
     app.afterClose(() -> events.add("cleanup-2"));
     app.close();
     app.close();
+
     assertEquals(List.of("signal-1", "signal-2", "cleanup-2", "cleanup-1", "resource"), events);
     assertThrows(IllegalStateException.class, app::start);
   }
@@ -109,6 +122,7 @@ class ShutdownExampleTest {
                 throw new IllegalStateException("startup failed");
               }
             });
+
         assertThrows(IllegalStateException.class, app::start);
         assertEquals(1, disposed.get());
         assertThrows(IllegalStateException.class, app::start);
@@ -121,6 +135,7 @@ class ShutdownExampleTest {
   @Test
   void disposesApplicationResourcesBeforeRethrowingASignallingError() throws Exception {
     var disposed = new AtomicInteger();
+
     var failure = assertThrows(AssertionError.class, () -> fail("Signalling failed"));
 
     {
@@ -131,6 +146,7 @@ class ShutdownExampleTest {
             () -> {
               throw failure;
             });
+
         assertSame(failure, assertThrows(AssertionError.class, app::close));
         assertEquals(1, disposed.get());
       }

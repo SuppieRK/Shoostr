@@ -68,20 +68,7 @@ public class StreamCompletionBenchmark {
     }
 
     if ("deferred".equals(completion)) {
-      worker =
-          Thread.ofVirtual()
-              .start(
-                  () -> {
-                    try {
-                      while (!Thread.currentThread().isInterrupted()) {
-                        var callback = pending.take();
-                        writes++;
-                        callback.succeeded();
-                      }
-                    } catch (InterruptedException ignored) {
-                      Thread.currentThread().interrupt();
-                    }
-                  });
+      worker = Thread.ofVirtual().start(this::runCompletionLoop);
     }
   }
 
@@ -94,11 +81,13 @@ public class StreamCompletionBenchmark {
   @Benchmark
   public int flushes() throws IOException {
     writes = 0;
+
     if ("shared".equals(blocker)) {
       var shared = new Blocker.Shared();
       for (int index = 0; index < 18; index++) {
         try (var callback = shared.callback()) {
           sink.write(index == 17, bytes, callback);
+
           callback.block();
         }
       }
@@ -121,7 +110,9 @@ public class StreamCompletionBenchmark {
   public void close() throws InterruptedException {
     if (worker != null) {
       worker.interrupt();
+
       worker.join(5000);
+
       if (worker.isAlive()) {
         throw new IllegalStateException("Completion worker did not stop");
       }
@@ -138,6 +129,7 @@ public class StreamCompletionBenchmark {
   private void complete(boolean last, ByteBuffer content, Callback callback) {
     if (worker == null) {
       writes++;
+
       callback.succeeded();
     } else {
       try {
@@ -146,6 +138,21 @@ public class StreamCompletionBenchmark {
         Thread.currentThread().interrupt();
         callback.failed(failure);
       }
+    }
+  }
+
+  /** Receives deferred writes and acknowledges each after its counter update. */
+  private void runCompletionLoop() {
+    try {
+      while (!Thread.currentThread().isInterrupted()) {
+        var callback = pending.take();
+
+        writes++;
+
+        callback.succeeded();
+      }
+    } catch (InterruptedException ignored) {
+      Thread.currentThread().interrupt();
     }
   }
 }

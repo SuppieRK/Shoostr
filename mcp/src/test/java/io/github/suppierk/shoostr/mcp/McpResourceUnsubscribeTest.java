@@ -7,11 +7,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpClient.SyncSpec;
+import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
+import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSchema.ResourceContents;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
@@ -33,40 +37,14 @@ class McpResourceUnsubscribeTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored2, ignored3) -> {});
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var mcp =
-        Mcp.sync(
-            security,
-            transport ->
-                McpServer.sync(transport)
-                    .capabilities(
-                        McpSchema.ServerCapabilities.builder().resources(true, true).build())
-                    .resources(
-                        new McpServerFeatures.SyncResourceSpecification(
-                            McpSchema.Resource.builder("fixture://alpha", "alpha").build(),
-                            (ignored4, ignored5) ->
-                                McpSchema.ReadResourceResult.builder(
-                                        List.of(
-                                            McpSchema.TextResourceContents.builder(
-                                                    "fixture://alpha", alpha.get())
-                                                .mimeType("text/plain")
-                                                .build()))
-                                    .build()),
-                        new McpServerFeatures.SyncResourceSpecification(
-                            McpSchema.Resource.builder("fixture://control", "control").build(),
-                            (ignored6, ignored7) ->
-                                McpSchema.ReadResourceResult.builder(
-                                        List.of(
-                                            McpSchema.TextResourceContents.builder(
-                                                    "fixture://control", "control-updated")
-                                                .mimeType("text/plain")
-                                                .build()))
-                                    .build()))
-                    .build());
+        createMcpForStopsUpdatesForAnUnsubscribedUriWithoutClosingOtherSubscriptions(
+            security, alpha);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
-        (request, ignored8) -> {
+        (request, ignoredResponse) -> {
           if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
             listening.countDown();
           }
@@ -74,22 +52,20 @@ class McpResourceUnsubscribeTest {
 
     try (var test = TestServer.start(app);
         var client =
-            McpClient.sync(
-                    HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                        .endpoint("/mcp")
-                        .build())
-                .requestTimeout(Duration.ofSeconds(3))
-                .initializationTimeout(Duration.ofSeconds(3))
-                .resourcesUpdateConsumer(updates::add)
-                .build()) {
+            openClientForStopsUpdatesForAnUnsubscribedUriWithoutClosingOtherSubscriptions(
+                test, updates)) {
       client.initialize();
+
       assertTrue(listening.await(3, TimeUnit.SECONDS));
+
       client.subscribeResource(McpSchema.SubscribeRequest.builder("fixture://alpha").build());
       client.subscribeResource(McpSchema.SubscribeRequest.builder("fixture://control").build());
 
       alpha.set("alpha-before-unsubscribe");
+
       mcp.server()
           .notifyResourcesUpdated(new McpSchema.ResourcesUpdatedNotification("fixture://alpha"));
+
       assertEquals(
           List.of(
               McpSchema.TextResourceContents.builder("fixture://alpha", "alpha-before-unsubscribe")
@@ -98,9 +74,12 @@ class McpResourceUnsubscribeTest {
           updates.poll(3, TimeUnit.SECONDS));
 
       client.unsubscribeResource(McpSchema.UnsubscribeRequest.builder("fixture://alpha").build());
+
       alpha.set("alpha-after-unsubscribe");
+
       mcp.server()
           .notifyResourcesUpdated(new McpSchema.ResourcesUpdatedNotification("fixture://alpha"));
+
       await("the unsubscribed client receives no resource update")
           .pollDelay(Duration.ZERO)
           .pollInterval(Duration.ofMillis(10))
@@ -111,12 +90,14 @@ class McpResourceUnsubscribeTest {
 
       mcp.server()
           .notifyResourcesUpdated(new McpSchema.ResourcesUpdatedNotification("fixture://control"));
+
       assertEquals(
           List.of(
               McpSchema.TextResourceContents.builder("fixture://control", "control-updated")
                   .mimeType("text/plain")
                   .build()),
           updates.poll(3, TimeUnit.SECONDS));
+
       await("the control subscriber receives no duplicate update")
           .pollDelay(Duration.ZERO)
           .pollInterval(Duration.ofMillis(10))
@@ -125,5 +106,57 @@ class McpResourceUnsubscribeTest {
           .failFast("the control subscriber received a duplicate update", () -> !updates.isEmpty())
           .until(updates::isEmpty);
     }
+  }
+
+  private Mcp<McpSyncServer>
+      createMcpForStopsUpdatesForAnUnsubscribedUriWithoutClosingOtherSubscriptions(
+          McpHttpSecurity security, AtomicReference<String> alpha) {
+    return Mcp.sync(
+        security,
+        transport ->
+            McpServer.sync(transport)
+                .capabilities(McpSchema.ServerCapabilities.builder().resources(true, true).build())
+                .resources(
+                    new McpServerFeatures.SyncResourceSpecification(
+                        McpSchema.Resource.builder("fixture://alpha", "alpha").build(),
+                        (ignoredMcpSyncServerExchange, ignoredReadResourceRequest) ->
+                            McpSchema.ReadResourceResult.builder(
+                                    List.of(
+                                        McpSchema.TextResourceContents.builder(
+                                                "fixture://alpha", alpha.get())
+                                            .mimeType("text/plain")
+                                            .build()))
+                                .build()),
+                    new McpServerFeatures.SyncResourceSpecification(
+                        McpSchema.Resource.builder("fixture://control", "control").build(),
+                        (ignoredMcpSyncServerExchange, ignoredReadResourceRequest) ->
+                            McpSchema.ReadResourceResult.builder(
+                                    List.of(
+                                        McpSchema.TextResourceContents.builder(
+                                                "fixture://control", "control-updated")
+                                            .mimeType("text/plain")
+                                            .build()))
+                                .build()))
+                .build());
+  }
+
+  private McpSyncClient
+      openClientForStopsUpdatesForAnUnsubscribedUriWithoutClosingOtherSubscriptions(
+          TestServer test, LinkedBlockingQueue<List<ResourceContents>> updates) {
+    return clientPropertiesForStopsUpdatesForAnUnsubscribedUriWithoutClosingOtherSubscriptions(
+            test, updates)
+        .build();
+  }
+
+  private SyncSpec
+      clientPropertiesForStopsUpdatesForAnUnsubscribedUriWithoutClosingOtherSubscriptions(
+          TestServer test, LinkedBlockingQueue<List<ResourceContents>> updates) {
+    return McpClient.sync(
+            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                .endpoint("/mcp")
+                .build())
+        .requestTimeout(Duration.ofSeconds(3))
+        .initializationTimeout(Duration.ofSeconds(3))
+        .resourcesUpdateConsumer(updates::add);
   }
 }

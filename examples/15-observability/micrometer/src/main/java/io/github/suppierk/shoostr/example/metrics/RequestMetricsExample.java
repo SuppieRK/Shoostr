@@ -17,6 +17,7 @@ public final class RequestMetricsExample {
    */
   public static Shoostr application(MeterRegistry registry) {
     var metrics = new MicrometerMetrics(registry);
+
     return new Shoostr()
         .routes(
             routes ->

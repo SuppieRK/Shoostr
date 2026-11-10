@@ -28,14 +28,15 @@ class RouteInfoTest {
                 routes.path(
                     "/api",
                     group -> {
-                      group.get("/public", (ignored, ignored2) -> {});
+                      group.get("/public", (ignored, ignoredResponse) -> {});
                       group.when(
                           () -> conditions.incrementAndGet() > 0,
-                          conditional -> conditional.get("/private", (ignored3, ignored4) -> {}));
+                          conditional ->
+                              conditional.get("/private", (ignoredRequest, ignoredResponse) -> {}));
                     },
-                    e -> {
+                    lifecycle -> {
                       Consumer<RouteInfo> collect = facts::add;
-                      e.onRoute(collect);
+                      lifecycle.onRoute(collect);
                     }));
 
         try (var test = TestServer.start(app)) {

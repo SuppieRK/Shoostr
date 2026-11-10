@@ -20,6 +20,7 @@ public final class TelemetryExample {
    */
   public static void main(String[] args) throws Exception {
     var app = application().start();
+
     LOGGER.info("Tracing: http://127.0.0.1:{}/hello/Ada", app.port());
   }
 
@@ -35,10 +36,13 @@ public final class TelemetryExample {
 
     // TelemetryConfiguration is example-local; it creates and owns the OpenTelemetry SDK.
     var configuration = new TelemetryConfiguration();
+
     // Core's afterClose callback flushes and closes the SDK after adapter cleanup.
     app.afterClose(configuration::close);
+
     // The SDK's Tracer creates application spans; this service borrows it for internal calls.
     var greetings = new GreetingService(configuration.sdk().getTracer("shoostr-tracing-example"));
+
     // Scoped selection below establishes shared setup and enables tracing only for the greeting.
     var tracing = new OpenTelemetryTracing(configuration.sdk());
 
@@ -46,12 +50,13 @@ public final class TelemetryExample {
         routes -> {
           // This endpoint remains untraced; extension selection belongs to individual
           // routes/groups.
-          routes.get("/health", (ignored, response) -> response.text("ok"));
-          routes.get(
-              "/hello/{name}",
-              (request, response) ->
-                  response.text(greetings.greet(request.pathParam("name").orElseThrow())),
-              lifecycle -> lifecycle.withExtension(tracing));
+          routes
+              .get("/health", (ignored, response) -> response.text("ok"))
+              .get(
+                  "/hello/{name}",
+                  (request, response) ->
+                      response.text(greetings.greet(request.pathParam("name").orElseThrow())),
+                  lifecycle -> lifecycle.withExtension(tracing));
         });
   }
 }

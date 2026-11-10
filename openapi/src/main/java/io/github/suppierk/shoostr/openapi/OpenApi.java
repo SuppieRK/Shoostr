@@ -72,7 +72,9 @@ public final class OpenApi
    */
   public synchronized OpenApi description(String value) {
     requireMutable();
+
     info.setDescription(text(value));
+
     return this;
   }
 
@@ -84,7 +86,9 @@ public final class OpenApi
    */
   public synchronized OpenApi server(String url) {
     requireMutable();
+
     servers.add(new Server().url(text(url)));
+
     return this;
   }
 
@@ -98,12 +102,14 @@ public final class OpenApi
    */
   public synchronized OpenApi tag(String name, String description) {
     requireMutable();
+
     var key = text(name);
     if (tags.stream().anyMatch(tag -> key.equals(tag.getName()))) {
       throw new IllegalArgumentException("Duplicate OpenAPI tag: " + key);
     }
 
     tags.add(new Tag().name(key).description(text(description)));
+
     return this;
   }
 
@@ -123,8 +129,10 @@ public final class OpenApi
    */
   public synchronized Handler uiHandler(String basePath, String specPath) {
     requireMutable();
+
     var ui = new OpenApiUi(basePath, specPath);
     interfaces.add(ui);
+
     return ui;
   }
 
@@ -139,6 +147,7 @@ public final class OpenApi
    */
   public synchronized JsonSchema schema(String name, Schema<?> schema) {
     requireMutable();
+
     var key = componentName(name);
     if (components.getSchemas() != null && components.getSchemas().containsKey(key)) {
       throw new IllegalArgumentException("Duplicate schema: " + key);
@@ -147,6 +156,7 @@ public final class OpenApi
     components.addSchemas(key, copy(schema, Schema.class));
     var reference = new JsonSchema();
     reference.set$ref("#/components/schemas/" + key);
+
     return reference;
   }
 
@@ -160,6 +170,7 @@ public final class OpenApi
    */
   public synchronized OpenApi securityScheme(String name, SecurityScheme scheme) {
     requireMutable();
+
     var key = componentName(name);
     if (components.getSecuritySchemes() != null
         && components.getSecuritySchemes().containsKey(key)) {
@@ -169,6 +180,7 @@ public final class OpenApi
     OpenApiValidation.scheme(Objects.requireNonNull(scheme));
     var detached = copy(scheme, SecurityScheme.class);
     components.addSecuritySchemes(key, detached);
+
     return this;
   }
 
@@ -199,8 +211,11 @@ public final class OpenApi
   public synchronized OpenApiOperation configure(
       Lifecycle endpoint, @Nullable OpenApiOperation inherited) {
     requireMutable();
+
     var operation = new OpenApiOperation(this, inherited);
+
     endpoint.onRoute(route -> collect(route, operation));
+
     return operation;
   }
 
@@ -213,7 +228,9 @@ public final class OpenApi
   @Override
   public synchronized void beforeStart() {
     requireMutable();
+
     prepared = true;
+
     var paths = new Paths();
     var shapes = new LinkedHashMap<String, String>();
     var identifiers = new HashSet<String>();
@@ -255,6 +272,7 @@ public final class OpenApi
       var bytes = Json31.mapper().writeValueAsBytes(model);
       var tree = Json31.mapper().readTree(bytes);
       OpenApiValidation.references(tree, tree, false);
+
       if (!interfaces.isEmpty()) {
         var css = OpenApiUi.asset("swagger-ui.css");
         var bundle = OpenApiUi.asset("swagger-ui-bundle.js");
@@ -276,7 +294,7 @@ public final class OpenApi
    * @return handler serving startup-prepared bytes
    */
   public Handler handler() {
-    return (ignored2, response) -> {
+    return (ignoredRequest, response) -> {
       var bytes = document.get();
       if (bytes == null) {
         throw new IllegalStateException("OpenAPI document is not prepared");
@@ -294,6 +312,7 @@ public final class OpenApi
    */
   private synchronized void collect(RouteInfo route, OpenApiOperation configuration) {
     requireMutable();
+
     if (!configuration.isHidden()) {
       bindings.add(new Binding(route, configuration.snapshot()));
     }

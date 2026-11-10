@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.FilterInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -33,6 +34,7 @@ class FiniteStreamingExampleTest {
     try (var test = TestServer.start(FiniteStreamingExample.application(report))) {
       var response =
           test.send(request -> request.path("/chunks"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("name\nAda\nGrace\n", response.body());
       assertEquals(
@@ -47,6 +49,7 @@ class FiniteStreamingExampleTest {
 
     try (var test = TestServer.start(FiniteStreamingExample.application(report))) {
       var response = test.send(request -> request.path("/input"));
+
       assertEquals(200, response.statusCode());
       assertArrayEquals(bytes, response.body());
       assertEquals(
@@ -77,6 +80,7 @@ class FiniteStreamingExampleTest {
       var response =
           test.send(
               request -> request.path("/tracked-input"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("name\nAda\n", response.body());
       assertTrue(closed.get());
@@ -93,10 +97,12 @@ class FiniteStreamingExampleTest {
     app.routes()
         .get(
             "/flush-boundary",
-            (ignored2, response) -> {
+            (ignoredRequest, response) -> {
               try {
                 var output = response.startStream("text/csv; charset=utf-8");
+
                 output.write("name\n").flush();
+
                 if (!release.await(5, TimeUnit.SECONDS)) {
                   throw new IOException("Client did not release the feed");
                 }
@@ -110,25 +116,32 @@ class FiniteStreamingExampleTest {
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       try {
-        var response =
-            client.send(
-                HttpRequest.newBuilder(test.baseUri().resolve("flush-boundary"))
-                    .timeout(Duration.ofSeconds(3))
-                    .GET()
-                    .build(),
-                HttpResponse.BodyHandlers.ofInputStream());
+        var response = sendResponseForExposesAFlushedChunkBeforeTheHandlerFinishes(client, test);
+
         assertEquals(200, response.statusCode());
 
         try (var body = response.body()) {
           assertEquals("name\n", new String(body.readNBytes(5), StandardCharsets.UTF_8));
           assertFalse(finished.get());
+
           release.countDown();
+
           assertEquals("Ada\nGrace\n", new String(body.readAllBytes(), StandardCharsets.UTF_8));
         }
       } finally {
         release.countDown();
       }
     }
+  }
+
+  private HttpResponse<InputStream> sendResponseForExposesAFlushedChunkBeforeTheHandlerFinishes(
+      HttpClient client, TestServer test) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(test.baseUri().resolve("flush-boundary"))
+            .timeout(Duration.ofSeconds(3))
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.ofInputStream());
   }
 
   @Test
@@ -140,7 +153,7 @@ class FiniteStreamingExampleTest {
     app.routes()
         .get(
             "/broken-input",
-            (ignored3, response) -> {
+            (ignoredRequest, response) -> {
               var readOnce = new AtomicBoolean();
               response.input(
                   new FilterInputStream(Files.newInputStream(report)) {
@@ -166,6 +179,7 @@ class FiniteStreamingExampleTest {
       var response =
           test.send(
               request -> request.path("/broken-input"), HttpResponse.BodyHandlers.ofInputStream());
+
       assertEquals(200, response.statusCode());
 
       try (var body = response.body()) {

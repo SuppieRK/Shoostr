@@ -23,6 +23,7 @@ class SseFramingBenchmarkTest {
     int dataFields = "single".equals(lineShape) ? 1 : 2;
     int metadata =
         "metadata".equals(eventShape) ? "event: update\nid: cursor-7\nretry: 2000\n".length() : 0;
+
     assertEquals(
         payloadBytes + dataFields * "data: ".length() + 2 + metadata, benchmark.bytesWritten());
   }

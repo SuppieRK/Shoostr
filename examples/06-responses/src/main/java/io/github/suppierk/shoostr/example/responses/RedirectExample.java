@@ -19,11 +19,11 @@ public final class RedirectExample {
             routes ->
                 routes
                     .get("/old", (ignored, response) -> response.redirect("/current"))
-                    .get("/current", (ignored2, response) -> response.text("current"))
+                    .get("/current", (ignoredRequest, response) -> response.text("current"))
                     // 303 makes the client fetch the receipt with GET after a successful POST.
                     .post(
                         "/submit",
-                        (ignored3, response) ->
+                        (ignoredRequest, response) ->
                             response.redirect("/receipt", HttpStatusCodes.SEE_OTHER))
                     .get(
                         "/receipt",
@@ -31,7 +31,7 @@ public final class RedirectExample {
                     // 307 preserves the original method and body when forwarding the POST.
                     .post(
                         "/forward",
-                        (ignored4, response) ->
+                        (ignoredRequest, response) ->
                             response.redirect("/receiver", HttpStatusCodes.TEMPORARY_REDIRECT))
                     .post(
                         "/receiver",

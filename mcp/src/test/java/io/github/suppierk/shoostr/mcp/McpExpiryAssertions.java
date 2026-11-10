@@ -11,24 +11,12 @@ import java.util.function.BooleanSupplier;
 final class McpExpiryAssertions {
   private McpExpiryAssertions() {}
 
-  static void awaitExpiry(Instant expiry) {
-    await("verified MCP token expiry")
-        .pollInSameThread()
-        .pollDelay(Duration.ZERO)
-        .pollInterval(Duration.ofMillis(10))
-        .atMost(Duration.ofSeconds(10))
-        .untilAsserted(
-            () -> {
-              var now = Instant.now();
-              assertFalse(
-                  now.isBefore(expiry), "Token remains fresh: now=" + now + ", expiry=" + expiry);
-            });
-  }
-
   static void awaitTermination(Instant expiry, BooleanSupplier terminated) {
     awaitExpiry(expiry);
+
     var wallStart = Instant.now();
     var nanoStart = System.nanoTime();
+
     // One reaction budget applies to every required completion, after the actual wall-clock expiry.
     await("MCP HTTP termination after verified expiry")
         .pollInSameThread()
@@ -48,6 +36,21 @@ final class McpExpiryAssertions {
                             + Duration.between(wallStart, Instant.now())
                             + ", monotonicElapsed="
                             + Duration.ofNanos(System.nanoTime() - nanoStart)));
+  }
+
+  static void awaitExpiry(Instant expiry) {
+    await("verified MCP token expiry")
+        .pollInSameThread()
+        .pollDelay(Duration.ZERO)
+        .pollInterval(Duration.ofMillis(10))
+        .atMost(Duration.ofSeconds(10))
+        .untilAsserted(
+            () -> {
+              var now = Instant.now();
+
+              assertFalse(
+                  now.isBefore(expiry), "Token remains fresh: now=" + now + ", expiry=" + expiry);
+            });
   }
 
   static void assertNotBeforeExpiry(Instant expiry, Instant observed) {

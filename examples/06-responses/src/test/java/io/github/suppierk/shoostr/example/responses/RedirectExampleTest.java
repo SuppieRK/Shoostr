@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -26,19 +27,21 @@ class RedirectExampleTest {
         TestServer.start(
             RedirectExample.application(),
             client -> client.followRedirects(HttpClient.Redirect.NORMAL))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path(path)
-                      .method("POST")
-                      .body("payload".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForFollowsRedirectsWithTheSelectedMethodAndBody(test, path);
+
       assertEquals(200, response.statusCode());
       assertEquals(destination, response.uri().getPath());
       assertEquals(status, response.previousResponse().orElseThrow().statusCode());
       assertEquals(expected, response.body());
     }
+  }
+
+  private HttpResponse<String> sendResponseForFollowsRedirectsWithTheSelectedMethodAndBody(
+      TestServer test, String path) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path(path).method("POST").body("payload".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -52,18 +55,22 @@ class RedirectExampleTest {
       // Replay spans multiple input buffers; the redirect handler leaves the original body
       // unread.
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/forward")
-                      .method("POST")
-                      .body(payload.getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForPreservesALargePostBodyWhenFollowingATemporaryRedirect(test, payload);
+
       assertEquals(200, response.statusCode());
       assertEquals("/receiver", response.uri().getPath());
       assertEquals(307, response.previousResponse().orElseThrow().statusCode());
       assertEquals("POST:" + payload, response.body());
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForPreservesALargePostBodyWhenFollowingATemporaryRedirect(
+          TestServer test, String payload) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/forward").method("POST").body(payload.getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -72,6 +79,7 @@ class RedirectExampleTest {
     try (var test = TestServer.start(RedirectExample.application())) {
       var response =
           test.send(request -> request.path("/old?next=https%3A%2F%2Funtrusted.example%2F"));
+
       assertEquals(302, response.statusCode());
       assertEquals("/current", response.headers().firstValue("Location").orElseThrow());
     }
@@ -88,12 +96,15 @@ class RedirectExampleTest {
                 "/continue-check",
                 (ignored, response) -> {
                   response.text("discarded").setHeader("X-Keep", "kept").redirect("/current");
+
                   assertFalse(response.isCommitted());
+
                   response.setHeader("X-After", "continued");
                 });
 
         try (var test = TestServer.start(app)) {
           var response = test.send(request -> request.path("/continue-check"));
+
           assertEquals(302, response.statusCode());
           assertEquals("/current", response.headers().firstValue("Location").orElseThrow());
           assertEquals("kept", response.headers().firstValue("X-Keep").orElseThrow());
@@ -119,6 +130,7 @@ class RedirectExampleTest {
             RedirectExample.application(),
             client -> client.followRedirects(HttpClient.Redirect.NEVER))) {
       var response = test.send(request -> request.path(path).method(method));
+
       assertEquals(status, response.statusCode());
       assertEquals(location, response.headers().firstValue("Location").orElseThrow());
       assertArrayEquals(new byte[0], response.body());

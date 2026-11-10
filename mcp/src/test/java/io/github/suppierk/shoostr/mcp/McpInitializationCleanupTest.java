@@ -15,10 +15,12 @@ import io.modelcontextprotocol.json.McpJsonDefaults;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSchema.InitializeResult;
 import io.modelcontextprotocol.spec.McpStreamableServerSession;
 import io.modelcontextprotocol.spec.McpStreamableServerTransportProvider;
 import java.io.IOException;
 import java.net.Socket;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
@@ -27,7 +29,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -39,14 +43,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import reactor.core.publisher.Mono;
 import reactor.core.publisher.Sinks;
+import reactor.core.publisher.Sinks.Empty;
+import reactor.core.publisher.Sinks.One;
 
 class McpInitializationCleanupTest {
-  private static final String INITIALIZE =
-      """
-      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-11-25","capabilities":{},
-        "clientInfo":{"name":"initialization-cleanup","version":"1.0"}}}
-      """;
+  private static final String INITIALIZE = initializationRequest();
 
   @Test
   @Timeout(15)
@@ -59,7 +60,7 @@ class McpInitializationCleanupTest {
     app.routes(routes -> routes.path("/mcp", mcp::routes));
     var fail = new AtomicBoolean(true);
     app.beforeResponseFlush(
-        (ignored, ignored2) -> {
+        (ignored, ignoredResponse) -> {
           if (fail.getAndSet(false)) {
             throw new IOException("Initialization response delivery failed");
           }
@@ -67,26 +68,35 @@ class McpInitializationCleanupTest {
 
     try (var test = TestServer.start(app)) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
+          sendResponseForClosesTheNewSessionExactlyOnceWhenInitializationCannotFlush(test);
+
       assertEquals(500, response.statusCode());
       assertTrue(
           closed.await(3, TimeUnit.SECONDS), "Failed initialization must close its native session");
       assertEquals(1, closes.get());
+
       var lookup =
           test.send(
               request ->
                   request.path("/mcp").method("DELETE").header("Mcp-Session-Id", sessionId.get()));
+
       assertEquals(404, lookup.statusCode());
     }
 
     assertEquals(1, closes.get(), "Application shutdown must not close the failed session again");
+  }
+
+  private HttpResponse<byte[]>
+      sendResponseForClosesTheNewSessionExactlyOnceWhenInitializationCannotFlush(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
   }
 
   @Test
@@ -103,8 +113,9 @@ class McpInitializationCleanupTest {
     var completed = new CountDownLatch(1);
     var failedTransport = new AtomicBoolean();
     app.beforeResponseFlush(
-        (ignored3, ignored4) -> {
+        (ignoredRequest, ignoredResponse) -> {
           prepared.countDown();
+
           assertTrue(release.await(5, TimeUnit.SECONDS));
         });
     app.afterRequest(
@@ -117,15 +128,11 @@ class McpInitializationCleanupTest {
       try (var socket = new Socket(test.baseUri().getHost(), test.baseUri().getPort())) {
         socket.setSoLinger(true, 0);
         var body = INITIALIZE.getBytes(StandardCharsets.UTF_8);
-        var headers =
-            "POST /mcp HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n"
-                + "Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
-                + "Content-Length: "
-                + body.length
-                + "\r\n\r\n";
+        var headers = createHeadersForClosesTheNewSessionWhenTheClientAbandonsInitialization(body);
         socket.getOutputStream().write(headers.getBytes(StandardCharsets.UTF_8));
         socket.getOutputStream().write(body);
         socket.getOutputStream().flush();
+
         assertTrue(prepared.await(5, TimeUnit.SECONDS));
       } finally {
         release.countDown();
@@ -141,6 +148,15 @@ class McpInitializationCleanupTest {
     assertEquals(1, closes.get());
   }
 
+  private String createHeadersForClosesTheNewSessionWhenTheClientAbandonsInitialization(
+      byte[] body) {
+    return "POST /mcp HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n"
+        + "Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
+        + "Content-Length: "
+        + body.length
+        + "\r\n\r\n";
+  }
+
   @Test
   @Timeout(15)
   void closesTheAllocatedSessionWhenNativeInitializationFails() throws Exception {
@@ -148,24 +164,14 @@ class McpInitializationCleanupTest {
     var closed = new CountDownLatch(1);
     var sessionId = new AtomicReference<String>();
     var mcp =
-        trackedMcp(
-            closes,
-            closed,
-            sessionId,
-            ignored5 -> Mono.error(new IOException("Native initialization failed")));
+        createMcpForClosesTheAllocatedSessionWhenNativeInitializationFails(
+            closes, closed, sessionId);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
+      var response = sendResponseForClosesTheAllocatedSessionWhenNativeInitializationFails(test);
+
       assertEquals(500, response.statusCode());
       assertTrue(response.headers().firstValue("Mcp-Session-Id").isEmpty());
       assertTrue(closed.await(3, TimeUnit.SECONDS));
@@ -175,6 +181,28 @@ class McpInitializationCleanupTest {
     assertEquals(1, closes.get());
   }
 
+  private Mcp<McpSyncServer> createMcpForClosesTheAllocatedSessionWhenNativeInitializationFails(
+      AtomicInteger closes, CountDownLatch closed, AtomicReference<String> sessionId) {
+    return trackedMcp(
+        closes,
+        closed,
+        sessionId,
+        ignoredInitializeResult -> Mono.error(new IOException("Native initialization failed")));
+  }
+
+  private HttpResponse<byte[]>
+      sendResponseForClosesTheAllocatedSessionWhenNativeInitializationFails(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
+  }
+
   @Test
   @Timeout(15)
   void closesTheAllocatedSessionWhenItsInitializationResultCannotBeSerialized() throws Exception {
@@ -182,31 +210,16 @@ class McpInitializationCleanupTest {
     var closed = new CountDownLatch(1);
     var sessionId = new AtomicReference<String>();
     var mcp =
-        trackedMcp(
-            closes,
-            closed,
-            sessionId,
-            result ->
-                Mono.just(
-                    new McpSchema.InitializeResult(
-                        result.protocolVersion(),
-                        result.capabilities(),
-                        result.serverInfo(),
-                        null,
-                        Map.of("unsupported", new Object()))));
+        createMcpForClosesTheAllocatedSessionWhenItsInitializationResultCannotBeSerialized(
+            closes, closed, sessionId);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
+          sendResponseForClosesTheAllocatedSessionWhenItsInitializationResultCannotBeSerialized(
+              test);
+
       assertEquals(500, response.statusCode());
       assertTrue(response.headers().firstValue("Mcp-Session-Id").isEmpty());
       assertTrue(closed.await(3, TimeUnit.SECONDS));
@@ -214,6 +227,36 @@ class McpInitializationCleanupTest {
     }
 
     assertEquals(1, closes.get());
+  }
+
+  private Mcp<McpSyncServer>
+      createMcpForClosesTheAllocatedSessionWhenItsInitializationResultCannotBeSerialized(
+          AtomicInteger closes, CountDownLatch closed, AtomicReference<String> sessionId) {
+    return trackedMcp(
+        closes,
+        closed,
+        sessionId,
+        result ->
+            Mono.just(
+                new McpSchema.InitializeResult(
+                    result.protocolVersion(),
+                    result.capabilities(),
+                    result.serverInfo(),
+                    null,
+                    Map.of("unsupported", new Object()))));
+  }
+
+  private HttpResponse<byte[]>
+      sendResponseForClosesTheAllocatedSessionWhenItsInitializationResultCannotBeSerialized(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
   }
 
   @Test
@@ -247,7 +290,7 @@ class McpInitializationCleanupTest {
                     lifecycle -> lifecycle.withExtension(new ClosingSignal())));
     var fail = new AtomicBoolean(true);
     app.beforeResponseFlush(
-        (ignored6, ignored7) -> {
+        (ignoredRequest, ignoredResponse) -> {
           if (fail.getAndSet(false)) {
             throw new IOException("Failed initialization");
           }
@@ -267,17 +310,16 @@ class McpInitializationCleanupTest {
                           .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)))
               .statusCode());
       assertTrue(closed.await(3, TimeUnit.SECONDS));
+
       var stopping =
-          closer.submit(
-              () -> {
-                app.close();
-                return null;
-              });
+          submitStoppingForApplicationShutdownWaitsForAnAlreadyClaimedInitializationCleanup(
+              closer, app);
 
       try {
         assertTrue(
             closingExtensions.await(7, TimeUnit.SECONDS),
             "Observe extension cleanup after HTTP drain");
+
         await("shutdown waits for native session closure")
             .pollDelay(Duration.ZERO)
             .pollInterval(Duration.ofMillis(10))
@@ -285,6 +327,7 @@ class McpInitializationCleanupTest {
             .atMost(Duration.ofMillis(1500))
             .failFast("shutdown completed before native session closure", stopping::isDone)
             .until(() -> !stopping.isDone());
+
         assertEquals(1, closes.get());
       } finally {
         release.tryEmitEmpty();
@@ -295,6 +338,17 @@ class McpInitializationCleanupTest {
     }
 
     assertEquals(1, closes.get());
+  }
+
+  private Future<Object>
+      submitStoppingForApplicationShutdownWaitsForAnAlreadyClaimedInitializationCleanup(
+          ExecutorService closer, Shoostr app) {
+    return closer.submit(
+        () -> {
+          app.close();
+
+          return null;
+        });
   }
 
   @Test
@@ -308,15 +362,8 @@ class McpInitializationCleanupTest {
     var held = Sinks.<McpSchema.InitializeResult>one();
     var releaseCleanup = Sinks.<Void>empty();
     var mcp =
-        trackedMcp(
-            closes,
-            closed,
-            new AtomicReference<>(),
-            ignored8 ->
-                held.asMono()
-                    .doOnSubscribe(ignored9 -> subscribed.countDown())
-                    .doOnCancel(canceled::countDown),
-            releaseCleanup::asMono);
+        createMcpForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
+            closes, closed, held, subscribed, canceled, releaseCleanup);
     var app = new Shoostr();
 
     try (var selected = Executors.newSingleThreadExecutor();
@@ -325,29 +372,21 @@ class McpInitializationCleanupTest {
 
       try (var test = TestServer.start(app)) {
         var pending =
-            workers.submit(
-                () ->
-                    test.send(
-                        request ->
-                            request
-                                .path("/mcp")
-                                .method("POST")
-                                .header("Content-Type", "application/json")
-                                .header("Accept", "application/json, text/event-stream")
-                                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8))));
+            submitPendingForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
+                workers, test);
+
         assertTrue(subscribed.await(3, TimeUnit.SECONDS));
+
         var stopping =
-            workers.submit(
-                () -> {
-                  app.close();
-                  return null;
-                });
+            submitStoppingForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
+                workers, app);
 
         try {
           assertTrue(
               canceled.await(3, TimeUnit.SECONDS),
               "Shutdown must cancel native initialization; native closes=" + closes.get());
           assertTrue(closed.await(3, TimeUnit.SECONDS));
+
           await("shutdown waits for pending initialization cleanup")
               .pollDelay(Duration.ZERO)
               .pollInterval(Duration.ofMillis(10))
@@ -372,6 +411,51 @@ class McpInitializationCleanupTest {
     assertEquals(1, closes.get());
   }
 
+  private Mcp<McpSyncServer>
+      createMcpForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
+          AtomicInteger closes,
+          CountDownLatch closed,
+          One<InitializeResult> held,
+          CountDownLatch subscribed,
+          CountDownLatch canceled,
+          Empty<Void> releaseCleanup) {
+    return trackedMcp(
+        closes,
+        closed,
+        new AtomicReference<>(),
+        ignoredInitializeResult ->
+            held.asMono()
+                .doOnSubscribe(ignoredSubscription -> subscribed.countDown())
+                .doOnCancel(canceled::countDown),
+        releaseCleanup::asMono);
+  }
+
+  private Future<HttpResponse<byte[]>>
+      submitPendingForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
+          ExecutorService workers, TestServer test) {
+    return workers.submit(
+        () ->
+            test.send(
+                request ->
+                    request
+                        .path("/mcp")
+                        .method("POST")
+                        .header("Content-Type", "application/json")
+                        .header("Accept", "application/json, text/event-stream")
+                        .body(INITIALIZE.getBytes(StandardCharsets.UTF_8))));
+  }
+
+  private Future<Object>
+      submitStoppingForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
+          ExecutorService workers, Shoostr app) {
+    return workers.submit(
+        () -> {
+          app.close();
+
+          return null;
+        });
+  }
+
   @Test
   @Timeout(20)
   void cancelsAndClosesNativeInitializationThatOutlivesItsVerifiedToken() throws Exception {
@@ -380,28 +464,16 @@ class McpInitializationCleanupTest {
     var canceled = new CountDownLatch(1);
     var first = new AtomicBoolean(true);
     var mcp =
-        trackedMcp(
-            closes,
-            closed,
-            new AtomicReference<>(),
-            result ->
-                first.getAndSet(false)
-                    ? Mono.<McpSchema.InitializeResult>never().doOnCancel(canceled::countDown)
-                    : Mono.just(result));
+        createMcpForCancelsAndClosesNativeInitializationThatOutlivesItsVerifiedToken(
+            closes, closed, first, canceled);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var expired =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("X-Expiring", "true")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
+          sendExpiredRequestForCancelsAndClosesNativeInitializationThatOutlivesItsVerifiedToken(
+              test);
+
       assertEquals(401, expired.statusCode());
       assertEquals(
           "Bearer error=\"invalid_token\"",
@@ -410,20 +482,58 @@ class McpInitializationCleanupTest {
       assertTrue(canceled.await(3, TimeUnit.SECONDS));
       assertTrue(closed.await(3, TimeUnit.SECONDS));
       assertEquals(1, closes.get());
+
       var retry =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
+          sendRetryRequestForCancelsAndClosesNativeInitializationThatOutlivesItsVerifiedToken(test);
+
       assertEquals(
           200, retry.statusCode(), "Expired initialization must release admission capacity");
     }
 
     assertEquals(2, closes.get());
+  }
+
+  private Mcp<McpSyncServer>
+      createMcpForCancelsAndClosesNativeInitializationThatOutlivesItsVerifiedToken(
+          AtomicInteger closes,
+          CountDownLatch closed,
+          AtomicBoolean first,
+          CountDownLatch canceled) {
+    return trackedMcp(
+        closes,
+        closed,
+        new AtomicReference<>(),
+        result ->
+            first.getAndSet(false)
+                ? Mono.<McpSchema.InitializeResult>never().doOnCancel(canceled::countDown)
+                : Mono.just(result));
+  }
+
+  private HttpResponse<byte[]>
+      sendExpiredRequestForCancelsAndClosesNativeInitializationThatOutlivesItsVerifiedToken(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("X-Expiring", "true")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<byte[]>
+      sendRetryRequestForCancelsAndClosesNativeInitializationThatOutlivesItsVerifiedToken(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
   }
 
   @Test
@@ -436,13 +546,13 @@ class McpInitializationCleanupTest {
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.afterRouteHandler(
-        (request, ignored10) -> {
+        (request, ignoredResponse) -> {
           if (request.header("X-Expiring").isPresent()) {
             request.attribute("finite-handler-returned", true);
           }
         });
     app.beforeResponseFlush(
-        (request, ignored11) -> {
+        (request, ignoredResponse) -> {
           if (request
               .attribute("finite-handler-returned")
               .filter(Boolean.TRUE::equals)
@@ -459,34 +569,51 @@ class McpInitializationCleanupTest {
 
     try (var test = TestServer.start(app)) {
       var expired =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("X-Expiring", "true")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
+          sendExpiredRequestForExpiresAFiniteInitializationDuringFinalFlushAndReleasesItsSession(
+              test);
+
       assertEquals(
           500, expired.statusCode(), "Later middleware follows generic interruption failure");
       assertTrue(interrupted.await(1, TimeUnit.SECONDS));
       assertTrue(closed.await(3, TimeUnit.SECONDS));
       assertEquals(1, closes.get());
+
       var retry =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
+          sendRetryRequestForExpiresAFiniteInitializationDuringFinalFlushAndReleasesItsSession(
+              test);
+
       assertEquals(
           200, retry.statusCode(), "Failed finite delivery must release admission capacity");
     }
 
     assertEquals(2, closes.get());
+  }
+
+  private HttpResponse<byte[]>
+      sendExpiredRequestForExpiresAFiniteInitializationDuringFinalFlushAndReleasesItsSession(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("X-Expiring", "true")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<byte[]>
+      sendRetryRequestForExpiresAFiniteInitializationDuringFinalFlushAndReleasesItsSession(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
   }
 
   @Test
@@ -498,24 +625,8 @@ class McpInitializationCleanupTest {
     var releaseFactory = new CountDownLatch(1);
     var subscriptions = new AtomicInteger();
     var mcp =
-        trackedMcp(
-            closes,
-            closed,
-            new AtomicReference<>(),
-            result -> {
-              factoryEntered.countDown();
-
-              try {
-                if (!releaseFactory.await(15, TimeUnit.SECONDS)) {
-                  throw new IllegalStateException("The test must release the native factory");
-                }
-              } catch (InterruptedException failure) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(failure);
-              }
-
-              return Mono.just(result).doOnSubscribe(ignored12 -> subscriptions.incrementAndGet());
-            });
+        createMcpForClosesALateFactoryResultWithoutSubscribingAfterApplicationShutdown(
+            closes, closed, factoryEntered, releaseFactory, subscriptions);
     var app = new Shoostr();
 
     try (var selected = Executors.newSingleThreadExecutor();
@@ -524,22 +635,9 @@ class McpInitializationCleanupTest {
 
       try (var test = TestServer.start(app)) {
         var pending =
-            workers.submit(
-                () -> {
-                  try {
-                    return test.send(
-                            request ->
-                                request
-                                    .path("/mcp")
-                                    .method("POST")
-                                    .header("Content-Type", "application/json")
-                                    .header("Accept", "application/json, text/event-stream")
-                                    .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)))
-                        .statusCode();
-                  } catch (IOException ignored13) {
-                    return 0;
-                  }
-                });
+            submitPendingForClosesALateFactoryResultWithoutSubscribingAfterApplicationShutdown(
+                workers, test);
+
         assertTrue(factoryEntered.await(3, TimeUnit.SECONDS));
 
         try {
@@ -558,6 +656,7 @@ class McpInitializationCleanupTest {
                     return null;
                   })
               .get(8, TimeUnit.SECONDS);
+
           assertEquals(
               0, closes.get(), "A blocked factory has not yet transferred its native handle");
         } finally {
@@ -567,7 +666,9 @@ class McpInitializationCleanupTest {
         assertTrue(closed.await(3, TimeUnit.SECONDS));
         assertEquals("usable", selected.submit(() -> "usable").get(2, TimeUnit.SECONDS));
         assertEquals(0, subscriptions.get(), "Never subscribe to a late initialization result");
+
         int status = pending.get(2, TimeUnit.SECONDS);
+
         assertTrue(status == 0 || status == 503, "Late initialization must not report success");
       } finally {
         releaseFactory.countDown();
@@ -575,6 +676,55 @@ class McpInitializationCleanupTest {
     }
 
     assertEquals(1, closes.get());
+  }
+
+  private Mcp<McpSyncServer>
+      createMcpForClosesALateFactoryResultWithoutSubscribingAfterApplicationShutdown(
+          AtomicInteger closes,
+          CountDownLatch closed,
+          CountDownLatch factoryEntered,
+          CountDownLatch releaseFactory,
+          AtomicInteger subscriptions) {
+    return trackedMcp(
+        closes,
+        closed,
+        new AtomicReference<>(),
+        result -> {
+          factoryEntered.countDown();
+
+          try {
+            if (!releaseFactory.await(15, TimeUnit.SECONDS)) {
+              throw new IllegalStateException("The test must release the native factory");
+            }
+          } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException(failure);
+          }
+
+          return Mono.just(result)
+              .doOnSubscribe(ignoredSubscription -> subscriptions.incrementAndGet());
+        });
+  }
+
+  private Future<Integer>
+      submitPendingForClosesALateFactoryResultWithoutSubscribingAfterApplicationShutdown(
+          ExecutorService workers, TestServer test) {
+    return workers.submit(
+        () -> {
+          try {
+            return test.send(
+                    request ->
+                        request
+                            .path("/mcp")
+                            .method("POST")
+                            .header("Content-Type", "application/json")
+                            .header("Accept", "application/json, text/event-stream")
+                            .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)))
+                .statusCode();
+          } catch (IOException ignoredFailure) {
+            return 0;
+          }
+        });
   }
 
   @Test
@@ -585,23 +735,8 @@ class McpInitializationCleanupTest {
     var completed = new CountDownLatch(1);
     var first = new AtomicBoolean(true);
     var mcp =
-        trackedMcp(
-            new AtomicInteger(),
-            new CountDownLatch(1),
-            new AtomicReference<>(),
-            Mono::just,
-            Mono::empty,
-            () -> {
-              if (first.getAndSet(false)) {
-                try {
-                  new CountDownLatch(1).await(5, TimeUnit.SECONDS);
-                } catch (InterruptedException ignored14) {
-                  throw fatal;
-                }
-
-                throw new IllegalStateException("The verified deadline must interrupt the factory");
-              }
-            });
+        createMcpForPreservesAFatalFactoryErrorInsteadOfReplacingItWithAnExpiryChallenge(
+            first, fatal);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.afterRequest(
@@ -625,7 +760,7 @@ class McpInitializationCleanupTest {
                     .header("Content-Type", "application/json")
                     .header("Accept", "application/json, text/event-stream")
                     .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
-      } catch (IOException ignored15) {
+      } catch (IOException ignoredFailure) {
         // Fatal failures abort the exchange rather than render an authentication challenge.
       }
 
@@ -644,6 +779,36 @@ class McpInitializationCleanupTest {
               .statusCode(),
           "A factory failure must release provisional admission capacity");
     }
+  }
+
+  private Mcp<McpSyncServer>
+      createMcpForPreservesAFatalFactoryErrorInsteadOfReplacingItWithAnExpiryChallenge(
+          AtomicBoolean first, LinkageError fatal) {
+    return trackedMcp(
+        new AtomicInteger(),
+        new CountDownLatch(1),
+        new AtomicReference<>(),
+        Mono::just,
+        Mono::empty,
+        () -> {
+          if (first.getAndSet(false)) {
+            try {
+              new CountDownLatch(1).await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ignoredFailure) {
+              throw fatal;
+            }
+
+            throw new IllegalStateException("The verified deadline must interrupt the factory");
+          }
+        });
+  }
+
+  private static String initializationRequest() {
+    return """
+      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "protocolVersion":"2025-11-25","capabilities":{},
+        "clientInfo":{"name":"initialization-cleanup","version":"1.0"}}}
+      """;
   }
 
   private static Mcp<McpSyncServer> trackedMcp(
@@ -683,7 +848,7 @@ class McpInitializationCleanupTest {
                     "alice:client",
                     McpTransportContext.EMPTY,
                     request.header("X-Expiring").isPresent() ? Instant.now().plusSeconds(1) : null),
-            (ignored16, ignored17) -> {}),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
         new McpSessionLimits(1, 1, Duration.ofMinutes(30)),
         transport ->
             McpServer.sync(
@@ -695,30 +860,9 @@ class McpInitializationCleanupTest {
                               beforeAllocation.run();
                               var id = UUID.randomUUID().toString();
                               sessionId.set(id);
-                              var session =
-                                  new McpStreamableServerSession(
-                                      id,
-                                      McpSchema.ClientCapabilities.builder().build(),
-                                      McpSchema.Implementation.builder("cleanup-client", "1.0")
-                                          .build(),
-                                      Duration.ofSeconds(5),
-                                      Map.of(),
-                                      Map.of(),
-                                      () ->
-                                          Mono.fromRunnable(
-                                                  () -> {
-                                                    closes.incrementAndGet();
-                                                    closed.countDown();
-                                                  })
-                                              .then(Mono.defer(cleanup)),
-                                      McpJsonDefaults.getSchemaValidator());
-                              var result =
-                                  McpSchema.InitializeResult.builder(
-                                          "2025-11-25",
-                                          McpSchema.ServerCapabilities.builder().build(),
-                                          McpSchema.Implementation.builder("cleanup-server", "1.0")
-                                              .build())
-                                      .build();
+                              var session = trackedSession(id, closes, closed, cleanup);
+                              var result = initializationResult();
+
                               return new McpStreamableServerSession.McpStreamableServerSessionInit(
                                   session, results.apply(result));
                             });
@@ -740,5 +884,32 @@ class McpInitializationCleanupTest {
                       }
                     })
                 .build());
+  }
+
+  private static McpStreamableServerSession trackedSession(
+      String id, AtomicInteger closes, CountDownLatch closed, Supplier<Mono<Void>> cleanup) {
+    return new McpStreamableServerSession(
+        id,
+        McpSchema.ClientCapabilities.builder().build(),
+        McpSchema.Implementation.builder("cleanup-client", "1.0").build(),
+        Duration.ofSeconds(5),
+        Map.of(),
+        Map.of(),
+        () ->
+            Mono.fromRunnable(
+                    () -> {
+                      closes.incrementAndGet();
+                      closed.countDown();
+                    })
+                .then(Mono.defer(cleanup)),
+        McpJsonDefaults.getSchemaValidator());
+  }
+
+  private static InitializeResult initializationResult() {
+    return McpSchema.InitializeResult.builder(
+            "2025-11-25",
+            McpSchema.ServerCapabilities.builder().build(),
+            McpSchema.Implementation.builder("cleanup-server", "1.0").build())
+        .build();
   }
 }

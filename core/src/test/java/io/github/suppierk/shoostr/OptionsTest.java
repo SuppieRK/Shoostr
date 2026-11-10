@@ -20,6 +20,7 @@ class OptionsTest {
   @Test
   void initializesEveryServingDefaultOnANewInstance() {
     var options = new Options();
+
     assertEquals("0.0.0.0", options.getHost());
     assertEquals(8080, options.getPort());
     assertEquals(1_048_576, options.getMaxRequestBytes());
@@ -44,6 +45,7 @@ class OptionsTest {
     options.setStreamBufferBytes(32);
     options.setMaxParameters(4);
     options.setMultipart(multipart);
+
     assertEquals(64, options.getMaxRequestBytes());
     assertEquals(128, options.getMaxResponseBytes());
     assertEquals(32, options.getStreamBufferBytes());
@@ -73,6 +75,7 @@ class OptionsTest {
     options.setMaxRequestHeaderBytes(1024);
     options.setIdleTimeout(Duration.ofSeconds(11));
     options.setShutdownTimeout(Duration.ofSeconds(2));
+
     assertThrows(IllegalArgumentException.class, () -> mutation.accept(options));
     assertEquals("127.0.0.1", options.getHost());
     assertEquals(9090, options.getPort());
@@ -91,6 +94,7 @@ class OptionsTest {
   @ValueSource(strings = {" ", "\t", "\n"})
   void rejectsEmptyOrBlankHosts(String host) {
     var options = new Options();
+
     assertThrows(IllegalArgumentException.class, () -> options.setHost(host));
     assertEquals("0.0.0.0", options.getHost());
   }
@@ -99,6 +103,7 @@ class OptionsTest {
   void leavesHostNamesUnresolvedUntilApplicationStartup() {
     var options = new Options();
     options.setHost("unresolved.invalid");
+
     assertEquals("unresolved.invalid", options.getHost());
   }
 
@@ -107,6 +112,7 @@ class OptionsTest {
   void acceptsEphemeralAndMaximumPorts(int port) {
     var options = new Options();
     options.setPort(port);
+
     assertEquals(port, options.getPort());
   }
 
@@ -114,6 +120,7 @@ class OptionsTest {
   @MethodSource("invalidTimeouts")
   void rejectsTimeoutsThatCannotExpressPositiveWholeMilliseconds(Duration timeout) {
     var options = new Options();
+
     assertThrows(IllegalArgumentException.class, () -> options.setIdleTimeout(timeout));
     assertThrows(IllegalArgumentException.class, () -> options.setShutdownTimeout(timeout));
     assertEquals(Duration.ofSeconds(30), options.getIdleTimeout());
@@ -126,6 +133,7 @@ class OptionsTest {
     var options = new Options();
     options.setIdleTimeout(timeout);
     options.setShutdownTimeout(timeout);
+
     assertEquals(timeout, options.getIdleTimeout());
     assertEquals(timeout, options.getShutdownTimeout());
   }

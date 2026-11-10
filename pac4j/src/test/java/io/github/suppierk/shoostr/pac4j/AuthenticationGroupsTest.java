@@ -62,34 +62,8 @@ class AuthenticationGroupsTest {
   }
 
   private static void registerAuthenticationGroups(Shoostr app) {
-    var basic =
-        new Pac4j(
-            new DirectBasicAuthClient(
-                (ignored, supplied) -> {
-                  if (!(supplied instanceof UsernamePasswordCredentials credentials)
-                      || !"alice".equals(credentials.getUsername())
-                      || !"correct".equals(credentials.getPassword())) {
-                    return Optional.empty();
-                  }
-
-                  var profile = new CommonProfile();
-                  profile.setId("alice");
-                  supplied.setUserProfile(profile);
-                  return Optional.of(supplied);
-                }),
-            "Basic");
-    Authenticator bearerAuthenticator =
-        (ignored2, supplied) -> {
-          if (!(supplied instanceof TokenCredentials credentials)
-              || !"correct".equals(credentials.getToken())) {
-            return Optional.empty();
-          }
-
-          var profile = new CommonProfile();
-          profile.setId("bob");
-          supplied.setUserProfile(profile);
-          return Optional.of(supplied);
-        };
+    var basic = createBasicForRegisterAuthenticationGroups();
+    Authenticator bearerAuthenticator = createBearerAuthenticatorForRegisterAuthenticationGroups();
     var bearer = new Pac4j(new DirectBearerAuthClient(bearerAuthenticator), "Bearer");
 
     app.routes(
@@ -109,5 +83,39 @@ class AuthenticationGroupsTest {
                           response.text(request.principal().orElseThrow().getName())),
               extensions -> extensions.withExtension(bearer));
         });
+  }
+
+  private static Pac4j createBasicForRegisterAuthenticationGroups() {
+    return new Pac4j(
+        new DirectBasicAuthClient(
+            (ignored, supplied) -> {
+              if (!(supplied instanceof UsernamePasswordCredentials credentials)
+                  || !"alice".equals(credentials.getUsername())
+                  || !"correct".equals(credentials.getPassword())) {
+                return Optional.empty();
+              }
+
+              var profile = new CommonProfile();
+              profile.setId("alice");
+              supplied.setUserProfile(profile);
+
+              return Optional.of(supplied);
+            }),
+        "Basic");
+  }
+
+  private static Authenticator createBearerAuthenticatorForRegisterAuthenticationGroups() {
+    return (ignoredCallContext, supplied) -> {
+      if (!(supplied instanceof TokenCredentials credentials)
+          || !"correct".equals(credentials.getToken())) {
+        return Optional.empty();
+      }
+
+      var profile = new CommonProfile();
+      profile.setId("bob");
+      supplied.setUserProfile(profile);
+
+      return Optional.of(supplied);
+    };
   }
 }

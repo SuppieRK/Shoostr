@@ -79,6 +79,7 @@ class ConstantComparisonTest {
       configuration.addChild(walker);
       checker.setModuleClassLoader(ConstantComparisonTest.class.getClassLoader());
       checker.configure(configuration);
+
       return checker.process(List.of(file.toFile()));
     } finally {
       checker.destroy();

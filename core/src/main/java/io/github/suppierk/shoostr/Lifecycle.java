@@ -122,6 +122,74 @@ public final class Lifecycle {
   }
 
   /**
+   * Regenerates a provider contribution from its independently inherited typed configuration.
+   *
+   * @param extension inherited instance
+   * @param selection inherited data
+   * @param <C> configuration type
+   */
+  private <C> void inherit(Extension extension, Selection<C> selection) {
+    var inherited = select(extension, selection.configure(), selection.configuration());
+    if (!selection.included()) {
+      selections.put(extension, inherited.included(false));
+    }
+  }
+
+  /**
+   * Creates typed provider data while isolating its hooks from direct scope callbacks.
+   *
+   * @param extension selected exact instance
+   * @param configure provider's configuration operation
+   * @param inherited parent settings, or null for first selection
+   * @param <C> configuration type
+   * @return independent settings and contribution
+   */
+  @SuppressWarnings("java:S1181") // Freeze retained provider collectors after any setup failure.
+  private <C> Selection<C> select(
+      Extension extension, BiFunction<Lifecycle, @Nullable C, C> configure, @Nullable C inherited) {
+    var contribution = new Lifecycle(installed, initialize, null);
+    contribution.provider = true;
+
+    try {
+      var selection = createSelection(contribution, configure, inherited);
+
+      var owners = new Lifecycle(installed, initialize, null);
+      owners.reserve(this);
+      for (var previous : selections.values()) {
+        owners.reserve(previous.contribution());
+      }
+      owners.reserve(contribution);
+      selections.put(extension, selection);
+      order.add(extension);
+
+      return selection;
+    } catch (RuntimeException | Error failure) {
+      contribution.freeze();
+      throw failure;
+    }
+  }
+
+  /**
+   * Evaluates provider configuration inside its contribution's failure boundary.
+   *
+   * @param contribution isolated callback collector
+   * @param configure provider configuration operation
+   * @param inherited parent configuration, or null
+   * @param <C> provider configuration type
+   * @return configured provider selection
+   */
+  private static <C> Selection<C> createSelection(
+      Lifecycle contribution,
+      BiFunction<Lifecycle, @Nullable C, C> configure,
+      @Nullable C inherited) {
+    return new Selection<>(
+        Objects.requireNonNull(configure.apply(contribution, inherited)),
+        contribution,
+        true,
+        configure);
+  }
+
+  /**
    * Activates one application's typed default contribution before route registration begins.
    *
    * @param extension application capability
@@ -185,6 +253,7 @@ public final class Lifecycle {
    */
   public Lifecycle onRoute(BiConsumer<HttpMethods, String> consumer) {
     Objects.requireNonNull(consumer);
+
     return onRoute(info -> consumer.accept(info.method(), info.pathTemplate()));
   }
 
@@ -432,6 +501,7 @@ public final class Lifecycle {
       }
     }
     combined.append(this);
+
     return combined;
   }
 
@@ -444,53 +514,13 @@ public final class Lifecycle {
   }
 
   /**
-   * Regenerates a provider contribution from its independently inherited typed configuration.
+   * Rejects mutation after the configuration callback has returned.
    *
-   * @param extension inherited instance
-   * @param selection inherited data
-   * @param <C> configuration type
+   * @throws IllegalStateException if configuration has finished
    */
-  private <C> void inherit(Extension extension, Selection<C> selection) {
-    var inherited = select(extension, selection.configure(), selection.configuration());
-    if (!selection.included()) {
-      selections.put(extension, inherited.included(false));
-    }
-  }
-
-  /**
-   * Creates typed provider data while isolating its hooks from direct scope callbacks.
-   *
-   * @param extension selected exact instance
-   * @param configure provider's configuration operation
-   * @param inherited parent settings, or null for first selection
-   * @param <C> configuration type
-   * @return independent settings and contribution
-   */
-  @SuppressWarnings("java:S1181") // Freeze retained provider collectors after any setup failure.
-  private <C> Selection<C> select(
-      Extension extension, BiFunction<Lifecycle, @Nullable C, C> configure, @Nullable C inherited) {
-    var contribution = new Lifecycle(installed, initialize, null);
-    contribution.provider = true;
-
-    try {
-      var selection =
-          new Selection<>(
-              Objects.requireNonNull(configure.apply(contribution, inherited)),
-              contribution,
-              true,
-              configure);
-      var owners = new Lifecycle(installed, initialize, null);
-      owners.reserve(this);
-      for (var previous : selections.values()) {
-        owners.reserve(previous.contribution());
-      }
-      owners.reserve(contribution);
-      selections.put(extension, selection);
-      order.add(extension);
-      return selection;
-    } catch (RuntimeException | Error failure) {
-      contribution.freeze();
-      throw failure;
+  void requireMutable() {
+    if (closed) {
+      throw new IllegalStateException("Endpoint configuration has finished");
     }
   }
 
@@ -503,6 +533,22 @@ public final class Lifecycle {
     reserve(source);
     appendCallbacks(source);
     routeConsumers.addAll(source.routeConsumers);
+  }
+
+  /**
+   * Copies inherited callbacks and nearest status renderers.
+   *
+   * @param source callbacks to append
+   */
+  private void appendCallbacks(Lifecycle source) {
+    matched.addAll(source.matched);
+    before.addAll(source.before);
+    after.addAll(source.after);
+    beforeFlush.addAll(source.beforeFlush);
+    afterFlush.addAll(source.afterFlush);
+    observers.addAll(source.observers);
+    source.instrumentation.forEach(this::observe);
+    statuses.putAll(source.statuses);
   }
 
   /**
@@ -522,33 +568,6 @@ public final class Lifecycle {
     if (source.cors != null) {
       cors(source.cors, Objects.requireNonNull(source.corsPolicy));
     }
-  }
-
-  /**
-   * Rejects mutation after the configuration callback has returned.
-   *
-   * @throws IllegalStateException if configuration has finished
-   */
-  void requireMutable() {
-    if (closed) {
-      throw new IllegalStateException("Endpoint configuration has finished");
-    }
-  }
-
-  /**
-   * Copies inherited callbacks and nearest status renderers.
-   *
-   * @param source callbacks to append
-   */
-  private void appendCallbacks(Lifecycle source) {
-    matched.addAll(source.matched);
-    before.addAll(source.before);
-    after.addAll(source.after);
-    beforeFlush.addAll(source.beforeFlush);
-    afterFlush.addAll(source.afterFlush);
-    observers.addAll(source.observers);
-    source.instrumentation.forEach(this::observe);
-    statuses.putAll(source.statuses);
   }
 
   /**

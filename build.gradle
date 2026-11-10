@@ -36,16 +36,21 @@ allprojects {
 	apply from: rootProject.file('config/gradle/constructor-fields.gradle')
 
 	java { toolchain { languageVersion = JavaLanguageVersion.of(21) } }
+
 	tasks.withType(JavaCompile).configureEach {
 		options.encoding = 'UTF-8'
 		options.release = 21
 		options.compilerArgs.add('-proc:none')
 	}
+
 	tasks.withType(Test).configureEach { useJUnitPlatform() }
+
 	repositories { mavenCentral() }
+
 	spotless {
 		groovyGradle { greclipse() }
 	}
+
 	checkstyle {
 		toolVersion = '14.3.0'
 		configFile = rootProject.file('config/checkstyle/checkstyle.xml')
@@ -67,7 +72,7 @@ allprojects {
 
 project(':core') { dependencies { testImplementation gradleTestKit() } }
 
-subprojects {
+subprojects { targetProject ->
 	apply plugin: 'java'
 	if (name != 'microbenchmarks') {
 		apply from: rootProject.file('config/gradle/nullaway.gradle')
@@ -84,7 +89,7 @@ subprojects {
 		java {
 			googleJavaFormat()
 			// Bump both Java custom-step versions when StatementSpacingCheck changes.
-			bumpThisNumberIfACustomStepChanges(2)
+			bumpThisNumberIfACustomStepChanges(4)
 			custom 'statement spacing', { String source ->
 				StatementSpacingCheck.format(source)
 			}
@@ -92,13 +97,8 @@ subprojects {
 	}
 
 	sourceSets.configureEach { sourceSet ->
-		def javaRules = tasks.register("checkstyle${sourceSet.name.capitalize()}JavaRules", Checkstyle) {
-			description = "Checks ${sourceSet.name} sources with the shared Java rules."
-			source sourceSet.allJava
-			classpath = sourceSet.output + sourceSet.compileClasspath
-			configFile = rootProject.file(
-					sourceSet.name == 'test' ? 'config/checkstyle/java-test.xml' : 'config/checkstyle/java.xml')
-		}
+		def javaRules = registerJavaRules(targetProject, sourceSet)
+
 		tasks.named("checkstyle${sourceSet.name.capitalize()}") {
 			dependsOn javaRules
 		}
@@ -108,12 +108,12 @@ subprojects {
 
 spotless {
 	groovyGradle {
-		target '*.gradle', 'buildSrc/*.gradle', 'config/gradle/*.gradle'
+		target '*.gradle', 'buildSrc/*.gradle', 'config/gradle/*.gradle', 'core/src/test/resources/published-consumer/*.gradle'
 	}
 	java {
-		target 'buildSrc/src/**/*.java', 'config/checkstyle/tests/**/*.java'
+		target 'buildSrc/src/**/*.java', 'config/checkstyle/tests/**/*.java', 'core/src/test/resources/published-consumer/*.java'
 		googleJavaFormat()
-		bumpThisNumberIfACustomStepChanges(2)
+		bumpThisNumberIfACustomStepChanges(4)
 		custom 'statement spacing', { String source ->
 			StatementSpacingCheck.format(source)
 		}
@@ -157,16 +157,7 @@ tasks.named('assemble') {
 	}
 }
 
-def frameworkModules = [
-	'http',
-	'core',
-	'test',
-	'pac4j',
-	'micrometer',
-	'opentelemetry',
-	'openapi',
-	'mcp'
-]
+def frameworkModules = frameworkModuleNames()
 def frameworkProjects = frameworkModules.collect { project(":${it}") }
 ext.publicationLibraries = frameworkModules
 apply from: 'config/gradle/publication.gradle'
@@ -374,4 +365,27 @@ project(':core') {
 			systemProperty 'shoostr.http.jar', project(':http').tasks.named('jar').get().archiveFile.get().asFile.absolutePath
 		}
 	}
+}
+
+private def registerJavaRules(targetProject, sourceSet) {
+	return targetProject.tasks.register("checkstyle${sourceSet.name.capitalize()}JavaRules", Checkstyle) {
+		description = "Checks ${sourceSet.name} sources with the shared Java rules."
+		source sourceSet.allJava
+		classpath = sourceSet.output + sourceSet.compileClasspath
+		configFile = targetProject.rootProject.file(
+				sourceSet.name == 'test' ? 'config/checkstyle/java-test.xml' : 'config/checkstyle/java.xml')
+	}
+}
+
+private List<String> frameworkModuleNames() {
+	return [
+		'http',
+		'core',
+		'test',
+		'pac4j',
+		'micrometer',
+		'opentelemetry',
+		'openapi',
+		'mcp'
+	]
 }

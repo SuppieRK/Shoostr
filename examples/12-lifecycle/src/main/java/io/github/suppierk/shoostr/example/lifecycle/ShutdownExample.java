@@ -18,7 +18,9 @@ public final class ShutdownExample {
    */
   public static Shoostr application(Runnable dispose) {
     Objects.requireNonNull(dispose);
+
     var stopping = new CountDownLatch(1);
+
     return new Shoostr()
         // Wake waiting handlers before shutdown waits for their exchanges to finish.
         .beforeClose(stopping::countDown)
@@ -30,7 +32,7 @@ public final class ShutdownExample {
                     .get("/ready", (ignored, response) -> response.text("ready"))
                     .get(
                         "/wait-for-shutdown",
-                        (ignored2, response) -> {
+                        (ignoredRequest, response) -> {
                           if (stopping.await(30, TimeUnit.SECONDS)) {
                             response.text("stopping");
                           } else {

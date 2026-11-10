@@ -18,6 +18,7 @@ class StreamCompletionBenchmarkTest {
 
     try {
       fixture.setup();
+
       assertEquals(18, fixture.flushes());
       assertEquals(18, fixture.flushes());
     } finally {

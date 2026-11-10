@@ -25,8 +25,7 @@ public final class StreamBulkheadExample {
   public static Shoostr application(Bulkhead streams, Callable<String> next) {
     Objects.requireNonNull(streams);
     Objects.requireNonNull(next);
-    var configuredOptions = new Options();
-    configuredOptions.setVirtualThreads(true);
+    var configuredOptions = options();
 
     return new Shoostr(configuredOptions)
         .exception(
@@ -40,6 +39,7 @@ public final class StreamBulkheadExample {
                         "/events",
                         (request, response) -> {
                           var output = response.startEventStream();
+
                           output.send("ready");
                           output.send(next.call());
                         },
@@ -49,6 +49,7 @@ public final class StreamBulkheadExample {
                                     request -> {
                                       var acquired = new AtomicBoolean();
                                       request.attribute(ADMISSION, acquired);
+
                                       // Completion includes the final framework write, beyond
                                       // handler return.
                                       return outcome -> {
@@ -67,5 +68,17 @@ public final class StreamBulkheadExample {
                                       streams.acquirePermission();
                                       acquired.set(true);
                                     })));
+  }
+
+  /**
+   * Configures the listener and resource policy used by this application.
+   *
+   * @return detached serving options
+   */
+  private static Options options() {
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
+    return configuredOptions;
   }
 }

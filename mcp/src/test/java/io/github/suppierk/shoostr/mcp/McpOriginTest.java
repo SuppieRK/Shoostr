@@ -39,7 +39,7 @@ class McpOriginTest {
         new McpHttpSecurity(
             Set.of("https://allowed.example"),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored2, ignored3) -> {});
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.routes(
@@ -63,8 +63,8 @@ class McpOriginTest {
     var security =
         new McpHttpSecurity(
             Set.of("https://allowed.example"),
-            ignored4 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored5, ignored6) -> {});
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.routes(
@@ -93,8 +93,8 @@ class McpOriginTest {
     var security =
         new McpHttpSecurity(
             Set.of("https://allowed.example"),
-            ignored7 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored8, ignored9) -> {});
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.routes(
@@ -117,8 +117,8 @@ class McpOriginTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            ignored10 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored11, ignored12) -> {});
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.routes(
@@ -138,8 +138,8 @@ class McpOriginTest {
     var security =
         new McpHttpSecurity(
             Set.of("https://allowed.example"),
-            ignored13 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored14, ignored15) -> {});
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.routes(
@@ -167,14 +167,14 @@ class McpOriginTest {
     var security =
         new McpHttpSecurity(
             Set.of(),
-            ignored16 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored17, ignored18) -> {});
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.routes(
         routes -> {
           routes.path("/mcp", mcp::routes);
-          routes.get("/public", (ignored19, response) -> response.text("public"));
+          routes.get("/public", (ignoredRequest, response) -> response.text("public"));
         });
 
     try (var test = TestServer.start(app)) {
@@ -192,19 +192,11 @@ class McpOriginTest {
     var security =
         new McpHttpSecurity(
             Set.of("https://allowed.example"),
-            ignored20 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignored21, ignored22) -> {});
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
-    var cors =
-        new Cors(
-            new CorsPolicy(
-                Set.of("https://untrusted.example"),
-                Set.of(HttpMethods.POST),
-                Set.of(),
-                false,
-                Set.of(),
-                5));
+    var cors = createCorsForRejectsUnapprovedOriginEvenWhenApplicationCorsWouldAdmitThePreflight();
 
     app.routes(
         routes ->
@@ -229,6 +221,17 @@ class McpOriginTest {
               .statusCode());
       assertEquals(0, authentication.attempts.get());
     }
+  }
+
+  private Cors createCorsForRejectsUnapprovedOriginEvenWhenApplicationCorsWouldAdmitThePreflight() {
+    return new Cors(
+        new CorsPolicy(
+            Set.of("https://untrusted.example"),
+            Set.of(HttpMethods.POST),
+            Set.of(),
+            false,
+            Set.of(),
+            5));
   }
 
   private static final class RejectingAuthentication extends AuthenticationExtension {

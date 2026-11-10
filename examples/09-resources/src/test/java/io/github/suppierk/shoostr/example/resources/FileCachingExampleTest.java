@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -26,14 +27,8 @@ class FileCachingExampleTest {
             directory.resolve("revision.txt"), "0123456789", StandardCharsets.US_ASCII);
 
     try (var test = TestServer.start(FileCachingExample.application(file))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/file")
-                      .header("Range", "bytes=2-5")
-                      .header("If-Range", "\"revision-1\""),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForServesOneByteRangeWhenItsStrongRevisionStillMatches(test);
+
       assertEquals(206, response.statusCode());
       assertEquals("2345", response.body());
       assertEquals("bytes 2-5/10", response.headers().firstValue("Content-Range").orElseThrow());
@@ -41,6 +36,14 @@ class FileCachingExampleTest {
       assertEquals("bytes", response.headers().firstValue("Accept-Ranges").orElseThrow());
       assertEquals("\"revision-1\"", response.headers().firstValue("ETag").orElseThrow());
     }
+  }
+
+  private HttpResponse<String> sendResponseForServesOneByteRangeWhenItsStrongRevisionStillMatches(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/file").header("Range", "bytes=2-5").header("If-Range", "\"revision-1\""),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -60,6 +63,7 @@ class FileCachingExampleTest {
           test.send(
               request -> request.path("/file").header("Range", range),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(status, response.statusCode());
       assertEquals(body, response.body());
       assertEquals(contentRange, response.headers().firstValue("Content-Range").orElseThrow());
@@ -78,6 +82,7 @@ class FileCachingExampleTest {
           test.send(
               request -> request.path("/file").header("Range", range),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("0123456789", response.body());
       assertTrue(response.headers().firstValue("Content-Range").isEmpty());
@@ -97,6 +102,7 @@ class FileCachingExampleTest {
               request ->
                   request.path("/file").header("Range", "bytes=2-5").header("If-Range", validator),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("0123456789", response.body());
       assertTrue(response.headers().firstValue("Content-Range").isEmpty());
@@ -111,15 +117,20 @@ class FileCachingExampleTest {
 
     try (var test = TestServer.start(FileCachingExample.application(file))) {
       var first = test.send(request -> request.path("/file"));
+
       assertEquals(200, first.statusCode());
+
       var tag = first.headers().firstValue("ETag").orElseThrow();
       var modified = first.headers().firstValue("Last-Modified").orElseThrow();
       var byTag = test.send(request -> request.path("/file").header("If-None-Match", tag));
+
       assertEquals(304, byTag.statusCode());
       assertEquals(0, byTag.body().length);
       assertEquals(tag, byTag.headers().firstValue("ETag").orElseThrow());
+
       var byDate =
           test.send(request -> request.path("/file").header("If-Modified-Since", modified));
+
       assertEquals(304, byDate.statusCode());
       assertEquals(0, byDate.body().length);
     }
@@ -139,6 +150,7 @@ class FileCachingExampleTest {
               request ->
                   request.path("/file").header("Range", "bytes=2-5").header("If-Range", modified),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("0123456789", response.body());
       assertTrue(response.headers().firstValue("Content-Range").isEmpty());
@@ -152,17 +164,19 @@ class FileCachingExampleTest {
             directory.resolve("revision.txt"), "0123456789", StandardCharsets.US_ASCII);
 
     try (var test = TestServer.start(FileCachingExample.application(file))) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/file")
-                      .header("If-Match", "\"other\"")
-                      .header("Range", "bytes=2-5"));
+      var response = sendResponseForEvaluatesPreconditionsBeforeSelectingARange(test);
+
       assertEquals(412, response.statusCode());
       assertEquals(0, response.body().length);
       assertTrue(response.headers().firstValue("Content-Range").isEmpty());
     }
+  }
+
+  private HttpResponse<byte[]> sendResponseForEvaluatesPreconditionsBeforeSelectingARange(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/file").header("If-Match", "\"other\"").header("Range", "bytes=2-5"));
   }
 
   @Test
@@ -176,31 +190,48 @@ class FileCachingExampleTest {
       var first = test.send(request -> request.path("/file"));
       var modified = first.headers().firstValue("Last-Modified").orElseThrow();
       var noneMatch =
-          test.send(
-              request ->
-                  request
-                      .path("/file")
-                      .header("If-None-Match", "\"other\"")
-                      .header("If-Modified-Since", modified),
-              HttpResponse.BodyHandlers.ofString());
+          sendNoneMatchRequestForGivesTagConditionsPrecedenceOverDateConditions(test, modified);
+
       assertEquals(200, noneMatch.statusCode());
       assertEquals("0123456789", noneMatch.body());
-      var match =
-          test.send(
-              request ->
-                  request
-                      .path("/file")
-                      .header("If-Match", "\"revision-1\"")
-                      .header("If-Unmodified-Since", "Thu, 01 Jan 1970 00:00:00 GMT"));
+
+      var match = sendMatchRequestForGivesTagConditionsPrecedenceOverDateConditions(test);
+
       assertEquals(200, match.statusCode());
-      var oldDate =
-          test.send(
-              request ->
-                  request
-                      .path("/file")
-                      .header("If-Unmodified-Since", "Thu, 01 Jan 1970 00:00:00 GMT"));
+
+      var oldDate = sendOldDateRequestForGivesTagConditionsPrecedenceOverDateConditions(test);
+
       assertEquals(412, oldDate.statusCode());
       assertEquals(0, oldDate.body().length);
     }
+  }
+
+  private HttpResponse<String>
+      sendNoneMatchRequestForGivesTagConditionsPrecedenceOverDateConditions(
+          TestServer test, String modified) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/file")
+                .header("If-None-Match", "\"other\"")
+                .header("If-Modified-Since", modified),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<byte[]> sendMatchRequestForGivesTagConditionsPrecedenceOverDateConditions(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/file")
+                .header("If-Match", "\"revision-1\"")
+                .header("If-Unmodified-Since", "Thu, 01 Jan 1970 00:00:00 GMT"));
+  }
+
+  private HttpResponse<byte[]> sendOldDateRequestForGivesTagConditionsPrecedenceOverDateConditions(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/file").header("If-Unmodified-Since", "Thu, 01 Jan 1970 00:00:00 GMT"));
   }
 }

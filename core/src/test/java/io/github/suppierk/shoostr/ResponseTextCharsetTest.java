@@ -37,12 +37,14 @@ class ResponseTextCharsetTest {
                 "/latin1",
                 (ignored, response) -> {
                   response.status(201).body("application/json", new byte[] {'0'});
+
                   assertSame(response, response.text("café", StandardCharsets.ISO_8859_1));
                   assertFalse(response.isCommitted());
                 });
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/latin1"));
+
           assertEquals(201, result.statusCode());
           assertEquals(
               "text/plain; charset=ISO-8859-1",
@@ -63,7 +65,7 @@ class ResponseTextCharsetTest {
         app.routes()
             .get(
                 "/utf8",
-                (ignored2, response) -> {
+                (ignoredRequest, response) -> {
                   if (explicit) {
                     response.text("café", StandardCharsets.UTF_8);
                   } else {
@@ -73,6 +75,7 @@ class ResponseTextCharsetTest {
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/utf8"));
+
           assertEquals(200, result.statusCode());
           assertEquals(
               "text/plain; charset=utf-8",
@@ -92,13 +95,16 @@ class ResponseTextCharsetTest {
       try (Closeable appCleanup2 = app::close) {
         app.routes()
             .get(
-                "/utf16", (ignored3, response) -> response.text("café", StandardCharsets.UTF_16BE));
+                "/utf16",
+                (ignoredRequest, response) -> response.text("café", StandardCharsets.UTF_16BE));
         app.routes()
             .head(
-                "/utf16", (ignored4, response) -> response.text("café", StandardCharsets.UTF_16BE));
+                "/utf16",
+                (ignoredRequest, response) -> response.text("café", StandardCharsets.UTF_16BE));
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/utf16").method(method));
+
           assertEquals(200, result.statusCode());
           assertEquals(
               "text/plain; charset=UTF-16BE",
@@ -125,24 +131,20 @@ class ResponseTextCharsetTest {
 
     {
       var app =
-          new Shoostr(configuredOptions)
-              .modifyServer(
-                  nativeServer -> {
-                    var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-                    nativeConnector.setHost("127.0.0.1");
-                    nativeConnector.setPort(0);
-                    nativeConnector.setIdleTimeout(5000);
-                  });
+          createAppForAppliesTheLimitToEncodedBytesAndPreservesOutputWhenReplacementIsTooLarge(
+              configuredOptions);
 
       try (Closeable appCleanup3 = app::close) {
         app.routes()
             .get(
-                "/latin1", (ignored5, response) -> response.text("é", StandardCharsets.ISO_8859_1));
+                "/latin1",
+                (ignoredRequest, response) -> response.text("é", StandardCharsets.ISO_8859_1));
         app.routes()
             .get(
                 "/utf8",
-                (ignored6, response) -> {
+                (ignoredRequest, response) -> {
                   response.status(201).body("application/octet-stream", new byte[] {42});
+
                   assertThrows(
                       IllegalArgumentException.class,
                       () -> response.text("é", StandardCharsets.UTF_8));
@@ -150,9 +152,12 @@ class ResponseTextCharsetTest {
 
         try (var test = TestServer.start(app)) {
           var latin1 = test.send(request -> request.path("/latin1"));
+
           assertEquals(200, latin1.statusCode());
           assertArrayEquals(new byte[] {(byte) 0xe9}, latin1.body());
+
           var rejected = test.send(request -> request.path("/utf8"));
+
           assertEquals(201, rejected.statusCode());
           assertEquals(
               "application/octet-stream",
@@ -161,6 +166,19 @@ class ResponseTextCharsetTest {
         }
       }
     }
+  }
+
+  private Shoostr
+      createAppForAppliesTheLimitToEncodedBytesAndPreservesOutputWhenReplacementIsTooLarge(
+          Options configuredOptions) {
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(5000);
+            });
   }
 
   @Test
@@ -173,19 +191,23 @@ class ResponseTextCharsetTest {
         app.routes()
             .get(
                 "/invalid",
-                (ignored7, response) -> {
+                (ignoredRequest, response) -> {
                   response.status(201).body("application/json", new byte[] {'0'});
+
                   assertThrows(
                       NullPointerException.class,
                       () -> response.text(null, StandardCharsets.UTF_8));
                   assertThrows(NullPointerException.class, () -> response.text("late", null));
+
                   var charset = rejectedEncoder("X-Test:Codec");
+
                   assertThrows(
                       IllegalArgumentException.class, () -> response.text("late", charset));
                 });
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/invalid"));
+
           assertEquals(201, result.statusCode());
           assertEquals(
               "application/json", result.headers().firstValue("Content-Type").orElseThrow());
@@ -205,15 +227,17 @@ class ResponseTextCharsetTest {
         app.routes()
             .get(
                 "/encoder",
-                (ignored8, response) -> {
+                (ignoredRequest, response) -> {
                   response.status(201).body("application/json", new byte[] {'0'});
                   var charset = rejectedEncoder(name);
+
                   assertThrows(
                       UnsupportedOperationException.class, () -> response.text("late", charset));
                 });
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/encoder"));
+
           assertEquals(201, result.statusCode());
           assertEquals(
               "application/json", result.headers().firstValue("Content-Type").orElseThrow());
@@ -232,7 +256,7 @@ class ResponseTextCharsetTest {
         app.routes()
             .get(
                 "/thread",
-                (ignored9, response) -> {
+                (ignoredRequest, response) -> {
                   var charset = rejectedEncoder("X-Test");
                   children
                       .submit(
@@ -246,6 +270,7 @@ class ResponseTextCharsetTest {
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/thread"));
+
           assertEquals(200, result.statusCode());
           assertArrayEquals(new byte[] {'o', 'k'}, result.body());
         }
@@ -265,13 +290,14 @@ class ResponseTextCharsetTest {
             .get(
                 "/complete",
                 executor,
-                (ignored10, response) -> {
+                (ignoredRequest, response) -> {
                   saved.set(response);
                   response.text("ok", StandardCharsets.US_ASCII);
                 });
 
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/complete")).statusCode());
+
           var response = saved.get();
           var charset = rejectedEncoder("X-Test");
           executor
@@ -297,14 +323,16 @@ class ResponseTextCharsetTest {
         app.routes()
             .get(
                 "/file",
-                (ignored11, response) -> {
+                (ignoredRequest, response) -> {
                   response.file(file, "application/octet-stream");
                   var charset = rejectedEncoder("X-Test");
+
                   assertThrows(IllegalStateException.class, () -> response.text("late", charset));
                 });
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/file"));
+
           assertEquals(200, result.statusCode());
           assertArrayEquals(new byte[] {42}, result.body());
         }
@@ -321,14 +349,16 @@ class ResponseTextCharsetTest {
         app.routes()
             .get(
                 "/stream",
-                (ignored12, response) -> {
+                (ignoredRequest, response) -> {
                   response.startStream("application/octet-stream").write(new byte[] {42});
                   var charset = rejectedEncoder("X-Test");
+
                   assertThrows(IllegalStateException.class, () -> response.text("late", charset));
                 });
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/stream"));
+
           assertEquals(200, result.statusCode());
           assertArrayEquals(new byte[] {42}, result.body());
         }
@@ -346,14 +376,16 @@ class ResponseTextCharsetTest {
             .routes()
             .get(
                 "/typed",
-                (ignored13, response) -> {
+                (ignoredTypedRequest, response) -> {
                   TypedResponse selected = response.text("café", StandardCharsets.ISO_8859_1);
+
                   assertSame(response, selected);
                   assertFalse(selected.isCommitted());
                 });
 
         try (var test = TestServer.start(app)) {
           var result = test.send(request -> request.path("/typed"));
+
           assertEquals(200, result.statusCode());
           assertEquals(
               "text/plain; charset=ISO-8859-1",
@@ -373,15 +405,20 @@ class ResponseTextCharsetTest {
         app.routes()
             .get(
                 "/ascii",
-                (ignored14, response) -> response.text("é\uD800", StandardCharsets.US_ASCII));
+                (ignoredRequest, response) -> response.text("é\uD800", StandardCharsets.US_ASCII));
         app.routes()
-            .get("/utf8", (ignored15, response) -> response.text("\uD800", StandardCharsets.UTF_8));
+            .get(
+                "/utf8",
+                (ignoredRequest, response) -> response.text("\uD800", StandardCharsets.UTF_8));
 
         try (var test = TestServer.start(app)) {
           var ascii = test.send(request -> request.path("/ascii"));
+
           assertEquals(200, ascii.statusCode());
           assertArrayEquals(new byte[] {'?', '?'}, ascii.body());
+
           var utf8 = test.send(request -> request.path("/utf8"));
+
           assertEquals(200, utf8.statusCode());
           assertArrayEquals(new byte[] {'?'}, utf8.body());
         }

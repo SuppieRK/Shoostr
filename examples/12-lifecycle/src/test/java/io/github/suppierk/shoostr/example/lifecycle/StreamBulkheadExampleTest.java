@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.resilience4j.bulkhead.Bulkhead;
 import io.github.resilience4j.bulkhead.BulkheadConfig;
+import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.IOException;
 import java.io.InputStream;
@@ -25,21 +26,11 @@ class StreamBulkheadExampleTest {
   void boundsOpenStreamsWhileHealthProgressesBeyondTheNativeWorkerBudget() throws Exception {
     var release = new CountDownLatch(1);
     var completed = new CountDownLatch(40);
-    var bulkhead =
-        Bulkhead.of(
-            "streams",
-            BulkheadConfig.custom().maxConcurrentCalls(40).maxWaitDuration(Duration.ZERO).build());
+    var bulkhead = Bulkhead.of("streams", bulkheadProperties(40));
     bulkhead.getEventPublisher().onCallFinished(event -> completed.countDown());
     var app =
-        StreamBulkheadExample.application(
-            bulkhead,
-            () -> {
-              if (!release.await(20, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("Fixture was not released");
-              }
-
-              return "done";
-            });
+        createAppForBoundsOpenStreamsWhileHealthProgressesBeyondTheNativeWorkerBudget(
+            bulkhead, release);
     app.modifyServer(server -> ((QueuedThreadPool) server.getThreadPool()).setMaxThreads(32));
     var streams = new ArrayList<HttpResponse<InputStream>>();
 
@@ -51,6 +42,7 @@ class StreamBulkheadExampleTest {
                   request -> request.path("/events").timeout(Duration.ofSeconds(2)),
                   HttpResponse.BodyHandlers.ofInputStream());
           streams.add(response);
+
           assertEquals(200, response.statusCode());
         }
         var rejected =
@@ -66,6 +58,7 @@ class StreamBulkheadExampleTest {
             test.send(
                 request -> request.path("/health").timeout(Duration.ofSeconds(2)),
                 HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, health.statusCode());
         assertEquals("healthy", health.body());
       } finally {
@@ -79,11 +72,26 @@ class StreamBulkheadExampleTest {
       }
 
       assertTrue(completed.await(3, TimeUnit.SECONDS));
+
       var recovered =
           test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, recovered.statusCode());
       assertTrue(recovered.body().contains("data: done"));
     }
+  }
+
+  private Shoostr createAppForBoundsOpenStreamsWhileHealthProgressesBeyondTheNativeWorkerBudget(
+      Bulkhead bulkhead, CountDownLatch release) {
+    return StreamBulkheadExample.application(
+        bulkhead,
+        () -> {
+          if (!release.await(20, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Fixture was not released");
+          }
+
+          return "done";
+        });
   }
 
   @Test
@@ -91,10 +99,7 @@ class StreamBulkheadExampleTest {
     var finalWrite = new CountDownLatch(1);
     var release = new CountDownLatch(1);
     var completed = new CountDownLatch(1);
-    var bulkhead =
-        Bulkhead.of(
-            "final-write",
-            BulkheadConfig.custom().maxConcurrentCalls(1).maxWaitDuration(Duration.ZERO).build());
+    var bulkhead = Bulkhead.of("final-write", bulkheadProperties(1));
     bulkhead.getEventPublisher().onCallFinished(event -> completed.countDown());
     var app = StreamBulkheadExample.application(bulkhead, () -> "done");
     app.afterRouteHandler(
@@ -145,21 +150,10 @@ class StreamBulkheadExampleTest {
   void releasesAdmissionAfterAProducerFailureAbortsCommittedOutput() throws Exception {
     var completed = new CountDownLatch(1);
     var calls = new AtomicInteger();
-    var bulkhead =
-        Bulkhead.of(
-            "failure",
-            BulkheadConfig.custom().maxConcurrentCalls(1).maxWaitDuration(Duration.ZERO).build());
+    var bulkhead = Bulkhead.of("failure", bulkheadProperties(1));
     bulkhead.getEventPublisher().onCallFinished(event -> completed.countDown());
     var app =
-        StreamBulkheadExample.application(
-            bulkhead,
-            () -> {
-              if (calls.getAndIncrement() == 0) {
-                throw new IllegalStateException("Producer failed");
-              }
-
-              return "recovered";
-            });
+        createAppForReleasesAdmissionAfterAProducerFailureAbortsCommittedOutput(bulkhead, calls);
 
     try (var test = TestServer.start(app)) {
       var failed =
@@ -176,11 +170,26 @@ class StreamBulkheadExampleTest {
       }
 
       assertTrue(completed.await(2, TimeUnit.SECONDS));
+
       var recovered =
           test.send(request -> request.path("/events"), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, recovered.statusCode());
       assertTrue(recovered.body().contains("data: recovered"));
     }
+  }
+
+  private Shoostr createAppForReleasesAdmissionAfterAProducerFailureAbortsCommittedOutput(
+      Bulkhead bulkhead, AtomicInteger calls) {
+    return StreamBulkheadExample.application(
+        bulkhead,
+        () -> {
+          if (calls.getAndIncrement() == 0) {
+            throw new IllegalStateException("Producer failed");
+          }
+
+          return "recovered";
+        });
   }
 
   @Test
@@ -188,22 +197,11 @@ class StreamBulkheadExampleTest {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
     var completed = new CountDownLatch(1);
-    var bulkhead =
-        Bulkhead.of(
-            "disconnect",
-            BulkheadConfig.custom().maxConcurrentCalls(1).maxWaitDuration(Duration.ZERO).build());
+    var bulkhead = Bulkhead.of("disconnect", bulkheadProperties(1));
     bulkhead.getEventPublisher().onCallFinished(event -> completed.countDown());
     var app =
-        StreamBulkheadExample.application(
-            bulkhead,
-            () -> {
-              entered.countDown();
-              if (!release.await(5, TimeUnit.SECONDS)) {
-                throw new IllegalStateException("Producer was not released");
-              }
-
-              return "done";
-            });
+        createAppForRetainsAdmissionAfterDisconnectUntilTheProducerActuallyReturns(
+            bulkhead, entered, release);
 
     try (var test = TestServer.start(app)) {
       var active =
@@ -211,7 +209,9 @@ class StreamBulkheadExampleTest {
 
       try {
         assertTrue(entered.await(2, TimeUnit.SECONDS));
+
         active.body().close();
+
         assertEquals(0, bulkhead.getMetrics().getAvailableConcurrentCalls());
       } finally {
         active.body().close();
@@ -225,25 +225,30 @@ class StreamBulkheadExampleTest {
     }
   }
 
+  private Shoostr createAppForRetainsAdmissionAfterDisconnectUntilTheProducerActuallyReturns(
+      Bulkhead bulkhead, CountDownLatch entered, CountDownLatch release) {
+    return StreamBulkheadExample.application(
+        bulkhead,
+        () -> {
+          entered.countDown();
+          if (!release.await(5, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("Producer was not released");
+          }
+
+          return "done";
+        });
+  }
+
   @Test
   void releasesAdmissionWhenApplicationShutdownStopsItsProducer() throws Exception {
     var entered = new CountDownLatch(1);
     var completed = new CountDownLatch(1);
     var stop = new CountDownLatch(1);
-    var bulkhead =
-        Bulkhead.of(
-            "shutdown",
-            BulkheadConfig.custom().maxConcurrentCalls(1).maxWaitDuration(Duration.ZERO).build());
+    var bulkhead = Bulkhead.of("shutdown", bulkheadProperties(1));
     bulkhead.getEventPublisher().onCallFinished(event -> completed.countDown());
     var app =
-        StreamBulkheadExample.application(
-                bulkhead,
-                () -> {
-                  entered.countDown();
-                  stop.await();
-                  return "stopped";
-                })
-            .beforeClose(stop::countDown);
+        createAppForReleasesAdmissionWhenApplicationShutdownStopsItsProducer(
+            bulkhead, entered, stop);
 
     try (var test = TestServer.start(app)) {
       var active =
@@ -251,10 +256,32 @@ class StreamBulkheadExampleTest {
 
       try (var body = active.body()) {
         assertTrue(entered.await(2, TimeUnit.SECONDS));
+
         test.close();
+
         assertTrue(completed.await(3, TimeUnit.SECONDS));
         assertEquals(1, bulkhead.getMetrics().getAvailableConcurrentCalls());
       }
     }
+  }
+
+  private BulkheadConfig bulkheadProperties(int permits) {
+    return BulkheadConfig.custom()
+        .maxConcurrentCalls(permits)
+        .maxWaitDuration(Duration.ZERO)
+        .build();
+  }
+
+  private Shoostr createAppForReleasesAdmissionWhenApplicationShutdownStopsItsProducer(
+      Bulkhead bulkhead, CountDownLatch entered, CountDownLatch stop) {
+    return StreamBulkheadExample.application(
+            bulkhead,
+            () -> {
+              entered.countDown();
+              stop.await();
+
+              return "stopped";
+            })
+        .beforeClose(stop::countDown);
   }
 }

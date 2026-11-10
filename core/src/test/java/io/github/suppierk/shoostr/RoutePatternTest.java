@@ -18,16 +18,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class RoutePatternTest {
-  private static final Handler HANDLER = (ignored, ignored2) -> {};
+  private static final Handler HANDLER = (ignored, ignoredResponse) -> {};
 
   @Test
   void prefersLiteralSegmentsRegardlessOfRegistrationOrderForEachMethod() {
-    var tree =
-        compile(
-            "POST /orders/latest",
-            "GET /orders/{id}",
-            "GET /orders/latest",
-            "POST /orders/{orderId}");
+    var tree = createTreeForPrefersLiteralSegmentsRegardlessOfRegistrationOrderForEachMethod();
+
     assertEquals(
         "/orders/latest",
         Objects.requireNonNull(tree.match("/orders/latest", HttpMethods.GET)).routePattern());
@@ -44,15 +40,16 @@ class RoutePatternTest {
     assertEquals(Set.of(HttpMethods.GET, HttpMethods.POST), tree.allowedMethods("/orders/latest"));
   }
 
+  private RadixRoutes
+      createTreeForPrefersLiteralSegmentsRegardlessOfRegistrationOrderForEachMethod() {
+    return compile(
+        "POST /orders/latest", "GET /orders/{id}", "GET /orders/latest", "POST /orders/{orderId}");
+  }
+
   @Test
   void prefersLiteralSegmentsAtEachDepthAndFallsBackAfterMethodOrSuffixMismatch() {
     var tree =
-        compile(
-            "GET /a/{name}/b",
-            "GET /a/fixed/{id}",
-            "POST /a/{name}/b",
-            "GET /a/fixed/other/end",
-            "GET /a/{name}/b/end");
+        createTreeForPrefersLiteralSegmentsAtEachDepthAndFallsBackAfterMethodOrSuffixMismatch();
 
     assertEquals(
         "/a/fixed/{id}",
@@ -72,10 +69,21 @@ class RoutePatternTest {
     assertEquals(Set.of(HttpMethods.GET, HttpMethods.POST), tree.allowedMethods("/a/fixed/b"));
   }
 
+  private RadixRoutes
+      createTreeForPrefersLiteralSegmentsAtEachDepthAndFallsBackAfterMethodOrSuffixMismatch() {
+    return compile(
+        "GET /a/{name}/b",
+        "GET /a/fixed/{id}",
+        "POST /a/{name}/b",
+        "GET /a/fixed/other/end",
+        "GET /a/{name}/b/end");
+  }
+
   @Test
   void fallsBackAfterSuffixOrMethodMismatchWithoutLeakingParameterNames() {
     var tree = compile("GET /a/fixed/x", "GET /a/{name}/y", "POST /a/{other}/y");
     var endpoint = Objects.requireNonNull(tree.match("/a/fixed/y", HttpMethods.GET));
+
     assertEquals("/a/{name}/y", endpoint.routePattern());
     assertEquals("fixed", endpoint.parameter("/a/fixed/y", "name"));
     assertThrows(IllegalArgumentException.class, () -> endpoint.parameter("/a/fixed/y", "other"));
@@ -87,6 +95,7 @@ class RoutePatternTest {
   @Test
   void distinguishesEmptySegmentsTrailingSlashAndMethodFailures() {
     var tree = compile("GET /orders/{id}", "POST /orders/{id}/");
+
     assertNull(tree.match("/orders/", HttpMethods.GET));
     assertNull(tree.match("/orders//", HttpMethods.POST));
     assertNull(tree.match("/orders/1/", HttpMethods.GET));
@@ -102,6 +111,7 @@ class RoutePatternTest {
         Objects.requireNonNull(
             compile("GET /accounts/{accountId}/orders/{id}")
                 .match("/accounts/a+b/orders/%252F", HttpMethods.GET));
+
     assertEquals("a+b", endpoint.parameter("/accounts/a+b/orders/%252F", "accountId"));
     assertEquals("%2F", endpoint.parameter("/accounts/a+b/orders/%252F", "id"));
     assertEquals("café +", endpoint.parameter("/accounts/x/orders/caf%C3%A9%20+", "id"));
@@ -113,6 +123,7 @@ class RoutePatternTest {
     var tree = compile("GET " + prefix + "/{first}/fixed/{second}/");
     String path = prefix + "/a%20b/fixed/c+d/";
     var endpoint = Objects.requireNonNull(tree.match(path, HttpMethods.GET));
+
     assertEquals("a b", endpoint.parameter(path, "first"));
     assertEquals("c+d", endpoint.parameter(path, "second"));
   }
@@ -158,30 +169,38 @@ class RoutePatternTest {
     for (var method : HttpMethods.values()) {
       assertEquals(method, Objects.requireNonNull(tree.match("/a/42", method)).method());
     }
+
     assertEquals(Set.of(HttpMethods.values()), tree.allowedMethods("/a/42"));
     assertEquals(Set.of(), tree.allowedMethods("/a/42/missing"));
     assertNull(tree.match("/a/42", null));
+
     var methods = tree.allowedMethods("/a/42");
     methods.clear();
+
     assertEquals(Set.of(HttpMethods.values()), tree.allowedMethods("/a/42"));
   }
 
   @Test
   void preservesCollectedMethodsWhenAlternativeBranchesDoNotComplete() {
-    var tree =
-        compile(
-            "GET /a/fixed",
-            "POST /a/{id}",
-            "PUT /a/{id}/more",
-            "DELETE /a/fixed/more",
-            "HEAD /a/{id}/more/end");
+    var tree = createTreeForPreservesCollectedMethodsWhenAlternativeBranchesDoNotComplete();
+
     assertEquals(Set.of(HttpMethods.GET, HttpMethods.POST), tree.allowedMethods("/a/fixed"));
     assertEquals(Set.of(HttpMethods.PUT, HttpMethods.DELETE), tree.allowedMethods("/a/fixed/more"));
     assertEquals(Set.of(HttpMethods.HEAD), tree.allowedMethods("/a/fixed/more/end"));
     assertEquals(Set.of(HttpMethods.POST), tree.allowedMethods("/a/fi"));
+
     for (String missing : List.of("/a/", "/a/fixed/mo", "/a/fixed/more/")) {
       assertEquals(Set.of(), tree.allowedMethods(missing));
     }
+  }
+
+  private RadixRoutes createTreeForPreservesCollectedMethodsWhenAlternativeBranchesDoNotComplete() {
+    return compile(
+        "GET /a/fixed",
+        "POST /a/{id}",
+        "PUT /a/{id}/more",
+        "DELETE /a/fixed/more",
+        "HEAD /a/{id}/more/end");
   }
 
   @Test
@@ -214,8 +233,10 @@ class RoutePatternTest {
                 }
               }
             }
+
             assertSame(expected, tree.match(path, method), method + " " + path);
           }
+
           assertEquals(allowed, tree.allowedMethods(path));
         }
       }
@@ -243,12 +264,12 @@ class RoutePatternTest {
       return false;
     }
 
-    for (int i = 0; i < patternSegments.length; i++) {
-      if ("{}".equals(patternSegments[i])) {
-        if (pathSegments[i].isEmpty()) {
+    for (int index = 0; index < patternSegments.length; index++) {
+      if ("{}".equals(patternSegments[index])) {
+        if (pathSegments[index].isEmpty()) {
           return false;
         }
-      } else if (!patternSegments[i].equals(pathSegments[i])) {
+      } else if (!patternSegments[index].equals(pathSegments[index])) {
         return false;
       }
     }

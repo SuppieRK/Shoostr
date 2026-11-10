@@ -312,6 +312,54 @@ public final class Routes {
   }
 
   /**
+   * Registers routes whose availability is evaluated for each matched request after admission.
+   * False produces terminal 404. Registration, method discovery and CORS remain unchanged.
+   *
+   * @param condition live application flag
+   * @param registration routes under the condition
+   * @return this scope
+   */
+  public Routes when(BooleanSupplier condition, Consumer<Routes> registration) {
+    Objects.requireNonNull(condition);
+
+    return when(ignored -> condition.getAsBoolean(), registration);
+  }
+
+  /**
+   * Registers a request-dependent condition, including authenticated principal decisions. Nested
+   * scopes short-circuit in outer-to-inner order; false does not fall through to another route.
+   *
+   * @param condition live request decision
+   * @param registration conditional routes, registered once
+   * @return this scope
+   */
+  public Routes when(Predicate<Request> condition, Consumer<Routes> registration) {
+    Routes child;
+    int previousDepth = groupDepth();
+    int nextDepth = nextGroupDepth(previousDepth);
+    synchronized (lock) {
+      beginRegistration();
+      Objects.requireNonNull(registration);
+      var inherited = new ArrayList<>(conditions);
+      inherited.add(Objects.requireNonNull(condition));
+      child = new Routes(this, prefix, inherited, configuration, nextDepth);
+      root.activeRegistrations++;
+    }
+    activeGroupDepth.set(nextDepth);
+
+    try {
+      registration.accept(child);
+    } finally {
+      restoreGroupDepth(previousDepth);
+      synchronized (lock) {
+        root.activeRegistrations--;
+      }
+    }
+
+    return this;
+  }
+
+  /**
    * Reads this app's active group context for the calling thread.
    *
    * @return zero outside a group callback, otherwise effective group depth
@@ -410,6 +458,50 @@ public final class Routes {
   }
 
   /**
+   * Registers GET with local extension configuration at this group's endpoint.
+   *
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes get(Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.GET, EMPTY_PATH, handler, configuration);
+  }
+
+  /**
+   * Registers GET with local extension configuration beneath this scope.
+   *
+   * @param path relative path
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes get(String path, Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.GET, path, handler, configuration);
+  }
+
+  /**
+   * Registers GET at this group's own endpoint.
+   *
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes get(Handler handler) {
+    return route(HttpMethods.GET, EMPTY_PATH, handler);
+  }
+
+  /**
+   * Registers GET beneath this group's prefix.
+   *
+   * @param path relative endpoint path; empty selects the group endpoint
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes get(String path, Handler handler) {
+    return route(HttpMethods.GET, path, handler);
+  }
+
+  /**
    * Registers POST on a caller-owned executor beneath this scope.
    *
    * @param path relative endpoint path
@@ -470,6 +562,50 @@ public final class Routes {
   }
 
   /**
+   * Registers POST with local extension configuration at this group's endpoint.
+   *
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes post(Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.POST, EMPTY_PATH, handler, configuration);
+  }
+
+  /**
+   * Registers POST with local extension configuration beneath this scope.
+   *
+   * @param path relative path
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes post(String path, Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.POST, path, handler, configuration);
+  }
+
+  /**
+   * Registers POST at this group's own endpoint.
+   *
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes post(Handler handler) {
+    return route(HttpMethods.POST, EMPTY_PATH, handler);
+  }
+
+  /**
+   * Registers POST beneath this group's prefix.
+   *
+   * @param path relative endpoint path; empty selects the group endpoint
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes post(String path, Handler handler) {
+    return route(HttpMethods.POST, path, handler);
+  }
+
+  /**
    * Registers PUT on a caller-owned executor beneath this scope.
    *
    * @param path relative endpoint path
@@ -527,6 +663,50 @@ public final class Routes {
         Objects.requireNonNull(executor),
         handler,
         Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers PUT with local extension configuration at this group's endpoint.
+   *
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes put(Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.PUT, EMPTY_PATH, handler, configuration);
+  }
+
+  /**
+   * Registers PUT with local extension configuration beneath this scope.
+   *
+   * @param path relative path
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes put(String path, Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.PUT, path, handler, configuration);
+  }
+
+  /**
+   * Registers PUT at this group's own endpoint.
+   *
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes put(Handler handler) {
+    return route(HttpMethods.PUT, EMPTY_PATH, handler);
+  }
+
+  /**
+   * Registers PUT beneath this group's prefix.
+   *
+   * @param path relative endpoint path; empty selects the group endpoint
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes put(String path, Handler handler) {
+    return route(HttpMethods.PUT, path, handler);
   }
 
   /**
@@ -591,6 +771,50 @@ public final class Routes {
   }
 
   /**
+   * Registers PATCH with local extension configuration at this group's endpoint.
+   *
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes patch(Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.PATCH, EMPTY_PATH, handler, configuration);
+  }
+
+  /**
+   * Registers PATCH with local extension configuration beneath this scope.
+   *
+   * @param path relative path
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes patch(String path, Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.PATCH, path, handler, configuration);
+  }
+
+  /**
+   * Registers PATCH at this group's own endpoint.
+   *
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes patch(Handler handler) {
+    return route(HttpMethods.PATCH, EMPTY_PATH, handler);
+  }
+
+  /**
+   * Registers PATCH beneath this group's prefix.
+   *
+   * @param path relative endpoint path; empty selects the group endpoint
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes patch(String path, Handler handler) {
+    return route(HttpMethods.PATCH, path, handler);
+  }
+
+  /**
    * Registers DELETE on a caller-owned executor beneath this scope.
    *
    * @param path relative endpoint path
@@ -652,6 +876,50 @@ public final class Routes {
   }
 
   /**
+   * Registers DELETE with local extension configuration at this group's endpoint.
+   *
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes delete(Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.DELETE, EMPTY_PATH, handler, configuration);
+  }
+
+  /**
+   * Registers DELETE with local extension configuration beneath this scope.
+   *
+   * @param path relative path
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes delete(String path, Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.DELETE, path, handler, configuration);
+  }
+
+  /**
+   * Registers DELETE at this group's own endpoint.
+   *
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes delete(Handler handler) {
+    return route(HttpMethods.DELETE, EMPTY_PATH, handler);
+  }
+
+  /**
+   * Registers DELETE beneath this group's prefix.
+   *
+   * @param path relative endpoint path; empty selects the group endpoint
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes delete(String path, Handler handler) {
+    return route(HttpMethods.DELETE, path, handler);
+  }
+
+  /**
    * Registers HEAD on a caller-owned executor beneath this scope.
    *
    * @param path relative endpoint path
@@ -709,6 +977,50 @@ public final class Routes {
         Objects.requireNonNull(executor),
         handler,
         Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers HEAD with local extension configuration at this group's endpoint.
+   *
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes head(Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.HEAD, EMPTY_PATH, handler, configuration);
+  }
+
+  /**
+   * Registers HEAD with local extension configuration beneath this scope.
+   *
+   * @param path relative path
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes head(String path, Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.HEAD, path, handler, configuration);
+  }
+
+  /**
+   * Registers HEAD at this group's own endpoint.
+   *
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes head(Handler handler) {
+    return route(HttpMethods.HEAD, EMPTY_PATH, handler);
+  }
+
+  /**
+   * Registers HEAD beneath this group's prefix.
+   *
+   * @param path relative endpoint path; empty selects the group endpoint
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes head(String path, Handler handler) {
+    return route(HttpMethods.HEAD, path, handler);
   }
 
   /**
@@ -774,6 +1086,50 @@ public final class Routes {
   }
 
   /**
+   * Registers OPTIONS with local extension configuration at this group's endpoint.
+   *
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes options(Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.OPTIONS, EMPTY_PATH, handler, configuration);
+  }
+
+  /**
+   * Registers OPTIONS with local extension configuration beneath this scope.
+   *
+   * @param path relative path
+   * @param handler endpoint handler
+   * @param configuration typed local configuration
+   * @return this scope
+   */
+  public Routes options(String path, Handler handler, Consumer<Lifecycle> configuration) {
+    return route(HttpMethods.OPTIONS, path, handler, configuration);
+  }
+
+  /**
+   * Registers OPTIONS at this group's own endpoint.
+   *
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes options(Handler handler) {
+    return route(HttpMethods.OPTIONS, EMPTY_PATH, handler);
+  }
+
+  /**
+   * Registers OPTIONS beneath this group's prefix.
+   *
+   * @param path relative endpoint path; empty selects the group endpoint
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes options(String path, Handler handler) {
+    return route(HttpMethods.OPTIONS, path, handler);
+  }
+
+  /**
    * Registers an event stream on a caller-owned executor beneath this scope.
    *
    * @param path relative endpoint path
@@ -825,6 +1181,80 @@ public final class Routes {
         Objects.requireNonNull(executor),
         handler,
         Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers a server-sent event GET route at this group's own endpoint.
+   *
+   * @param handler request/response handler that starts an event stream
+   * @return this scope
+   */
+  public Routes sse(Handler handler) {
+    return sse(EMPTY_PATH, handler);
+  }
+
+  /**
+   * Registers a server-sent event GET route beneath this group's prefix.
+   *
+   * @param path relative endpoint path; empty selects the group endpoint
+   * @param handler request/response handler that starts an event stream
+   * @return this scope
+   */
+  public Routes sse(String path, Handler handler) {
+    return registerSse(path, null, handler, null);
+  }
+
+  /**
+   * Registers an event stream with typed local configuration.
+   *
+   * @param path relative path
+   * @param handler event-stream handler
+   * @param configuration endpoint configuration
+   * @return this scope
+   */
+  public Routes sse(String path, Handler handler, Consumer<Lifecycle> configuration) {
+    return registerSse(path, null, handler, Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers an event stream at this group's endpoint with local configuration.
+   *
+   * @param handler event-stream handler
+   * @param configuration endpoint configuration
+   * @return this scope
+   */
+  public Routes sse(Handler handler, Consumer<Lifecycle> configuration) {
+    return sse(EMPTY_PATH, handler, configuration);
+  }
+
+  /**
+   * Keeps the event-stream contract shared by both registration forms.
+   *
+   * @param path relative path
+   * @param executor borrowed executor, or null for default execution
+   * @param handler submitted handler
+   * @param configure optional local configuration
+   * @return this scope
+   */
+  private Routes registerSse(
+      String path,
+      @Nullable ExecutorService executor,
+      Handler handler,
+      @Nullable Consumer<Lifecycle> configure) {
+    Objects.requireNonNull(handler);
+
+    return registerRoute(
+        HttpMethods.GET,
+        path,
+        executor,
+        (request, response) -> {
+          response.requireEventStream();
+          handler.handle(request, response);
+          if (response.status() != HttpStatusCodes.NO_CONTENT.value() && !response.isCommitted()) {
+            throw new IllegalStateException("SSE route must start an event stream or return 204");
+          }
+        },
+        configure);
   }
 
   /**
@@ -897,6 +1327,257 @@ public final class Routes {
         Objects.requireNonNull(executor),
         listenerFactory,
         Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers a WebSocket endpoint at this group's own path.
+   *
+   * @param listenerFactory one listener per accepted connection, created during the handshake
+   * @return this scope
+   */
+  public Routes websocket(
+      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory) {
+    return websocket(EMPTY_PATH, listenerFactory);
+  }
+
+  /**
+   * Registers a WebSocket endpoint beneath this group's prefix. The factory runs after route
+   * admission, may configure the upgrade response, and must return a fresh listener. It must not
+   * retain the HTTP request or upgrade response after the handshake.
+   *
+   * @param path relative endpoint path; empty selects the group endpoint
+   * @param listenerFactory one listener per accepted connection
+   * @return this scope
+   * @throws IllegalArgumentException if the path duplicates an existing WebSocket route shape
+   */
+  public Routes websocket(
+      String path, BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory) {
+    return registerWebsocket(path, null, listenerFactory, null);
+  }
+
+  /**
+   * Registers handshake-local extension configuration. Hooks apply to HTTP admission only.
+   *
+   * @param path relative path
+   * @param listenerFactory per-connection factory
+   * @param configuration local handshake configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      String path,
+      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
+      Consumer<Lifecycle> configuration) {
+    return registerWebsocket(path, null, listenerFactory, Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers a configured handshake at this group's own endpoint.
+   *
+   * @param listenerFactory per-connection factory
+   * @param configuration local handshake configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
+      Consumer<Lifecycle> configuration) {
+    return websocket(EMPTY_PATH, listenerFactory, configuration);
+  }
+
+  /**
+   * Registers complete-message callbacks configured once, running sequentially per connection on
+   * the application's configured execution facility. Existing native factories retain their own
+   * execution.
+   *
+   * @param path relative endpoint path
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public Routes websocket(String path, Consumer<WebSocket> configuration) {
+    return registerManagedWebsocket(path, null, configuration, null);
+  }
+
+  /**
+   * Registers managed callbacks at this group's own endpoint.
+   *
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public Routes websocket(Consumer<WebSocket> configuration) {
+    return websocket(EMPTY_PATH, configuration);
+  }
+
+  /**
+   * Registers managed callbacks with local extensions applying to HTTP admission only.
+   *
+   * @param path relative endpoint path
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extension configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      String path, Consumer<WebSocket> configuration, Consumer<Lifecycle> extensions) {
+    return registerManagedWebsocket(path, null, configuration, Objects.requireNonNull(extensions));
+  }
+
+  /**
+   * Registers managed callbacks and handshake extensions at this group's own endpoint.
+   *
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extension configuration
+   * @return this scope
+   */
+  public Routes websocket(Consumer<WebSocket> configuration, Consumer<Lifecycle> extensions) {
+    return websocket(EMPTY_PATH, configuration, extensions);
+  }
+
+  /**
+   * Runs the matched HTTP handshake on a borrowed executor. All subsequent WebSocket callbacks run
+   * using the application's execution mode; executor thread-local bindings are not propagated.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed handshake executor
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      String path, ExecutorService executor, Consumer<WebSocket> configuration) {
+    return registerManagedWebsocket(path, Objects.requireNonNull(executor), configuration, null);
+  }
+
+  /**
+   * Selects a borrowed HTTP handshake executor and local extensions. Subsequent WebSocket callbacks
+   * use the application's execution mode, without propagating arbitrary executor-local bindings.
+   *
+   * @param path relative endpoint path
+   * @param executor asynchronous borrowed handshake executor
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extension configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      String path,
+      ExecutorService executor,
+      Consumer<WebSocket> configuration,
+      Consumer<Lifecycle> extensions) {
+    return registerManagedWebsocket(
+        path, Objects.requireNonNull(executor), configuration, Objects.requireNonNull(extensions));
+  }
+
+  /**
+   * Runs this group's HTTP handshake on a borrowed executor, not its managed WebSocket callbacks.
+   * Arbitrary executor-local bindings are not propagated after upgrade.
+   *
+   * @param executor asynchronous borrowed handshake executor
+   * @param configuration eager callback configuration
+   * @return this scope
+   */
+  public Routes websocket(ExecutorService executor, Consumer<WebSocket> configuration) {
+    return websocket(EMPTY_PATH, executor, configuration);
+  }
+
+  /**
+   * Configures this group's handshake on a borrowed executor with local HTTP extensions. Subsequent
+   * WebSocket callbacks use the application's execution mode without executor-local bindings.
+   *
+   * @param executor asynchronous borrowed handshake executor
+   * @param configuration eager callback configuration
+   * @param extensions local handshake extension configuration
+   * @return this scope
+   */
+  public Routes websocket(
+      ExecutorService executor, Consumer<WebSocket> configuration, Consumer<Lifecycle> extensions) {
+    return websocket(EMPTY_PATH, executor, configuration, extensions);
+  }
+
+  /**
+   * Validates and publishes one configured upgrade endpoint.
+   *
+   * @param path relative path
+   * @param executor borrowed handshake executor, or null for default execution
+   * @param listenerFactory per-connection factory
+   * @param configure optional local configuration
+   * @return this scope
+   * @throws IllegalArgumentException if the WebSocket shape is already registered
+   */
+  private Routes registerWebsocket(
+      String path,
+      @Nullable ExecutorService executor,
+      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
+      @Nullable Consumer<Lifecycle> configure) {
+    Objects.requireNonNull(listenerFactory);
+    RadixRoutes.Endpoint endpoint;
+    synchronized (lock) {
+      requireMutable();
+      endpoint =
+          RadixRoutes.websocketEndpoint(
+                  join(prefix, path),
+                  (ignoredRequest, ignoredResponse) -> {},
+                  (request, response, ignoredWebSocketRuntime) ->
+                      Objects.requireNonNull(listenerFactory).apply(request, response))
+              .withExecutor(executor);
+    }
+    return registerEndpoint(endpoint, configure, true);
+  }
+
+  /**
+   * Reserves the route before configuring its managed callbacks and extensions.
+   *
+   * @param path relative endpoint path
+   * @param executor optional borrowed handshake executor
+   * @param configuration eager WebSocket callback configuration
+   * @param extensions optional local handshake extensions
+   * @return this scope
+   */
+  private Routes registerManagedWebsocket(
+      String path,
+      @Nullable ExecutorService executor,
+      Consumer<WebSocket> configuration,
+      @Nullable Consumer<Lifecycle> extensions) {
+    return registerManagedWebsocket(path, executor, new WebSocket(), configuration, extensions);
+  }
+
+  /**
+   * Shares route reservation and publication between ordinary and codec-enabled callbacks.
+   *
+   * @param path relative endpoint path
+   * @param executor optional borrowed handshake executor
+   * @param callbacks framework-owned callback configuration
+   * @param configuration eager callback registration
+   * @param extensions optional local handshake extensions
+   * @return this scope
+   */
+  Routes registerManagedWebsocket(
+      String path,
+      @Nullable ExecutorService executor,
+      WebSocket callbacks,
+      Consumer<WebSocket> configuration,
+      @Nullable Consumer<Lifecycle> extensions) {
+    Objects.requireNonNull(configuration);
+    Objects.requireNonNull(callbacks);
+    RadixRoutes.Endpoint endpoint;
+    synchronized (lock) {
+      requireMutable();
+      endpoint =
+          RadixRoutes.websocketEndpoint(
+                  join(prefix, path),
+                  callbacks::admit,
+                  (request, ignoredServerUpgradeResponse, runtime) -> {
+                    request.response().requireWebSocketUpgrade();
+
+                    return new ManagedWebSocket(callbacks, request, runtime);
+                  })
+              .withExecutor(executor);
+    }
+    return registerEndpoint(
+        endpoint,
+        local -> {
+          configuration.accept(callbacks);
+          callbacks.freeze();
+          if (extensions != null) {
+            extensions.accept(local);
+          }
+        },
+        true);
   }
 
   /**
@@ -1051,684 +1732,6 @@ public final class Routes {
   }
 
   /**
-   * Registers GET with local extension configuration at this group's endpoint.
-   *
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes get(Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.GET, EMPTY_PATH, handler, configuration);
-  }
-
-  /**
-   * Registers GET with local extension configuration beneath this scope.
-   *
-   * @param path relative path
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes get(String path, Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.GET, path, handler, configuration);
-  }
-
-  /**
-   * Registers POST with local extension configuration at this group's endpoint.
-   *
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes post(Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.POST, EMPTY_PATH, handler, configuration);
-  }
-
-  /**
-   * Registers POST with local extension configuration beneath this scope.
-   *
-   * @param path relative path
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes post(String path, Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.POST, path, handler, configuration);
-  }
-
-  /**
-   * Registers PUT with local extension configuration at this group's endpoint.
-   *
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes put(Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.PUT, EMPTY_PATH, handler, configuration);
-  }
-
-  /**
-   * Registers PUT with local extension configuration beneath this scope.
-   *
-   * @param path relative path
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes put(String path, Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.PUT, path, handler, configuration);
-  }
-
-  /**
-   * Registers PATCH with local extension configuration at this group's endpoint.
-   *
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes patch(Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.PATCH, EMPTY_PATH, handler, configuration);
-  }
-
-  /**
-   * Registers PATCH with local extension configuration beneath this scope.
-   *
-   * @param path relative path
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes patch(String path, Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.PATCH, path, handler, configuration);
-  }
-
-  /**
-   * Registers DELETE with local extension configuration at this group's endpoint.
-   *
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes delete(Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.DELETE, EMPTY_PATH, handler, configuration);
-  }
-
-  /**
-   * Registers DELETE with local extension configuration beneath this scope.
-   *
-   * @param path relative path
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes delete(String path, Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.DELETE, path, handler, configuration);
-  }
-
-  /**
-   * Registers HEAD with local extension configuration at this group's endpoint.
-   *
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes head(Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.HEAD, EMPTY_PATH, handler, configuration);
-  }
-
-  /**
-   * Registers HEAD with local extension configuration beneath this scope.
-   *
-   * @param path relative path
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes head(String path, Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.HEAD, path, handler, configuration);
-  }
-
-  /**
-   * Registers OPTIONS with local extension configuration at this group's endpoint.
-   *
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes options(Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.OPTIONS, EMPTY_PATH, handler, configuration);
-  }
-
-  /**
-   * Registers OPTIONS with local extension configuration beneath this scope.
-   *
-   * @param path relative path
-   * @param handler endpoint handler
-   * @param configuration typed local configuration
-   * @return this scope
-   */
-  public Routes options(String path, Handler handler, Consumer<Lifecycle> configuration) {
-    return route(HttpMethods.OPTIONS, path, handler, configuration);
-  }
-
-  /**
-   * Registers GET at this group's own endpoint.
-   *
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes get(Handler handler) {
-    return route(HttpMethods.GET, EMPTY_PATH, handler);
-  }
-
-  /**
-   * Registers routes whose availability is evaluated for each matched request after admission.
-   * False produces terminal 404. Registration, method discovery and CORS remain unchanged.
-   *
-   * @param condition live application flag
-   * @param registration routes under the condition
-   * @return this scope
-   */
-  public Routes when(BooleanSupplier condition, Consumer<Routes> registration) {
-    Objects.requireNonNull(condition);
-    return when(ignored -> condition.getAsBoolean(), registration);
-  }
-
-  /**
-   * Registers a request-dependent condition, including authenticated principal decisions. Nested
-   * scopes short-circuit in outer-to-inner order; false does not fall through to another route.
-   *
-   * @param condition live request decision
-   * @param registration conditional routes, registered once
-   * @return this scope
-   */
-  public Routes when(Predicate<Request> condition, Consumer<Routes> registration) {
-    Routes child;
-    int previousDepth = groupDepth();
-    int nextDepth = nextGroupDepth(previousDepth);
-    synchronized (lock) {
-      beginRegistration();
-      Objects.requireNonNull(registration);
-      var inherited = new ArrayList<>(conditions);
-      inherited.add(Objects.requireNonNull(condition));
-      child = new Routes(this, prefix, inherited, configuration, nextDepth);
-      root.activeRegistrations++;
-    }
-    activeGroupDepth.set(nextDepth);
-
-    try {
-      registration.accept(child);
-    } finally {
-      restoreGroupDepth(previousDepth);
-      synchronized (lock) {
-        root.activeRegistrations--;
-      }
-    }
-
-    return this;
-  }
-
-  /**
-   * Registers GET beneath this group's prefix.
-   *
-   * @param path relative endpoint path; empty selects the group endpoint
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes get(String path, Handler handler) {
-    return route(HttpMethods.GET, path, handler);
-  }
-
-  /**
-   * Registers a server-sent event GET route at this group's own endpoint.
-   *
-   * @param handler request/response handler that starts an event stream
-   * @return this scope
-   */
-  public Routes sse(Handler handler) {
-    return sse(EMPTY_PATH, handler);
-  }
-
-  /**
-   * Registers a server-sent event GET route beneath this group's prefix.
-   *
-   * @param path relative endpoint path; empty selects the group endpoint
-   * @param handler request/response handler that starts an event stream
-   * @return this scope
-   */
-  public Routes sse(String path, Handler handler) {
-    return registerSse(path, null, handler, null);
-  }
-
-  /**
-   * Registers an event stream with typed local configuration.
-   *
-   * @param path relative path
-   * @param handler event-stream handler
-   * @param configuration endpoint configuration
-   * @return this scope
-   */
-  public Routes sse(String path, Handler handler, Consumer<Lifecycle> configuration) {
-    return registerSse(path, null, handler, Objects.requireNonNull(configuration));
-  }
-
-  /**
-   * Registers an event stream at this group's endpoint with local configuration.
-   *
-   * @param handler event-stream handler
-   * @param configuration endpoint configuration
-   * @return this scope
-   */
-  public Routes sse(Handler handler, Consumer<Lifecycle> configuration) {
-    return sse(EMPTY_PATH, handler, configuration);
-  }
-
-  /**
-   * Keeps the event-stream contract shared by both registration forms.
-   *
-   * @param path relative path
-   * @param executor borrowed executor, or null for default execution
-   * @param handler submitted handler
-   * @param configure optional local configuration
-   * @return this scope
-   */
-  private Routes registerSse(
-      String path,
-      @Nullable ExecutorService executor,
-      Handler handler,
-      @Nullable Consumer<Lifecycle> configure) {
-    Objects.requireNonNull(handler);
-    return registerRoute(
-        HttpMethods.GET,
-        path,
-        executor,
-        (request, response) -> {
-          response.requireEventStream();
-          handler.handle(request, response);
-          if (response.status() != HttpStatusCodes.NO_CONTENT.value() && !response.isCommitted()) {
-            throw new IllegalStateException("SSE route must start an event stream or return 204");
-          }
-        },
-        configure);
-  }
-
-  /**
-   * Registers a WebSocket endpoint at this group's own path.
-   *
-   * @param listenerFactory one listener per accepted connection, created during the handshake
-   * @return this scope
-   */
-  public Routes websocket(
-      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory) {
-    return websocket(EMPTY_PATH, listenerFactory);
-  }
-
-  /**
-   * Registers a WebSocket endpoint beneath this group's prefix. The factory runs after route
-   * admission, may configure the upgrade response, and must return a fresh listener. It must not
-   * retain the HTTP request or upgrade response after the handshake.
-   *
-   * @param path relative endpoint path; empty selects the group endpoint
-   * @param listenerFactory one listener per accepted connection
-   * @return this scope
-   * @throws IllegalArgumentException if the path duplicates an existing WebSocket route shape
-   */
-  public Routes websocket(
-      String path, BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory) {
-    return registerWebsocket(path, null, listenerFactory, null);
-  }
-
-  /**
-   * Registers handshake-local extension configuration. Hooks apply to HTTP admission only.
-   *
-   * @param path relative path
-   * @param listenerFactory per-connection factory
-   * @param configuration local handshake configuration
-   * @return this scope
-   */
-  public Routes websocket(
-      String path,
-      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
-      Consumer<Lifecycle> configuration) {
-    return registerWebsocket(path, null, listenerFactory, Objects.requireNonNull(configuration));
-  }
-
-  /**
-   * Registers a configured handshake at this group's own endpoint.
-   *
-   * @param listenerFactory per-connection factory
-   * @param configuration local handshake configuration
-   * @return this scope
-   */
-  public Routes websocket(
-      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
-      Consumer<Lifecycle> configuration) {
-    return websocket(EMPTY_PATH, listenerFactory, configuration);
-  }
-
-  /**
-   * Validates and publishes one configured upgrade endpoint.
-   *
-   * @param path relative path
-   * @param executor borrowed handshake executor, or null for default execution
-   * @param listenerFactory per-connection factory
-   * @param configure optional local configuration
-   * @return this scope
-   * @throws IllegalArgumentException if the WebSocket shape is already registered
-   */
-  private Routes registerWebsocket(
-      String path,
-      @Nullable ExecutorService executor,
-      BiFunction<Request, ServerUpgradeResponse, Session.Listener> listenerFactory,
-      @Nullable Consumer<Lifecycle> configure) {
-    Objects.requireNonNull(listenerFactory);
-    RadixRoutes.Endpoint endpoint;
-    synchronized (lock) {
-      requireMutable();
-      endpoint =
-          RadixRoutes.websocketEndpoint(
-                  join(prefix, path),
-                  (ignored2, ignored3) -> {},
-                  (request, response, ignored4) ->
-                      Objects.requireNonNull(listenerFactory).apply(request, response))
-              .withExecutor(executor);
-    }
-    return registerEndpoint(endpoint, configure, true);
-  }
-
-  /**
-   * Registers complete-message callbacks configured once, running sequentially per connection on
-   * the application's configured execution facility. Existing native factories retain their own
-   * execution.
-   *
-   * @param path relative endpoint path
-   * @param configuration eager callback configuration
-   * @return this scope
-   */
-  public Routes websocket(String path, Consumer<WebSocket> configuration) {
-    return registerManagedWebsocket(path, null, configuration, null);
-  }
-
-  /**
-   * Registers managed callbacks at this group's own endpoint.
-   *
-   * @param configuration eager callback configuration
-   * @return this scope
-   */
-  public Routes websocket(Consumer<WebSocket> configuration) {
-    return websocket(EMPTY_PATH, configuration);
-  }
-
-  /**
-   * Registers managed callbacks with local extensions applying to HTTP admission only.
-   *
-   * @param path relative endpoint path
-   * @param configuration eager callback configuration
-   * @param extensions local handshake extension configuration
-   * @return this scope
-   */
-  public Routes websocket(
-      String path, Consumer<WebSocket> configuration, Consumer<Lifecycle> extensions) {
-    return registerManagedWebsocket(path, null, configuration, Objects.requireNonNull(extensions));
-  }
-
-  /**
-   * Registers managed callbacks and handshake extensions at this group's own endpoint.
-   *
-   * @param configuration eager callback configuration
-   * @param extensions local handshake extension configuration
-   * @return this scope
-   */
-  public Routes websocket(Consumer<WebSocket> configuration, Consumer<Lifecycle> extensions) {
-    return websocket(EMPTY_PATH, configuration, extensions);
-  }
-
-  /**
-   * Runs the matched HTTP handshake on a borrowed executor. All subsequent WebSocket callbacks run
-   * using the application's execution mode; executor thread-local bindings are not propagated.
-   *
-   * @param path relative endpoint path
-   * @param executor asynchronous borrowed handshake executor
-   * @param configuration eager callback configuration
-   * @return this scope
-   */
-  public Routes websocket(
-      String path, ExecutorService executor, Consumer<WebSocket> configuration) {
-    return registerManagedWebsocket(path, Objects.requireNonNull(executor), configuration, null);
-  }
-
-  /**
-   * Selects a borrowed HTTP handshake executor and local extensions. Subsequent WebSocket callbacks
-   * use the application's execution mode, without propagating arbitrary executor-local bindings.
-   *
-   * @param path relative endpoint path
-   * @param executor asynchronous borrowed handshake executor
-   * @param configuration eager callback configuration
-   * @param extensions local handshake extension configuration
-   * @return this scope
-   */
-  public Routes websocket(
-      String path,
-      ExecutorService executor,
-      Consumer<WebSocket> configuration,
-      Consumer<Lifecycle> extensions) {
-    return registerManagedWebsocket(
-        path, Objects.requireNonNull(executor), configuration, Objects.requireNonNull(extensions));
-  }
-
-  /**
-   * Runs this group's HTTP handshake on a borrowed executor, not its managed WebSocket callbacks.
-   * Arbitrary executor-local bindings are not propagated after upgrade.
-   *
-   * @param executor asynchronous borrowed handshake executor
-   * @param configuration eager callback configuration
-   * @return this scope
-   */
-  public Routes websocket(ExecutorService executor, Consumer<WebSocket> configuration) {
-    return websocket(EMPTY_PATH, executor, configuration);
-  }
-
-  /**
-   * Configures this group's handshake on a borrowed executor with local HTTP extensions. Subsequent
-   * WebSocket callbacks use the application's execution mode without executor-local bindings.
-   *
-   * @param executor asynchronous borrowed handshake executor
-   * @param configuration eager callback configuration
-   * @param extensions local handshake extension configuration
-   * @return this scope
-   */
-  public Routes websocket(
-      ExecutorService executor, Consumer<WebSocket> configuration, Consumer<Lifecycle> extensions) {
-    return websocket(EMPTY_PATH, executor, configuration, extensions);
-  }
-
-  /**
-   * Reserves the route before configuring its managed callbacks and extensions.
-   *
-   * @param path relative endpoint path
-   * @param executor optional borrowed handshake executor
-   * @param configuration eager WebSocket callback configuration
-   * @param extensions optional local handshake extensions
-   * @return this scope
-   */
-  private Routes registerManagedWebsocket(
-      String path,
-      @Nullable ExecutorService executor,
-      Consumer<WebSocket> configuration,
-      @Nullable Consumer<Lifecycle> extensions) {
-    return registerManagedWebsocket(path, executor, new WebSocket(), configuration, extensions);
-  }
-
-  /**
-   * Shares route reservation and publication between ordinary and codec-enabled callbacks.
-   *
-   * @param path relative endpoint path
-   * @param executor optional borrowed handshake executor
-   * @param callbacks framework-owned callback configuration
-   * @param configuration eager callback registration
-   * @param extensions optional local handshake extensions
-   * @return this scope
-   */
-  Routes registerManagedWebsocket(
-      String path,
-      @Nullable ExecutorService executor,
-      WebSocket callbacks,
-      Consumer<WebSocket> configuration,
-      @Nullable Consumer<Lifecycle> extensions) {
-    Objects.requireNonNull(configuration);
-    Objects.requireNonNull(callbacks);
-    RadixRoutes.Endpoint endpoint;
-    synchronized (lock) {
-      requireMutable();
-      endpoint =
-          RadixRoutes.websocketEndpoint(
-                  join(prefix, path),
-                  callbacks::admit,
-                  (request, ignored5, runtime) -> {
-                    request.response().requireWebSocketUpgrade();
-                    return new ManagedWebSocket(callbacks, request, runtime);
-                  })
-              .withExecutor(executor);
-    }
-    return registerEndpoint(
-        endpoint,
-        local -> {
-          configuration.accept(callbacks);
-          callbacks.freeze();
-          if (extensions != null) {
-            extensions.accept(local);
-          }
-        },
-        true);
-  }
-
-  /**
-   * Registers POST at this group's own endpoint.
-   *
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes post(Handler handler) {
-    return route(HttpMethods.POST, EMPTY_PATH, handler);
-  }
-
-  /**
-   * Registers POST beneath this group's prefix.
-   *
-   * @param path relative endpoint path; empty selects the group endpoint
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes post(String path, Handler handler) {
-    return route(HttpMethods.POST, path, handler);
-  }
-
-  /**
-   * Registers PUT at this group's own endpoint.
-   *
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes put(Handler handler) {
-    return route(HttpMethods.PUT, EMPTY_PATH, handler);
-  }
-
-  /**
-   * Registers PUT beneath this group's prefix.
-   *
-   * @param path relative endpoint path; empty selects the group endpoint
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes put(String path, Handler handler) {
-    return route(HttpMethods.PUT, path, handler);
-  }
-
-  /**
-   * Registers PATCH at this group's own endpoint.
-   *
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes patch(Handler handler) {
-    return route(HttpMethods.PATCH, EMPTY_PATH, handler);
-  }
-
-  /**
-   * Registers PATCH beneath this group's prefix.
-   *
-   * @param path relative endpoint path; empty selects the group endpoint
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes patch(String path, Handler handler) {
-    return route(HttpMethods.PATCH, path, handler);
-  }
-
-  /**
-   * Registers DELETE at this group's own endpoint.
-   *
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes delete(Handler handler) {
-    return route(HttpMethods.DELETE, EMPTY_PATH, handler);
-  }
-
-  /**
-   * Registers DELETE beneath this group's prefix.
-   *
-   * @param path relative endpoint path; empty selects the group endpoint
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes delete(String path, Handler handler) {
-    return route(HttpMethods.DELETE, path, handler);
-  }
-
-  /**
-   * Registers HEAD at this group's own endpoint.
-   *
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes head(Handler handler) {
-    return route(HttpMethods.HEAD, EMPTY_PATH, handler);
-  }
-
-  /**
-   * Registers HEAD beneath this group's prefix.
-   *
-   * @param path relative endpoint path; empty selects the group endpoint
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes head(String path, Handler handler) {
-    return route(HttpMethods.HEAD, path, handler);
-  }
-
-  /**
-   * Registers OPTIONS at this group's own endpoint.
-   *
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes options(Handler handler) {
-    return route(HttpMethods.OPTIONS, EMPTY_PATH, handler);
-  }
-
-  /**
-   * Registers OPTIONS beneath this group's prefix.
-   *
-   * @param path relative endpoint path; empty selects the group endpoint
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes options(String path, Handler handler) {
-    return route(HttpMethods.OPTIONS, path, handler);
-  }
-
-  /**
    * Registers an explicit HTTP method beneath this group's prefix. Whole-segment patterns may use
    * {@code {name}}, terminal {@code {*tail}}, or a constrained parameter such as {@code
    * {id:[0-9]+}}. Constraints use one ASCII character class with optional simple repetition.
@@ -1757,6 +1760,97 @@ public final class Routes {
   public Routes route(
       HttpMethods method, String path, Handler handler, Consumer<Lifecycle> configuration) {
     return registerRoute(method, path, null, handler, Objects.requireNonNull(configuration));
+  }
+
+  /**
+   * Registers a case-sensitive wire method beneath this group's prefix.
+   *
+   * @param method registered wire token, such as GET or PROPFIND; no normalization is performed
+   * @param path relative endpoint path; empty selects the group endpoint
+   * @param handler request/response handler
+   * @return this scope
+   * @throws NullPointerException if method is null
+   * @throws IllegalArgumentException if the method is unrecognized or the route is invalid
+   * @throws IllegalStateException if route registration has ended
+   */
+  public Routes route(String method, String path, Handler handler) {
+    HttpMethods parsed;
+    synchronized (lock) {
+      requireMutable();
+      Objects.requireNonNull(method);
+      parsed =
+          HttpMethods.httpMethod(method)
+              .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method));
+    }
+    return route(parsed, path, handler);
+  }
+
+  /**
+   * Registers a wire method with local endpoint configuration.
+   *
+   * @param method recognized case-sensitive method
+   * @param path relative path
+   * @param handler submitted endpoint
+   * @param configuration local configuration
+   * @return this scope
+   * @throws IllegalArgumentException if the method is unrecognized
+   */
+  public Routes route(
+      String method, String path, Handler handler, Consumer<Lifecycle> configuration) {
+    Objects.requireNonNull(method);
+
+    return route(
+        HttpMethods.httpMethod(method)
+            .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method)),
+        path,
+        handler,
+        configuration);
+  }
+
+  /**
+   * Registers an enum method with local configuration at this group's endpoint.
+   *
+   * @param method HTTP method
+   * @param handler endpoint handler
+   * @param configuration local configuration
+   * @return this scope
+   */
+  public Routes route(HttpMethods method, Handler handler, Consumer<Lifecycle> configuration) {
+    return route(method, EMPTY_PATH, handler, configuration);
+  }
+
+  /**
+   * Registers a wire method with local configuration at this group's endpoint.
+   *
+   * @param method recognized case-sensitive method
+   * @param handler endpoint handler
+   * @param configuration local configuration
+   * @return this scope
+   */
+  public Routes route(String method, Handler handler, Consumer<Lifecycle> configuration) {
+    return route(method, EMPTY_PATH, handler, configuration);
+  }
+
+  /**
+   * Registers an explicit HTTP method at this group's own endpoint.
+   *
+   * @param method registered HTTP method
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes route(HttpMethods method, Handler handler) {
+    return route(method, EMPTY_PATH, handler);
+  }
+
+  /**
+   * Registers a case-sensitive wire method at this group's own endpoint.
+   *
+   * @param method registered wire token, without trimming or normalization
+   * @param handler request/response handler
+   * @return this scope
+   */
+  public Routes route(String method, Handler handler) {
+    return route(method, EMPTY_PATH, handler);
   }
 
   /**
@@ -1845,93 +1939,48 @@ public final class Routes {
   }
 
   /**
-   * Registers a case-sensitive wire method beneath this group's prefix.
+   * Copies a scope and freezes all request data without retaining the extension map in the router.
    *
-   * @param method registered wire token, such as GET or PROPFIND; no normalization is performed
-   * @param path relative endpoint path; empty selects the group endpoint
-   * @param handler request/response handler
-   * @return this scope
-   * @throws NullPointerException if method is null
-   * @throws IllegalArgumentException if the method is unrecognized or the route is invalid
-   * @throws IllegalStateException if route registration has ended
+   * @param method HTTP method, or null for handshakes/mounts
+   * @param template actual composed registration path
+   * @param configure optional local configuration
+   * @param facts pending metadata notifications, published only on successful registration
+   * @return behavior, or null for a route without local runtime behavior
    */
-  public Routes route(String method, String path, Handler handler) {
-    HttpMethods parsed;
-    synchronized (lock) {
-      requireMutable();
-      Objects.requireNonNull(method);
-      parsed =
-          HttpMethods.httpMethod(method)
-              .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method));
+  private @Nullable EndpointBehavior behavior(
+      @Nullable HttpMethods method,
+      String template,
+      @Nullable Consumer<Lifecycle> configure,
+      List<Runnable> facts) {
+    if (configuration == null && configure == null && conditions.isEmpty()) {
+      return null;
     }
-    return route(parsed, path, handler);
+
+    var local = new Lifecycle(installed, initialize, configuration);
+
+    try {
+      if (configure != null) {
+        configure.accept(local);
+      }
+
+      return local.bind(conditions, method, template, facts);
+    } finally {
+      local.freeze();
+    }
   }
 
   /**
-   * Registers a wire method with local endpoint configuration.
+   * Publishes cold notifications and completion requirements while holding the root lock.
    *
-   * @param method recognized case-sensitive method
-   * @param path relative path
-   * @param handler submitted endpoint
-   * @param configuration local configuration
-   * @return this scope
-   * @throws IllegalArgumentException if the method is unrecognized
+   * @param behavior immutable local behavior
+   * @param facts pending HTTP metadata notifications
    */
-  public Routes route(
-      String method, String path, Handler handler, Consumer<Lifecycle> configuration) {
-    Objects.requireNonNull(method);
-    return route(
-        HttpMethods.httpMethod(method)
-            .orElseThrow(() -> new IllegalArgumentException(UNRECOGNIZED_HTTP_METHOD + method)),
-        path,
-        handler,
-        configuration);
-  }
-
-  /**
-   * Registers an enum method with local configuration at this group's endpoint.
-   *
-   * @param method HTTP method
-   * @param handler endpoint handler
-   * @param configuration local configuration
-   * @return this scope
-   */
-  public Routes route(HttpMethods method, Handler handler, Consumer<Lifecycle> configuration) {
-    return route(method, EMPTY_PATH, handler, configuration);
-  }
-
-  /**
-   * Registers a wire method with local configuration at this group's endpoint.
-   *
-   * @param method recognized case-sensitive method
-   * @param handler endpoint handler
-   * @param configuration local configuration
-   * @return this scope
-   */
-  public Routes route(String method, Handler handler, Consumer<Lifecycle> configuration) {
-    return route(method, EMPTY_PATH, handler, configuration);
-  }
-
-  /**
-   * Registers an explicit HTTP method at this group's own endpoint.
-   *
-   * @param method registered HTTP method
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes route(HttpMethods method, Handler handler) {
-    return route(method, EMPTY_PATH, handler);
-  }
-
-  /**
-   * Registers a case-sensitive wire method at this group's own endpoint.
-   *
-   * @param method registered wire token, without trimming or normalization
-   * @param handler request/response handler
-   * @return this scope
-   */
-  public Routes route(String method, Handler handler) {
-    return route(method, EMPTY_PATH, handler);
+  private void publish(@Nullable EndpointBehavior behavior, List<Runnable> facts) {
+    notifications.addAll(facts);
+    if (behavior != null
+        && (!behavior.observers().isEmpty() || !behavior.instrumentation().isEmpty())) {
+      root.localObservers = true;
+    }
   }
 
   /**
@@ -2042,6 +2091,40 @@ public final class Routes {
   }
 
   /**
+   * Normalizes a mount and rejects parameters because mounted resources have no parameter binding.
+   *
+   * @param path relative mount path
+   * @return absolute normalized literal mount path
+   * @throws IllegalArgumentException if the mount has a parameter segment
+   */
+  private String staticMount(String path) {
+    var mounted = mount(path);
+    if (!RadixRoutes.parameters(mounted).isEmpty()) {
+      throw new IllegalArgumentException("Static-resource mounts cannot contain path parameters");
+    }
+
+    return mounted;
+  }
+
+  /**
+   * Normalizes a mounted path while preserving the root mount as the single separator.
+   *
+   * @param path relative mount path
+   * @return absolute normalized mount path
+   */
+  private String mount(String path) {
+    var mounted = join(prefix, path);
+    RadixRoutes.parameters(mounted);
+    if (mounted.length() == 1) {
+      return mounted;
+    }
+
+    return mounted.charAt(mounted.length() - 1) == HttpCharacters.PATH_SEPARATOR
+        ? mounted.substring(0, mounted.length() - 1)
+        : mounted;
+  }
+
+  /**
    * Compiles the immutable request router and ends registration before releasing the shared lock.
    * Static mounts transfer to the compiled router; other registration data is released. Active
    * callbacks are rejected before compilation, allowing startup to be retried once they finish.
@@ -2091,6 +2174,7 @@ public final class Routes {
       routeKeys.clear();
       websocketRouteKeys.clear();
       installed.clear();
+
       return router;
     }
   }
@@ -2107,6 +2191,7 @@ public final class Routes {
       IdentityHashMap<Routes, Map<Class<? extends Exception>, ExceptionHandler<Exception>>>
           resolved) {
     var scope = Objects.requireNonNull(endpointScopes.get(endpoint));
+
     return endpoint.withBehavior(
         EndpointBehavior.withErrors(endpoint.behavior(), scope.exceptionMappings(resolved)));
   }
@@ -2131,6 +2216,7 @@ public final class Routes {
             : parent.exceptionMappings(resolved);
     if (errors.isEmpty()) {
       resolved.put(this, inherited);
+
       return inherited;
     }
 
@@ -2138,6 +2224,7 @@ public final class Routes {
     combined.putAll(errors);
     var frozen = Map.copyOf(combined);
     resolved.put(this, frozen);
+
     return frozen;
   }
 
@@ -2180,6 +2267,26 @@ public final class Routes {
       websocketRouteKeys.clear();
       notifications.clear();
       installed.clear();
+    }
+  }
+
+  /** Closes every uncompiled static source before reporting aggregated failures. */
+  private void closeStaticFiles() {
+    RuntimeException failure = null;
+    for (var files : staticFiles) {
+      try {
+        files.close();
+      } catch (RuntimeException closeFailure) {
+        if (failure == null) {
+          failure = closeFailure;
+        } else {
+          failure.addSuppressed(closeFailure);
+        }
+      }
+    }
+
+    if (failure != null) {
+      throw failure;
     }
   }
 
@@ -2265,87 +2372,6 @@ public final class Routes {
   }
 
   /**
-   * Copies a scope and freezes all request data without retaining the extension map in the router.
-   *
-   * @param method HTTP method, or null for handshakes/mounts
-   * @param template actual composed registration path
-   * @param configure optional local configuration
-   * @param facts pending metadata notifications, published only on successful registration
-   * @return behavior, or null for a route without local runtime behavior
-   */
-  private @Nullable EndpointBehavior behavior(
-      @Nullable HttpMethods method,
-      String template,
-      @Nullable Consumer<Lifecycle> configure,
-      List<Runnable> facts) {
-    if (configuration == null && configure == null && conditions.isEmpty()) {
-      return null;
-    }
-
-    var local = new Lifecycle(installed, initialize, configuration);
-
-    try {
-      if (configure != null) {
-        configure.accept(local);
-      }
-
-      return local.bind(conditions, method, template, facts);
-    } finally {
-      local.freeze();
-    }
-  }
-
-  /**
-   * Publishes cold notifications and completion requirements while holding the root lock.
-   *
-   * @param behavior immutable local behavior
-   * @param facts pending HTTP metadata notifications
-   */
-  private void publish(@Nullable EndpointBehavior behavior, List<Runnable> facts) {
-    notifications.addAll(facts);
-    if (behavior != null
-        && (!behavior.observers().isEmpty() || !behavior.instrumentation().isEmpty())) {
-      root.localObservers = true;
-    }
-  }
-
-  /**
-   * Normalizes a mount and rejects parameters because mounted resources have no parameter binding.
-   *
-   * @param path relative mount path
-   * @return absolute normalized literal mount path
-   * @throws IllegalArgumentException if the mount has a parameter segment
-   */
-  private String staticMount(String path) {
-    var mounted = mount(path);
-    if (!RadixRoutes.parameters(mounted).isEmpty()) {
-      throw new IllegalArgumentException("Static-resource mounts cannot contain path parameters");
-    }
-
-    return mounted;
-  }
-
-  /** Closes every uncompiled static source before reporting aggregated failures. */
-  private void closeStaticFiles() {
-    RuntimeException failure = null;
-    for (var files : staticFiles) {
-      try {
-        files.close();
-      } catch (RuntimeException closeFailure) {
-        if (failure == null) {
-          failure = closeFailure;
-        } else {
-          failure.addSuppressed(closeFailure);
-        }
-      }
-    }
-
-    if (failure != null) {
-      throw failure;
-    }
-  }
-
-  /**
    * Composes a relative endpoint or group path without allowing a leading slash to escape scope.
    * Empty paths select the current group, or the root slash when no prefix exists.
    *
@@ -2363,23 +2389,5 @@ public final class Routes {
         + (path.charAt(0) == HttpCharacters.PATH_SEPARATOR
             ? path
             : HttpCharacters.PATH_SEPARATOR + path);
-  }
-
-  /**
-   * Normalizes a mounted path while preserving the root mount as the single separator.
-   *
-   * @param path relative mount path
-   * @return absolute normalized mount path
-   */
-  private String mount(String path) {
-    var mounted = join(prefix, path);
-    RadixRoutes.parameters(mounted);
-    if (mounted.length() == 1) {
-      return mounted;
-    }
-
-    return mounted.charAt(mounted.length() - 1) == HttpCharacters.PATH_SEPARATOR
-        ? mounted.substring(0, mounted.length() - 1)
-        : mounted;
   }
 }

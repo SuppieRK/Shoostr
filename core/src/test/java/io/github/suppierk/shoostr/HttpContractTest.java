@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Proxy;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -21,11 +22,16 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.http.HttpFields.Mutable;
 import org.eclipse.jetty.server.ServerConnector;
 import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.AfterEach;
@@ -73,38 +79,39 @@ class HttpContractTest {
                   nativeConnector.setIdleTimeout(5000);
                 });
 
-    app.routes().get("/plain", (ignored2, res) -> res.text("hello"));
+    app.routes().get("/plain", (ignoredRequest, response) -> response.text("hello"));
     app.routes()
         .get(
             "/thread",
-            (ignored3, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
-    app.routes().post("/echo", (req, res) -> res.text(req.bodyText()));
+            (ignoredRequest, response) ->
+                response.text(Boolean.toString(Thread.currentThread().isVirtual())));
+    app.routes().post("/echo", (request, response) -> response.text(request.bodyText()));
     app.routes()
         .get(
             "/failure",
-            (ignored4, res) -> {
-              res.status(201).setHeader("X-Leak", "secret").text("must not escape");
+            (ignoredRequest, response) -> {
+              response.status(201).setHeader("X-Leak", "secret").text("must not escape");
               throw new IllegalArgumentException("secret details");
             });
     app.routes()
         .get(
             "/finite",
-            (req, res) -> {
-              res.text("staged");
-              retainedResponse.set(res);
-              retainedRequest.set(req);
+            (request, response) -> {
+              response.text("staged");
+              retainedResponse.set(response);
+              retainedRequest.set(request);
               staged.countDown();
               if (!releaseFinite.await(5, TimeUnit.SECONDS)) {
                 throw new IOException("test timeout");
               }
 
-              res.text("finished");
+              response.text("finished");
             });
     app.routes()
         .get(
             "/stream",
-            (ignored5, res) -> {
-              var stream = res.startStream("text/plain; charset=utf-8");
+            (ignoredRequest, response) -> {
+              var stream = response.startStream("text/plain; charset=utf-8");
               stream.write("first\n");
               stream.flush();
               if (!releaseStream.await(5, TimeUnit.SECONDS)) {
@@ -116,59 +123,73 @@ class HttpContractTest {
     app.routes()
         .get(
             "/fluent-stream",
-            (ignored6, res) -> {
-              var stream = res.startStream("text/plain; charset=utf-8");
+            (ignoredRequest, response) -> {
+              var stream = response.startStream("text/plain; charset=utf-8");
+
               assertSame(stream, stream.write("café"));
               assertSame(stream, stream.write(new byte[] {'!'}));
               assertSame(stream, stream.write(""));
               assertSame(stream, stream.write(new byte[0]));
               assertSame(stream, stream.flush());
+
               stream.write("012345678").flush().write("tail");
             });
     app.routes()
         .get(
             "/broken-stream",
-            (ignored7, res) -> {
-              var stream = res.startStream("text/plain; charset=utf-8");
+            (ignoredRequest, response) -> {
+              var stream = response.startStream("text/plain; charset=utf-8");
               stream.write("partial\n");
               stream.flush();
               throw new IOException("failed after commitment");
             });
-    app.routes().get("/close", (ignored8, res) -> res.close());
+    app.routes().get("/close", (ignoredRequest, response) -> response.close());
     app.routes()
         .get(
             "/cross-thread",
-            (ignored9, res) -> {
+            (ignoredRequest, response) -> {
               var failure = new AtomicReference<Throwable>();
-              var thread =
-                  Thread.startVirtualThread(
-                      () -> {
-                        try {
-                          res.text("bad");
-                        } catch (Throwable error) {
-                          failure.set(error);
-                        }
-                      });
+              var thread = createThreadForStartServer(response, failure);
               thread.join();
-              res.text(Boolean.toString(failure.get() instanceof IllegalStateException));
+              response.text(Boolean.toString(failure.get() instanceof IllegalStateException));
             });
-    app.routes().get("/empty", (ignored10, res) -> res.status(204));
-    app.routes().get("/invalid-empty", (ignored11, res) -> res.status(204).text("bad"));
+    app.routes().get("/empty", (ignoredRequest, response) -> response.status(204));
+    app.routes()
+        .get("/invalid-empty", (ignoredRequest, response) -> response.status(204).text("bad"));
     app.routes()
         .get(
             "/invalid-type",
-            (ignored12, res) -> res.body("text/plain\r\nX-Leak: injected", new byte[0]));
+            (ignoredRequest, response) ->
+                response.body("text/plain\r\nX-Leak: injected", new byte[0]));
     app.routes()
         .get(
             "/invalid-stream-type",
-            (ignored13, res) -> res.startStream("text/plain\nX-Leak: injected"));
-    app.routes().get("/invalid-header", (ignored14, res) -> res.setHeader("Bad Header", "value"));
-    app.routes().get("/invalid-framing", (ignored15, res) -> res.setHeader("content-length", "12"));
+            (ignoredRequest, response) -> response.startStream("text/plain\nX-Leak: injected"));
+    app.routes()
+        .get(
+            "/invalid-header",
+            (ignoredRequest, response) -> response.setHeader("Bad Header", "value"));
+    app.routes()
+        .get(
+            "/invalid-framing",
+            (ignoredRequest, response) -> response.setHeader("content-length", "12"));
     app.routes()
         .get(
             "/custom-type",
-            (ignored16, res) -> res.body("application/vnd.example+json", new byte[0]));
+            (ignoredRequest, response) ->
+                response.body("application/vnd.example+json", new byte[0]));
     test = TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1));
+  }
+
+  private Thread createThreadForStartServer(Response response, AtomicReference<Throwable> failure) {
+    return Thread.startVirtualThread(
+        () -> {
+          try {
+            response.text("bad");
+          } catch (Throwable error) {
+            failure.set(error);
+          }
+        });
   }
 
   @AfterEach
@@ -223,6 +244,7 @@ class HttpContractTest {
         test.send(
             request -> request.path("/plain").timeout(Duration.ofSeconds(5)).method("POST"),
             HttpResponse.BodyHandlers.ofString());
+
     assertEquals(405, result.statusCode());
     assertEquals("GET", result.headers().firstValue("Allow").orElseThrow());
   }
@@ -233,6 +255,7 @@ class HttpContractTest {
         test.send(
             request -> request.path("/failure").timeout(Duration.ofSeconds(5)),
             HttpResponse.BodyHandlers.ofString());
+
     assertEquals(500, result.statusCode());
     assertEquals("Internal Server Error", result.body());
     assertTrue(result.headers().firstValue("X-Leak").isEmpty());
@@ -242,13 +265,12 @@ class HttpContractTest {
   void stagesFiniteBodyUntilHandlerReturnsAndClosesApplicationAccess() throws Exception {
     try (var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
       var finite =
-          testRequests.submit(
-              () ->
-                  test.send(
-                      request -> request.path("/finite").timeout(Duration.ofSeconds(5)),
-                      HttpResponse.BodyHandlers.ofInputStream()));
+          submitFiniteForStagesFiniteBodyUntilHandlerReturnsAndClosesApplicationAccess(
+              testRequests);
+
       assertTrue(staged.await(3, TimeUnit.SECONDS), "finite handler entered");
       assertFalse(finite.isDone(), "finite response remains staged");
+
       releaseFinite.countDown();
 
       try (var input = finite.get(3, TimeUnit.SECONDS).body()) {
@@ -257,29 +279,49 @@ class HttpContractTest {
 
       var closedResponse = retainedResponse.get();
       var closedRequest = retainedRequest.get();
+
       assertThrows(IllegalStateException.class, () -> closedResponse.text("too late"));
       assertThrows(IllegalStateException.class, closedRequest::path);
     }
+  }
+
+  private Future<HttpResponse<InputStream>>
+      submitFiniteForStagesFiniteBodyUntilHandlerReturnsAndClosesApplicationAccess(
+          ExecutorService testRequests) {
+    return testRequests.submit(
+        () ->
+            test.send(
+                request -> request.path("/finite").timeout(Duration.ofSeconds(5)),
+                HttpResponse.BodyHandlers.ofInputStream()));
   }
 
   @Test
   void streamsBeforeHandlerReturnsAndFlushesRemainderOnReturn() throws Exception {
     try (var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
       var result =
-          testRequests
-              .submit(
-                  () ->
-                      test.send(
-                          request -> request.path("/stream").timeout(Duration.ofSeconds(5)),
-                          HttpResponse.BodyHandlers.ofInputStream()))
-              .get(3, TimeUnit.SECONDS);
+          sendResultForStreamsBeforeHandlerReturnsAndFlushesRemainderOnReturn(testRequests);
 
       try (var input = result.body()) {
         assertEquals("first\n", new String(input.readNBytes(6), StandardCharsets.UTF_8));
+
         releaseStream.countDown();
+
         assertEquals("last\n", new String(input.readAllBytes(), StandardCharsets.UTF_8));
       }
     }
+  }
+
+  private HttpResponse<InputStream>
+      sendResultForStreamsBeforeHandlerReturnsAndFlushesRemainderOnReturn(
+          ExecutorService testRequests)
+          throws InterruptedException, ExecutionException, TimeoutException {
+    return testRequests
+        .submit(
+            () ->
+                test.send(
+                    request -> request.path("/stream").timeout(Duration.ofSeconds(5)),
+                    HttpResponse.BodyHandlers.ofInputStream()))
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -351,6 +393,7 @@ class HttpContractTest {
         test.send(
             request -> request.path(path).timeout(Duration.ofSeconds(5)),
             HttpResponse.BodyHandlers.ofString());
+
     assertEquals(500, result.statusCode());
     assertTrue(result.headers().firstValue("X-Leak").isEmpty());
   }
@@ -369,16 +412,21 @@ class HttpContractTest {
 
   @Test
   void readsRequestBody() throws Exception {
-    var result =
-        test.send(
-            request ->
-                request
-                    .path("/echo")
-                    .timeout(Duration.ofSeconds(5))
-                    .method("POST")
-                    .body("hello".getBytes(StandardCharsets.UTF_8)),
-            HttpResponse.BodyHandlers.ofString());
+    var result = sendResultForReadsRequestBody();
+
     assertEquals("hello", result.body());
+  }
+
+  private HttpResponse<String> sendResultForReadsRequestBody()
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/echo")
+                .timeout(Duration.ofSeconds(5))
+                .method("POST")
+                .body("hello".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -407,6 +455,7 @@ class HttpContractTest {
           client.send(
               request(test.baseUri().resolve("/echo").toString()).POST(body).build(),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(413, result.statusCode());
       assertEquals("Content Too Large", result.body());
     }
@@ -415,8 +464,10 @@ class HttpContractTest {
   @Test
   void freezesRoutesAfterStartup() {
     var routes = app.routes();
+
     assertThrows(
-        IllegalStateException.class, () -> routes.get("/later", (ignored17, ignored18) -> {}));
+        IllegalStateException.class,
+        () -> routes.get("/later", (ignoredRequest, ignoredResponse) -> {}));
   }
 
   @ParameterizedTest
@@ -440,54 +491,12 @@ class HttpContractTest {
     var failures = new AtomicInteger();
     var afterFlushes = new AtomicInteger();
     var headers = HttpFields.build();
-    var sink =
-        (org.eclipse.jetty.server.Response)
-            Proxy.newProxyInstance(
-                HttpContractTest.class.getClassLoader(),
-                new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (ignored19, method, args) ->
-                    switch (method.getName()) {
-                      case "getStatus" -> 200;
-                      case "getHeaders" -> headers;
-                      case "isCommitted" -> writes.get() != 0;
-                      case "write" -> {
-                        writes.incrementAndGet();
-                        bytes.set((ByteBuffer) args[1]);
-                        pending.set((Callback) args[2]);
-                        yield null;
-                      }
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
+    var sink = createSinkForCompletesFiniteResponsesAsynchronously(headers, writes, bytes, pending);
     var completion =
         Callback.from(successes::incrementAndGet, ignored -> failures.incrementAndGet());
     var producer =
-        Thread.startVirtualThread(
-            () -> {
-              try {
-                var response = response(sink, completion);
-                if (hasAfterFlush) {
-                  response.flushHooks(
-                      () -> {},
-                      () -> {
-                        afterFlushes.incrementAndGet();
-                        if (afterFlushFails) {
-                          throw new IllegalStateException("after flush");
-                        }
-                      });
-                }
-
-                var original = "finished".getBytes(StandardCharsets.UTF_8);
-                response.body("text/plain;charset=utf-8", original);
-                original[0] = '!';
-                response.complete();
-
-                assertThrows(IllegalStateException.class, () -> response.text("too late"));
-              } catch (Throwable error) {
-                failure.set(error);
-              } finally {
-                returned.countDown();
-              }
-            });
+        createProducerForCompletesFiniteResponsesAsynchronously(
+            sink, completion, hasAfterFlush, afterFlushes, afterFlushFails, failure, returned);
 
     try {
       assertTrue(
@@ -505,6 +514,7 @@ class HttpContractTest {
           "finished",
           StandardCharsets.UTF_8.decode(bytes.get()).toString(),
           "in-flight bytes retain defensive ownership");
+
       if (transportFails) {
         pending.get().failed(new IOException("simulated disconnect"));
       } else {
@@ -528,6 +538,67 @@ class HttpContractTest {
     }
   }
 
+  private org.eclipse.jetty.server.Response createSinkForCompletesFiniteResponsesAsynchronously(
+      Mutable headers,
+      AtomicInteger writes,
+      AtomicReference<ByteBuffer> bytes,
+      AtomicReference<Callback> pending) {
+    return (org.eclipse.jetty.server.Response)
+        Proxy.newProxyInstance(
+            HttpContractTest.class.getClassLoader(),
+            new Class<?>[] {org.eclipse.jetty.server.Response.class},
+            (ignoredObject, method, args) ->
+                switch (method.getName()) {
+                  case "getStatus" -> 200;
+                  case "getHeaders" -> headers;
+                  case "isCommitted" -> writes.get() != 0;
+                  case "write" -> {
+                    writes.incrementAndGet();
+                    bytes.set((ByteBuffer) args[1]);
+                    pending.set((Callback) args[2]);
+                    yield null;
+                  }
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
+  }
+
+  private Thread createProducerForCompletesFiniteResponsesAsynchronously(
+      org.eclipse.jetty.server.Response sink,
+      Callback completion,
+      boolean hasAfterFlush,
+      AtomicInteger afterFlushes,
+      boolean afterFlushFails,
+      AtomicReference<Throwable> failure,
+      CountDownLatch returned) {
+    return Thread.startVirtualThread(
+        () -> {
+          try {
+            var response = response(sink, completion);
+            if (hasAfterFlush) {
+              response.flushHooks(
+                  () -> {},
+                  () -> {
+                    afterFlushes.incrementAndGet();
+                    if (afterFlushFails) {
+                      throw new IllegalStateException("after flush");
+                    }
+                  });
+            }
+
+            var original = "finished".getBytes(StandardCharsets.UTF_8);
+            response.body("text/plain;charset=utf-8", original);
+            original[0] = '!';
+            response.complete();
+
+            assertThrows(IllegalStateException.class, () -> response.text("too late"));
+          } catch (Throwable error) {
+            failure.set(error);
+          } finally {
+            returned.countDown();
+          }
+        });
+  }
+
   @Test
   void failsCompletionWhenSynchronousTransportCallbackSeesAfterFlushFailure() throws Exception {
     var events = new ArrayList<String>();
@@ -535,21 +606,7 @@ class HttpContractTest {
     var successes = new AtomicInteger();
     var failures = new AtomicInteger();
     var sink =
-        (org.eclipse.jetty.server.Response)
-            Proxy.newProxyInstance(
-                HttpContractTest.class.getClassLoader(),
-                new Class<?>[] {org.eclipse.jetty.server.Response.class},
-                (ignored20, method, args) ->
-                    switch (method.getName()) {
-                      case "getStatus" -> 200;
-                      case "getHeaders" -> headers;
-                      case "isCommitted" -> false;
-                      case "write" -> {
-                        ((Callback) args[2]).succeeded();
-                        yield null;
-                      }
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
+        createSinkForFailsCompletionWhenSynchronousTransportCallbackSeesAfterFlushFailure(headers);
     var completion =
         Callback.from(successes::incrementAndGet, ignored -> failures.incrementAndGet());
     var response = response(sink, completion);
@@ -568,22 +625,46 @@ class HttpContractTest {
     assertEquals(1, failures.get());
   }
 
+  private org.eclipse.jetty.server.Response
+      createSinkForFailsCompletionWhenSynchronousTransportCallbackSeesAfterFlushFailure(
+          Mutable headers) {
+    return (org.eclipse.jetty.server.Response)
+        Proxy.newProxyInstance(
+            HttpContractTest.class.getClassLoader(),
+            new Class<?>[] {org.eclipse.jetty.server.Response.class},
+            (ignoredObject, method, args) ->
+                switch (method.getName()) {
+                  case "getStatus" -> 200;
+                  case "getHeaders" -> headers;
+                  case "isCommitted" -> false;
+                  case "write" -> {
+                    ((Callback) args[2]).succeeded();
+                    yield null;
+                  }
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
+  }
+
   private static Response response(org.eclipse.jetty.server.Response sink, Callback completion) {
-    var nativeRequest =
-        (org.eclipse.jetty.server.Request)
-            Proxy.newProxyInstance(
-                HttpContractTest.class.getClassLoader(),
-                new Class<?>[] {org.eclipse.jetty.server.Request.class},
-                (ignored21, method, ignored22) ->
-                    switch (method.getName()) {
-                      case "getMethod" -> "GET";
-                      case "getHeaders" -> HttpFields.EMPTY;
-                      case "getLength" -> 0L;
-                      case "consumeAvailable" -> true;
-                      case "addHttpStreamWrapper" -> null;
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
+    var nativeRequest = createNativeRequestForResponse();
+
     return Request.create(nativeRequest, sink, new Options(), completion).response();
+  }
+
+  private static org.eclipse.jetty.server.Request createNativeRequestForResponse() {
+    return (org.eclipse.jetty.server.Request)
+        Proxy.newProxyInstance(
+            HttpContractTest.class.getClassLoader(),
+            new Class<?>[] {org.eclipse.jetty.server.Request.class},
+            (ignoredObject, method, ignoredObjectValues) ->
+                switch (method.getName()) {
+                  case "getMethod" -> "GET";
+                  case "getHeaders" -> HttpFields.EMPTY;
+                  case "getLength" -> 0L;
+                  case "consumeAvailable" -> true;
+                  case "addHttpStreamWrapper" -> null;
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
   }
 
   private static HttpRequest.Builder request(String uri) {

@@ -2,7 +2,9 @@ package io.github.suppierk.shoostr;
 
 import io.github.suppierk.shoostr.opentelemetry.OpenTelemetryTracing;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.OpenTelemetrySdkBuilder;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ExecutorService;
@@ -101,6 +103,7 @@ public class ExtensionRequestBenchmark {
         new Shoostr()
             .modifyServer(
                 nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
     executor =
         switch (execution) {
           case "default" -> null;
@@ -117,6 +120,7 @@ public class ExtensionRequestBenchmark {
           connector = new LocalConnector(server);
           server.addConnector(connector);
         });
+
     if ("plain".equals(configuration)) {
       registerPlain();
     } else {
@@ -124,6 +128,7 @@ public class ExtensionRequestBenchmark {
     }
 
     app.start();
+
     String path = "missed".equals(outcome) ? "/missing" : "/api/" + (groups - 1) + "/users/42";
     String method = "wrongMethod".equals(outcome) ? "DELETE" : "GET";
     request = method + " " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
@@ -142,6 +147,7 @@ public class ExtensionRequestBenchmark {
   @TearDown
   public void close() throws Exception {
     app.close();
+
     for (var resource : resources) {
       resource.close();
     }
@@ -155,10 +161,10 @@ public class ExtensionRequestBenchmark {
       var path = "/api/" + group + "/users/{id}";
       if (executor == null) {
         app.routes().get(path, (ignored, response) -> response.text("ok"));
-        app.routes().post(path, (ignored2, response) -> response.text("ok"));
+        app.routes().post(path, (ignoredRequest, response) -> response.text("ok"));
       } else {
-        app.routes().get(path, executor, (ignored3, response) -> response.text("ok"));
-        app.routes().post(path, executor, (ignored4, response) -> response.text("ok"));
+        app.routes().get(path, executor, (ignoredRequest, response) -> response.text("ok"));
+        app.routes().post(path, executor, (ignoredRequest, response) -> response.text("ok"));
       }
     }
   }
@@ -197,12 +203,12 @@ public class ExtensionRequestBenchmark {
           return;
         }
         case "appObserver" -> {
-          benchmark.app.afterRequest(ignored5 -> {});
+          benchmark.app.afterRequest(ignoredRequestOutcome -> {});
           benchmark.registerPlain();
           return;
         }
         case "appInstrumentation" -> {
-          benchmark.app.observe(ignored6 -> ignored7 -> {});
+          benchmark.app.observe(ignoredRequest -> ignoredRequestOutcome -> {});
           benchmark.registerPlain();
           return;
         }
@@ -215,14 +221,10 @@ public class ExtensionRequestBenchmark {
 
       for (int group = 0; group < benchmark.groups; group++) {
         var path = "/api/" + group + "/users/{id}";
-        Handler handler = (ignored8, response) -> response.text("ok");
-        Consumer<Lifecycle> get =
-            e -> {
-              if (!"unselectedInstrumentation".equals(benchmark.configuration)) {
-                configure(e, authentication, benchmark.configuration);
-              }
-            };
-        Consumer<Lifecycle> post = e -> configure(e, authentication, benchmark.configuration);
+        Handler handler = (ignoredRequest, response) -> response.text("ok");
+        Consumer<Lifecycle> get = endpointRegistration(benchmark, authentication);
+        Consumer<Lifecycle> post =
+            lifecycle -> configure(lifecycle, authentication, benchmark.configuration);
         if (benchmark.executor == null) {
           benchmark.app.routes().get(path, handler, get);
           benchmark.app.routes().post(path, handler, post);
@@ -234,15 +236,32 @@ public class ExtensionRequestBenchmark {
     }
 
     /**
+     * Creates endpoint lifecycle configuration for the selected benchmark scenario.
+     *
+     * @param benchmark configured benchmark state
+     * @param authentication benchmark identity provider
+     * @return endpoint registration callback
+     */
+    private static Consumer<Lifecycle> endpointRegistration(
+        ExtensionRequestBenchmark benchmark, Identity authentication) {
+      return lifecycle -> {
+        if (!"unselectedInstrumentation".equals(benchmark.configuration)) {
+          configure(lifecycle, authentication, benchmark.configuration);
+        }
+      };
+    }
+
+    /**
      * Installs a real recording SDK without an exporter; all allocations are SDK/dispatch work.
      *
      * @param benchmark owning trial
      */
     private static void registerTracing(ExtensionRequestBenchmark benchmark) {
-      var provider = SdkTracerProvider.builder().build();
+      var provider = createTracerProvider();
+
       benchmark.resources.add(provider);
-      var tracing =
-          new OpenTelemetryTracing(OpenTelemetrySdk.builder().setTracerProvider(provider).build());
+
+      var tracing = new OpenTelemetryTracing(createTelemetry(provider));
       if ("otelAppWide".equals(benchmark.configuration)) {
         benchmark.app.withExtension(tracing);
       }
@@ -250,15 +269,8 @@ public class ExtensionRequestBenchmark {
       for (int group = 0; group < benchmark.groups; group++) {
         var path = "/api/" + group + "/users/{id}";
         for (var method : List.of("GET", "POST")) {
-          Consumer<Lifecycle> configure =
-              e -> {
-                if ("otelSelected".equals(benchmark.configuration)
-                    || ("otelUnselected".equals(benchmark.configuration)
-                        && "POST".equals(method))) {
-                  e.withExtension(tracing);
-                }
-              };
-          Handler handler = (ignored9, response) -> response.text("ok");
+          Consumer<Lifecycle> configure = tracingSelection(benchmark, method, tracing);
+          Handler handler = (ignoredRequest, response) -> response.text("ok");
           if (benchmark.executor == null) {
             benchmark.app.routes().route(method, path, handler, configure);
           } else {
@@ -266,6 +278,62 @@ public class ExtensionRequestBenchmark {
           }
         }
       }
+    }
+
+    /**
+     * Acquires the recording provider before the trial registers its cleanup ownership.
+     *
+     * @return fresh recording provider
+     */
+    private static SdkTracerProvider createTracerProvider() {
+      return tracerProviderProperties().build();
+    }
+
+    /**
+     * Configures the benchmark's exporter-free recording provider.
+     *
+     * @return native provider builder
+     */
+    private static SdkTracerProviderBuilder tracerProviderProperties() {
+      return SdkTracerProvider.builder();
+    }
+
+    /**
+     * Constructs the SDK after its provider has a cleanup owner.
+     *
+     * @param provider trial-owned recording provider
+     * @return configured SDK
+     */
+    private static OpenTelemetrySdk createTelemetry(SdkTracerProvider provider) {
+      return telemetryProperties(provider).build();
+    }
+
+    /**
+     * Configures the SDK with the trial-owned provider.
+     *
+     * @param provider trial-owned recording provider
+     * @return native SDK builder
+     */
+    private static OpenTelemetrySdkBuilder telemetryProperties(SdkTracerProvider provider) {
+      return OpenTelemetrySdk.builder().setTracerProvider(provider);
+    }
+
+    /**
+     * Creates the tracing selection used by the benchmark endpoint.
+     *
+     * @param benchmark configured benchmark state
+     * @param method HTTP method token
+     * @param tracing borrowed tracing extension
+     * @return tracing registration callback
+     */
+    private static Consumer<Lifecycle> tracingSelection(
+        ExtensionRequestBenchmark benchmark, String method, OpenTelemetryTracing tracing) {
+      return lifecycle -> {
+        if ("otelSelected".equals(benchmark.configuration)
+            || ("otelUnselected".equals(benchmark.configuration) && "POST".equals(method))) {
+          lifecycle.withExtension(tracing);
+        }
+      };
     }
 
     /**
@@ -279,13 +347,14 @@ public class ExtensionRequestBenchmark {
         Lifecycle endpoint, Identity authentication, String configuration) {
       switch (configuration) {
         case "authentication" -> endpoint.withExtension(authentication);
-        case "localObserver" -> endpoint.afterRequest(ignored10 -> {});
+        case "localObserver" -> endpoint.afterRequest(ignoredRequestOutcome -> {});
         case "localInstrumentation", "unselectedInstrumentation" ->
-            endpoint.observe(ignored11 -> ignored12 -> {});
+            endpoint.observe(ignoredRequest -> ignoredRequestOutcome -> {});
         default -> {
           endpoint.beforeRouteHandler(
-              (request, ignored13) -> request.attribute("admitted", Boolean.TRUE));
-          endpoint.afterRouteHandler((request, ignored14) -> request.attribute("admitted", null));
+              (request, ignoredResponse) -> request.attribute("admitted", Boolean.TRUE));
+          endpoint.afterRouteHandler(
+              (request, ignoredResponse) -> request.attribute("admitted", null));
         }
       }
     }

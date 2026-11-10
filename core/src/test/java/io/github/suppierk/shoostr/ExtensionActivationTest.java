@@ -26,11 +26,13 @@ class ExtensionActivationTest {
               "/selected",
               (request, response) -> response.text("ready"),
               lifecycle -> lifecycle.withExtension(extension));
+
       assertEquals(1, setups.get());
 
       try (var server = TestServer.start(app)) {
         var response =
             server.send(request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, response.statusCode());
         assertEquals("ready", response.body());
         assertEquals("selected", response.headers().firstValue("X-Extension").orElseThrow());
@@ -63,6 +65,7 @@ class ExtensionActivationTest {
                 lifecycle.withoutExtension(first);
                 lifecycle.withExtension(second).value = "private";
               });
+
       assertEquals(2, setups.get());
 
       try (var server = TestServer.start(app)) {
@@ -110,6 +113,7 @@ class ExtensionActivationTest {
 
     try {
       app.withExtension(extension);
+
       assertThrows(
           IllegalArgumentException.class,
           () -> app.withExtension(extension, ignored -> callbacks.incrementAndGet()));
@@ -127,6 +131,7 @@ class ExtensionActivationTest {
 
     try {
       app.routes().get("/ready", (request, response) -> response.text("ready"));
+
       assertThrows(
           IllegalStateException.class, () -> app.withExtension(new ConfigurableExtension(setups)));
       assertEquals(0, setups.get());
@@ -139,12 +144,7 @@ class ExtensionActivationTest {
   void applicationAuthenticationPrecedesAdmissionAndCanBeExcludedFromAPublicEndpoint()
       throws Exception {
     var authentication =
-        new AuthenticationExtension() {
-          @Override
-          public void handle(Request request, Response response) {
-            request.principal(() -> "alice");
-          }
-        };
+        createAuthenticationForApplicationAuthenticationPrecedesAdmissionAndCanBeExcludedFromAPublicEndpoint();
     var app = new Shoostr();
 
     try {
@@ -166,6 +166,7 @@ class ExtensionActivationTest {
       try (var server = TestServer.start(app)) {
         var secured =
             server.send(request -> request.path("/private"), HttpResponse.BodyHandlers.ofString());
+
         assertEquals("alice", secured.body());
         assertEquals("alice", secured.headers().firstValue("X-Admitted").orElseThrow());
         assertEquals(
@@ -177,6 +178,16 @@ class ExtensionActivationTest {
     } finally {
       app.close();
     }
+  }
+
+  private AuthenticationExtension
+      createAuthenticationForApplicationAuthenticationPrecedesAdmissionAndCanBeExcludedFromAPublicEndpoint() {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        request.principal(() -> "alice");
+      }
+    };
   }
 
   @Test
@@ -200,12 +211,17 @@ class ExtensionActivationTest {
                         defaults.value = "discarded";
                         throw failure;
                       })));
+
       var failed = retained.get();
+
       assertThrows(
           IllegalStateException.class, () -> failed.beforeRouteHandler((request, response) -> {}));
+
       app.withExtension(extension, defaults -> defaults.value = "corrected");
       var configured = retained.get();
+
       assertThrows(IllegalStateException.class, () -> configured.afterRequest(ignored -> {}));
+
       app.routes().get("/ready", (request, response) -> response.text("ready"));
 
       try (var server = TestServer.start(app)) {
@@ -290,6 +306,7 @@ class ExtensionActivationTest {
       var settings = new Settings(inherited == null ? "default" : inherited.value);
       lifecycle.beforeRouteHandler(
           (request, response) -> response.setHeader("X-Application-Only", settings.value));
+
       return settings;
     }
   }
@@ -327,6 +344,7 @@ class ExtensionActivationTest {
       var settings = new Settings(inherited == null ? "default" : inherited.value);
       lifecycle.beforeRouteHandler(
           (request, response) -> response.setHeader("X-Configuration", settings.value));
+
       return settings;
     }
   }

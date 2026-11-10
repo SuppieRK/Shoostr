@@ -17,6 +17,7 @@ public final class FileCachingExample {
    */
   public static Shoostr application(Path file) {
     Objects.requireNonNull(file);
+
     return new Shoostr()
         .routes(
             routes ->

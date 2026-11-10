@@ -51,7 +51,7 @@ public final class StatementSpacingCheck extends AbstractCheck {
    */
   @Override
   public void visitToken(DetailAST token) {
-    int before = beforeBoundary(token);
+    int before = beforeBoundary(token, getLines());
     if (before >= 0 && missingLine(token, before, getLines(), true)) {
       log(token, "statement.spacing", "before try");
     }
@@ -78,12 +78,15 @@ public final class StatementSpacingCheck extends AbstractCheck {
         JavaParser.parseFileText(
             new FileText(new File("Source.java"), Arrays.asList(lines)),
             JavaParser.Options.WITHOUT_COMMENTS);
+
     var insertions = new TreeSet<Integer>();
     collect(tree, lines, insertions);
+
     var result = new ArrayList<>(Arrays.asList(lines));
     for (int line : insertions.descendingSet()) {
       result.add(line, "");
     }
+
     return String.join("\n", result);
   }
 
@@ -97,7 +100,7 @@ public final class StatementSpacingCheck extends AbstractCheck {
    */
   private static void collect(DetailAST token, String[] lines, TreeSet<Integer> insertions) {
     for (var current = token; current != null; current = current.getNextSibling()) {
-      int before = beforeBoundary(current);
+      int before = beforeBoundary(current, lines);
       if (before >= 0 && missingLine(current, before, lines, true)) {
         insertions.add(before);
       }
@@ -115,11 +118,18 @@ public final class StatementSpacingCheck extends AbstractCheck {
    * Locates a separator before a try statement unless it is the first statement in its block.
    *
    * @param token candidate statement
+   * @param lines formatted source lines
    * @return zero-based insertion position, or -1 if no separator is required
    */
-  private static int beforeBoundary(DetailAST token) {
+  private static int beforeBoundary(DetailAST token, String[] lines) {
     if (token.getType() == TokenTypes.LITERAL_TRY && token.getPreviousSibling() != null) {
-      return token.getLineNo() - 1;
+      int boundary = token.getLineNo() - 1;
+      int previousEnd = endLine(token.getPreviousSibling());
+      while (boundary > previousEnd && lines[boundary - 1].stripLeading().startsWith("//")) {
+        boundary--;
+      }
+
+      return boundary;
     }
 
     return -1;
@@ -138,14 +148,25 @@ public final class StatementSpacingCheck extends AbstractCheck {
                 && token.getParent().getType() != TokenTypes.LITERAL_ELSE)
         && token.getNextSibling() != null
         && token.getNextSibling().getType() != TokenTypes.RCURLY) {
-      var end = token;
-      while (end.getLastChild() != null) {
-        end = end.getLastChild();
-      }
-      return end.getLineNo();
+      return endLine(token);
     }
 
     return -1;
+  }
+
+  /**
+   * Finds the final physical line occupied by a syntax node.
+   *
+   * @param token syntax node
+   * @return one-based final line number
+   */
+  private static int endLine(DetailAST token) {
+    var end = token;
+    while (end.getLastChild() != null) {
+      end = end.getLastChild();
+    }
+
+    return end.getLineNo();
   }
 
   /**
@@ -164,7 +185,7 @@ public final class StatementSpacingCheck extends AbstractCheck {
     if (before) {
       return boundary == 0
           || !lines[boundary - 1].isBlank()
-          || !lines[boundary].substring(0, token.getColumnNo()).isBlank();
+          || !lines[token.getLineNo() - 1].substring(0, token.getColumnNo()).isBlank();
     }
 
     return token.getNextSibling().getLineNo() <= boundary

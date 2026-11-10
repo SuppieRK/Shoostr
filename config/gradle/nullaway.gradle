@@ -16,6 +16,7 @@ tasks.withType(JavaCompile).configureEach {
 	// Libraries and examples retain their existing default Error Prone checks.
 	options.errorprone.disableAllChecks = false
 	def nullawayOptions = options.errorprone.nullaway
+
 	if (options.errorprone.compilingTestOnlyCode.get()) {
 		nullawayOptions.disable()
 	} else {

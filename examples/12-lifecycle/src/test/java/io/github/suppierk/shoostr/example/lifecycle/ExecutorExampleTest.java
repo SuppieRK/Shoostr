@@ -9,6 +9,7 @@ import io.github.suppierk.shoostr.RequestOutcome;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.net.http.HttpResponse;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
@@ -27,6 +28,7 @@ class ExecutorExampleTest {
               ExecutorExample.application(virtual, workers, new ThreadLocal<>(), ignored -> {}))) {
         var response =
             test.send(request -> request.path("/default"), HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, response.statusCode());
         assertEquals("virtual=" + virtual, response.body());
       }
@@ -45,16 +47,12 @@ class ExecutorExampleTest {
             Thread.ofPlatform().name("recipe-worker-", 0).factory())) {
       workers.submit(() -> context.set("worker-base")).get(5, TimeUnit.SECONDS);
 
-      try (var test =
-          TestServer.start(
-              verifyExecutionMode(
-                  ExecutorExample.application(
-                      virtualApplication, workers, context, outcomes::offer),
-                  virtualApplication))) {
+      try (var test = startExecutionTest(virtualApplication, workers, context, outcomes)) {
         var response =
             test.send(
                 request -> request.path("/selected").header("X-Request-Id", "request-7"),
                 HttpResponse.BodyHandlers.ofString());
+
         assertEquals(200, response.statusCode());
         assertEquals("request-7|recipe-worker-0", response.body());
         assertNotNull(outcomes.poll(5, TimeUnit.SECONDS));
@@ -76,25 +74,35 @@ class ExecutorExampleTest {
 
     try (var workers = Executors.newSingleThreadExecutor()) {
 
-      try (var test =
-          TestServer.start(
-              verifyExecutionMode(
-                  ExecutorExample.application(
-                      virtualApplication, workers, context, outcomes::offer),
-                  virtualApplication))) {
+      try (var test = startExecutionTest(virtualApplication, workers, context, outcomes)) {
         workers.shutdown();
         var response =
             test.send(
                 request -> request.path("/selected").header("X-Request-Id", "request-8"),
                 HttpResponse.BodyHandlers.ofString());
+
         assertEquals(503, response.statusCode());
         assertEquals("busy:request-8", response.body());
+
         var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+
         assertNotNull(outcome);
         assertEquals("/selected", outcome.routePattern());
         assertInstanceOf(RejectedExecutionException.class, outcome.applicationFailure());
       }
     }
+  }
+
+  private TestServer startExecutionTest(
+      boolean virtualApplication,
+      ExecutorService workers,
+      ThreadLocal<String> context,
+      LinkedBlockingQueue<RequestOutcome> outcomes)
+      throws Exception {
+    return TestServer.start(
+        verifyExecutionMode(
+            ExecutorExample.application(virtualApplication, workers, context, outcomes::offer),
+            virtualApplication));
   }
 
   private static Shoostr verifyExecutionMode(Shoostr app, boolean virtualApplication) {

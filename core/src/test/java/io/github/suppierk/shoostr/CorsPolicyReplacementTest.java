@@ -20,42 +20,11 @@ class CorsPolicyReplacementTest {
   @ParameterizedTest
   @ValueSource(strings = {"narrow", "empty-origins", "empty-methods", "wildcard"})
   void replacesEveryPermissionWithoutChangingTheParentOrSibling(String mode) throws Exception {
-    var parent =
-        CorsPolicy.builder()
-            .origins(Set.of("https://parent.example"))
-            .methods(Set.of(HttpMethods.GET, HttpMethods.POST))
-            .allowedHeaders(Set.of(HttpHeaders.of("X-Parent")))
-            .exposedHeaders(Set.of(HttpHeaders.ETAG))
-            .credentials(true)
-            .maxAgeSeconds(600)
-            .build();
-    var wildcard =
-        CorsPolicy.builder()
-            .origins(Set.of("*", "https://extra.example"))
-            .allMethods()
-            .allowedHeaders(Set.of(HttpHeaders.of("*"), HttpHeaders.CONTENT_TYPE))
-            .exposedHeaders(Set.of(HttpHeaders.of("*"), HttpHeaders.ETAG))
-            .maxAgeSeconds(0)
-            .build();
+    var parent = createParentForReplacesEveryPermissionWithoutChangingTheParentOrSibling();
+    var wildcard = createWildcardForReplacesEveryPermissionWithoutChangingTheParentOrSibling();
     var replacement =
-        switch (mode) {
-          case "wildcard" -> wildcard;
-          case "empty-origins" -> CorsPolicy.builder().origins(Set.of()).build();
-          case "empty-methods" ->
-              CorsPolicy.builder()
-                  .origins(Set.of("https://child.example"))
-                  .methods(Set.of())
-                  .build();
-          default ->
-              CorsPolicy.builder()
-                  .origins(Set.of("https://child.example"))
-                  .methods(Set.of(HttpMethods.GET))
-                  .allowedHeaders(Set.of(HttpHeaders.of("X-Child")))
-                  .exposedHeaders(Set.of(HttpHeaders.of("X-Child")))
-                  .credentials(false)
-                  .maxAgeSeconds(0)
-                  .build();
-        };
+        createReplacementForReplacesEveryPermissionWithoutChangingTheParentOrSibling(
+            mode, wildcard);
     var cors = new Cors(parent);
     var retained = new AtomicReference<Cors.Configuration>();
 
@@ -71,12 +40,14 @@ class CorsPolicyReplacementTest {
                     routes
                         .get("/value", (request, response) -> response.text("read"))
                         .post("/value", (request, response) -> response.text("written")),
-                e -> {
-                  var configuration = e.withExtension(cors).policy(wildcard).policy(replacement);
+                lifecycle -> {
+                  var configuration =
+                      lifecycle.withExtension(cors).policy(wildcard).policy(replacement);
                   retained.set(configuration);
                 })
             .get("/sibling", (request, response) -> response.text("sibling"));
         var configuration = retained.get();
+
         assertThrows(IllegalStateException.class, () -> configuration.policy(parent));
 
         try (var test = TestServer.start(app)) {
@@ -87,7 +58,9 @@ class CorsPolicyReplacementTest {
             assertEquals(403, result.statusCode());
             assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
             assertEquals(
-                403, test.send(r -> r.path("/leaf/value").header("Origin", origin)).statusCode());
+                403,
+                test.send(testRequest -> testRequest.path("/leaf/value").header("Origin", origin))
+                    .statusCode());
           } else {
             assertEquals(204, result.statusCode());
             assertEquals("0", result.headers().firstValue("Access-Control-Max-Age").orElseThrow());
@@ -96,14 +69,19 @@ class CorsPolicyReplacementTest {
             assertEquals(
                 "x-child",
                 result.headers().firstValue("Access-Control-Allow-Headers").orElseThrow());
-            var actual = test.send(r -> r.path("/leaf/value").header("Origin", origin));
+
+            var actual =
+                test.send(testRequest -> testRequest.path("/leaf/value").header("Origin", origin));
+
             assertEquals(200, actual.statusCode());
             assertEquals(
                 "wildcard".equals(mode) ? "*" : "X-Child",
                 actual.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
+
             if ("wildcard".equals(mode)) {
               var any =
                   preflight(test, "/leaf/value", origin, "POST", "X-Arbitrary, Authorization");
+
               assertEquals(204, any.statusCode());
               assertEquals(
                   "POST", any.headers().firstValue("Access-Control-Allow-Methods").orElseThrow());
@@ -119,13 +97,20 @@ class CorsPolicyReplacementTest {
                   403, preflight(test, "/leaf/value", origin, "GET", "X-Parent").statusCode());
               assertEquals(
                   403,
-                  test.send(r -> r.path("/leaf/value").header("Origin", "https://parent.example"))
+                  test.send(
+                          testRequest ->
+                              testRequest
+                                  .path("/leaf/value")
+                                  .header("Origin", "https://parent.example"))
                       .statusCode());
             }
           }
 
           var sibling =
-              test.send(r -> r.path("/sibling").header("Origin", "https://parent.example"));
+              test.send(
+                  testRequest ->
+                      testRequest.path("/sibling").header("Origin", "https://parent.example"));
+
           assertEquals(200, sibling.statusCode());
           assertEquals(
               "true",
@@ -134,7 +119,9 @@ class CorsPolicyReplacementTest {
               "ETag", sibling.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
           assertEquals(
               403,
-              test.send(r -> r.path("/sibling").header("Origin", "https://child.example"))
+              test.send(
+                      testRequest ->
+                          testRequest.path("/sibling").header("Origin", "https://child.example"))
                   .statusCode());
         }
       }
@@ -145,16 +132,50 @@ class CorsPolicyReplacementTest {
     assertEquals(Set.of(HttpHeaders.of("*")), wildcard.exposedHeaders());
   }
 
+  private CorsPolicy createParentForReplacesEveryPermissionWithoutChangingTheParentOrSibling() {
+    return CorsPolicy.builder()
+        .origins(Set.of("https://parent.example"))
+        .methods(Set.of(HttpMethods.GET, HttpMethods.POST))
+        .allowedHeaders(Set.of(HttpHeaders.of("X-Parent")))
+        .exposedHeaders(Set.of(HttpHeaders.ETAG))
+        .credentials(true)
+        .maxAgeSeconds(600)
+        .build();
+  }
+
+  private CorsPolicy createWildcardForReplacesEveryPermissionWithoutChangingTheParentOrSibling() {
+    return CorsPolicy.builder()
+        .origins(Set.of("*", "https://extra.example"))
+        .allMethods()
+        .allowedHeaders(Set.of(HttpHeaders.of("*"), HttpHeaders.CONTENT_TYPE))
+        .exposedHeaders(Set.of(HttpHeaders.of("*"), HttpHeaders.ETAG))
+        .maxAgeSeconds(0)
+        .build();
+  }
+
+  private CorsPolicy createReplacementForReplacesEveryPermissionWithoutChangingTheParentOrSibling(
+      String mode, CorsPolicy wildcard) {
+    return switch (mode) {
+      case "wildcard" -> wildcard;
+      case "empty-origins" -> CorsPolicy.builder().origins(Set.of()).build();
+      case "empty-methods" ->
+          CorsPolicy.builder().origins(Set.of("https://child.example")).methods(Set.of()).build();
+      default ->
+          CorsPolicy.builder()
+              .origins(Set.of("https://child.example"))
+              .methods(Set.of(HttpMethods.GET))
+              .allowedHeaders(Set.of(HttpHeaders.of("X-Child")))
+              .exposedHeaders(Set.of(HttpHeaders.of("X-Child")))
+              .credentials(false)
+              .maxAgeSeconds(0)
+              .build();
+    };
+  }
+
   @Test
   void reflectsCredentialedWildcardMethodsAndRequestHeadersForARegisteredTarget() throws Exception {
     var cors =
-        new Cors(
-            CorsPolicy.builder()
-                .origins(Set.of("https://client.example"))
-                .credentials(true)
-                .allMethods()
-                .allowedHeaders(Set.of(HttpHeaders.of("*")))
-                .build());
+        createCorsForReflectsCredentialedWildcardMethodsAndRequestHeadersForARegisteredTarget();
 
     {
       var app = new Shoostr();
@@ -167,6 +188,7 @@ class CorsPolicyReplacementTest {
           var result =
               preflight(
                   test, "/value", "https://client.example", "POST", "Authorization, X-Client");
+
           assertEquals(204, result.statusCode());
           assertEquals(
               "https://client.example",
@@ -182,6 +204,17 @@ class CorsPolicyReplacementTest {
         }
       }
     }
+  }
+
+  private Cors
+      createCorsForReflectsCredentialedWildcardMethodsAndRequestHeadersForARegisteredTarget() {
+    return new Cors(
+        CorsPolicy.builder()
+            .origins(Set.of("https://client.example"))
+            .credentials(true)
+            .allMethods()
+            .allowedHeaders(Set.of(HttpHeaders.of("*")))
+            .build());
   }
 
   @ParameterizedTest
@@ -200,8 +233,9 @@ class CorsPolicyReplacementTest {
   private static HttpResponse<String> preflight(
       TestServer test, String path, String origin, String method, String headers) throws Exception {
     return test.send(
-        r ->
-            r.path(path)
+        testRequest ->
+            testRequest
+                .path(path)
                 .method("OPTIONS")
                 .header("Origin", origin)
                 .header("Access-Control-Request-Method", method)

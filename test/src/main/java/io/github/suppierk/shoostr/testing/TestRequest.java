@@ -45,6 +45,7 @@ public final class TestRequest {
    */
   public TestRequest path(String path) {
     requireOpen();
+
     var relative = URI.create(Objects.requireNonNull(path));
     if (path.isEmpty()
         || relative.isAbsolute()
@@ -57,6 +58,7 @@ public final class TestRequest {
 
     builder.uri(baseUri.resolve(relative));
     pathConfigured = true;
+
     return this;
   }
 
@@ -71,8 +73,10 @@ public final class TestRequest {
    */
   public TestRequest method(String method) {
     requireOpen();
+
     builder.method(Objects.requireNonNull(method), body);
     this.method = method;
+
     return this;
   }
 
@@ -100,7 +104,9 @@ public final class TestRequest {
    */
   public TestRequest header(String name, String value) {
     requireOpen();
+
     builder.header(name, value);
+
     return this;
   }
 
@@ -128,8 +134,10 @@ public final class TestRequest {
    */
   public TestRequest body(byte[] bytes) {
     requireOpen();
+
     body = HttpRequest.BodyPublishers.ofByteArray(Objects.requireNonNull(bytes).clone());
     builder.method(method, body);
+
     return this;
   }
 
@@ -144,7 +152,9 @@ public final class TestRequest {
    */
   public TestRequest timeout(Duration timeout) {
     requireOpen();
+
     builder.timeout(timeout);
+
     return this;
   }
 
@@ -157,11 +167,13 @@ public final class TestRequest {
   @SuppressWarnings("javabugs:S6416") // Missing paths deliberately fail after caller configuration.
   HttpRequest build() {
     requireOpen();
+
     if (!pathConfigured) {
       throw new IllegalStateException("Configure a relative path before sending a request");
     }
 
     finished = true;
+
     return builder.build();
   }
 

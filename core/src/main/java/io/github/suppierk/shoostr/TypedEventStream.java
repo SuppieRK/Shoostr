@@ -34,9 +34,11 @@ public final class TypedEventStream extends Response.EventStream {
   public TypedEventStream sendObject(Object value) throws Exception {
     requireWritable();
     Objects.requireNonNull(value);
+
     var bytes = Objects.requireNonNull(codec.write(value), "Codec returned null bytes");
     // Reporting decoding rejects malformed output before even a data prefix is written.
     var text = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
+
     super.send(text);
     return this;
   }

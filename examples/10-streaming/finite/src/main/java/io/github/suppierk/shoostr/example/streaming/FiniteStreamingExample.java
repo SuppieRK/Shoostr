@@ -18,6 +18,7 @@ public final class FiniteStreamingExample {
    */
   public static Shoostr application(Path report) {
     Objects.requireNonNull(report);
+
     return new Shoostr()
         .routes(
             routes ->
@@ -26,15 +27,17 @@ public final class FiniteStreamingExample {
                         "/chunks",
                         (ignored, response) -> {
                           var output = response.startStream("text/csv; charset=utf-8");
+
                           // startStream commits headers; flush sends the first buffered chunk.
                           output.write("name\n").flush();
+
                           output.write("Ada\n");
                           output.write("Grace\n");
                         })
                     // response.input owns the newly opened stream through transfer completion.
                     .get(
                         "/input",
-                        (ignored2, response) ->
+                        (ignoredRequest, response) ->
                             response.input(
                                 Files.newInputStream(report), "text/csv; charset=utf-8")));
   }

@@ -7,11 +7,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpClient.SyncSpec;
+import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
+import io.modelcontextprotocol.server.McpSyncServer;
+import io.modelcontextprotocol.server.McpSyncServerExchange;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSchema.ElicitResult;
+import io.modelcontextprotocol.spec.McpSchema.ElicitResult.Action;
+import io.modelcontextprotocol.spec.McpSchema.ElicitUrlRequest;
+import io.modelcontextprotocol.spec.McpSchema.ElicitationCompleteNotification;
 import java.time.Duration;
 import java.util.Map;
 import java.util.Set;
@@ -30,41 +38,11 @@ class McpUrlElicitationTest {
     var session = new CompletableFuture<String>();
     var completed = new CompletableFuture<McpSchema.ElicitationCompleteNotification>();
     var listening = new CountDownLatch(1);
-    var mcp =
-        Mcp.sync(
-            new McpHttpSecurity(
-                Set.of(),
-                ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (ignored2, ignored3) -> {}),
-            transport ->
-                McpServer.sync(transport)
-                    .requestTimeout(Duration.ofSeconds(5))
-                    .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                    .tools(
-                        McpServerFeatures.SyncToolSpecification.builder()
-                            .tool(
-                                McpSchema.Tool.builder("authorize", Map.of("type", "object"))
-                                    .build())
-                            .callHandler(
-                                (exchange, ignored4) -> {
-                                  session.complete(exchange.sessionId());
-                                  var result =
-                                      exchange.createElicitation(
-                                          McpSchema.ElicitUrlRequest.builder(
-                                                  "Authorize the external service",
-                                                  "https://service.example/authorize",
-                                                  "authorization-complete")
-                                              .build());
-                                  return McpSchema.CallToolResult.builder()
-                                      .addTextContent(result.action().name())
-                                      .build();
-                                })
-                            .build())
-                    .build());
+    var mcp = urlCompletionServer(session);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.beforeResponseFlush(
-        (request, ignored5) -> {
+        (request, ignoredResponse) -> {
           if ("GET".equals(request.method())) {
             listening.countDown();
           }
@@ -72,25 +50,16 @@ class McpUrlElicitationTest {
 
     try (var test = TestServer.start(app);
         var client =
-            McpClient.sync(
-                    HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                        .endpoint("/mcp")
-                        .build())
-                .capabilities(
-                    McpSchema.ClientCapabilities.builder().elicitation(false, true).build())
-                .urlElicitation(
-                    ignored6 ->
-                        McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT)
-                            .build())
-                .elicitationCompleteConsumer(completed::complete)
-                .requestTimeout(Duration.ofSeconds(5))
-                .initializationTimeout(Duration.ofSeconds(5))
-                .build()) {
+            openClientForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
+                test, completed)) {
       client.initialize();
+
       assertTrue(listening.await(5, TimeUnit.SECONDS));
+
       var result =
           client.callTool(
               McpSchema.CallToolRequest.builder("authorize").arguments(Map.of()).build());
+
       assertEquals(
           "ACCEPT",
           assertInstanceOf(McpSchema.TextContent.class, result.content().getFirst()).text());
@@ -99,9 +68,72 @@ class McpUrlElicitationTest {
           .sendElicitationComplete(
               session.get(5, TimeUnit.SECONDS),
               new McpSchema.ElicitationCompleteNotification("authorization-complete"));
+
       assertEquals("authorization-complete", completed.get(5, TimeUnit.SECONDS).elicitationId());
       assertTrue(client.closeGracefully());
     }
+  }
+
+  private Mcp<McpSyncServer> urlCompletionServer(CompletableFuture<String> session) {
+    return Mcp.sync(
+        new McpHttpSecurity(
+            Set.of(),
+            ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+        transport ->
+            McpServer.sync(transport)
+                .requestTimeout(Duration.ofSeconds(5))
+                .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
+                .tools(
+                    McpServerFeatures.SyncToolSpecification.builder()
+                        .tool(McpSchema.Tool.builder("authorize", Map.of("type", "object")).build())
+                        .callHandler(
+                            (exchange, ignoredCallToolRequest) -> {
+                              session.complete(exchange.sessionId());
+                              var result =
+                                  sendResultForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
+                                      exchange);
+
+                              return McpSchema.CallToolResult.builder()
+                                  .addTextContent(result.action().name())
+                                  .build();
+                            })
+                        .build())
+                .build());
+  }
+
+  private ElicitResult sendResultForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
+      McpSyncServerExchange exchange) {
+    return exchange.createElicitation(
+        McpSchema.ElicitUrlRequest.builder(
+                "Authorize the external service",
+                "https://service.example/authorize",
+                "authorization-complete")
+            .build());
+  }
+
+  private McpSyncClient
+      openClientForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
+          TestServer test, CompletableFuture<ElicitationCompleteNotification> completed) {
+    return clientPropertiesForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
+            test, completed)
+        .build();
+  }
+
+  private SyncSpec
+      clientPropertiesForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
+          TestServer test, CompletableFuture<ElicitationCompleteNotification> completed) {
+    return McpClient.sync(
+            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                .endpoint("/mcp")
+                .build())
+        .capabilities(McpSchema.ClientCapabilities.builder().elicitation(false, true).build())
+        .urlElicitation(
+            ignoredElicitUrlRequest ->
+                McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT).build())
+        .elicitationCompleteConsumer(completed::complete)
+        .requestTimeout(Duration.ofSeconds(5))
+        .initializationTimeout(Duration.ofSeconds(5));
   }
 
   @ParameterizedTest
@@ -110,67 +142,89 @@ class McpUrlElicitationTest {
   void preservesTheNativeClientsUrlElicitationDecision(McpSchema.ElicitResult.Action action)
       throws Exception {
     var received = new CompletableFuture<McpSchema.ElicitUrlRequest>();
-    var mcp =
-        Mcp.sync(
-            new McpHttpSecurity(
-                Set.of(),
-                ignored7 -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-                (ignored8, ignored9) -> {}),
-            transport ->
-                McpServer.sync(transport)
-                    .serverInfo("url-elicitation", "1.0")
-                    .requestTimeout(Duration.ofSeconds(5))
-                    .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                    .tools(
-                        McpServerFeatures.SyncToolSpecification.builder()
-                            .tool(
-                                McpSchema.Tool.builder("authorize", Map.of("type", "object"))
-                                    .build())
-                            .callHandler(
-                                (exchange, ignored10) -> {
-                                  var result =
-                                      exchange.createElicitation(
-                                          McpSchema.ElicitUrlRequest.builder(
-                                                  "Authorize the external service",
-                                                  "https://service.example/authorize",
-                                                  "authorization-1")
-                                              .build());
-                                  return McpSchema.CallToolResult.builder()
-                                      .addTextContent(result.action().name())
-                                      .build();
-                                })
-                            .build())
-                    .build());
+    var mcp = urlDecisionServer();
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app);
         var client =
-            McpClient.sync(
-                    HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                        .endpoint("/mcp")
-                        .build())
-                .capabilities(
-                    McpSchema.ClientCapabilities.builder().elicitation(false, true).build())
-                .urlElicitation(
-                    request -> {
-                      received.complete(request);
-                      return McpSchema.ElicitResult.builder(action).build();
-                    })
-                .requestTimeout(Duration.ofSeconds(5))
-                .initializationTimeout(Duration.ofSeconds(5))
-                .build()) {
+            openClientForPreservesTheNativeClientsUrlElicitationDecision(test, received, action)) {
       client.initialize();
       var result =
           client.callTool(
               McpSchema.CallToolRequest.builder("authorize").arguments(Map.of()).build());
+
       assertEquals(
           action.name(),
           assertInstanceOf(McpSchema.TextContent.class, result.content().getFirst()).text());
+
       var request = received.get(5, TimeUnit.SECONDS);
+
       assertEquals("https://service.example/authorize", request.url());
       assertEquals("authorization-1", request.elicitationId());
       assertTrue(client.closeGracefully());
     }
+  }
+
+  private Mcp<McpSyncServer> urlDecisionServer() {
+    return Mcp.sync(
+        new McpHttpSecurity(
+            Set.of(),
+            ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+        transport ->
+            McpServer.sync(transport)
+                .serverInfo("url-elicitation", "1.0")
+                .requestTimeout(Duration.ofSeconds(5))
+                .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
+                .tools(
+                    McpServerFeatures.SyncToolSpecification.builder()
+                        .tool(McpSchema.Tool.builder("authorize", Map.of("type", "object")).build())
+                        .callHandler(
+                            (exchange, ignoredCallToolRequest) -> {
+                              var result =
+                                  sendResultForPreservesTheNativeClientsUrlElicitationDecision(
+                                      exchange);
+
+                              return McpSchema.CallToolResult.builder()
+                                  .addTextContent(result.action().name())
+                                  .build();
+                            })
+                        .build())
+                .build());
+  }
+
+  private ElicitResult sendResultForPreservesTheNativeClientsUrlElicitationDecision(
+      McpSyncServerExchange exchange) {
+    return exchange.createElicitation(
+        McpSchema.ElicitUrlRequest.builder(
+                "Authorize the external service",
+                "https://service.example/authorize",
+                "authorization-1")
+            .build());
+  }
+
+  private McpSyncClient openClientForPreservesTheNativeClientsUrlElicitationDecision(
+      TestServer test, CompletableFuture<ElicitUrlRequest> received, Action action) {
+    return clientPropertiesForPreservesTheNativeClientsUrlElicitationDecision(
+            test, received, action)
+        .build();
+  }
+
+  private SyncSpec clientPropertiesForPreservesTheNativeClientsUrlElicitationDecision(
+      TestServer test, CompletableFuture<ElicitUrlRequest> received, Action action) {
+    return McpClient.sync(
+            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                .endpoint("/mcp")
+                .build())
+        .capabilities(McpSchema.ClientCapabilities.builder().elicitation(false, true).build())
+        .urlElicitation(
+            request -> {
+              received.complete(request);
+
+              return McpSchema.ElicitResult.builder(action).build();
+            })
+        .requestTimeout(Duration.ofSeconds(5))
+        .initializationTimeout(Duration.ofSeconds(5));
   }
 }

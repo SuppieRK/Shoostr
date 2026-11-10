@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.io.Content;
+import org.eclipse.jetty.io.Content.Chunk;
 import org.eclipse.jetty.server.Response;
 import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Test;
@@ -82,15 +83,18 @@ class BufferedRequestBodyTest {
 
   @Test
   void propagatesFailureAfterExactlyTheDeclaredBytes() {
-    var request =
-        request(
-            3,
-            16,
-            Content.Chunk.from(ByteBuffer.wrap(new byte[] {1, 2, 3}), false),
-            Content.Chunk.from(new IOException("read failed"), true));
+    var request = createRequestForPropagatesFailureAfterExactlyTheDeclaredBytes();
 
     var failure = assertThrows(IOException.class, request::bodyBytes);
     assertEquals("read failed", failure.getMessage());
+  }
+
+  private Request createRequestForPropagatesFailureAfterExactlyTheDeclaredBytes() {
+    return request(
+        3,
+        16,
+        Content.Chunk.from(ByteBuffer.wrap(new byte[] {1, 2, 3}), false),
+        Content.Chunk.from(new IOException("read failed"), true));
   }
 
   @Test
@@ -130,16 +134,20 @@ class BufferedRequestBodyTest {
   @Test
   void keepsOversizedRejectionPrimaryWhenCleanupFails() {
     var cleanupFailure = new IOException("cleanup failed");
-    var request =
-        request(
-            -1,
-            16,
-            Content.Chunk.from(ByteBuffer.wrap(new byte[17]), false),
-            Content.Chunk.from(cleanupFailure, true));
+    var request = createRequestForKeepsOversizedRejectionPrimaryWhenCleanupFails(cleanupFailure);
 
     var failure = assertThrows(ContentTooLargeException.class, request::bodyBytes);
     assertArrayEquals(new Throwable[] {cleanupFailure}, failure.getSuppressed());
     assertThrows(ContentTooLargeException.class, request::bodyBytes);
+  }
+
+  private Request createRequestForKeepsOversizedRejectionPrimaryWhenCleanupFails(
+      IOException cleanupFailure) {
+    return request(
+        -1,
+        16,
+        Content.Chunk.from(ByteBuffer.wrap(new byte[17]), false),
+        Content.Chunk.from(cleanupFailure, true));
   }
 
   @Test
@@ -156,14 +164,19 @@ class BufferedRequestBodyTest {
   void keepsDeclaredLengthMismatchPrimaryWhenCleanupFails() {
     var cleanupFailure = new IOException("cleanup failed");
     var request =
-        request(
-            3,
-            16,
-            Content.Chunk.from(ByteBuffer.wrap(new byte[4]), false),
-            Content.Chunk.from(cleanupFailure, true));
+        createRequestForKeepsDeclaredLengthMismatchPrimaryWhenCleanupFails(cleanupFailure);
 
     var failure = assertThrows(BadRequestException.class, request::bodyBytes);
     assertArrayEquals(new Throwable[] {cleanupFailure}, failure.getSuppressed());
+  }
+
+  private Request createRequestForKeepsDeclaredLengthMismatchPrimaryWhenCleanupFails(
+      IOException cleanupFailure) {
+    return request(
+        3,
+        16,
+        Content.Chunk.from(ByteBuffer.wrap(new byte[4]), false),
+        Content.Chunk.from(cleanupFailure, true));
   }
 
   @Test
@@ -210,54 +223,8 @@ class BufferedRequestBodyTest {
       long declaredLength, int limit, boolean complete, Content.Chunk... input) {
     var chunks = new ArrayDeque<>(List.of(input));
     var failure = new AtomicReference<>(Content.Chunk.EMPTY);
-    var delegate =
-        (org.eclipse.jetty.server.Request)
-            Proxy.newProxyInstance(
-                BufferedRequestBodyTest.class.getClassLoader(),
-                new Class<?>[] {org.eclipse.jetty.server.Request.class},
-                (ignored, method, arguments) ->
-                    switch (method.getName()) {
-                      case "getHeaders" -> HttpFields.EMPTY;
-                      case "getMethod" -> "GET";
-                      case "getLength" -> declaredLength;
-                      case "read" -> {
-                        var failed = failure.get();
-                        if (!Content.Chunk.EMPTY.equals(failed)) {
-                          yield failed;
-                        }
-
-                        if (chunks.isEmpty()) {
-                          yield complete ? Content.Chunk.EOF : null;
-                        }
-
-                        yield chunks.removeFirst();
-                      }
-                      case "fail" -> {
-                        failure.compareAndSet(
-                            Content.Chunk.EMPTY, Content.Chunk.from((Throwable) arguments[0]));
-                        chunks.forEach(Content.Chunk::release);
-                        chunks.clear();
-                        yield null;
-                      }
-                      case "demand" -> {
-                        if (!complete && chunks.isEmpty()) {
-                          fail("Input is unavailable after the overflow byte");
-                        }
-
-                        ((Runnable) arguments[0]).run();
-                        yield null;
-                      }
-                      case "addHttpStreamWrapper" -> null;
-                      default -> throw new UnsupportedOperationException(method.getName());
-                    });
-    var sink =
-        (Response)
-            Proxy.newProxyInstance(
-                BufferedRequestBodyTest.class.getClassLoader(),
-                new Class<?>[] {Response.class},
-                (ignored2, method, ignored3) -> {
-                  throw new UnsupportedOperationException(method.getName());
-                });
+    var delegate = nativeRequest(declaredLength, failure, chunks, complete);
+    var sink = createSinkForRequest();
 
     var defaults = new Options();
     var options = new Options();
@@ -266,6 +233,63 @@ class BufferedRequestBodyTest {
     options.setStreamBufferBytes(defaults.getStreamBufferBytes());
     options.setMaxParameters(1000);
     options.setMultipart(MultipartOptions.defaults());
+
     return Request.create(delegate, sink, options, Callback.NOOP);
+  }
+
+  private static org.eclipse.jetty.server.Request nativeRequest(
+      long declaredLength,
+      AtomicReference<Chunk> failure,
+      ArrayDeque<Chunk> chunks,
+      boolean complete) {
+    return (org.eclipse.jetty.server.Request)
+        Proxy.newProxyInstance(
+            BufferedRequestBodyTest.class.getClassLoader(),
+            new Class<?>[] {org.eclipse.jetty.server.Request.class},
+            (ignored, method, arguments) ->
+                switch (method.getName()) {
+                  case "getHeaders" -> HttpFields.EMPTY;
+                  case "getMethod" -> "GET";
+                  case "getLength" -> declaredLength;
+                  case "read" -> {
+                    var failed = failure.get();
+                    if (!Content.Chunk.EMPTY.equals(failed)) {
+                      yield failed;
+                    }
+
+                    if (chunks.isEmpty()) {
+                      yield complete ? Content.Chunk.EOF : null;
+                    }
+
+                    yield chunks.removeFirst();
+                  }
+                  case "fail" -> {
+                    failure.compareAndSet(
+                        Content.Chunk.EMPTY, Content.Chunk.from((Throwable) arguments[0]));
+                    chunks.forEach(Content.Chunk::release);
+                    chunks.clear();
+                    yield null;
+                  }
+                  case "demand" -> {
+                    if (!complete && chunks.isEmpty()) {
+                      fail("Input is unavailable after the overflow byte");
+                    }
+
+                    ((Runnable) arguments[0]).run();
+                    yield null;
+                  }
+                  case "addHttpStreamWrapper" -> null;
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
+  }
+
+  private static Response createSinkForRequest() {
+    return (Response)
+        Proxy.newProxyInstance(
+            BufferedRequestBodyTest.class.getClassLoader(),
+            new Class<?>[] {Response.class},
+            (ignoredObject, method, ignoredObjectValues) -> {
+              throw new UnsupportedOperationException(method.getName());
+            });
   }
 }

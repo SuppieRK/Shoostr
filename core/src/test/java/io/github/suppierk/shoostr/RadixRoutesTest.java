@@ -21,27 +21,37 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class RadixRoutesTest {
-  private static final Handler GET = (ignored, ignored2) -> {};
-  private static final Handler POST = (ignored3, ignored4) -> {};
+  private static final Handler GET = (ignored, ignoredResponse) -> {};
+  private static final Handler POST = (ignoredRequest, ignoredResponse) -> {};
 
   @Test
   void distinguishesTerminalPathsFromPrefixesAndMissingMethods() {
-    var tree =
-        compile(
-            Map.of(
-                "/", Map.of(HttpMethods.GET, GET),
-                "/orders", Map.of(HttpMethods.GET, GET, HttpMethods.POST, POST),
-                "/orders/recent", Map.of(HttpMethods.GET, GET),
-                "/other", Map.of(HttpMethods.POST, POST)));
+    var tree = createTreeForDistinguishesTerminalPathsFromPrefixesAndMissingMethods();
+
     assertSame(GET, handler(tree, "/", HttpMethods.GET));
     assertSame(GET, handler(tree, "/orders", HttpMethods.GET));
     assertSame(POST, handler(tree, "/orders", HttpMethods.POST));
     assertSame(GET, handler(tree, "/orders/recent", HttpMethods.GET));
     assertNull(handler(tree, "/orders", HttpMethods.DELETE));
+
     for (String missing :
         List.of("", "/ord", "/orders/", "/orders/recent/x", "/orders-old", "/oth")) {
       assertNull(tree.match(missing, HttpMethods.GET), missing);
     }
+  }
+
+  private RadixRoutes createTreeForDistinguishesTerminalPathsFromPrefixesAndMissingMethods() {
+    return compile(routeDefinitions());
+  }
+
+  private Map<String, Map<HttpMethods, Handler>> routeDefinitions() {
+    var entries = new LinkedHashMap<String, Map<HttpMethods, Handler>>();
+    entries.put("/", Map.of(HttpMethods.GET, GET));
+    entries.put("/orders", Map.of(HttpMethods.GET, GET, HttpMethods.POST, POST));
+    entries.put("/orders/recent", Map.of(HttpMethods.GET, GET));
+    entries.put("/other", Map.of(HttpMethods.POST, POST));
+
+    return Map.copyOf(entries);
   }
 
   @Test
@@ -50,7 +60,7 @@ class RadixRoutesTest {
     var routes = new HashMap<String, Map<HttpMethods, Handler>>();
     for (String captured : paths) {
       routes.put(
-          captured, Map.of(HttpMethods.GET, (ignored5, response) -> response.text(captured)));
+          captured, Map.of(HttpMethods.GET, (ignoredRequest, response) -> response.text(captured)));
     }
     var tree = compile(routes);
     for (String path : paths) {
@@ -58,6 +68,7 @@ class RadixRoutesTest {
           Objects.requireNonNull(routes.get(path)).get(HttpMethods.GET),
           handler(tree, path, HttpMethods.GET));
     }
+
     assertNull(tree.match("/a%2FB", HttpMethods.GET));
     assertNull(tree.match("/É", HttpMethods.GET));
     assertNull(tree.match("/a?x=1", HttpMethods.GET));
@@ -71,15 +82,20 @@ class RadixRoutesTest {
     var tree = compile(routes);
     methods.clear();
     routes.clear();
+
     assertSame(GET, handler(tree, "/orders", HttpMethods.GET));
+
     var parameters = Objects.requireNonNull(tree.match("/orders", HttpMethods.GET)).parameters();
+
     assertThrows(UnsupportedOperationException.class, () -> parameters.put("id", 1));
   }
 
   @Test
   void handlesEmptyAndSingleRouteTables() {
     assertNull(compile(Map.of()).match("/", HttpMethods.GET));
+
     var tree = compile(Map.of("/only", Map.of(HttpMethods.GET, GET)));
+
     assertSame(GET, handler(tree, "/only", HttpMethods.GET));
     assertNull(tree.match("/on", HttpMethods.GET));
     assertNull(tree.match("/only/", HttpMethods.GET));
@@ -90,6 +106,7 @@ class RadixRoutesTest {
     var tree =
         compile(
             Map.of("/a/x", Map.of(HttpMethods.GET, GET), "/a/y", Map.of(HttpMethods.POST, POST)));
+
     assertNull(tree.match("/a/", HttpMethods.GET));
     assertEquals(Set.of(), tree.allowedMethods("/a/"));
   }
@@ -98,8 +115,8 @@ class RadixRoutesTest {
   @ValueSource(ints = {0, 1, 2, 4, 5, 16, 64})
   void selectsExactChildrenAcrossSmallAndLargeFanOuts(int count) {
     var routes = new HashMap<String, Map<HttpMethods, Handler>>();
-    for (int i = 0; i < count; i++) {
-      String path = "/prefix/" + (char) (0x100 + i);
+    for (int index = 0; index < count; index++) {
+      String path = "/prefix/" + (char) (0x100 + index);
       routes.put(path, Map.of(HttpMethods.GET, GET));
     }
     var tree = compile(routes);
@@ -107,6 +124,7 @@ class RadixRoutesTest {
       assertSame(GET, handler(tree, path, HttpMethods.GET));
       assertNull(tree.match(path + "/missing", HttpMethods.GET));
     }
+
     assertNull(tree.match("/prefix/" + (char) 0xff, HttpMethods.GET));
     assertNull(tree.match("/prefix/" + (char) (0x100 + count), HttpMethods.GET));
   }
@@ -114,8 +132,8 @@ class RadixRoutesTest {
   @Test
   void agreesWithMapAcrossShuffledRegistrationAndSharedPrefixes() {
     var paths = new ArrayList<String>();
-    for (int i = 0; i < 5000; i++) {
-      paths.add("/api/" + (i % 31) + "/orders/" + i);
+    for (int index = 0; index < 5000; index++) {
+      paths.add("/api/" + (index % 31) + "/orders/" + index);
     }
     for (int seed = 0; seed < 3; seed++) {
       Collections.shuffle(paths, new Random(seed));
@@ -129,7 +147,9 @@ class RadixRoutesTest {
             Objects.requireNonNull(routes.get(path)).get(HttpMethods.GET),
             handler(tree, path, HttpMethods.GET));
         assertNull(tree.match(path + "/missing", HttpMethods.GET));
+
         String prefix = path.substring(0, path.length() - 1);
+
         assertSame(
             routes.containsKey(prefix)
                 ? Objects.requireNonNull(routes.get(prefix)).get(HttpMethods.GET)
@@ -145,12 +165,14 @@ class RadixRoutesTest {
         (path, methods) ->
             methods.forEach(
                 (method, handler) -> endpoints.add(RadixRoutes.endpoint(method, path, handler))));
+
     return RadixRoutes.from(endpoints);
   }
 
   @SuppressWarnings("NullAway") // A missing route intentionally yields null for assertions.
   private static Handler handler(RadixRoutes tree, String path, HttpMethods method) {
     var endpoint = tree.match(path, method);
+
     return endpoint == null ? null : endpoint.handler();
   }
 }

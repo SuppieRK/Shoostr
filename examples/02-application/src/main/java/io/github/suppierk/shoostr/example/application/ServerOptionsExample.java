@@ -17,6 +17,22 @@ public final class ServerOptionsExample {
    */
   public static Shoostr application(String host, int port) {
     // Configure listener choices and request limits before the application captures its settings.
+    var options = options(host, port);
+
+    return new Shoostr(options)
+        .routes(
+            routes ->
+                routes.post("/echo", (request, response) -> response.text(request.bodyText())));
+  }
+
+  /**
+   * Configures the listener and resource policy used by this application.
+   *
+   * @param host application setting
+   * @param port application setting
+   * @return detached serving options
+   */
+  private static Options options(String host, int port) {
     var options = new Options();
     options.setHost(host);
     options.setPort(port);
@@ -25,9 +41,6 @@ public final class ServerOptionsExample {
     options.setMaxResponseBytes(2048);
     options.setStreamBufferBytes(4096);
 
-    return new Shoostr(options)
-        .routes(
-            routes ->
-                routes.post("/echo", (request, response) -> response.text(request.bodyText())));
+    return options;
   }
 }

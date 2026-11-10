@@ -11,6 +11,7 @@ import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -23,16 +24,7 @@ class OpenApiUiTest {
   void servesEveryPreparedUiResourceUnchangedAcrossConcurrentRepeatedRequests() throws Exception {
     var docs = new OpenApi("API", "1");
     var ui = docs.uiHandler("/docs/", "/openapi.json");
-    var paths =
-        Map.of(
-            "/docs/",
-            "text/html",
-            "/docs/swagger-ui.css",
-            "text/css",
-            "/docs/swagger-ui-bundle.js",
-            "text/javascript",
-            "/docs/swagger-initializer.js",
-            "text/javascript");
+    var paths = expectedContentTypes();
 
     {
       var app = new Shoostr();
@@ -51,6 +43,7 @@ class OpenApiUiTest {
           var originals = new HashMap<String, byte[]>();
           for (var path : paths.keySet()) {
             var initial = test.send(request -> request.path(path));
+
             assertEquals(200, initial.statusCode());
             assertTrue(
                 initial
@@ -58,6 +51,7 @@ class OpenApiUiTest {
                     .firstValue("Content-Type")
                     .orElseThrow()
                     .startsWith(paths.get(path)));
+
             originals.put(path, initial.body());
           }
           var start = new CountDownLatch(1);
@@ -68,7 +62,9 @@ class OpenApiUiTest {
                   clients.submit(
                       () -> {
                         assertTrue(start.await(5, TimeUnit.SECONDS));
+
                         var result = test.send(request -> request.path(path));
+
                         assertEquals(200, result.statusCode());
                         assertTrue(
                             result
@@ -77,6 +73,7 @@ class OpenApiUiTest {
                                 .orElseThrow()
                                 .startsWith(paths.get(path)));
                         assertArrayEquals(originals.get(path), result.body());
+
                         return null;
                       }));
             }
@@ -88,6 +85,16 @@ class OpenApiUiTest {
         }
       }
     }
+  }
+
+  private Map<String, String> expectedContentTypes() {
+    var entries = new LinkedHashMap<String, String>();
+    entries.put("/docs/", "text/html");
+    entries.put("/docs/swagger-ui.css", "text/css");
+    entries.put("/docs/swagger-ui-bundle.js", "text/javascript");
+    entries.put("/docs/swagger-initializer.js", "text/javascript");
+
+    return Map.copyOf(entries);
   }
 
   @Test
@@ -114,18 +121,23 @@ class OpenApiUiTest {
         try (var test = TestServer.start(app)) {
           var page =
               test.send(request -> request.path("/docs/"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, page.statusCode());
           assertTrue(page.body().contains("swagger-ui-bundle.js"));
           assertTrue(page.body().contains("swagger-ui.css"));
           assertEquals(
               200, test.send(request -> request.path("/docs/swagger-ui.css")).statusCode());
+
           var bundle = test.send(request -> request.path("/docs/swagger-ui-bundle.js"));
+
           assertEquals(200, bundle.statusCode());
           assertTrue(bundle.body().length > new Options().getMaxResponseBytes());
+
           var configuration =
               test.send(
                   request -> request.path("/docs/swagger-initializer.js"),
                   HttpResponse.BodyHandlers.ofString());
+
           assertTrue(configuration.body().contains("/openapi.json"));
           assertTrue(configuration.body().contains("\"validatorUrl\":null"));
           assertEquals(404, test.send(request -> request.path("/docs/unknown.js")).statusCode());

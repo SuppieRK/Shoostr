@@ -184,9 +184,25 @@ final class McpRequestLifetime implements RequestObservation {
       terminal = initialization;
       initialization = null;
     }
+
     if (terminal != null) {
       terminal.accept(outcome);
     }
+  }
+
+  /**
+   * Retains the current timer so completion also cancels a rescheduled early wake-up.
+   *
+   * @param remaining delay until the verified expiry, capped to the scheduler's nanosecond range
+   */
+  private void scheduleExpiry(Duration remaining) {
+    deadline =
+        deadlines.schedule(
+            this::expire,
+            remaining.compareTo(Duration.ofNanos(Long.MAX_VALUE)) > 0
+                ? Long.MAX_VALUE
+                : remaining.toNanos(),
+            TimeUnit.NANOSECONDS);
   }
 
   /** Rechecks the verified expiry before signaling the mailbox and interrupting its owner. */
@@ -211,20 +227,5 @@ final class McpRequestLifetime implements RequestObservation {
       interruptedOwner = true;
       owner.interrupt();
     }
-  }
-
-  /**
-   * Retains the current timer so completion also cancels a rescheduled early wake-up.
-   *
-   * @param remaining delay until the verified expiry, capped to the scheduler's nanosecond range
-   */
-  private void scheduleExpiry(Duration remaining) {
-    deadline =
-        deadlines.schedule(
-            this::expire,
-            remaining.compareTo(Duration.ofNanos(Long.MAX_VALUE)) > 0
-                ? Long.MAX_VALUE
-                : remaining.toNanos(),
-            TimeUnit.NANOSECONDS);
   }
 }

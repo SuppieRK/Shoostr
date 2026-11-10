@@ -13,9 +13,11 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.json.McpJsonMapper;
 import io.modelcontextprotocol.json.jackson2.JacksonMcpJsonMapper;
 import io.modelcontextprotocol.server.McpServer;
+import io.modelcontextprotocol.server.McpSyncServer;
 import io.modelcontextprotocol.spec.McpSchema;
 import io.modelcontextprotocol.spec.McpStreamableServerSession;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -41,12 +43,7 @@ import reactor.core.publisher.MonoSink;
 import reactor.core.publisher.Sinks;
 
 class McpRuntimeEqualityTest {
-  private static final String INITIALIZE =
-      """
-      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-11-25","capabilities":{},
-        "clientInfo":{"name":"equality-fixture","version":"1"}}}
-      """;
+  private static final String INITIALIZE = initializationRequest();
 
   @Test
   void preservesRuntimeIdentityAndSessionHashKeysThroughProtocolAndCleanup() throws Exception {
@@ -105,12 +102,16 @@ class McpRuntimeEqualityTest {
             var identifiers = new ArrayList<String>();
             for (int index = 0; index < servers.size(); index++) {
               var initialized = post(servers.get(index), INITIALIZE, null);
+
               assertEquals(200, initialized.statusCode());
               assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+
               var identifier = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
               identifiers.add(identifier);
               var session = ((Map<?, ?>) field(providers.get(index), "sessions")).get(identifier);
+
               assertNotNull(session);
+
               sessions.add(session);
               hashes.put(session, session.hashCode());
               hashes.put(providers.get(index), providers.get(index).hashCode());
@@ -132,61 +133,28 @@ class McpRuntimeEqualityTest {
                     Mono.<Void>create(acknowledgments::add).subscribe(value -> {}, failures::add));
                 exerciseProtocol(servers.get(index), identifiers.get(index), completed);
               }
+
               assertEquals(2, flushed.get());
+
               var frames =
-                  List.of(
-                      frame(
-                          new SseEvent("first", "message", "first", null), acknowledgments.get(0)),
-                      frame(
-                          new SseEvent("second", "message", "second", null),
-                          acknowledgments.get(1)));
-              var configuration =
-                  EqualsVerifier.configure()
-                      .withPrefabValues(Mcp.class, first, second)
-                      .withPrefabValues(
-                          McpSessionLimits.class,
-                          new McpSessionLimits(32, 8, Duration.ofMinutes(1)),
-                          new McpSessionLimits(64, 16, Duration.ofMinutes(2)))
-                      .withPrefabValues(
-                          SseEvent.class,
-                          new SseEvent("first", "message", "first", null),
-                          new SseEvent("second", "message", "second", null))
-                      .withPrefabValues(
-                          McpHttpSecurity.class,
-                          McpValueEqualityTest.security("first"),
-                          McpValueEqualityTest.security("second"))
-                      .withPrefabValues(McpJsonMapper.class, firstMapper, secondMapper)
-                      .withPrefabValues(McpStream.class, streams.get(0), streams.get(1))
-                      .withPrefabValues(
-                          McpRequestLifetime.class, lifetimes.get(0), lifetimes.get(1))
-                      .withPrefabValues(
-                          ScheduledThreadPoolExecutor.class, firstDeadlines, secondDeadlines)
-                      .withPrefabValues(
-                          ScheduledFuture.class,
-                          (ScheduledFuture<?>) field(providers.get(0), "idleExpiry"),
-                          (ScheduledFuture<?>) field(providers.get(1), "idleExpiry"))
-                      .withPrefabValues(
-                          McpStreamableServerSession.class,
-                          (McpStreamableServerSession) field(sessions.get(0), "sdk"),
-                          (McpStreamableServerSession) field(sessions.get(1), "sdk"))
-                      .withPrefabValues(
-                          Disposable.Composite.class,
-                          (Disposable.Composite) field(sessions.get(0), "dispatches"),
-                          (Disposable.Composite) field(sessions.get(1), "dispatches"))
-                      .withPrefabValues(
-                          MonoSink.class, acknowledgments.get(0), acknowledgments.get(1))
-                      .withPrefabValues(Sinks.Empty.class, Sinks.empty(), Sinks.empty())
-                      .withPrefabValues(Mono.class, Mono.empty(), Mono.never())
-                      .withPrefabValues(
-                          Thread.class,
-                          new Thread(() -> {}, "first"),
-                          new Thread(() -> {}, "second"))
-                      .withPrefabValues(
-                          Throwable.class,
-                          new IllegalStateException("first"),
-                          new IllegalStateException("second"))
-                      .withGenericPrefabValues(
-                          ArrayDeque.class, value -> new ArrayDeque<>(List.of(value)));
+                  createFramesForPreservesRuntimeIdentityAndSessionHashKeysThroughProtocolAndCleanup(
+                      acknowledgments);
+              var configuration = EqualsVerifier.configure();
+
+              configuration =
+                  runtimeIdentityConfiguration(
+                      configuration,
+                      first,
+                      second,
+                      firstMapper,
+                      secondMapper,
+                      streams,
+                      lifetimes,
+                      firstDeadlines,
+                      secondDeadlines,
+                      providers,
+                      sessions,
+                      acknowledgments);
               configuration =
                   prefab(
                       configuration,
@@ -231,21 +199,17 @@ class McpRuntimeEqualityTest {
                   .forClass(frames.getFirst().getClass())
                   .withNonnullFields("event", "acknowledgment")
                   .verify();
+
               assertNotEquals(first, second);
               assertNotEquals(streams.get(0), streams.get(1));
               assertNotEquals(lifetimes.get(0), lifetimes.get(1));
+
               for (int index = 0; index < servers.size(); index++) {
                 var identifier = identifiers.get(index);
                 var deleted =
-                    servers
-                        .get(index)
-                        .send(
-                            request ->
-                                request
-                                    .path("/mcp")
-                                    .method("DELETE")
-                                    .header("Mcp-Session-Id", identifier)
-                                    .header("MCP-Protocol-Version", "2025-11-25"));
+                    createDeletedForPreservesRuntimeIdentityAndSessionHashKeysThroughProtocolAndCleanup(
+                        servers, index, identifier);
+
                 assertEquals(200, deleted.statusCode());
                 assertNotNull(completed.poll(3, TimeUnit.SECONDS));
               }
@@ -264,13 +228,102 @@ class McpRuntimeEqualityTest {
     }
 
     assertTrue(failures.isEmpty());
+
     var retained = new HashSet<>(hashes.keySet());
     for (var entry : hashes.entrySet()) {
       assertEquals(entry.getKey(), entry.getKey());
       assertEquals(entry.getValue().intValue(), entry.getKey().hashCode());
       assertTrue(retained.remove(entry.getKey()));
     }
+
     assertTrue(retained.isEmpty());
+  }
+
+  private List<Object>
+      createFramesForPreservesRuntimeIdentityAndSessionHashKeysThroughProtocolAndCleanup(
+          ArrayList<MonoSink<Void>> acknowledgments) throws ReflectiveOperationException {
+    return List.of(
+        frame(new SseEvent("first", "message", "first", null), acknowledgments.get(0)),
+        frame(new SseEvent("second", "message", "second", null), acknowledgments.get(1)));
+  }
+
+  private ConfiguredEqualsVerifier runtimeIdentityConfiguration(
+      ConfiguredEqualsVerifier configuration,
+      Mcp<McpSyncServer> first,
+      Mcp<McpSyncServer> second,
+      JacksonMcpJsonMapper firstMapper,
+      JacksonMcpJsonMapper secondMapper,
+      List<McpStream> streams,
+      List<McpRequestLifetime> lifetimes,
+      ScheduledThreadPoolExecutor firstDeadlines,
+      ScheduledThreadPoolExecutor secondDeadlines,
+      List<Object> providers,
+      ArrayList<Object> sessions,
+      ArrayList<MonoSink<Void>> acknowledgments)
+      throws ReflectiveOperationException {
+    return configuration
+        .withPrefabValues(Mcp.class, first, second)
+        .withPrefabValues(
+            McpSessionLimits.class,
+            new McpSessionLimits(32, 8, Duration.ofMinutes(1)),
+            new McpSessionLimits(64, 16, Duration.ofMinutes(2)))
+        .withPrefabValues(
+            SseEvent.class,
+            new SseEvent("first", "message", "first", null),
+            new SseEvent("second", "message", "second", null))
+        .withPrefabValues(
+            McpHttpSecurity.class,
+            McpValueEqualityTest.security("first"),
+            McpValueEqualityTest.security("second"))
+        .withPrefabValues(McpJsonMapper.class, firstMapper, secondMapper)
+        .withPrefabValues(McpStream.class, streams.get(0), streams.get(1))
+        .withPrefabValues(McpRequestLifetime.class, lifetimes.get(0), lifetimes.get(1))
+        .withPrefabValues(ScheduledThreadPoolExecutor.class, firstDeadlines, secondDeadlines)
+        .withPrefabValues(
+            ScheduledFuture.class,
+            (ScheduledFuture<?>) field(providers.get(0), "idleExpiry"),
+            (ScheduledFuture<?>) field(providers.get(1), "idleExpiry"))
+        .withPrefabValues(
+            McpStreamableServerSession.class,
+            (McpStreamableServerSession) field(sessions.get(0), "sdk"),
+            (McpStreamableServerSession) field(sessions.get(1), "sdk"))
+        .withPrefabValues(
+            Disposable.Composite.class,
+            (Disposable.Composite) field(sessions.get(0), "dispatches"),
+            (Disposable.Composite) field(sessions.get(1), "dispatches"))
+        .withPrefabValues(MonoSink.class, acknowledgments.get(0), acknowledgments.get(1))
+        .withPrefabValues(Sinks.Empty.class, Sinks.empty(), Sinks.empty())
+        .withPrefabValues(Mono.class, Mono.empty(), Mono.never())
+        .withPrefabValues(
+            Thread.class, new Thread(() -> {}, "first"), new Thread(() -> {}, "second"))
+        .withPrefabValues(
+            Throwable.class,
+            new IllegalStateException("first"),
+            new IllegalStateException("second"))
+        .withGenericPrefabValues(ArrayDeque.class, value -> new ArrayDeque<>(List.of(value)));
+  }
+
+  private HttpResponse<byte[]>
+      createDeletedForPreservesRuntimeIdentityAndSessionHashKeysThroughProtocolAndCleanup(
+          List<TestServer> servers, int index, String identifier)
+          throws IOException, InterruptedException {
+    return servers
+        .get(index)
+        .send(
+            request ->
+                request
+                    .path("/mcp")
+                    .method("DELETE")
+                    .header("Mcp-Session-Id", identifier)
+                    .header("MCP-Protocol-Version", "2025-11-25"));
+  }
+
+  private static String initializationRequest() {
+    return """
+      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "protocolVersion":"2025-11-25","capabilities":{},
+        "clientInfo":{"name":"equality-fixture","version":"1"}}}
+      """;
   }
 
   private static void exerciseProtocol(
@@ -286,21 +339,29 @@ class McpRuntimeEqualityTest {
                 identifier)
             .statusCode());
     assertNotNull(completed.poll(3, TimeUnit.SECONDS));
-    var ping =
-        post(
-            server,
-            """
-        {"jsonrpc":"2.0","id":2,"method":"ping"}
-        """,
-            identifier);
+
+    var ping = createPingForExerciseProtocol(server, identifier);
+
     assertEquals(200, ping.statusCode());
     assertTrue(ping.body().contains("\"id\":2"));
     assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+
     var output =
         server.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
+
     assertEquals(200, output.statusCode());
     assertTrue(output.body().contains("notice"));
     assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+  }
+
+  private static HttpResponse<String> createPingForExerciseProtocol(
+      TestServer server, String identifier) throws Exception {
+    return post(
+        server,
+        """
+        {"jsonrpc":"2.0","id":2,"method":"ping"}
+        """,
+        identifier);
   }
 
   private static HttpResponse<String> post(TestServer server, String body, String session)
@@ -323,6 +384,7 @@ class McpRuntimeEqualityTest {
   private static Object field(Object owner, String name) throws ReflectiveOperationException {
     var field = owner.getClass().getDeclaredField(name);
     field.setAccessible(true);
+
     return field.get(owner);
   }
 
@@ -331,6 +393,7 @@ class McpRuntimeEqualityTest {
     var type = Class.forName(McpStream.class.getName() + "$Frame");
     var constructor = type.getDeclaredConstructor(SseEvent.class, MonoSink.class);
     constructor.setAccessible(true);
+
     return constructor.newInstance(event, acknowledgment);
   }
 

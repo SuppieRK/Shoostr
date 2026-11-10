@@ -37,7 +37,17 @@ final class WebSocketRuntime {
     }
 
     connections.add(connection);
+
     return true;
+  }
+
+  /**
+   * Releases registry ownership after transport closure or rejected dispatch.
+   *
+   * @param connection terminated adapter
+   */
+  synchronized void remove(ManagedWebSocket connection) {
+    connections.remove(connection);
   }
 
   /**
@@ -54,15 +64,6 @@ final class WebSocketRuntime {
       }
     }
     executor.execute(task);
-  }
-
-  /**
-   * Releases registry ownership after transport closure or rejected dispatch.
-   *
-   * @param connection terminated adapter
-   */
-  synchronized void remove(ManagedWebSocket connection) {
-    connections.remove(connection);
   }
 
   /**

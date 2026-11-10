@@ -20,10 +20,12 @@ public final class DownloadExample {
     Objects.requireNonNull(report);
     // Both handlers borrow an application-selected file, not a path taken from request input.
     Handler inline = (ignored, response) -> response.file(report, "text/csv; charset=utf-8");
+
     // Attachment output adds a download filename while serving the same report bytes.
     Handler attachment =
-        (ignored2, response) ->
+        (ignoredRequest, response) ->
             response.attachment(report, "text/csv; charset=utf-8", "résumé.csv");
+
     return new Shoostr()
         .routes(
             routes ->

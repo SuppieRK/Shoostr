@@ -9,11 +9,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.Closeable;
+import java.io.IOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentHashMap.KeySetView;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -39,7 +41,7 @@ class BorrowedExecutorTest {
       (ignored, response) ->
           response.setHeader("X-Worker", Thread.currentThread().getName()).text("ok");
   private static final Handler SSE =
-      (ignored2, response) -> {
+      (ignoredRequest, response) -> {
         response.setHeader("X-Worker", Thread.currentThread().getName());
         response.startEventStream().send("ok");
       };
@@ -56,12 +58,13 @@ class BorrowedExecutorTest {
               .get(
                   "/selected",
                   workers,
-                  (ignored3, response) -> response.text(Thread.currentThread().getName()));
+                  (ignoredRequest, response) -> response.text(Thread.currentThread().getName()));
 
           try (var test = TestServer.start(app)) {
             var response =
                 test.send(
                     request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString());
+
             assertEquals("selected", response.body());
           }
         }
@@ -86,6 +89,7 @@ class BorrowedExecutorTest {
 
         try (var test = TestServer.start(app)) {
           var response = test.send(request -> request.path("/selected").method(method));
+
           assertEquals(200, response.statusCode(), name);
           assertEquals("selected", response.headers().firstValue("X-Worker").orElseThrow(), name);
           assertEquals(configured, response.headers().firstValue("X-Configured").isPresent(), name);
@@ -133,7 +137,7 @@ class BorrowedExecutorTest {
 
       try (Closeable appCleanup3 = app::close) {
 
-        app.routes().get("/ready", workers, (ignored4, response) -> response.text("ready"));
+        app.routes().get("/ready", workers, (ignoredRequest, response) -> response.text("ready"));
         app.routes()
             .post(
                 "/echo",
@@ -148,22 +152,10 @@ class BorrowedExecutorTest {
             TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_2))) {
           assertEquals(
               HttpClient.Version.HTTP_2, test.send(request -> request.path("/ready")).version());
-          var first =
-              test.send(
-                  request ->
-                      request
-                          .path("/echo")
-                          .method("POST")
-                          .body("first".getBytes(StandardCharsets.UTF_8)),
-                  HttpResponse.BodyHandlers.ofString());
-          var second =
-              test.send(
-                  request ->
-                      request
-                          .path("/echo")
-                          .method("POST")
-                          .body("second".getBytes(StandardCharsets.UTF_8)),
-                  HttpResponse.BodyHandlers.ofString());
+
+          var first = sendFirstEchoBody(test);
+          var second = sendSecondEchoBody(test);
+
           assertEquals(HttpClient.Version.HTTP_2, first.version());
           assertEquals(HttpClient.Version.HTTP_2, second.version());
           assertEquals("first", first.body());
@@ -171,6 +163,22 @@ class BorrowedExecutorTest {
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendFirstEchoBody(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/echo").method("POST").body("first".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String> sendSecondEchoBody(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/echo").method("POST").body("second".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -186,7 +194,7 @@ class BorrowedExecutorTest {
       try (Closeable appCleanup4 = app::close) {
 
         Handler endpoint =
-            (ignored5, response) ->
+            (ignoredRequest, response) ->
                 response.text(Boolean.toString(Thread.currentThread().isVirtual()));
         app.routes().get("/default", endpoint).get("/selected", workers, endpoint);
 
@@ -208,13 +216,7 @@ class BorrowedExecutorTest {
   void acceptsVirtualThreadExecutors() throws Exception {
     var owned = ConcurrentHashMap.<Thread>newKeySet();
 
-    try (var workers =
-        Executors.newThreadPerTaskExecutor(
-            task -> {
-              var thread = Thread.ofVirtual().unstarted(task);
-              owned.add(thread);
-              return thread;
-            })) {
+    try (var workers = openWorkersForAcceptsVirtualThreadExecutors(owned)) {
       var app = new Shoostr();
 
       try (Closeable appCleanup5 = app::close) {
@@ -222,7 +224,7 @@ class BorrowedExecutorTest {
             .get(
                 "/selected",
                 workers,
-                (ignored6, response) ->
+                (ignoredRequest, response) ->
                     response.text(Boolean.toString(owned.contains(Thread.currentThread()))));
 
         try (var test = TestServer.start(app)) {
@@ -235,6 +237,17 @@ class BorrowedExecutorTest {
     }
   }
 
+  private ExecutorService openWorkersForAcceptsVirtualThreadExecutors(
+      KeySetView<Thread, Boolean> owned) {
+    return Executors.newThreadPerTaskExecutor(
+        task -> {
+          var thread = Thread.ofVirtual().unstarted(task);
+          owned.add(thread);
+
+          return thread;
+        });
+  }
+
   @Test
   void rejectsNullExecutorBeforeConfiguringOrReservingTheEndpoint() throws Exception {
     var configured = new AtomicInteger();
@@ -244,10 +257,12 @@ class BorrowedExecutorTest {
 
       try (Closeable appCleanup6 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             NullPointerException.class,
             () ->
-                routes.get("/selected", null, ENDPOINT, ignored7 -> configured.incrementAndGet()));
+                routes.get(
+                    "/selected", null, ENDPOINT, ignoredLifecycle -> configured.incrementAndGet()));
         assertEquals(0, configured.get());
         assertSame(app.routes(), app.routes().get("/selected", workers, ENDPOINT));
       }
@@ -264,12 +279,17 @@ class BorrowedExecutorTest {
       try (Closeable appCleanup7 = app::close) {
         workers.shutdown();
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
                 routes.get(
-                    "/selected", workers, ENDPOINT, ignored8 -> configured.incrementAndGet()));
+                    "/selected",
+                    workers,
+                    ENDPOINT,
+                    ignoredLifecycle -> configured.incrementAndGet()));
         assertEquals(0, configured.get());
+
         app.routes().get("/selected", ENDPOINT);
       }
     }
@@ -285,9 +305,11 @@ class BorrowedExecutorTest {
 
       try (Closeable appCleanup8 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class, () -> routes.get("/selected", workers, ENDPOINT));
         assertFalse(workers.isShutdown());
+
         app.routes().get("/selected", ENDPOINT);
       }
     }
@@ -329,7 +351,7 @@ class BorrowedExecutorTest {
 
           try {
             release.await();
-          } catch (InterruptedException ignored9) {
+          } catch (InterruptedException ignoredFailure) {
             Thread.currentThread().interrupt();
           }
         });
@@ -339,16 +361,22 @@ class BorrowedExecutorTest {
 
       try (Closeable appCleanup10 = app::close) {
         assertTrue(entered.await(5, TimeUnit.SECONDS));
+
         var workers = wrapped ? Executors.unconfigurableExecutorService(pool) : pool;
         app.exception(
             RejectedExecutionException.class,
-            (failure, ignored10, response) ->
+            (failure, ignoredRequest, response) ->
                 response.status(503).text(Objects.requireNonNull(failure.getMessage())));
-        app.routes().get("/selected", workers, (ignored11, ignored12) -> invoked.incrementAndGet());
+        app.routes()
+            .get(
+                "/selected",
+                workers,
+                (ignoredRequest, ignoredResponse) -> invoked.incrementAndGet());
 
         try (var test = TestServer.start(app)) {
           var response =
               test.send(request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(503, response.statusCode());
           assertEquals("custom rejection", response.body());
           assertEquals(0, invoked.get());
@@ -376,14 +404,16 @@ class BorrowedExecutorTest {
         app.routes().get("/selected", workers, ENDPOINT);
         if (failStart) {
           app.modifyServer(
-              ignored13 -> {
+              ignoredServer -> {
                 throw new IllegalStateException("startup failed");
               });
+
           assertThrows(IllegalStateException.class, app::start);
         }
 
         app.close();
         app.close();
+
         assertFalse(workers.isShutdown());
         assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
       }
@@ -406,7 +436,9 @@ class BorrowedExecutorTest {
           try (var firstTest = TestServer.start(first);
               var secondTest = TestServer.start(second)) {
             assertEquals(200, firstTest.send(request -> request.path("/selected")).statusCode());
+
             first.close();
+
             assertEquals(200, secondTest.send(request -> request.path("/selected")).statusCode());
             assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
             assertFalse(workers.isShutdown());
@@ -426,7 +458,7 @@ class BorrowedExecutorTest {
       };
     }
 
-    return (ignored14, ignored15) -> {
+    return (ignoredRunnable, ignoredThreadPoolExecutor) -> {
       throw new RejectedExecutionException("custom rejection");
     };
   }
@@ -458,7 +490,7 @@ class BorrowedExecutorTest {
                         ENDPOINT,
                         extensions ->
                             extensions.beforeRouteHandler(
-                                (ignored16, response) ->
+                                (ignoredRequest, response) ->
                                     response.setHeader("X-Configured", "yes")))),
         Arguments.of(
             "get.pathless.plain",
@@ -481,7 +513,7 @@ class BorrowedExecutorTest {
                                 ENDPOINT,
                                 extensions ->
                                     extensions.beforeRouteHandler(
-                                        (ignored17, response) ->
+                                        (ignoredRequest, response) ->
                                             response.setHeader("X-Configured", "yes"))))),
         Arguments.of(
             "post.path.plain",
@@ -501,7 +533,7 @@ class BorrowedExecutorTest {
                         ENDPOINT,
                         extensions ->
                             extensions.beforeRouteHandler(
-                                (ignored18, response) ->
+                                (ignoredRequest, response) ->
                                     response.setHeader("X-Configured", "yes")))),
         Arguments.of(
             "post.pathless.plain",
@@ -524,7 +556,7 @@ class BorrowedExecutorTest {
                                 ENDPOINT,
                                 extensions ->
                                     extensions.beforeRouteHandler(
-                                        (ignored19, response) ->
+                                        (ignoredRequest, response) ->
                                             response.setHeader("X-Configured", "yes"))))),
         Arguments.of(
             "put.path.plain",
@@ -544,7 +576,7 @@ class BorrowedExecutorTest {
                         ENDPOINT,
                         extensions ->
                             extensions.beforeRouteHandler(
-                                (ignored20, response) ->
+                                (ignoredRequest, response) ->
                                     response.setHeader("X-Configured", "yes")))),
         Arguments.of(
             "put.pathless.plain",
@@ -567,7 +599,7 @@ class BorrowedExecutorTest {
                                 ENDPOINT,
                                 extensions ->
                                     extensions.beforeRouteHandler(
-                                        (ignored21, response) ->
+                                        (ignoredRequest, response) ->
                                             response.setHeader("X-Configured", "yes"))))),
         Arguments.of(
             "patch.path.plain",
@@ -587,7 +619,7 @@ class BorrowedExecutorTest {
                         ENDPOINT,
                         extensions ->
                             extensions.beforeRouteHandler(
-                                (ignored22, response) ->
+                                (ignoredRequest, response) ->
                                     response.setHeader("X-Configured", "yes")))),
         Arguments.of(
             "patch.pathless.plain",
@@ -610,7 +642,7 @@ class BorrowedExecutorTest {
                                 ENDPOINT,
                                 extensions ->
                                     extensions.beforeRouteHandler(
-                                        (ignored23, response) ->
+                                        (ignoredRequest, response) ->
                                             response.setHeader("X-Configured", "yes"))))),
         Arguments.of(
             "delete.path.plain",
@@ -630,7 +662,7 @@ class BorrowedExecutorTest {
                         ENDPOINT,
                         extensions ->
                             extensions.beforeRouteHandler(
-                                (ignored24, response) ->
+                                (ignoredRequest, response) ->
                                     response.setHeader("X-Configured", "yes")))),
         Arguments.of(
             "delete.pathless.plain",
@@ -653,7 +685,7 @@ class BorrowedExecutorTest {
                                 ENDPOINT,
                                 extensions ->
                                     extensions.beforeRouteHandler(
-                                        (ignored25, response) ->
+                                        (ignoredRequest, response) ->
                                             response.setHeader("X-Configured", "yes"))))),
         Arguments.of(
             "head.path.plain",
@@ -673,7 +705,7 @@ class BorrowedExecutorTest {
                         ENDPOINT,
                         extensions ->
                             extensions.beforeRouteHandler(
-                                (ignored26, response) ->
+                                (ignoredRequest, response) ->
                                     response.setHeader("X-Configured", "yes")))),
         Arguments.of(
             "head.pathless.plain",
@@ -696,7 +728,7 @@ class BorrowedExecutorTest {
                                 ENDPOINT,
                                 extensions ->
                                     extensions.beforeRouteHandler(
-                                        (ignored27, response) ->
+                                        (ignoredRequest, response) ->
                                             response.setHeader("X-Configured", "yes"))))),
         Arguments.of(
             "options.path.plain",
@@ -716,7 +748,7 @@ class BorrowedExecutorTest {
                         ENDPOINT,
                         extensions ->
                             extensions.beforeRouteHandler(
-                                (ignored28, response) ->
+                                (ignoredRequest, response) ->
                                     response.setHeader("X-Configured", "yes")))),
         Arguments.of(
             "options.pathless.plain",
@@ -739,7 +771,7 @@ class BorrowedExecutorTest {
                                 ENDPOINT,
                                 extensions ->
                                     extensions.beforeRouteHandler(
-                                        (ignored29, response) ->
+                                        (ignoredRequest, response) ->
                                             response.setHeader("X-Configured", "yes"))))),
         Arguments.of(
             "sse.path.plain",
@@ -759,7 +791,7 @@ class BorrowedExecutorTest {
                         SSE,
                         extensions ->
                             extensions.beforeRouteHandler(
-                                (ignored30, response) ->
+                                (ignoredRequest, response) ->
                                     response.setHeader("X-Configured", "yes")))),
         Arguments.of(
             "sse.pathless.plain",
@@ -781,7 +813,7 @@ class BorrowedExecutorTest {
                                 SSE,
                                 extensions ->
                                     extensions.beforeRouteHandler(
-                                        (ignored31, response) ->
+                                        (ignoredRequest, response) ->
                                             response.setHeader("X-Configured", "yes"))))),
         Arguments.of(
             "enum.path.plain",
@@ -802,7 +834,7 @@ class BorrowedExecutorTest {
                         ENDPOINT,
                         extensions ->
                             extensions.beforeRouteHandler(
-                                (ignored32, response) ->
+                                (ignoredRequest, response) ->
                                     response.setHeader("X-Configured", "yes")))),
         Arguments.of(
             "enum.pathless.plain",
@@ -827,7 +859,7 @@ class BorrowedExecutorTest {
                                 ENDPOINT,
                                 extensions ->
                                     extensions.beforeRouteHandler(
-                                        (ignored33, response) ->
+                                        (ignoredRequest, response) ->
                                             response.setHeader("X-Configured", "yes"))))),
         Arguments.of(
             "string.path.plain",
@@ -848,7 +880,7 @@ class BorrowedExecutorTest {
                         ENDPOINT,
                         extensions ->
                             extensions.beforeRouteHandler(
-                                (ignored34, response) ->
+                                (ignoredRequest, response) ->
                                     response.setHeader("X-Configured", "yes")))),
         Arguments.of(
             "string.pathless.plain",
@@ -872,7 +904,7 @@ class BorrowedExecutorTest {
                                 ENDPOINT,
                                 extensions ->
                                     extensions.beforeRouteHandler(
-                                        (ignored35, response) ->
+                                        (ignoredRequest, response) ->
                                             response.setHeader("X-Configured", "yes"))))));
   }
 }

@@ -38,6 +38,7 @@ class ApplicationCallbacksTest {
         Arrays.stream(ApplicationCallbacks.class.getDeclaredMethods())
             .filter(method -> Modifier.isPublic(method.getModifiers()))
             .collect(Collectors.toSet());
+
     assertEquals(8, methods.size());
     assertEquals(
         Set.of(
@@ -60,13 +61,7 @@ class ApplicationCallbacksTest {
   void rejectsRetainedRegistrationAfterInstallationFinishes(boolean fail) throws Exception {
     var retained = new AtomicReference<ApplicationCallbacks>();
     var extension =
-        extension(
-            callbacks -> {
-              retained.set(callbacks);
-              if (fail) {
-                throw new IllegalArgumentException("setup failed");
-              }
-            });
+        createExtensionForRejectsRetainedRegistrationAfterInstallationFinishes(retained, fail);
 
     {
       var app = new Shoostr();
@@ -86,18 +81,23 @@ class ApplicationCallbacksTest {
     }
   }
 
+  private ApplicationExtension<Object>
+      createExtensionForRejectsRetainedRegistrationAfterInstallationFinishes(
+          AtomicReference<ApplicationCallbacks> retained, boolean fail) {
+    return extension(
+        callbacks -> {
+          retained.set(callbacks);
+          if (fail) {
+            throw new IllegalArgumentException("setup failed");
+          }
+        });
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void rejectsRetainedRegistrationFromAnotherThread(boolean fail) throws Exception {
     var retained = new AtomicReference<ApplicationCallbacks>();
-    var extension =
-        extension(
-            callbacks -> {
-              retained.set(callbacks);
-              if (fail) {
-                throw new IllegalArgumentException("setup failed");
-              }
-            });
+    var extension = createExtensionForRejectsRetainedRegistrationFromAnotherThread(retained, fail);
 
     {
       var app = new Shoostr();
@@ -116,26 +116,27 @@ class ApplicationCallbacksTest {
                 () ->
                     assertThrows(
                         IllegalStateException.class,
-                        () -> callbacks.beforeRouteHandler((ignored, ignored2) -> {})))
+                        () -> callbacks.beforeRouteHandler((ignored, ignoredResponse) -> {})))
             .get(5, TimeUnit.SECONDS);
       }
     }
   }
 
+  private ApplicationExtension<Object>
+      createExtensionForRejectsRetainedRegistrationFromAnotherThread(
+          AtomicReference<ApplicationCallbacks> retained, boolean fail) {
+    return extension(
+        callbacks -> {
+          retained.set(callbacks);
+          if (fail) {
+            throw new IllegalArgumentException("setup failed");
+          }
+        });
+  }
+
   @Test
   void rejectsNullCallbacksWhileInstallationIsOpen() throws Exception {
-    var extension =
-        extension(
-            c -> {
-              assertThrows(NullPointerException.class, () -> c.onRequestHeaders(null));
-              assertThrows(NullPointerException.class, () -> c.onRouteMatched(null));
-              assertThrows(NullPointerException.class, () -> c.beforeRouteHandler(null));
-              assertThrows(NullPointerException.class, () -> c.afterRouteHandler(null));
-              assertThrows(NullPointerException.class, () -> c.beforeResponseFlush(null));
-              assertThrows(NullPointerException.class, () -> c.afterResponseFlush(null));
-              assertThrows(NullPointerException.class, () -> c.afterRequest(null));
-              assertThrows(NullPointerException.class, () -> c.observe(null));
-            });
+    var extension = createExtensionForRejectsNullCallbacksWhileInstallationIsOpen();
 
     {
       var app = new Shoostr();
@@ -144,6 +145,21 @@ class ApplicationCallbacksTest {
         app.withExtension(extension);
       }
     }
+  }
+
+  private ApplicationExtension<Object>
+      createExtensionForRejectsNullCallbacksWhileInstallationIsOpen() {
+    return extension(
+        c -> {
+          assertThrows(NullPointerException.class, () -> c.onRequestHeaders(null));
+          assertThrows(NullPointerException.class, () -> c.onRouteMatched(null));
+          assertThrows(NullPointerException.class, () -> c.beforeRouteHandler(null));
+          assertThrows(NullPointerException.class, () -> c.afterRouteHandler(null));
+          assertThrows(NullPointerException.class, () -> c.beforeResponseFlush(null));
+          assertThrows(NullPointerException.class, () -> c.afterResponseFlush(null));
+          assertThrows(NullPointerException.class, () -> c.afterRequest(null));
+          assertThrows(NullPointerException.class, () -> c.observe(null));
+        });
   }
 
   @Test
@@ -155,17 +171,22 @@ class ApplicationCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup3 = app::close) {
-        app.onRequestHeaders((ignored3, ignored4) -> events.add("before"));
+        app.onRequestHeaders((ignoredRequest, ignoredResponse) -> events.add("before"));
         app.withExtension(
                 extension(
                     c ->
                         assertSame(
-                            c, c.onRequestHeaders((ignored5, ignored6) -> events.add("first")))))
+                            c,
+                            c.onRequestHeaders(
+                                (ignoredRequest, ignoredResponse) -> events.add("first")))))
             .withExtension(
-                extension(c -> c.onRequestHeaders((ignored7, ignored8) -> events.add("second"))));
-        app.onRequestHeaders((ignored9, ignored10) -> events.add("after"));
-        app.afterRequest(ignored11 -> completed.countDown());
-        app.routes().get("/", (ignored12, response) -> response.text("ok"));
+                extension(
+                    c ->
+                        c.onRequestHeaders(
+                            (ignoredRequest, ignoredResponse) -> events.add("second"))));
+        app.onRequestHeaders((ignoredRequest, ignoredResponse) -> events.add("after"));
+        app.afterRequest(ignoredRequestOutcome -> completed.countDown());
+        app.routes().get("/", (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -187,17 +208,22 @@ class ApplicationCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup4 = app::close) {
-        app.onRouteMatched((ignored13, ignored14) -> events.add("before"));
+        app.onRouteMatched((ignoredRequest, ignoredResponse) -> events.add("before"));
         app.withExtension(
                 extension(
                     c ->
                         assertSame(
-                            c, c.onRouteMatched((ignored15, ignored16) -> events.add("first")))))
+                            c,
+                            c.onRouteMatched(
+                                (ignoredRequest, ignoredResponse) -> events.add("first")))))
             .withExtension(
-                extension(c -> c.onRouteMatched((ignored17, ignored18) -> events.add("second"))));
-        app.onRouteMatched((ignored19, ignored20) -> events.add("after"));
-        app.afterRequest(ignored21 -> completed.countDown());
-        app.routes().get("/", (ignored22, response) -> response.text("ok"));
+                extension(
+                    c ->
+                        c.onRouteMatched(
+                            (ignoredRequest, ignoredResponse) -> events.add("second"))));
+        app.onRouteMatched((ignoredRequest, ignoredResponse) -> events.add("after"));
+        app.afterRequest(ignoredRequestOutcome -> completed.countDown());
+        app.routes().get("/", (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -219,19 +245,22 @@ class ApplicationCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup5 = app::close) {
-        app.beforeRouteHandler((ignored23, ignored24) -> events.add("before"));
+        app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> events.add("before"));
         app.withExtension(
                 extension(
                     c ->
                         assertSame(
                             c,
-                            c.beforeRouteHandler((ignored25, ignored26) -> events.add("first")))))
+                            c.beforeRouteHandler(
+                                (ignoredRequest, ignoredResponse) -> events.add("first")))))
             .withExtension(
                 extension(
-                    c -> c.beforeRouteHandler((ignored27, ignored28) -> events.add("second"))));
-        app.beforeRouteHandler((ignored29, ignored30) -> events.add("after"));
-        app.afterRequest(ignored31 -> completed.countDown());
-        app.routes().get("/", (ignored32, response) -> response.text("ok"));
+                    c ->
+                        c.beforeRouteHandler(
+                            (ignoredRequest, ignoredResponse) -> events.add("second"))));
+        app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> events.add("after"));
+        app.afterRequest(ignoredRequestOutcome -> completed.countDown());
+        app.routes().get("/", (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -253,18 +282,22 @@ class ApplicationCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup6 = app::close) {
-        app.afterRouteHandler((ignored33, ignored34) -> events.add("before"));
+        app.afterRouteHandler((ignoredRequest, ignoredResponse) -> events.add("before"));
         app.withExtension(
                 extension(
                     c ->
                         assertSame(
-                            c, c.afterRouteHandler((ignored35, ignored36) -> events.add("first")))))
+                            c,
+                            c.afterRouteHandler(
+                                (ignoredRequest, ignoredResponse) -> events.add("first")))))
             .withExtension(
                 extension(
-                    c -> c.afterRouteHandler((ignored37, ignored38) -> events.add("second"))));
-        app.afterRouteHandler((ignored39, ignored40) -> events.add("after"));
-        app.afterRequest(ignored41 -> completed.countDown());
-        app.routes().get("/", (ignored42, response) -> response.text("ok"));
+                    c ->
+                        c.afterRouteHandler(
+                            (ignoredRequest, ignoredResponse) -> events.add("second"))));
+        app.afterRouteHandler((ignoredRequest, ignoredResponse) -> events.add("after"));
+        app.afterRequest(ignoredRequestOutcome -> completed.countDown());
+        app.routes().get("/", (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -286,19 +319,22 @@ class ApplicationCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup7 = app::close) {
-        app.beforeResponseFlush((ignored43, ignored44) -> events.add("before"));
+        app.beforeResponseFlush((ignoredRequest, ignoredResponse) -> events.add("before"));
         app.withExtension(
                 extension(
                     c ->
                         assertSame(
                             c,
-                            c.beforeResponseFlush((ignored45, ignored46) -> events.add("first")))))
+                            c.beforeResponseFlush(
+                                (ignoredRequest, ignoredResponse) -> events.add("first")))))
             .withExtension(
                 extension(
-                    c -> c.beforeResponseFlush((ignored47, ignored48) -> events.add("second"))));
-        app.beforeResponseFlush((ignored49, ignored50) -> events.add("after"));
-        app.afterRequest(ignored51 -> completed.countDown());
-        app.routes().get("/", (ignored52, response) -> response.text("ok"));
+                    c ->
+                        c.beforeResponseFlush(
+                            (ignoredRequest, ignoredResponse) -> events.add("second"))));
+        app.beforeResponseFlush((ignoredRequest, ignoredResponse) -> events.add("after"));
+        app.afterRequest(ignoredRequestOutcome -> completed.countDown());
+        app.routes().get("/", (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -320,19 +356,22 @@ class ApplicationCallbacksTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup8 = app::close) {
-        app.afterResponseFlush((ignored53, ignored54) -> events.add("before"));
+        app.afterResponseFlush((ignoredRequest, ignoredResponse) -> events.add("before"));
         app.withExtension(
                 extension(
                     c ->
                         assertSame(
                             c,
-                            c.afterResponseFlush((ignored55, ignored56) -> events.add("first")))))
+                            c.afterResponseFlush(
+                                (ignoredRequest, ignoredResponse) -> events.add("first")))))
             .withExtension(
                 extension(
-                    c -> c.afterResponseFlush((ignored57, ignored58) -> events.add("second"))));
-        app.afterResponseFlush((ignored59, ignored60) -> events.add("after"));
-        app.afterRequest(ignored61 -> completed.countDown());
-        app.routes().get("/", (ignored62, response) -> response.text("ok"));
+                    c ->
+                        c.afterResponseFlush(
+                            (ignoredRequest, ignoredResponse) -> events.add("second"))));
+        app.afterResponseFlush((ignoredRequest, ignoredResponse) -> events.add("after"));
+        app.afterRequest(ignoredRequestOutcome -> completed.countDown());
+        app.routes().get("/", (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(
@@ -358,12 +397,13 @@ class ApplicationCallbacksTest {
                 extension(
                     c ->
                         c.afterRequest(
-                            ignored63 -> {
+                            ignoredRequestOutcome -> {
                               throw new IllegalStateException("observer failed");
                             })))
-            .withExtension(extension(c -> c.afterRequest(ignored64 -> events.add("extension"))));
+            .withExtension(
+                extension(c -> c.afterRequest(ignoredRequestOutcome -> events.add("extension"))));
         app.afterRequest(
-            ignored65 -> {
+            ignoredRequestOutcome -> {
               events.add("app");
               completed.countDown();
             });
@@ -393,8 +433,9 @@ class ApplicationCallbacksTest {
             extension(
                 c ->
                     c.observe(
-                        ignored66 -> {
+                        ignoredRequest -> {
                           events.add("begin");
+
                           return new RequestObservation() {
                             @Override
                             public void close() {
@@ -438,7 +479,8 @@ class ApplicationCallbacksTest {
   }
 
   private static List<Consumer<ApplicationCallbacks>> registrations() {
-    Handler handler = (ignored67, ignored68) -> {};
+    Handler handler = (ignoredRequest, ignoredResponse) -> {};
+
     return List.of(
         c -> c.onRequestHeaders(handler),
         c -> c.onRouteMatched(handler),
@@ -446,7 +488,7 @@ class ApplicationCallbacksTest {
         c -> c.afterRouteHandler(handler),
         c -> c.beforeResponseFlush(handler),
         c -> c.afterResponseFlush(handler),
-        c -> c.afterRequest(ignored69 -> {}),
-        c -> c.observe(ignored70 -> ignored71 -> {}));
+        c -> c.afterRequest(ignoredRequestOutcome -> {}),
+        c -> c.observe(ignoredRequest -> ignoredRequestOutcome -> {}));
   }
 }

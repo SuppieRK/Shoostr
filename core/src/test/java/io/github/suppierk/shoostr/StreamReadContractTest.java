@@ -33,14 +33,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(15)
 class StreamReadContractTest {
   private static final String BOUNDARY = "stream-read-contract";
-  private static final String CHUNKED_HEADERS =
-      """
-      POST /input HTTP/1.1\r
-      Host: localhost\r
-      Transfer-Encoding: chunked\r
-      Connection: close\r
-      \r
-      """;
+  private static final String CHUNKED_HEADERS = chunkedHeaders();
   @TempDir Path temporaryDirectory;
 
   @Test
@@ -68,6 +61,7 @@ class StreamReadContractTest {
           assertArrayEquals(new byte[] {'A'}, prefix.get(3, TimeUnit.SECONDS));
 
           write(socket, "1\r\nB\r\n0\r\n\r\n");
+
           assertResponse(socket, "B");
         }
       }
@@ -87,7 +81,9 @@ class StreamReadContractTest {
                 "/input",
                 (request, response) -> {
                   var input = request.input();
+
                   assertEquals(0, input.read(new byte[0]));
+
                   emptyRead.complete(input.read(new byte[2], 2, 0));
                   response.text(new String(input.readAllBytes(), StandardCharsets.US_ASCII));
                 });
@@ -100,10 +96,21 @@ class StreamReadContractTest {
           assertEquals(0, emptyRead.get(3, TimeUnit.SECONDS));
 
           write(socket, "2\r\nAB\r\n0\r\n\r\n");
+
           assertResponse(socket, "AB");
         }
       }
     }
+  }
+
+  private static String chunkedHeaders() {
+    return """
+      POST /input HTTP/1.1\r
+      Host: localhost\r
+      Transfer-Encoding: chunked\r
+      Connection: close\r
+      \r
+      """;
   }
 
   @ParameterizedTest
@@ -120,6 +127,7 @@ class StreamReadContractTest {
                 (request, response) -> {
                   try (var input = content(request, multipart)) {
                     var buffer = new byte[] {'x', 'y'};
+
                     assertEquals(0, input.read(new byte[0]));
                     assertEquals(0, input.read(buffer, 1, 0));
                     assertEquals(0, input.read(buffer, buffer.length, 0));
@@ -138,6 +146,7 @@ class StreamReadContractTest {
 
         try (var test = TestServer.start(app)) {
           var result = post(test, multipart);
+
           assertEquals(200, result.statusCode());
           assertEquals("ok", result.body());
         }
@@ -169,6 +178,7 @@ class StreamReadContractTest {
 
         try (var test = TestServer.start(app)) {
           var result = post(test, multipart);
+
           assertEquals(200, result.statusCode());
           assertEquals("ok", result.body());
         }
@@ -196,9 +206,12 @@ class StreamReadContractTest {
 
         try (var test = TestServer.start(app)) {
           var result = post(test, multipart);
+
           assertEquals(200, result.statusCode());
           assertEquals("ok", result.body());
+
           var input = retained.get();
+
           assertNotNull(input);
           assertThrows(IllegalStateException.class, () -> input.read(new byte[0], 0, 0));
           assertThrows(IllegalStateException.class, () -> input.read(new byte[0], 1, 0));
@@ -224,10 +237,12 @@ class StreamReadContractTest {
                 "/input",
                 (request, response) -> {
                   var input = request.input();
+
                   assertEquals(0, input.read(new byte[0], 0, 0));
                   assertArrayEquals(new byte[] {'A', 'B'}, input.readNBytes(2));
                   assertEquals(0, input.read(new byte[2], 2, 0));
                   assertEquals(-1, input.read());
+
                   response.text("ok");
                 });
 
@@ -235,19 +250,23 @@ class StreamReadContractTest {
             var client = HttpClient.newHttpClient()) {
           var bytes = body.getBytes(StandardCharsets.US_ASCII);
           var result =
-              client.send(
-                  HttpRequest.newBuilder(test.baseUri().resolve("input"))
-                      .timeout(Duration.ofSeconds(3))
-                      .POST(
-                          HttpRequest.BodyPublishers.ofInputStream(
-                              () -> new ByteArrayInputStream(bytes)))
-                      .build(),
-                  HttpResponse.BodyHandlers.ofString());
+              sendResultForCountsOnlyConsumedRequestBytesAcrossEmptyReads(client, test, bytes);
+
           assertEquals(expectedStatus, result.statusCode());
           assertEquals(expectedStatus == 200 ? "ok" : "Content Too Large", result.body());
         }
       }
     }
+  }
+
+  private HttpResponse<String> sendResultForCountsOnlyConsumedRequestBytesAcrossEmptyReads(
+      HttpClient client, TestServer test, byte[] bytes) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(test.baseUri().resolve("input"))
+            .timeout(Duration.ofSeconds(3))
+            .POST(HttpRequest.BodyPublishers.ofInputStream(() -> new ByteArrayInputStream(bytes)))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   private static void connect(Socket socket, TestServer test) throws IOException {
@@ -265,6 +284,7 @@ class StreamReadContractTest {
 
   private static void assertResponse(Socket socket, String expected) throws IOException {
     var result = HttpTester.parseResponse(HttpTester.from(socket.getInputStream()));
+
     assertNotNull(result);
     assertEquals(200, result.getStatus());
     assertEquals(expected, result.getContent());
@@ -276,6 +296,7 @@ class StreamReadContractTest {
 
   private static void assertInvalidRanges(InputStream input) {
     var buffer = new byte[] {'x', 'y'};
+
     assertThrows(NullPointerException.class, () -> input.read(null, 0, 0));
     assertThrows(NullPointerException.class, () -> input.read(null, 0, 1));
     assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, -1, 0));
@@ -301,12 +322,14 @@ class StreamReadContractTest {
                   try (var input = request.file("document").orElseThrow().content()) {
                     assertArrayEquals(new byte[] {'A', 'B'}, input.readAllBytes());
                     assertEquals(-1, input.read());
+
                     response.text(Integer.toString(input.read(new byte[0], 0, 0)));
                   }
                 });
 
         try (var test = TestServer.start(app)) {
           var result = post(test, true);
+
           assertEquals(200, result.statusCode());
           assertEquals("0", result.body());
         }
@@ -323,14 +346,8 @@ class StreamReadContractTest {
   }
 
   private static HttpResponse<String> post(TestServer test, boolean multipart) throws Exception {
-    var body =
-        ("--"
-                + BOUNDARY
-                + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"bytes.bin\""
-                + "\r\nContent-Type: application/octet-stream\r\n\r\nAB\r\n--"
-                + BOUNDARY
-                + "--\r\n")
-            .getBytes(StandardCharsets.US_ASCII);
+    var body = createBodyForPost();
+
     return test.send(
         request -> {
           request
@@ -343,5 +360,15 @@ class StreamReadContractTest {
           }
         },
         HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static byte[] createBodyForPost() {
+    return ("--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"bytes.bin\""
+            + "\r\nContent-Type: application/octet-stream\r\n\r\nAB\r\n--"
+            + BOUNDARY
+            + "--\r\n")
+        .getBytes(StandardCharsets.US_ASCII);
   }
 }

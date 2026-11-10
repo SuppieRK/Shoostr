@@ -27,6 +27,7 @@ class DownloadExampleTest {
       var response =
           test.send(
               request -> request.path("/download"), HttpResponse.BodyHandlers.ofFile(downloaded));
+
       assertEquals(200, response.statusCode());
       assertEquals(downloaded, response.body());
       assertEquals(
@@ -51,9 +52,11 @@ class DownloadExampleTest {
       var response =
           test.send(
               request -> request.path(path).method(method), HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("HEAD".equals(method) ? "" : "name\nAda\n", response.body());
       assertEquals("9", response.headers().firstValue("Content-Length").orElseThrow());
+
       if ("/download".equals(path)) {
         assertTrue(
             response

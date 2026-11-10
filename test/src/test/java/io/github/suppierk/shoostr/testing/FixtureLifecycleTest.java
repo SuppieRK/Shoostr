@@ -66,7 +66,7 @@ class FixtureLifecycleTest {
     app.routes()
         .sse(
             "/events",
-            (ignored2, response) -> {
+            (ignoredRequest, response) -> {
               response.startEventStream().send("open");
               release.await();
             });
@@ -112,7 +112,9 @@ class FixtureLifecycleTest {
 
     try (var test = TestServer.start(app)) {
       assertEquals(1, starts.get());
+
       test.close();
+
       assertThrows(IllegalStateException.class, test::baseUri);
     }
 
@@ -129,6 +131,7 @@ class FixtureLifecycleTest {
           var test = TestServer.start(app)) {
         var client = test.httpClient();
         var status = test.send(request -> request.path("/missing")).statusCode();
+
         assertThrows(
             AssertionError.class,
             () -> {
@@ -151,20 +154,25 @@ class FixtureLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup1 = app::close) {
-        var actual =
-            assertThrows(
-                IOException.class,
-                () -> {
-                  try (var test = TestServer.start(app)) {
-                    client.set(test.httpClient());
-                    throw expected;
-                  }
-                });
+        var actual = assertScopeFailure(app, client, expected);
+
         assertSame(expected, actual);
         assertTrue(client.get().isTerminated());
         assertThrows(IllegalStateException.class, app::port);
       }
     }
+  }
+
+  private IOException assertScopeFailure(
+      Shoostr app, AtomicReference<HttpClient> client, IOException expected) {
+    return assertThrows(
+        IOException.class,
+        () -> {
+          try (var test = TestServer.start(app)) {
+            client.set(test.httpClient());
+            throw expected;
+          }
+        });
   }
 
   @ParameterizedTest
@@ -176,7 +184,8 @@ class FixtureLifecycleTest {
 
       try (Closeable appCleanup2 = app::close) {
         assertThrows(NullPointerException.class, () -> TestServer.start(app, configureClient));
-        app.routes().get("/value", (ignored3, response) -> response.text("not closed"));
+
+        app.routes().get("/value", (ignoredRequest, response) -> response.text("not closed"));
 
         try (var test = TestServer.start(app)) {
           assertEquals(200, test.send(request -> request.path("/value")).statusCode());
@@ -195,14 +204,18 @@ class FixtureLifecycleTest {
 
       try (Closeable appCleanup3 = app::close;
           var client = HttpClient.newHttpClient()) {
-        app.routes().get("/value", (ignored4, response) -> response.text("still running"));
+        app.routes().get("/value", (ignoredRequest, response) -> response.text("still running"));
         app.start();
+
         assertThrows(
             IllegalStateException.class,
             () ->
                 TestServer.start(
-                    app, ignored5 -> fail("Rejected apps must not configure a client")));
+                    app,
+                    ignoredClientBuilder -> fail("Rejected apps must not configure a client")));
+
         var target = URI.create("http://127.0.0.1:" + app.port() + "/value");
+
         assertEquals(
             "still running",
             client

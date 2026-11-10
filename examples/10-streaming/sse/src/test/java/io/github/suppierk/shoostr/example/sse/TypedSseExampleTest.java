@@ -18,6 +18,7 @@ class TypedSseExampleTest {
           server.send(
               request -> request.path("/progress"),
               HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
       assertEquals(200, result.statusCode());
       assertEquals(
           "text/event-stream; charset=utf-8",

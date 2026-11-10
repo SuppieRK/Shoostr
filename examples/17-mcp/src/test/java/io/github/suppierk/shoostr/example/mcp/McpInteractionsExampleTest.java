@@ -9,9 +9,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.client.McpClient;
+import io.modelcontextprotocol.client.McpClient.SyncSpec;
+import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSchema.CallToolResult;
+import io.modelcontextprotocol.spec.McpSchema.CreateMessageRequest;
+import io.modelcontextprotocol.spec.McpSchema.ElicitFormRequest;
+import io.modelcontextprotocol.spec.McpSchema.ElicitResult.Action;
+import io.modelcontextprotocol.spec.McpSchema.LoggingMessageNotification;
+import io.modelcontextprotocol.spec.McpSchema.ProgressNotification;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -34,12 +43,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(20)
 class McpInteractionsExampleTest {
-  private static final String INITIALIZE =
-      """
-      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-11-25","capabilities":{},
-        "clientInfo":{"name":"interactions-lifecycle","version":"1.0"}}}
-      """;
+  private static final String INITIALIZE = initializationRequest();
 
   @Test
   void asksForAnAudienceBeforeRequestingAClientGeneratedSummary() throws Exception {
@@ -49,42 +53,15 @@ class McpInteractionsExampleTest {
 
     try (var test = TestServer.start(McpInteractionsExample.application());
         var client =
-            McpClient.sync(
-                    HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                        .endpoint("/mcp")
-                        .build())
-                .requestTimeout(Duration.ofSeconds(5))
-                .initializationTimeout(Duration.ofSeconds(5))
-                .capabilities(
-                    McpSchema.ClientCapabilities.builder()
-                        .sampling()
-                        .elicitation(true, false)
-                        .build())
-                .elicitation(
-                    request -> {
-                      stages.add("elicitation");
-                      form.set(request);
-                      return McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT)
-                          .content(Map.of("audience", "developers"))
-                          .build();
-                    })
-                .sampling(
-                    request -> {
-                      stages.add("sampling");
-                      sampling.set(request);
-                      return McpSchema.CreateMessageResult.builder(
-                              McpSchema.Role.ASSISTANT,
-                              "The service is ready for developers.",
-                              "fixture-model")
-                          .build();
-                    })
-                .build()) {
+            openClientForAsksForAnAudienceBeforeRequestingAClientGeneratedSummary(
+                test, stages, form, sampling)) {
       client.initialize();
 
       try {
         var result =
             client.callTool(
                 McpSchema.CallToolRequest.builder("prepare-summary").arguments(Map.of()).build());
+
         assertEquals(false, result.isError());
         assertEquals(
             "Client-generated summary: The service is ready for developers.",
@@ -104,6 +81,51 @@ class McpInteractionsExampleTest {
     }
   }
 
+  private McpSyncClient openClientForAsksForAnAudienceBeforeRequestingAClientGeneratedSummary(
+      TestServer test,
+      CopyOnWriteArrayList<String> stages,
+      AtomicReference<ElicitFormRequest> form,
+      AtomicReference<CreateMessageRequest> sampling) {
+    return clientPropertiesForAsksForAnAudienceBeforeRequestingAClientGeneratedSummary(
+            test, stages, form, sampling)
+        .build();
+  }
+
+  private SyncSpec clientPropertiesForAsksForAnAudienceBeforeRequestingAClientGeneratedSummary(
+      TestServer test,
+      CopyOnWriteArrayList<String> stages,
+      AtomicReference<ElicitFormRequest> form,
+      AtomicReference<CreateMessageRequest> sampling) {
+    return McpClient.sync(
+            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                .endpoint("/mcp")
+                .build())
+        .requestTimeout(Duration.ofSeconds(5))
+        .initializationTimeout(Duration.ofSeconds(5))
+        .capabilities(
+            McpSchema.ClientCapabilities.builder().sampling().elicitation(true, false).build())
+        .elicitation(
+            request -> {
+              stages.add("elicitation");
+              form.set(request);
+
+              return McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT)
+                  .content(Map.of("audience", "developers"))
+                  .build();
+            })
+        .sampling(
+            request -> {
+              stages.add("sampling");
+              sampling.set(request);
+
+              return McpSchema.CreateMessageResult.builder(
+                      McpSchema.Role.ASSISTANT,
+                      "The service is ready for developers.",
+                      "fixture-model")
+                  .build();
+            });
+  }
+
   @Test
   void sendsLoggingAndCorrelatedProgressOnlyToTheInitiatingSession() throws Exception {
     var logs = new LinkedBlockingQueue<McpSchema.LoggingMessageNotification>();
@@ -113,25 +135,8 @@ class McpInteractionsExampleTest {
 
     try (var test = TestServer.start(McpInteractionsExample.application());
         var initiating =
-            client(test)
-                .capabilities(
-                    McpSchema.ClientCapabilities.builder()
-                        .sampling()
-                        .elicitation(true, false)
-                        .build())
-                .elicitation(
-                    ignored ->
-                        McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT)
-                            .content(Map.of("audience", "developers"))
-                            .build())
-                .sampling(
-                    ignored2 ->
-                        McpSchema.CreateMessageResult.builder(
-                                McpSchema.Role.ASSISTANT, "Ready.", "fixture-model")
-                            .build())
-                .loggingConsumer(logs::add)
-                .progressConsumer(progress::add)
-                .build();
+            openInitiatingForSendsLoggingAndCorrelatedProgressOnlyToTheInitiatingSession(
+                test, logs, progress);
         var other =
             client(test)
                 .loggingConsumer(otherLogs::add)
@@ -143,26 +148,27 @@ class McpInteractionsExampleTest {
       try {
         initiating.setLoggingLevel(McpSchema.LoggingLevel.INFO);
         var result =
-            initiating.callTool(
-                McpSchema.CallToolRequest.builder("prepare-summary")
-                    .arguments(Map.of())
-                    .progressToken("summary-42")
-                    .build());
+            sendResultForSendsLoggingAndCorrelatedProgressOnlyToTheInitiatingSession(initiating);
+
         assertEquals(false, result.isError());
+
         for (var expected : List.of("Preparing a status summary", "Prepared a status summary")) {
           var log = logs.poll(3, TimeUnit.SECONDS);
+
           assertNotNull(log);
           assertEquals(McpSchema.LoggingLevel.INFO, log.level());
           assertEquals(expected, log.data());
         }
         for (var expected : List.of(0.0, 0.5, 1.0)) {
           var update = progress.poll(3, TimeUnit.SECONDS);
+
           assertNotNull(update);
           assertEquals("summary-42", update.progressToken());
           assertEquals(expected, update.progress());
           assertEquals(1.0, update.total());
         }
         other.ping();
+
         assertNull(otherLogs.poll(250, TimeUnit.MILLISECONDS));
         assertNull(otherProgress.poll(250, TimeUnit.MILLISECONDS));
       } finally {
@@ -172,13 +178,54 @@ class McpInteractionsExampleTest {
     }
   }
 
+  private McpSyncClient
+      openInitiatingForSendsLoggingAndCorrelatedProgressOnlyToTheInitiatingSession(
+          TestServer test,
+          LinkedBlockingQueue<LoggingMessageNotification> logs,
+          LinkedBlockingQueue<ProgressNotification> progress) {
+    return initiatingPropertiesForSendsLoggingAndCorrelatedProgressOnlyToTheInitiatingSession(
+            test, logs, progress)
+        .build();
+  }
+
+  private SyncSpec
+      initiatingPropertiesForSendsLoggingAndCorrelatedProgressOnlyToTheInitiatingSession(
+          TestServer test,
+          LinkedBlockingQueue<LoggingMessageNotification> logs,
+          LinkedBlockingQueue<ProgressNotification> progress) {
+    return client(test)
+        .capabilities(
+            McpSchema.ClientCapabilities.builder().sampling().elicitation(true, false).build())
+        .elicitation(
+            ignored ->
+                McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT)
+                    .content(Map.of("audience", "developers"))
+                    .build())
+        .sampling(
+            ignoredCreateMessageRequest ->
+                McpSchema.CreateMessageResult.builder(
+                        McpSchema.Role.ASSISTANT, "Ready.", "fixture-model")
+                    .build())
+        .loggingConsumer(logs::add)
+        .progressConsumer(progress::add);
+  }
+
+  private CallToolResult sendResultForSendsLoggingAndCorrelatedProgressOnlyToTheInitiatingSession(
+      McpSyncClient initiating) {
+    return initiating.callTool(
+        McpSchema.CallToolRequest.builder("prepare-summary")
+            .arguments(Map.of())
+            .progressToken("summary-42")
+            .build());
+  }
+
   @Test
   void publishesResourceChangesAndStopsUpdatesAfterUnsubscribe() throws Exception {
     var updates = new LinkedBlockingQueue<List<McpSchema.ResourceContents>>();
     var listening = new CountDownLatch(1);
     var app = McpInteractionsExample.application();
     app.beforeResponseFlush(
-        (request, ignored3) -> {
+        (request, ignoredResponse) -> {
           if ("GET".equals(request.method()) && "/mcp".equals(request.path())) {
             listening.countDown();
           }
@@ -190,13 +237,17 @@ class McpInteractionsExampleTest {
 
       try {
         assertTrue(listening.await(3, TimeUnit.SECONDS));
+
         var initial =
             client.readResource(McpSchema.ReadResourceRequest.builder("status://current").build());
+
         assertEquals(
             "ready",
             assertInstanceOf(McpSchema.TextResourceContents.class, initial.contents().getFirst())
                 .text());
+
         client.subscribeResource(McpSchema.SubscribeRequest.builder("status://current").build());
+
         assertEquals(
             204,
             test.send(
@@ -207,13 +258,17 @@ class McpInteractionsExampleTest {
                             .header("Content-Type", "text/plain")
                             .body("busy".getBytes(StandardCharsets.UTF_8)))
                 .statusCode());
+
         var update = updates.poll(3, TimeUnit.SECONDS);
+
         assertNotNull(update);
         assertEquals(
             "busy",
             assertInstanceOf(McpSchema.TextResourceContents.class, update.getFirst()).text());
+
         client.unsubscribeResource(
             McpSchema.UnsubscribeRequest.builder("status://current").build());
+
         assertEquals(
             204,
             test.send(
@@ -234,7 +289,9 @@ class McpInteractionsExampleTest {
                         .getFirst())
                 .text());
         assertNull(updates.poll(250, TimeUnit.MILLISECONDS));
+
         client.subscribeResource(McpSchema.SubscribeRequest.builder("status://current").build());
+
         assertEquals(
             204,
             test.send(
@@ -244,7 +301,9 @@ class McpInteractionsExampleTest {
                             .path("/status")
                             .body("ready".getBytes(StandardCharsets.UTF_8)))
                 .statusCode());
+
         var resumed = updates.poll(3, TimeUnit.SECONDS);
+
         assertNotNull(resumed);
         assertEquals(
             "ready",
@@ -264,28 +323,15 @@ class McpInteractionsExampleTest {
 
     try (var test = TestServer.start(McpInteractionsExample.application());
         var client =
-            client(test)
-                .capabilities(
-                    McpSchema.ClientCapabilities.builder()
-                        .sampling()
-                        .elicitation(true, false)
-                        .build())
-                .elicitation(ignored4 -> McpSchema.ElicitResult.builder(action).build())
-                .sampling(
-                    ignored5 -> {
-                      samples.incrementAndGet();
-                      return McpSchema.CreateMessageResult.builder(
-                              McpSchema.Role.ASSISTANT, "Not requested", "fixture-model")
-                          .build();
-                    })
-                .progressConsumer(progress::add)
-                .build()) {
+            openClientForPreservesTheClientsDecisionWithoutSamplingOrInventingProgress(
+                test, action, samples, progress)) {
       client.initialize();
 
       try {
         var result =
             client.callTool(
                 McpSchema.CallToolRequest.builder("prepare-summary").arguments(Map.of()).build());
+
         assertEquals(false, result.isError());
         assertEquals(
             expected,
@@ -296,6 +342,36 @@ class McpInteractionsExampleTest {
         assertTrue(client.closeGracefully());
       }
     }
+  }
+
+  private McpSyncClient openClientForPreservesTheClientsDecisionWithoutSamplingOrInventingProgress(
+      TestServer test,
+      Action action,
+      AtomicInteger samples,
+      LinkedBlockingQueue<ProgressNotification> progress) {
+    return clientPropertiesForPreservesTheClientsDecisionWithoutSamplingOrInventingProgress(
+            test, action, samples, progress)
+        .build();
+  }
+
+  private SyncSpec clientPropertiesForPreservesTheClientsDecisionWithoutSamplingOrInventingProgress(
+      TestServer test,
+      Action action,
+      AtomicInteger samples,
+      LinkedBlockingQueue<ProgressNotification> progress) {
+    return client(test)
+        .capabilities(
+            McpSchema.ClientCapabilities.builder().sampling().elicitation(true, false).build())
+        .elicitation(ignoredElicitFormRequest -> McpSchema.ElicitResult.builder(action).build())
+        .sampling(
+            ignoredCreateMessageRequest -> {
+              samples.incrementAndGet();
+
+              return McpSchema.CreateMessageResult.builder(
+                      McpSchema.Role.ASSISTANT, "Not requested", "fixture-model")
+                  .build();
+            })
+        .progressConsumer(progress::add);
   }
 
   @ParameterizedTest
@@ -311,8 +387,9 @@ class McpInteractionsExampleTest {
             specification
                 .capabilities(McpSchema.ClientCapabilities.builder().sampling().build())
                 .sampling(
-                    ignored6 -> {
+                    ignoredCreateMessageRequest -> {
                       interactions.incrementAndGet();
+
                       return McpSchema.CreateMessageResult.builder(
                               McpSchema.Role.ASSISTANT, "Not requested", "fixture-model")
                           .build();
@@ -322,8 +399,9 @@ class McpInteractionsExampleTest {
                 .capabilities(
                     McpSchema.ClientCapabilities.builder().elicitation(true, false).build())
                 .elicitation(
-                    ignored7 -> {
+                    ignoredElicitFormRequest -> {
                       interactions.incrementAndGet();
+
                       return McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.CANCEL)
                           .build();
                     });
@@ -337,6 +415,7 @@ class McpInteractionsExampleTest {
           var result =
               client.callTool(
                   McpSchema.CallToolRequest.builder("prepare-summary").arguments(Map.of()).build());
+
           assertEquals(true, result.isError());
           assertEquals(
               "Client must support sampling and form elicitation",
@@ -355,31 +434,15 @@ class McpInteractionsExampleTest {
 
     try (var test = TestServer.start(McpInteractionsExample.application());
         var client =
-            client(test)
-                .capabilities(
-                    McpSchema.ClientCapabilities.builder()
-                        .sampling()
-                        .elicitation(true, false)
-                        .build())
-                .elicitation(
-                    ignored8 ->
-                        McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT)
-                            .content(Map.of("audience", "root"))
-                            .build())
-                .sampling(
-                    ignored9 -> {
-                      samples.incrementAndGet();
-                      return McpSchema.CreateMessageResult.builder(
-                              McpSchema.Role.ASSISTANT, "Not requested", "fixture-model")
-                          .build();
-                    })
-                .build()) {
+            openClientForRejectsAnAcceptedAudienceOutsideTheFormWithoutRequestingSampling(
+                test, samples)) {
       client.initialize();
 
       try {
         var result =
             client.callTool(
                 McpSchema.CallToolRequest.builder("prepare-summary").arguments(Map.of()).build());
+
         assertEquals(true, result.isError());
         assertEquals(
             "Client returned an invalid audience",
@@ -391,34 +454,47 @@ class McpInteractionsExampleTest {
     }
   }
 
+  private McpSyncClient
+      openClientForRejectsAnAcceptedAudienceOutsideTheFormWithoutRequestingSampling(
+          TestServer test, AtomicInteger samples) {
+    return clientPropertiesForRejectsAnAcceptedAudienceOutsideTheFormWithoutRequestingSampling(
+            test, samples)
+        .build();
+  }
+
+  private SyncSpec
+      clientPropertiesForRejectsAnAcceptedAudienceOutsideTheFormWithoutRequestingSampling(
+          TestServer test, AtomicInteger samples) {
+    return client(test)
+        .capabilities(
+            McpSchema.ClientCapabilities.builder().sampling().elicitation(true, false).build())
+        .elicitation(
+            ignoredElicitFormRequest ->
+                McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT)
+                    .content(Map.of("audience", "root"))
+                    .build())
+        .sampling(
+            ignoredCreateMessageRequest -> {
+              samples.incrementAndGet();
+
+              return McpSchema.CreateMessageResult.builder(
+                      McpSchema.Role.ASSISTANT, "Not requested", "fixture-model")
+                  .build();
+            });
+  }
+
   @Test
   void rejectsABlankClientGeneratedSummary() throws Exception {
 
     try (var test = TestServer.start(McpInteractionsExample.application());
-        var client =
-            client(test)
-                .capabilities(
-                    McpSchema.ClientCapabilities.builder()
-                        .sampling()
-                        .elicitation(true, false)
-                        .build())
-                .elicitation(
-                    ignored10 ->
-                        McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT)
-                            .content(Map.of("audience", "operators"))
-                            .build())
-                .sampling(
-                    ignored11 ->
-                        McpSchema.CreateMessageResult.builder(
-                                McpSchema.Role.ASSISTANT, " ", "fixture-model")
-                            .build())
-                .build()) {
+        var client = openClientForRejectsABlankClientGeneratedSummary(test)) {
       client.initialize();
 
       try {
         var result =
             client.callTool(
                 McpSchema.CallToolRequest.builder("prepare-summary").arguments(Map.of()).build());
+
         assertEquals(true, result.isError());
         assertEquals(
             "Client returned no text summary",
@@ -429,16 +505,39 @@ class McpInteractionsExampleTest {
     }
   }
 
+  private McpSyncClient openClientForRejectsABlankClientGeneratedSummary(TestServer test) {
+    return clientPropertiesForRejectsABlankClientGeneratedSummary(test).build();
+  }
+
+  private SyncSpec clientPropertiesForRejectsABlankClientGeneratedSummary(TestServer test) {
+    return client(test)
+        .capabilities(
+            McpSchema.ClientCapabilities.builder().sampling().elicitation(true, false).build())
+        .elicitation(
+            ignoredElicitFormRequest ->
+                McpSchema.ElicitResult.builder(McpSchema.ElicitResult.Action.ACCEPT)
+                    .content(Map.of("audience", "operators"))
+                    .build())
+        .sampling(
+            ignoredCreateMessageRequest ->
+                McpSchema.CreateMessageResult.builder(
+                        McpSchema.Role.ASSISTANT, " ", "fixture-model")
+                    .build());
+  }
+
   @Test
   void invalidatesAnExplicitlyDeletedSessionWithoutStoppingAnotherSession() throws Exception {
 
     try (var test = TestServer.start(McpInteractionsExample.application())) {
       var first = message(test, "", INITIALIZE);
       var second = message(test, "", INITIALIZE);
+
       assertEquals(200, first.statusCode());
       assertEquals(200, second.statusCode());
+
       var firstSession = first.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var secondSession = second.headers().firstValue("Mcp-Session-Id").orElseThrow();
+
       assertEquals(
           200,
           test.send(
@@ -449,7 +548,9 @@ class McpInteractionsExampleTest {
                           .header("Mcp-Session-Id", firstSession)
                           .header("MCP-Protocol-Version", "2025-11-25"))
               .statusCode());
+
       var ping = "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}";
+
       assertEquals(404, message(test, firstSession, ping).statusCode());
       assertEquals(200, message(test, secondSession, ping).statusCode());
     }
@@ -462,22 +563,21 @@ class McpInteractionsExampleTest {
     try (var readers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {
       var initialized = message(test, "", INITIALIZE);
+
       assertEquals(200, initialized.statusCode());
+
       var session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var listening =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .header("Mcp-Session-Id", session)
-                      .header("MCP-Protocol-Version", "2025-11-25")
-                      .header("Accept", "text/event-stream"),
-              HttpResponse.BodyHandlers.ofInputStream());
+          sendListeningRequestForEndsAnAttachedStreamWhenTheApplicationClosesBeforeItsHttpClient(
+              test, session);
+
       assertEquals(200, listening.statusCode());
 
       try (var input = listening.body()) {
         var ended = readers.submit(input::readAllBytes);
+
         assertThrows(TimeoutException.class, () -> ended.get(200, TimeUnit.MILLISECONDS));
+
         app.close();
 
         try {
@@ -489,6 +589,27 @@ class McpInteractionsExampleTest {
     }
   }
 
+  private HttpResponse<InputStream>
+      sendListeningRequestForEndsAnAttachedStreamWhenTheApplicationClosesBeforeItsHttpClient(
+          TestServer test, String session) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .header("Mcp-Session-Id", session)
+                .header("MCP-Protocol-Version", "2025-11-25")
+                .header("Accept", "text/event-stream"),
+        HttpResponse.BodyHandlers.ofInputStream());
+  }
+
+  private static String initializationRequest() {
+    return """
+      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "protocolVersion":"2025-11-25","capabilities":{},
+        "clientInfo":{"name":"interactions-lifecycle","version":"1.0"}}}
+      """;
+  }
+
   @Test
   void validatesHttpUpdatesBeforeChangingTheResource() throws Exception {
 
@@ -498,6 +619,7 @@ class McpInteractionsExampleTest {
 
       try {
         var accepted = "é".repeat(80);
+
         assertEquals(
             204,
             test.send(
@@ -507,6 +629,7 @@ class McpInteractionsExampleTest {
                             .path("/status")
                             .body(("  " + accepted + "  ").getBytes(StandardCharsets.UTF_8)))
                 .statusCode());
+
         for (var invalid : List.of("", " ", "one\ntwo", "x".repeat(81))) {
           assertEquals(
               400,
@@ -517,9 +640,11 @@ class McpInteractionsExampleTest {
                               .path("/status")
                               .body(invalid.getBytes(StandardCharsets.UTF_8)))
                   .statusCode());
+
           var value =
               client.readResource(
                   McpSchema.ReadResourceRequest.builder("status://current").build());
+
           assertEquals(
               accepted,
               assertInstanceOf(McpSchema.TextResourceContents.class, value.contents().getFirst())

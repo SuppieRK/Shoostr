@@ -19,8 +19,10 @@ class BufferedRequestBenchmarkTest {
     benchmark.length = length;
     benchmark.headers = headers;
     benchmark.setup();
+
     var expected = new byte[size];
     Arrays.fill(expected, (byte) 0x5A);
+
     assertArrayEquals(expected, benchmark.bodyBytes());
   }
 
@@ -35,6 +37,7 @@ class BufferedRequestBenchmarkTest {
     benchmark.charset = charset;
     benchmark.content = content;
     benchmark.setup();
+
     assertEquals(expected, benchmark.bodyText());
   }
 
@@ -51,6 +54,7 @@ class BufferedRequestBenchmarkTest {
                                   ? 1
                                   : 2;
                           String unit = "ascii".equals(content) ? "Z" : "é";
+
                           return Stream.of(0, 1024, 16384, 1048576)
                               .flatMap(
                                   size ->

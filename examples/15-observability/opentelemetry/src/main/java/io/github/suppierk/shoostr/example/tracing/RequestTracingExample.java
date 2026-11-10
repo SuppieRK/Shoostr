@@ -35,8 +35,10 @@ public final class RequestTracingExample {
   public static Shoostr application(
       OpenTelemetry telemetry, ExecutorService workers, Options options) {
     Objects.requireNonNull(workers);
+
     var tracing = new OpenTelemetryTracing(telemetry);
     var tracer = telemetry.getTracer("example.items");
+
     return new Shoostr(options)
         .routes(
             routes ->
@@ -53,7 +55,6 @@ public final class RequestTracingExample {
                           var child = tracer.spanBuilder("load-item").startSpan();
 
                           // Make this child current for the work and end it even when output fails.
-
                           try (var scope = child.makeCurrent()) {
                             response.text("item " + request.pathParam("id").orElseThrow());
                           } finally {

@@ -24,6 +24,7 @@ public final class RouteCatalogExample {
   public static Shoostr application(BooleanSupplier previewAvailable) {
     Objects.requireNonNull(previewAvailable);
     var catalog = new RouteCatalog();
+
     return new Shoostr()
         .withExtension(catalog, defaults -> defaults.summary("List route descriptions"))
         .routes(
@@ -34,7 +35,7 @@ public final class RouteCatalogExample {
                       "/health",
                       (ignored, response) -> response.text("ok"),
                       lifecycle -> lifecycle.withoutExtension(catalog))
-                  .get("/catalog", (ignored2, response) -> response.text(catalog.document()))
+                  .get("/catalog", (ignoredRequest, response) -> response.text(catalog.document()))
                   // Selected children inherit a summary and can override their own copy.
                   .path(
                       "/api",
@@ -45,7 +46,7 @@ public final class RouteCatalogExample {
                                       response.text(request.pathParam("id").orElseThrow()))
                               .get(
                                   "/status",
-                                  (ignored3, response) -> response.text("ready"),
+                                  (ignoredRequest, response) -> response.text("ready"),
                                   lifecycle ->
                                       lifecycle.withExtension(catalog).summary("Check readiness")),
                       lifecycle -> lifecycle.withExtension(catalog).summary("Read an item"))
@@ -55,7 +56,7 @@ public final class RouteCatalogExample {
                       preview ->
                           preview.get(
                               "/preview",
-                              (ignored4, response) -> response.text("preview"),
+                              (ignoredRequest, response) -> response.text("preview"),
                               lifecycle ->
                                   lifecycle.withExtension(catalog).summary("Preview content")));
             });
@@ -88,9 +89,11 @@ public final class RouteCatalogExample {
     @Override
     public Description configure(Lifecycle endpoint, Description inherited) {
       endpoint.beforeRouteHandler(
-          (ignored5, response) -> response.setHeader("X-Route-Catalog", "/catalog"));
+          (ignoredRequest, response) -> response.setHeader("X-Route-Catalog", "/catalog"));
+
       // Copy inherited settings instead of sharing a mutable object with parents or siblings.
       var description = new Description(inherited == null ? "Route" : inherited.summary);
+
       // Read final registration facts after this scope's configuration has been applied.
       endpoint.onRoute(
           info ->
@@ -101,6 +104,7 @@ public final class RouteCatalogExample {
                       + " — "
                       + description.summary
                       + (info.conditional() ? " [conditional]" : "")));
+
       return description;
     }
 

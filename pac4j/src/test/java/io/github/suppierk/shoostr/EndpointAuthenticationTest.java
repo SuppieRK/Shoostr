@@ -24,6 +24,8 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.pac4j.core.context.CallContext;
+import org.pac4j.core.credentials.Credentials;
 import org.pac4j.core.credentials.UsernamePasswordCredentials;
 import org.pac4j.core.profile.CommonProfile;
 import org.pac4j.http.client.direct.DirectBasicAuthClient;
@@ -37,39 +39,20 @@ class EndpointAuthenticationTest {
     var owned = ConcurrentHashMap.<Thread>newKeySet();
     var authenticated = new CompletableFuture<Thread>();
     var authorized = new CompletableFuture<Thread>();
-    var client =
-        new DirectBasicAuthClient(
-            (ignored, supplied) -> {
-              authenticated.complete(Thread.currentThread());
-              if (!(supplied instanceof UsernamePasswordCredentials credentials)
-                  || !"alice".equals(credentials.getUsername())
-                  || !"correct".equals(credentials.getPassword())) {
-                return Optional.empty();
-              }
-
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              credentials.setUserProfile(profile);
-              return Optional.of(credentials);
-            });
+    var client = authenticationClient(authenticated);
 
     try (var workers = executor(executorType, owned)) {
       var app = new Shoostr();
 
       try (Closeable appCleanup = app::close) {
         var auth =
-            new Pac4j(
-                client,
-                "Basic",
-                (ignored2, ignored3, ignored4) -> {
-                  authorized.complete(Thread.currentThread());
-                  return false;
-                });
+            createAuthForRejectsSelectedRequestForInvalidCredentialsOrAuthorization(
+                client, authorized);
         app.routes()
             .get(
                 "/me",
                 workers,
-                (ignored5, response) -> {
+                (ignoredRequest, response) -> {
                   invoked.set(true);
                   response.text("wrong");
                 },
@@ -84,6 +67,7 @@ class EndpointAuthenticationTest {
                   .statusCode());
           assertFalse(invoked.get());
           assertTrue(owned.contains(authenticated.get(5, TimeUnit.SECONDS)));
+
           if (status == 403) {
             assertSame(authenticated.get(5, TimeUnit.SECONDS), authorized.get(5, TimeUnit.SECONDS));
           } else {
@@ -96,6 +80,18 @@ class EndpointAuthenticationTest {
     }
   }
 
+  private Pac4j createAuthForRejectsSelectedRequestForInvalidCredentialsOrAuthorization(
+      DirectBasicAuthClient client, CompletableFuture<Thread> authorized) {
+    return new Pac4j(
+        client,
+        "Basic",
+        (ignoredWebContext, ignoredSessionStore, ignoredList) -> {
+          authorized.complete(Thread.currentThread());
+
+          return false;
+        });
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"platform", "virtual", "fork-join", "wrapped-fork-join"})
   void authenticatesAndAuthorizesOnTheSelectedExecutor(String executorType) throws Exception {
@@ -103,34 +99,13 @@ class EndpointAuthenticationTest {
     var authenticated = new CompletableFuture<Thread>();
     var authorized = new CompletableFuture<Thread>();
     var handled = new CompletableFuture<Thread>();
-    var client =
-        new DirectBasicAuthClient(
-            (ignored6, supplied) -> {
-              authenticated.complete(Thread.currentThread());
-              if (!(supplied instanceof UsernamePasswordCredentials credentials)
-                  || !"alice".equals(credentials.getUsername())
-                  || !"correct".equals(credentials.getPassword())) {
-                return Optional.empty();
-              }
-
-              var profile = new CommonProfile();
-              profile.setId("alice");
-              credentials.setUserProfile(profile);
-              return Optional.of(credentials);
-            });
+    var client = authenticationClient(authenticated);
 
     try (var workers = executor(executorType, owned)) {
       var app = new Shoostr();
 
       try (Closeable appCleanup1 = app::close) {
-        var auth =
-            new Pac4j(
-                client,
-                "Basic",
-                (ignored7, ignored8, ignored9) -> {
-                  authorized.complete(Thread.currentThread());
-                  return true;
-                });
+        var auth = createAuthForAuthenticatesAndAuthorizesOnTheSelectedExecutor(client, authorized);
         app.routes()
             .get(
                 "/me",
@@ -147,9 +122,12 @@ class EndpointAuthenticationTest {
                   request ->
                       request.path("/me").header("Authorization", "Basic YWxpY2U6Y29ycmVjdA=="),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("alice", result.body());
+
           var thread = authenticated.get(5, TimeUnit.SECONDS);
+
           assertTrue(owned.contains(thread));
           assertSame(thread, authorized.get(5, TimeUnit.SECONDS));
           assertSame(thread, handled.get(5, TimeUnit.SECONDS));
@@ -160,16 +138,42 @@ class EndpointAuthenticationTest {
     }
   }
 
+  private DirectBasicAuthClient authenticationClient(CompletableFuture<Thread> authenticated) {
+    return new DirectBasicAuthClient(
+        (context, supplied) -> authenticate(authenticated, context, supplied));
+  }
+
+  private Optional<Credentials> authenticate(
+      CompletableFuture<Thread> authenticated, CallContext context, Credentials supplied) {
+    authenticated.complete(Thread.currentThread());
+    if (!(supplied instanceof UsernamePasswordCredentials credentials)
+        || !"alice".equals(credentials.getUsername())
+        || !"correct".equals(credentials.getPassword())) {
+      return Optional.empty();
+    }
+
+    var profile = new CommonProfile();
+    profile.setId("alice");
+    credentials.setUserProfile(profile);
+
+    return Optional.of(credentials);
+  }
+
+  private Pac4j createAuthForAuthenticatesAndAuthorizesOnTheSelectedExecutor(
+      DirectBasicAuthClient client, CompletableFuture<Thread> authorized) {
+    return new Pac4j(
+        client,
+        "Basic",
+        (ignoredWebContext, ignoredSessionStore, ignoredList) -> {
+          authorized.complete(Thread.currentThread());
+
+          return true;
+        });
+  }
+
   private static ExecutorService executor(String type, Set<Thread> owned) {
-    ThreadFactory factory =
-        task -> {
-          var thread =
-              "virtual".equals(type)
-                  ? Thread.ofVirtual().unstarted(task)
-                  : Thread.ofPlatform().unstarted(task);
-          owned.add(thread);
-          return thread;
-        };
+    ThreadFactory factory = createFactoryForExecutor(type, owned);
+
     return switch (type) {
       case "platform" -> Executors.newFixedThreadPool(1, factory);
       case "virtual" -> Executors.newThreadPerTaskExecutor(factory);
@@ -179,12 +183,25 @@ class EndpointAuthenticationTest {
     };
   }
 
+  private static ThreadFactory createFactoryForExecutor(String type, Set<Thread> owned) {
+    return task -> {
+      var thread =
+          "virtual".equals(type)
+              ? Thread.ofVirtual().unstarted(task)
+              : Thread.ofPlatform().unstarted(task);
+      owned.add(thread);
+
+      return thread;
+    };
+  }
+
   private static ForkJoinPool forkJoin(Set<Thread> owned) {
     return new ForkJoinPool(
         1,
         pool -> {
           var worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
           owned.add(worker);
+
           return worker;
         },
         null,

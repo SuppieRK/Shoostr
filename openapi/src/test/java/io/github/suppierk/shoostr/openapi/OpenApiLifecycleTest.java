@@ -37,27 +37,30 @@ class OpenApiLifecycleTest {
             routes -> {
               routes.get(
                   "/endpoint",
-                  (ignored, ignored2) -> called.incrementAndGet(),
-                  e -> retained.set(e.withExtension(docs).summary("Endpoint")));
+                  (ignored, ignoredResponse) -> called.incrementAndGet(),
+                  lifecycle -> retained.set(lifecycle.withExtension(docs).summary("Endpoint")));
               routes.get(
                   "/openapi.json",
                   docs.handler(),
-                  e -> e.withExtension(docs).summary("Own specification"));
+                  lifecycle -> lifecycle.withExtension(docs).summary("Own specification"));
             });
 
         try (var test = TestServer.start(app);
             var clients = Executors.newVirtualThreadPerTaskExecutor()) {
           var original = test.send(request -> request.path("/openapi.json")).body();
           var results = new ArrayList<Future<byte[]>>();
-          for (int i = 0; i < 24; i++) {
+          for (int index = 0; index < 24; index++) {
             results.add(
                 clients.submit(() -> test.send(request -> request.path("/openapi.json")).body()));
           }
           for (var result : results) {
             assertArrayEquals(original, result.get(10, TimeUnit.SECONDS));
           }
+
           assertEquals(0, called.get());
+
           var operation = retained.get();
+
           assertThrows(IllegalStateException.class, () -> operation.summary("Late mutation"));
         }
       }
@@ -92,14 +95,16 @@ class OpenApiLifecycleTest {
                 routes ->
                     routes.get(
                         "/broken",
-                        (ignored3, ignored4) -> {},
-                        e ->
-                            e.withExtension(docs)
+                        (ignoredRequest, ignoredResponse) -> {},
+                        lifecycle ->
+                            lifecycle
+                                .withExtension(docs)
                                 .response(
                                     200,
                                     "Broken",
                                     MediaType.APPLICATION_JSON,
                                     new JsonSchema().$ref("#/components/schemas/Missing"))));
+
         assertThrows(IllegalArgumentException.class, app::start);
         assertEquals(0, listening.get());
         assertEquals(1, closed.get());

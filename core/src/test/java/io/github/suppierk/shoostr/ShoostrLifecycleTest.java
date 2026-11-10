@@ -71,6 +71,7 @@ class ShoostrLifecycleTest {
         app.modifyServer(
             server -> {
               var connector = assertInstanceOf(ServerConnector.class, server.getConnectors()[0]);
+
               connector.setPort(0);
               if (loopback) {
                 connector.setHost("127.0.0.1");
@@ -85,20 +86,28 @@ class ShoostrLifecycleTest {
             assertInstanceOf(ServerSocketChannel.class, listener.get().getTransport())
                 .socket()
                 .getInetAddress();
+
         assertEquals(loopback, address.isLoopbackAddress());
         assertEquals(!loopback, address.isAnyLocalAddress());
 
         // TestServer intentionally replaces the binding, so this transport check owns its client.
         var reply =
-            client.send(
-                HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
-                    .timeout(Duration.ofSeconds(3))
-                    .build(),
-                HttpResponse.BodyHandlers.ofString());
+            sendReplyRequestForBindsWildcardByDefaultAndPreservesExplicitLoopback(client, app);
+
         assertEquals(200, reply.statusCode());
         assertEquals("configured listener", reply.body());
       }
     }
+  }
+
+  private HttpResponse<String>
+      sendReplyRequestForBindsWildcardByDefaultAndPreservesExplicitLoopback(
+          HttpClient client, Shoostr app) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/"))
+            .timeout(Duration.ofSeconds(3))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -120,7 +129,7 @@ class ShoostrLifecycleTest {
         app.routes()
             .get(
                 "/blocked",
-                (ignored2, response) -> {
+                (ignoredRequest, response) -> {
                   entered.countDown();
                   if (!release.await(5, TimeUnit.SECONDS)) {
                     throw new IOException("test timeout");
@@ -131,38 +140,45 @@ class ShoostrLifecycleTest {
         app.routes()
             .get(
                 "/ready",
-                (ignored3, response) ->
+                (ignoredRequest, response) ->
                     response.text(Boolean.toString(Thread.currentThread().isVirtual())));
 
         try (var test =
             TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
-          var blocked =
-              CompletableFuture.supplyAsync(
-                  () -> {
-                    try {
-                      return test.send(
-                          request -> request.path("/blocked").timeout(Duration.ofSeconds(6)),
-                          HttpResponse.BodyHandlers.ofString());
-                    } catch (IOException | InterruptedException failure) {
-                      throw new CompletionException(failure);
-                    }
-                  });
+          var blocked = createBlockedForServesAnotherConnectionWhileAVirtualHandlerIsBlocked(test);
 
           try {
             assertTrue(entered.await(2, TimeUnit.SECONDS));
+
             var ready =
                 test.send(
                     request -> request.path("/ready").timeout(Duration.ofSeconds(2)),
                     HttpResponse.BodyHandlers.ofString());
+
             assertEquals(200, ready.statusCode());
             assertEquals("true", ready.body());
           } finally {
             release.countDown();
+
             assertEquals("true", blocked.get(3, TimeUnit.SECONDS).body());
           }
         }
       }
     }
+  }
+
+  private CompletableFuture<HttpResponse<String>>
+      createBlockedForServesAnotherConnectionWhileAVirtualHandlerIsBlocked(TestServer test) {
+    return CompletableFuture.supplyAsync(
+        () -> {
+          try {
+            return test.send(
+                request -> request.path("/blocked").timeout(Duration.ofSeconds(6)),
+                HttpResponse.BodyHandlers.ofString());
+          } catch (IOException | InterruptedException failure) {
+            throw new CompletionException(failure);
+          }
+        });
   }
 
   @Test
@@ -175,13 +191,14 @@ class ShoostrLifecycleTest {
                       ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup2 = app::close) {
-        app.routes().get("/", (ignored4, response) -> response.text("default listener"));
+        app.routes().get("/", (ignoredRequest, response) -> response.text("default listener"));
 
         try (var test = TestServer.start(app)) {
           var result =
               test.send(
                   request -> request.path("/").timeout(Duration.ofSeconds(3)),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals("default listener", result.body());
           assertTrue(result.headers().firstValue("Server").isEmpty());
@@ -205,6 +222,7 @@ class ShoostrLifecycleTest {
         app.modifyHttpConfiguration(
             configuration -> {
               assertEquals(8192, configuration.getRequestHeaderSize());
+
               configuration.setRequestHeaderSize(16_384);
             });
         app.routes()
@@ -219,6 +237,7 @@ class ShoostrLifecycleTest {
                   request ->
                       request.path("/").timeout(Duration.ofSeconds(3)).header("User-Agent", value),
                   HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, result.statusCode());
           assertEquals(HttpClient.Version.HTTP_1_1, result.version());
           assertEquals(value, result.body());
@@ -243,22 +262,27 @@ class ShoostrLifecycleTest {
         app.modifyHttpConfiguration(
             http -> {
               assertTrue(http.getSendServerVersion());
+
               http.setSendServerVersion(false);
               http.setRequestHeaderSize(512);
             });
         app.modifyServer(
             server -> {
               nativeServer.set(server);
+
               assertFalse(server.isStarted());
               assertEquals(5000, server.getStopTimeout());
+
               server.setStopTimeout(200);
             });
         app.modifyServer(
             server -> {
               assertEquals(200, server.getStopTimeout());
+
               var connector = (ServerConnector) server.getConnectors()[0];
               connector.setIdleTimeout(2345);
               connector.setShutdownIdleTimeout(100);
+
               assertEquals(
                   512,
                   connector
@@ -266,18 +290,21 @@ class ShoostrLifecycleTest {
                       .getHttpConfiguration()
                       .getRequestHeaderSize());
             });
-        app.routes().get("/", (ignored5, res) -> res.text("configured"));
+        app.routes().get("/", (ignoredRequest, routeResponse) -> routeResponse.text("configured"));
 
         try (var test = TestServer.start(app)) {
 
           var response =
               test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals("configured", response.body());
           assertTrue(response.headers().firstValue("Server").isEmpty());
+
           var oversized =
               test.send(
                   request -> request.path("/").header("X-Large", "x".repeat(1024)),
                   HttpResponse.BodyHandlers.discarding());
+
           assertEquals(431, oversized.statusCode());
           assertEquals(2345, nativeServer.get().getConnectors()[0].getIdleTimeout());
         }
@@ -308,8 +335,8 @@ class ShoostrLifecycleTest {
         app.routes()
             .get(
                 "/",
-                (ignored6, res) -> {
-                  var stream = streaming ? res.startStream("text/plain") : null;
+                (ignoredRequest, routeResponse) -> {
+                  var stream = streaming ? routeResponse.startStream("text/plain") : null;
                   if (stream != null) {
                     stream.write("first");
                     stream.flush();
@@ -320,26 +347,33 @@ class ShoostrLifecycleTest {
                   if (stream != null) {
                     stream.write("last");
                   } else {
-                    res.text("complete");
+                    routeResponse.text("complete");
                   }
                 });
         app.start();
         var graceful = nativeServer.get().getDescendant(GracefulHandler.class);
+
         assertNotNull(graceful);
+
         var request =
             HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/")).build();
         var pending = client.sendAsync(request, HttpResponse.BodyHandlers.ofString());
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+
           var drain = graceful.shutdown();
+
           assertFalse(drain.isDone());
           assertEquals(
               503, client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode());
+
           release.countDown();
           var response = pending.get(3, TimeUnit.SECONDS);
+
           assertEquals(200, response.statusCode());
           assertEquals(streaming ? "firstlast" : "complete", response.body());
+
           drain.get(3, TimeUnit.SECONDS);
         } finally {
           release.countDown();
@@ -369,6 +403,7 @@ class ShoostrLifecycleTest {
             server -> {
               assertEquals(
                   1000, ((ServerConnector) server.getConnectors()[0]).getShutdownIdleTimeout());
+
               server.addEventListener(
                   new LifeCycle.Listener() {
                     @Override
@@ -380,8 +415,8 @@ class ShoostrLifecycleTest {
         app.routes()
             .post(
                 "/",
-                (ignored7, res) -> {
-                  var stream = streaming ? res.startStream("text/plain") : null;
+                (ignoredRequest, response) -> {
+                  var stream = streaming ? response.startStream("text/plain") : null;
                   if (stream != null) {
                     stream.write("first");
                     stream.flush();
@@ -392,7 +427,7 @@ class ShoostrLifecycleTest {
                   if (stream != null) {
                     stream.write("last");
                   } else {
-                    res.text("complete");
+                    response.text("complete");
                   }
                 });
         app.start();
@@ -404,25 +439,23 @@ class ShoostrLifecycleTest {
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+
           var closing =
-              CompletableFuture.runAsync(
-                  () -> {
-                    try {
-                      app.close();
-                    } catch (Exception failure) {
-                      throw new CompletionException(failure);
-                    }
-                  });
+              createClosingForAppCloseLetsQuietFiniteAndStreamingHandlersFinishWithinDefaultGrace(
+                  app);
 
           try {
             assertTrue(stopping.await(3, TimeUnit.SECONDS));
+
             await()
                 .during(Duration.ofMillis(1500))
                 .atMost(Duration.ofSeconds(3))
                 .until(() -> !pending.isDone() && !closing.isDone());
             release.countDown();
+
             assertEquals(
                 streaming ? "firstlast" : "complete", pending.get(3, TimeUnit.SECONDS).body());
+
             closing.get(3, TimeUnit.SECONDS);
           } finally {
             release.countDown();
@@ -433,6 +466,19 @@ class ShoostrLifecycleTest {
         }
       }
     }
+  }
+
+  private CompletableFuture<Void>
+      createClosingForAppCloseLetsQuietFiniteAndStreamingHandlersFinishWithinDefaultGrace(
+          Shoostr app) {
+    return CompletableFuture.runAsync(
+        () -> {
+          try {
+            app.close();
+          } catch (Exception failure) {
+            throw new CompletionException(failure);
+          }
+        });
   }
 
   @ParameterizedTest
@@ -462,17 +508,17 @@ class ShoostrLifecycleTest {
         app.routes()
             .post(
                 "/",
-                (ignored8, res) -> {
+                (ignoredRequest, response) -> {
                   entered.countDown();
                   while (release.getCount() != 0) {
                     try {
                       release.await();
-                    } catch (InterruptedException ignored9) {
+                    } catch (InterruptedException ignoredFailure) {
                       interrupted.countDown();
                     }
                   }
 
-                  res.text("late");
+                  response.text("late");
                 });
         app.start();
         var request =
@@ -483,19 +529,13 @@ class ShoostrLifecycleTest {
 
         try {
           assertTrue(entered.await(3, TimeUnit.SECONDS));
+
           var closing =
-              CompletableFuture.runAsync(
-                  () -> {
-                    try {
-                      app.close();
-                    } catch (Exception failure) {
-                      throw new CompletionException(failure);
-                    }
-                  });
+              createClosingForNativeShutdownBudgetsBoundWaitingForHandlersThatIgnoreInterrupts(app);
 
           try {
             var stopFailure =
-                closing.handle((ignored10, failure) -> failure).get(2, TimeUnit.SECONDS);
+                closing.handle((ignoredVoid, failure) -> failure).get(2, TimeUnit.SECONDS);
             if (budget == 0) {
               assertNull(stopFailure);
             } else {
@@ -507,13 +547,26 @@ class ShoostrLifecycleTest {
             assertThrows(ExecutionException.class, () -> pending.get(2, TimeUnit.SECONDS));
           } finally {
             release.countDown();
-            closing.handle((ignored11, failure) -> failure).get(6, TimeUnit.SECONDS);
+            closing.handle((ignoredVoid, failure) -> failure).get(6, TimeUnit.SECONDS);
           }
         } finally {
           release.countDown();
         }
       }
     }
+  }
+
+  private CompletableFuture<Void>
+      createClosingForNativeShutdownBudgetsBoundWaitingForHandlersThatIgnoreInterrupts(
+          Shoostr app) {
+    return CompletableFuture.runAsync(
+        () -> {
+          try {
+            app.close();
+          } catch (Exception failure) {
+            throw new CompletionException(failure);
+          }
+        });
   }
 
   @Test
@@ -531,6 +584,7 @@ class ShoostrLifecycleTest {
         app.modifyServer(
             server -> {
               nativeServer.set(server);
+
               assertDoesNotThrow(app::close);
             });
 
@@ -567,7 +621,7 @@ class ShoostrLifecycleTest {
                   (ExecutorService)
                       VirtualThreads.getVirtualThreadsExecutor(server.getThreadPool()));
             });
-        app.sessions(ignored12 -> assertDoesNotThrow(app::close));
+        app.sessions(ignoredSessionHandler -> assertDoesNotThrow(app::close));
 
         try {
           assertThrows(IllegalStateException.class, app::start);
@@ -628,28 +682,7 @@ class ShoostrLifecycleTest {
   @Test
   void rejectsHandlerReplacementEvenWhenItsEqualsClaimsTheOwnedHandler() throws Exception {
     {
-      var app =
-          new Shoostr()
-              .modifyServer(
-                  server -> {
-                    ((ServerConnector) server.getConnectors()[0]).setPort(0);
-                    var graceful = server.getDescendant(GracefulHandler.class);
-                    var owned = assertInstanceOf(Handler.class, graceful.getHandler());
-                    graceful.setHandler(
-                        new Handler.Wrapper(owned) {
-                          @Override
-                          public boolean equals(Object other) {
-                            return owned.equals(other)
-                                || (other instanceof Handler.Wrapper wrapper
-                                    && owned.equals(wrapper.getHandler()));
-                          }
-
-                          @Override
-                          public int hashCode() {
-                            return owned.hashCode();
-                          }
-                        });
-                  });
+      var app = createAppForRejectsHandlerReplacementEvenWhenItsEqualsClaimsTheOwnedHandler();
 
       try (Closeable appCleanup11 = app::close) {
         var failure = assertThrows(IllegalStateException.class, app::start);
@@ -658,6 +691,32 @@ class ShoostrLifecycleTest {
             failure.getMessage());
       }
     }
+  }
+
+  private Shoostr createAppForRejectsHandlerReplacementEvenWhenItsEqualsClaimsTheOwnedHandler() {
+    return new Shoostr()
+        .modifyServer(
+            server -> {
+              ((ServerConnector) server.getConnectors()[0]).setPort(0);
+              var graceful = server.getDescendant(GracefulHandler.class);
+
+              var owned = assertInstanceOf(Handler.class, graceful.getHandler());
+
+              graceful.setHandler(
+                  new Handler.Wrapper(owned) {
+                    @Override
+                    public boolean equals(Object other) {
+                      return owned.equals(other)
+                          || (other instanceof Handler.Wrapper wrapper
+                              && owned.equals(wrapper.getHandler()));
+                    }
+
+                    @Override
+                    public int hashCode() {
+                      return owned.hashCode();
+                    }
+                  });
+            });
   }
 
   @Test
@@ -676,6 +735,7 @@ class ShoostrLifecycleTest {
           var client = HttpClient.newHttpClient()) {
         assertThrows(NullPointerException.class, () -> app.modifyServer(null));
         assertThrows(NullPointerException.class, () -> app.modifyHttpConfiguration(null));
+
         app.modifyServer(
             server -> {
               var http =
@@ -690,14 +750,18 @@ class ShoostrLifecycleTest {
               additional.set(extra);
               server.setHandler(new Handler.Wrapper(server.getHandler()));
             });
-        app.routes().get("/", (ignored13, res) -> res.text("shared"));
+        app.routes().get("/", (ignoredRequest, response) -> response.text("shared"));
         app.start();
-        assertThrows(IllegalStateException.class, () -> app.modifyServer(ignored14 -> {}));
+
+        assertThrows(IllegalStateException.class, () -> app.modifyServer(ignoredServer -> {}));
         assertThrows(
-            IllegalStateException.class, () -> app.modifyHttpConfiguration(ignored15 -> {}));
+            IllegalStateException.class,
+            () -> app.modifyHttpConfiguration(ignoredHttpConfiguration -> {}));
+
         for (int port : new int[] {app.port(), additional.get().getLocalPort()}) {
           var request =
               HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/")).build();
+
           assertEquals("shared", client.send(request, HttpResponse.BodyHandlers.ofString()).body());
         }
       }
@@ -734,12 +798,12 @@ class ShoostrLifecycleTest {
             });
         if (http) {
           app.modifyHttpConfiguration(
-              ignored16 -> {
+              ignoredHttpConfiguration -> {
                 throw failure;
               });
         } else {
           app.modifyServer(
-              ignored17 -> {
+              ignoredServer -> {
                 throw failure;
               });
         }
@@ -747,9 +811,13 @@ class ShoostrLifecycleTest {
         assertSame(failure, assertThrows(IllegalArgumentException.class, app::start));
         assertThrows(IllegalStateException.class, app::start);
         assertThrows(IllegalStateException.class, app::port);
+
         var routes = app.routes();
+
         assertThrows(
-            IllegalStateException.class, () -> routes.get("/", (ignored18, ignored19) -> {}));
+            IllegalStateException.class,
+            () -> routes.get("/", (ignoredRequest, ignoredResponse) -> {}));
+
         if (!http) {
           assertTrue(nativeServer.get().isStopped());
           assertTrue(ownedExecutor.get().isShutdown());
@@ -770,23 +838,30 @@ class ShoostrLifecycleTest {
 
       try (Closeable appCleanup14 = app::close;
           var client = HttpClient.newHttpClient()) {
-        app.routes().get("/", (ignored20, res) -> res.text("complete"));
+        app.routes().get("/", (ignoredRequest, response) -> response.text("complete"));
         app.start();
         var request =
             HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/")).build();
+
         assertEquals("complete", client.send(request, HttpResponse.BodyHandlers.ofString()).body());
+
         var closing =
-            CompletableFuture.runAsync(
-                () -> {
-                  try {
-                    app.close();
-                  } catch (Exception failure) {
-                    throw new CompletionException(failure);
-                  }
-                });
+            createClosingForDefaultShutdownClosesIdleKeepAliveBeforeTheGraceBudgetExpires(app);
         closing.get(3, TimeUnit.SECONDS);
       }
     }
+  }
+
+  private CompletableFuture<Void>
+      createClosingForDefaultShutdownClosesIdleKeepAliveBeforeTheGraceBudgetExpires(Shoostr app) {
+    return CompletableFuture.runAsync(
+        () -> {
+          try {
+            app.close();
+          } catch (Exception failure) {
+            throw new CompletionException(failure);
+          }
+        });
   }
 
   @Test
@@ -794,20 +869,29 @@ class ShoostrLifecycleTest {
     var app = new Shoostr();
     var scope = new AtomicReference<Routes>();
     app.routes().path("/api", scope::set);
+
     assertFalse(
         List.of(Shoostr.class, Routes.class, TypedRoutes.class).stream()
             .anyMatch(AutoCloseable.class::isAssignableFrom));
+
     app.close();
     app.close();
+
     assertThrows(IllegalStateException.class, app::start);
     assertThrows(IllegalStateException.class, app::port);
-    assertThrows(IllegalStateException.class, () -> app.modifyServer(ignored21 -> {}));
-    assertThrows(IllegalStateException.class, () -> app.modifyHttpConfiguration(ignored22 -> {}));
+    assertThrows(IllegalStateException.class, () -> app.modifyServer(ignoredServer -> {}));
+    assertThrows(
+        IllegalStateException.class,
+        () -> app.modifyHttpConfiguration(ignoredHttpConfiguration -> {}));
+
     var routes = app.routes();
     var closedScope = scope.get();
+
     assertThrows(
-        IllegalStateException.class, () -> routes.get("/later", (ignored23, ignored24) -> {}));
-    assertThrows(IllegalStateException.class, () -> closedScope.path("/later", ignored25 -> {}));
+        IllegalStateException.class,
+        () -> routes.get("/later", (ignoredRequest, ignoredResponse) -> {}));
+    assertThrows(
+        IllegalStateException.class, () -> closedScope.path("/later", ignoredRoutes -> {}));
   }
 
   @Test
@@ -823,10 +907,14 @@ class ShoostrLifecycleTest {
 
       try (Closeable appCleanup17 = app::close) {
         assertSame(app, app.start());
+
         port = app.port();
+
         assertThrows(IllegalStateException.class, app::start);
+
         app.close();
         app.close();
+
         assertThrows(IllegalStateException.class, app::port);
         assertThrows(IllegalStateException.class, app::start);
       }
@@ -834,38 +922,49 @@ class ShoostrLifecycleTest {
 
     {
       var replacement =
-          new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                          .setPort(port));
+          createReplacementForExplicitCloseReleasesTheListenerAndPreventsRestart(port);
 
       try (Closeable replacementCleanup = replacement::close) {
         replacement.start();
+
         assertEquals(port, replacement.port());
       }
     }
   }
 
+  private Shoostr createReplacementForExplicitCloseReleasesTheListenerAndPreventsRestart(int port) {
+    return new Shoostr()
+        .modifyServer(
+            nativeServerConfiguration ->
+                ((ServerConnector) nativeServerConfiguration.getConnectors()[0]).setPort(port));
+  }
+
   @Test
   void failedStartupCleansUpAndCannotBeRetried() throws Exception {
     try (var occupied = new ServerSocket(0, 1, InetAddress.getAllByName("127.0.0.1")[0])) {
-      var app =
-          new Shoostr()
-              .modifyServer(
-                  nativeServerConfiguration ->
-                      ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
-                          .setPort(occupied.getLocalPort()));
+      var app = createAppForFailedStartupCleansUpAndCannotBeRetried(occupied);
 
       try (Closeable appCleanup18 = app::close) {
         assertThrows(Exception.class, app::start);
+
         app.close();
+
         assertThrows(IllegalStateException.class, app::port);
         assertThrows(IllegalStateException.class, app::start);
+
         var routes = app.routes();
-        assertThrows(IllegalStateException.class, () -> routes.path("/late", ignored34 -> {}));
+
+        assertThrows(IllegalStateException.class, () -> routes.path("/late", ignoredRoutes -> {}));
       }
     }
+  }
+
+  private Shoostr createAppForFailedStartupCleansUpAndCannotBeRetried(ServerSocket occupied) {
+    return new Shoostr()
+        .modifyServer(
+            nativeServerConfiguration ->
+                ((ServerConnector) nativeServerConfiguration.getConnectors()[0])
+                    .setPort(occupied.getLocalPort()));
   }
 
   @Test
@@ -883,9 +982,11 @@ class ShoostrLifecycleTest {
                 "/api",
                 routes -> {
                   assertThrows(IllegalStateException.class, app::start);
-                  routes.get((ignored35, res) -> res.text("ready"));
+
+                  routes.get((ignoredRequest, response) -> response.text("ready"));
                 });
         app.start();
+
         assertTrue(app.port() > 0);
       }
     }
@@ -908,17 +1009,12 @@ class ShoostrLifecycleTest {
         app.start();
         var failure = new AtomicReference<Throwable>();
         Runnable close =
-            () -> {
-              try {
-                app.close();
-              } catch (Throwable thrown) {
-                failure.set(thrown);
-              }
-            };
+            createCloseForConcurrentCloseCallsCompleteWithoutDuplicatingShutdown(app, failure);
         var first = Thread.startVirtualThread(close);
         var second = Thread.startVirtualThread(close);
         first.join(5000);
         second.join(5000);
+
         assertFalse(first.isAlive());
         assertFalse(second.isAlive());
         assertNull(failure.get());
@@ -928,6 +1024,17 @@ class ShoostrLifecycleTest {
     }
   }
 
+  private Runnable createCloseForConcurrentCloseCallsCompleteWithoutDuplicatingShutdown(
+      Shoostr app, AtomicReference<Throwable> failure) throws IOException {
+    return () -> {
+      try {
+        app.close();
+      } catch (Throwable thrown) {
+        failure.set(thrown);
+      }
+    };
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"started", "unstarted", "explicit-close"})
   void jvmShutdownCompletesApplicationCleanupExactlyOnce(String lifecycle) throws Exception {
@@ -935,16 +1042,8 @@ class ShoostrLifecycleTest {
     var log = temporary.resolve("child.log");
     var java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
     var process =
-        new ProcessBuilder(
-                java,
-                "-cp",
-                System.getProperty("java.class.path"),
-                ShutdownFixture.class.getName(),
-                marker.toString(),
-                lifecycle)
-            .redirectErrorStream(true)
-            .redirectOutput(log.toFile())
-            .start();
+        createProcessForJvmShutdownCompletesApplicationCleanupExactlyOnce(
+            java, marker, lifecycle, log);
 
     try {
       assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Shutdown child JVM did not exit");
@@ -956,6 +1055,20 @@ class ShoostrLifecycleTest {
         process.waitFor(5, TimeUnit.SECONDS);
       }
     }
+  }
+
+  private Process createProcessForJvmShutdownCompletesApplicationCleanupExactlyOnce(
+      String java, Path marker, String lifecycle, Path log) throws IOException {
+    return new ProcessBuilder(
+            java,
+            "-cp",
+            System.getProperty("java.class.path"),
+            ShutdownFixture.class.getName(),
+            marker.toString(),
+            lifecycle)
+        .redirectErrorStream(true)
+        .redirectOutput(log.toFile())
+        .start();
   }
 
   public static final class ShutdownFixture {

@@ -106,6 +106,7 @@ public final class ConstantComparisonCheck extends AbstractCheck {
       }
 
       String name = method.getLastChild().getText();
+
       return ("value".equals(name) || "name".equals(name) || "toString".equals(name))
           && isConstant(method.getFirstChild());
     }

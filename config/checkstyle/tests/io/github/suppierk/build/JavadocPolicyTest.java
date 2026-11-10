@@ -9,11 +9,13 @@ import java.nio.file.Path;
 import java.util.List;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.xpath.XPathConstants;
+import javax.xml.xpath.XPathExpressionException;
 import javax.xml.xpath.XPathFactory;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
@@ -132,15 +134,10 @@ class JavadocPolicyTest {
     factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
     var document =
         factory.newDocumentBuilder().parse(Path.of("config/checkstyle/java.xml").toFile());
-    var rules =
-        (NodeList)
-            XPathFactory.newInstance()
-                .newXPath()
-                .evaluate(
-                    "/module/module/module[@name='MissingJavadocType' or @name='MissingJavadocMethod' or @name='JavadocMethod']",
-                    document,
-                    XPathConstants.NODESET);
+    var rules = createRulesForViolations(document);
+
     assertEquals(3, rules.getLength(), "All documentation rules must remain configured");
+
     var checker = new Checker();
     var file = Files.createTempFile(temporaryDirectory, "javadoc-policy-", ".java");
 
@@ -148,12 +145,12 @@ class JavadocPolicyTest {
       Files.writeString(file, source);
       var configuration = new DefaultConfiguration("Checker");
       var walker = new DefaultConfiguration("TreeWalker");
-      for (int i = 0; i < rules.getLength(); i++) {
-        var element = (Element) rules.item(i);
+      for (int ruleIndex = 0; ruleIndex < rules.getLength(); ruleIndex++) {
+        var element = (Element) rules.item(ruleIndex);
         var rule = new DefaultConfiguration(element.getAttribute("name"));
         var properties = element.getElementsByTagName("property");
-        for (int j = 0; j < properties.getLength(); j++) {
-          var property = (Element) properties.item(j);
+        for (int propertyIndex = 0; propertyIndex < properties.getLength(); propertyIndex++) {
+          var property = (Element) properties.item(propertyIndex);
           rule.addProperty(property.getAttribute("name"), property.getAttribute("value"));
         }
         walker.addChild(rule);
@@ -161,6 +158,7 @@ class JavadocPolicyTest {
       configuration.addChild(walker);
       checker.setModuleClassLoader(JavadocPolicyTest.class.getClassLoader());
       checker.configure(configuration);
+
       return checker.process(List.of(file.toFile()));
     } finally {
       checker.destroy();
@@ -168,20 +166,25 @@ class JavadocPolicyTest {
     }
   }
 
+  private NodeList createRulesForViolations(Document document) throws XPathExpressionException {
+    return (NodeList)
+        XPathFactory.newInstance()
+            .newXPath()
+            .evaluate(
+                "/module/module/module[@name='MissingJavadocType' or @name='MissingJavadocMethod' or @name='JavadocMethod']",
+                document,
+                XPathConstants.NODESET);
+  }
+
   private int testViolations(String source) throws Exception {
     var factory = DocumentBuilderFactory.newInstance();
     factory.setFeature("http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
     var document =
         factory.newDocumentBuilder().parse(Path.of("config/checkstyle/java-test.xml").toFile());
-    var rules =
-        (NodeList)
-            XPathFactory.newInstance()
-                .newXPath()
-                .evaluate(
-                    "/module/module/module[@name='io.github.suppierk.build.NoJavadocCheck']",
-                    document,
-                    XPathConstants.NODESET);
+    var rules = createRulesForTestViolations(document);
+
     assertEquals(1, rules.getLength(), "Test Javadoc rule must remain configured");
+
     var checker = new Checker();
     var file = Files.createTempFile(temporaryDirectory, "test-javadoc-policy-", ".java");
 
@@ -192,18 +195,29 @@ class JavadocPolicyTest {
       var element = (Element) rules.item(0);
       var rule = new DefaultConfiguration(element.getAttribute("name"));
       var properties = element.getElementsByTagName("property");
-      for (int index = 0; index < properties.getLength(); index++) {
-        var property = (Element) properties.item(index);
+      for (int propertyIndex = 0; propertyIndex < properties.getLength(); propertyIndex++) {
+        var property = (Element) properties.item(propertyIndex);
         rule.addProperty(property.getAttribute("name"), property.getAttribute("value"));
       }
       walker.addChild(rule);
       configuration.addChild(walker);
       checker.setModuleClassLoader(JavadocPolicyTest.class.getClassLoader());
       checker.configure(configuration);
+
       return checker.process(List.of(file.toFile()));
     } finally {
       checker.destroy();
       Files.deleteIfExists(file);
     }
+  }
+
+  private NodeList createRulesForTestViolations(Document document) throws XPathExpressionException {
+    return (NodeList)
+        XPathFactory.newInstance()
+            .newXPath()
+            .evaluate(
+                "/module/module/module[@name='io.github.suppierk.build.NoJavadocCheck']",
+                document,
+                XPathConstants.NODESET);
   }
 }

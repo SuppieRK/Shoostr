@@ -45,7 +45,9 @@ public final class OpenApiOperation {
   public OpenApiOperation summary(String value) {
     synchronized (owner) {
       owner.requireMutable();
+
       operation.setSummary(OpenApi.text(value));
+
       return this;
     }
   }
@@ -59,7 +61,9 @@ public final class OpenApiOperation {
   public OpenApiOperation description(String value) {
     synchronized (owner) {
       owner.requireMutable();
+
       operation.setDescription(OpenApi.text(value));
+
       return this;
     }
   }
@@ -73,7 +77,9 @@ public final class OpenApiOperation {
   public OpenApiOperation operationId(String value) {
     synchronized (owner) {
       owner.requireMutable();
+
       operation.setOperationId(OpenApi.text(value));
+
       return this;
     }
   }
@@ -87,6 +93,7 @@ public final class OpenApiOperation {
   public OpenApiOperation tag(String value) {
     synchronized (owner) {
       owner.requireMutable();
+
       var tag = OpenApi.text(value);
       if (operation.getTags() == null) {
         operation.setTags(new ArrayList<>());
@@ -206,12 +213,14 @@ public final class OpenApiOperation {
   public OpenApiOperation requestBody(RequestBody body) {
     synchronized (owner) {
       owner.requireMutable();
+
       Objects.requireNonNull(body);
       if (body.get$ref() == null && (body.getContent() == null || body.getContent().isEmpty())) {
         throw new IllegalArgumentException("OpenAPI request bodies require content");
       }
 
       operation.setRequestBody(OpenApi.copy(body, RequestBody.class));
+
       return this;
     }
   }
@@ -226,6 +235,7 @@ public final class OpenApiOperation {
   public OpenApiOperation parameter(Parameter value) {
     synchronized (owner) {
       owner.requireMutable();
+
       var parameter = OpenApi.copy(value, Parameter.class);
       if (parameter.getName() == null
           || parameter.getName().isBlank()
@@ -251,6 +261,7 @@ public final class OpenApiOperation {
                   parameter.getName().equals(existing.getName())
                       && parameter.getIn().equals(existing.getIn()));
       operation.addParametersItem(parameter);
+
       return this;
     }
   }
@@ -273,6 +284,7 @@ public final class OpenApiOperation {
     }
 
     requirement.put(OpenApi.componentName(name), values);
+
     return security(requirement);
   }
 
@@ -286,8 +298,10 @@ public final class OpenApiOperation {
   public OpenApiOperation security(SecurityRequirement requirement) {
     synchronized (owner) {
       owner.requireMutable();
+
       operation.setSecurity(
           new ArrayList<>(List.of(OpenApi.copy(requirement, SecurityRequirement.class))));
+
       return this;
     }
   }
@@ -300,7 +314,9 @@ public final class OpenApiOperation {
   public OpenApiOperation anonymous() {
     synchronized (owner) {
       owner.requireMutable();
+
       operation.setSecurity(new ArrayList<>());
+
       return this;
     }
   }
@@ -397,6 +413,7 @@ public final class OpenApiOperation {
   public OpenApiOperation response(int status, ApiResponse value) {
     synchronized (owner) {
       owner.requireMutable();
+
       if (status < 100 || status > 599) {
         throw new IllegalArgumentException("Invalid documented HTTP status");
       }
@@ -411,6 +428,7 @@ public final class OpenApiOperation {
       }
 
       operation.getResponses().addApiResponse(Integer.toString(status), response);
+
       return this;
     }
   }
@@ -423,7 +441,9 @@ public final class OpenApiOperation {
   public OpenApiOperation hidden() {
     synchronized (owner) {
       owner.requireMutable();
+
       hidden = true;
+
       return this;
     }
   }

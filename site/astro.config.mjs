@@ -3,20 +3,22 @@ import starlight from '@astrojs/starlight';
 import { fileURLToPath } from 'node:url';
 import * as pagefind from 'pagefind';
 
-function checked(response) {
-  if (response.errors.length) throw new Error(response.errors.join('\n'));
-  return response;
-}
-
 async function buildSearchIndex({ dir }) {
   try {
     const { index } = checked(await pagefind.createIndex({ includeCharacters: '/+' }));
     if (!index) throw new Error('Pagefind did not create a search index.');
+
     checked(await index.addDirectory({ path: fileURLToPath(dir) }));
+
     checked(await index.writeFiles({ outputPath: fileURLToPath(new URL('./pagefind/', dir)) }));
   } finally {
     await pagefind.close();
   }
+}
+
+function checked(response) {
+  if (response.errors.length) throw new Error(response.errors.join('\n'));
+  return response;
 }
 
 export default defineConfig({

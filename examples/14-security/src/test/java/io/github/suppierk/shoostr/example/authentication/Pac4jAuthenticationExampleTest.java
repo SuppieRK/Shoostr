@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
@@ -24,6 +25,7 @@ class Pac4jAuthenticationExampleTest {
               request ->
                   request.path("/accounts/me").header("Authorization", basic("reader:local-only")),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(200, response.statusCode());
       assertEquals("reader", response.body());
     }
@@ -36,16 +38,22 @@ class Pac4jAuthenticationExampleTest {
 
     try (var test = TestServer.start(Pac4jAuthenticationExample.application())) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/accounts/admin")
-                      .header("Authorization", basic(user + ":local-only")),
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForRequiresTheAdministratorRoleAfterSuccessfulCredentialValidation(
+              test, user);
+
       assertEquals(status, response.statusCode());
       assertEquals(body, response.body());
       assertFalse(response.headers().firstValue("WWW-Authenticate").isPresent());
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForRequiresTheAdministratorRoleAfterSuccessfulCredentialValidation(
+          TestServer test, String user) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/accounts/admin").header("Authorization", basic(user + ":local-only")),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -53,6 +61,7 @@ class Pac4jAuthenticationExampleTest {
 
     try (var test = TestServer.start(Pac4jAuthenticationExample.application())) {
       var response = test.send(request -> request.path("/accounts/me"));
+
       assertEquals(401, response.statusCode());
       assertEquals(
           "Basic realm=\"accounts\", charset=\"UTF-8\"",
@@ -68,6 +77,7 @@ class Pac4jAuthenticationExampleTest {
       var response =
           test.send(
               request -> request.path("/accounts/me").header("Authorization", basic(credentials)));
+
       assertEquals(401, response.statusCode());
       assertEquals(
           "Basic realm=\"accounts\", charset=\"UTF-8\"",
@@ -80,14 +90,21 @@ class Pac4jAuthenticationExampleTest {
 
     try (var test = TestServer.start(Pac4jAuthenticationExample.application())) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/accounts/me")
-                      .header("Authorization", basic("reader:local-only"))
-                      .header("Authorization", basic("admin:local-only")));
+          sendResponseForRejectsMultipleAuthorizationFieldsEvenWhenBothCredentialsAreValid(test);
+
       assertEquals(401, response.statusCode());
     }
+  }
+
+  private HttpResponse<byte[]>
+      sendResponseForRejectsMultipleAuthorizationFieldsEvenWhenBothCredentialsAreValid(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/accounts/me")
+                .header("Authorization", basic("reader:local-only"))
+                .header("Authorization", basic("admin:local-only")));
   }
 
   @Test
@@ -108,12 +125,15 @@ class Pac4jAuthenticationExampleTest {
           test.send(
               request ->
                   request.path("/accounts/me").header("Authorization", basic("reader:local-only")));
+
       assertEquals(200, authenticated.statusCode());
       assertFalse(authenticated.headers().firstValue("Set-Cookie").isPresent());
+
       var state =
           test.send(
               request -> request.path("/fixture/session-state"),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals("absent", state.body());
     }
   }

@@ -15,8 +15,11 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.ForkJoinTask;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
@@ -68,7 +71,7 @@ class BorrowedExecutorShutdownTest {
               .get(
                   "/active",
                   workers,
-                  (ignored, ignored2) -> {
+                  (ignored, ignoredResponse) -> {
                     entered.countDown();
 
                     try {
@@ -80,8 +83,11 @@ class BorrowedExecutorShutdownTest {
                       throw failure;
                     }
                   })
-              .get("/queued", workers, (ignored3, ignored4) -> queuedInvoked.set(true));
-          second.routes().get("/second", workers, (ignored5, response) -> response.text("second"));
+              .get(
+                  "/queued", workers, (ignoredRequest, ignoredResponse) -> queuedInvoked.set(true));
+          second
+              .routes()
+              .get("/second", workers, (ignoredRequest, response) -> response.text("second"));
 
           try (var firstTest = TestServer.start(first);
               var secondTest = TestServer.start(second)) {
@@ -89,23 +95,17 @@ class BorrowedExecutorShutdownTest {
 
             try {
               assertTrue(entered.await(5, TimeUnit.SECONDS));
-              var unrelated =
-                  workers.submit(
-                      () -> {
-                        blockerEntered.countDown();
-                        return releaseBlocker.await(10, TimeUnit.SECONDS);
-                      });
+
+              var unrelated = submitBlockedUnrelatedTask(workers, blockerEntered, releaseBlocker);
+
               assertTrue(blockerEntered.await(5, TimeUnit.SECONDS));
+
               var queued = drivers.submit(() -> firstTest.send(request -> request.path("/queued")));
               await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 1);
-              var otherApp =
-                  drivers.submit(
-                      () ->
-                          secondTest.send(
-                              request -> request.path("/second"),
-                              HttpResponse.BodyHandlers.ofString()));
+              var otherApp = submitSecondApplicationRequest(drivers, secondTest);
               await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 2);
               first.close();
+
               assertInstanceOf(
                   RejectedExecutionException.class,
                   queuedOutcome.get(5, TimeUnit.SECONDS).applicationFailure());
@@ -114,13 +114,18 @@ class BorrowedExecutorShutdownTest {
               assertFalse(activeOutcome.isDone());
               assertFalse(workers.isShutdown());
               assertFalse(unrelated.isDone());
+
               releaseBlocker.countDown();
+
               assertTrue(unrelated.get(5, TimeUnit.SECONDS));
               assertEquals("second", otherApp.get(5, TimeUnit.SECONDS).body());
               assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
               assertFalse(queuedInvoked.get());
+
               releaseActive.countDown();
+
               assertEquals("/active", activeOutcome.get(5, TimeUnit.SECONDS).routePattern());
+
               for (var sent : List.of(active, queued)) {
                 try {
                   sent.get(5, TimeUnit.SECONDS);
@@ -138,6 +143,24 @@ class BorrowedExecutorShutdownTest {
     }
   }
 
+  private Future<Boolean> submitBlockedUnrelatedTask(
+      ThreadPoolExecutor workers, CountDownLatch blockerEntered, CountDownLatch releaseBlocker) {
+    return workers.submit(
+        () -> {
+          blockerEntered.countDown();
+
+          return releaseBlocker.await(10, TimeUnit.SECONDS);
+        });
+  }
+
+  private Future<HttpResponse<String>> submitSecondApplicationRequest(
+      ExecutorService drivers, TestServer secondTest) {
+    return drivers.submit(
+        () ->
+            secondTest.send(
+                request -> request.path("/second"), HttpResponse.BodyHandlers.ofString()));
+  }
+
   @Test
   void cancelsARegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns() throws Exception {
     var submitting = new CountDownLatch(1);
@@ -148,18 +171,8 @@ class BorrowedExecutorShutdownTest {
     var completions = new AtomicInteger();
 
     try (var workers =
-            new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>()) {
-              @Override
-              public void execute(Runnable command) {
-                if (firstSubmission.compareAndSet(true, false)) {
-                  submitting.countDown();
-
-                  releaseSubmission.acquireUninterruptibly();
-                }
-
-                super.execute(command);
-              }
-            };
+            openWorkersForCancelsARegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns(
+                firstSubmission, submitting, releaseSubmission);
         var driver = Executors.newVirtualThreadPerTaskExecutor()) {
       var app =
           new Shoostr()
@@ -173,14 +186,17 @@ class BorrowedExecutorShutdownTest {
               completions.incrementAndGet();
               completed.complete(outcome);
             });
-        app.routes().get("/racing", workers, (ignored6, ignored7) -> invoked.set(true));
+        app.routes()
+            .get("/racing", workers, (ignoredRequest, ignoredResponse) -> invoked.set(true));
 
         try (var test = TestServer.start(app)) {
           var sent = driver.submit(() -> test.send(request -> request.path("/racing")));
 
           try {
             assertTrue(submitting.await(5, TimeUnit.SECONDS));
+
             app.close();
+
             assertFalse(invoked.get());
           } finally {
             releaseSubmission.release();
@@ -203,6 +219,23 @@ class BorrowedExecutorShutdownTest {
         }
       }
     }
+  }
+
+  private ThreadPoolExecutor
+      openWorkersForCancelsARegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns(
+          AtomicBoolean firstSubmission, CountDownLatch submitting, Semaphore releaseSubmission) {
+    return new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>()) {
+      @Override
+      public void execute(Runnable command) {
+        if (firstSubmission.compareAndSet(true, false)) {
+          submitting.countDown();
+
+          releaseSubmission.acquireUninterruptibly();
+        }
+
+        super.execute(command);
+      }
+    };
   }
 
   @Test
@@ -232,7 +265,7 @@ class BorrowedExecutorShutdownTest {
             .get(
                 "/active",
                 workers,
-                (request, ignored8) -> {
+                (request, ignoredResponse) -> {
                   entered.countDown();
 
                   try {
@@ -252,7 +285,9 @@ class BorrowedExecutorShutdownTest {
 
           try {
             assertTrue(entered.await(5, TimeUnit.SECONDS));
+
             app.close();
+
             assertFalse(interrupted.get());
             assertFalse(workers.isShutdown());
             assertFalse(finished.isDone());
@@ -301,7 +336,7 @@ class BorrowedExecutorShutdownTest {
             .get(
                 "/help",
                 workers,
-                (ignored9, ignored10) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   handlerThread.complete(Thread.currentThread());
                   entered.countDown();
                   if (!allowHelping.await(5, TimeUnit.SECONDS)) {
@@ -316,27 +351,23 @@ class BorrowedExecutorShutdownTest {
 
           try {
             assertTrue(entered.await(5, TimeUnit.SECONDS));
-            var unrelated =
-                workers.submit(
-                    () -> {
-                      helpedThread.complete(Thread.currentThread());
-                      helped.countDown();
 
-                      try {
-                        return release.await(10, TimeUnit.SECONDS);
-                      } catch (InterruptedException failure) {
-                        interrupted.set(true);
-                        throw failure;
-                      }
-                    });
+            var unrelated =
+                submitUnrelatedForDoesNotInterruptUnrelatedWorkHelpedByARunningForkJoinHandler(
+                    workers, helpedThread, helped, release, interrupted);
             allowHelping.countDown();
+
             assertTrue(helped.await(5, TimeUnit.SECONDS));
             assertEquals(
                 handlerThread.get(5, TimeUnit.SECONDS), helpedThread.get(5, TimeUnit.SECONDS));
+
             app.close();
+
             assertFalse(interrupted.get());
             assertFalse(unrelated.isDone());
+
             release.countDown();
+
             assertTrue(unrelated.get(5, TimeUnit.SECONDS));
             assertEquals("/help", completed.get(5, TimeUnit.SECONDS).routePattern());
             assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
@@ -353,5 +384,26 @@ class BorrowedExecutorShutdownTest {
         }
       }
     }
+  }
+
+  private ForkJoinTask<Boolean>
+      submitUnrelatedForDoesNotInterruptUnrelatedWorkHelpedByARunningForkJoinHandler(
+          ForkJoinPool workers,
+          CompletableFuture<Thread> helpedThread,
+          CountDownLatch helped,
+          CountDownLatch release,
+          AtomicBoolean interrupted) {
+    return workers.submit(
+        () -> {
+          helpedThread.complete(Thread.currentThread());
+          helped.countDown();
+
+          try {
+            return release.await(10, TimeUnit.SECONDS);
+          } catch (InterruptedException failure) {
+            interrupted.set(true);
+            throw failure;
+          }
+        });
   }
 }

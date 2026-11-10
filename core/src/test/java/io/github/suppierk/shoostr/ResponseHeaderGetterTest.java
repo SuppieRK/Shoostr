@@ -27,14 +27,18 @@ class ResponseHeaderGetterTest {
                 (request, response) -> {
                   assertNull(response.header("Missing"));
                   assertThrows(NullPointerException.class, () -> response.header(null));
+
                   response.status(202).setHeader("X-Value", "typed");
+
                   assertEquals("typed", response.header("x-value"));
+
                   response.text("checked");
                 });
 
         try (var test = TestServer.start(app)) {
           var response =
               test.send(request -> request.path("/headers"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(202, response.statusCode());
           assertEquals("checked", response.body());
           assertEquals("typed", response.headers().firstValue("X-Value").orElseThrow());
@@ -60,14 +64,18 @@ class ResponseHeaderGetterTest {
                 "/headers",
                 (request, response) -> {
                   assertNull(response.header("Missing"));
+
                   response.setHeader("X-Value", "first").addHeader("X-Value", "second");
+
                   assertEquals("first", response.header("x-value"));
+
                   response.text("checked");
                 });
 
         try (var test = TestServer.start(app)) {
           var response =
               test.send(request -> request.path("/headers"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("checked", response.body());
           assertEquals(List.of("first", "second"), response.headers().allValues("X-Value"));

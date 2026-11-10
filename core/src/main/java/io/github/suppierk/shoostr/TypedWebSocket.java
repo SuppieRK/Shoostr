@@ -20,27 +20,6 @@ public final class TypedWebSocket extends WebSocket {
   }
 
   /**
-   * Decodes each complete binary message before invoking its sequential callback. A later object or
-   * binary registration replaces this handler. Uncaught conversion failures follow ordinary
-   * terminal error handling; raw text handling is independent.
-   *
-   * @param type concrete decode target, not a parameterized type
-   * @param handler object callback serialized with this connection's other callbacks
-   * @param <T> decoded value type
-   * @return this configuration
-   */
-  public <T> TypedWebSocket onObject(Class<T> type, MessageHandler<T> handler) {
-    Objects.requireNonNull(type);
-    Objects.requireNonNull(handler);
-    super.onBinary(
-        (connection, bytes) ->
-            handler.handle(
-                (TypedWebSocketConnection) connection,
-                Objects.requireNonNull(codec.read(bytes, type), "Codec returned null object")));
-    return this;
-  }
-
-  /**
    * Registers admission with codec-enabled HTTP arguments before the upgrade.
    *
    * @param handler handshake admission, not a retained request or response
@@ -121,6 +100,27 @@ public final class TypedWebSocket extends WebSocket {
   @Override
   public synchronized TypedWebSocket onBinary(WebSocket.MessageHandler<byte[]> handler) {
     super.onBinary(handler);
+    return this;
+  }
+
+  /**
+   * Decodes each complete binary message before invoking its sequential callback. A later object or
+   * binary registration replaces this handler. Uncaught conversion failures follow ordinary
+   * terminal error handling; raw text handling is independent.
+   *
+   * @param type concrete decode target, not a parameterized type
+   * @param handler object callback serialized with this connection's other callbacks
+   * @param <T> decoded value type
+   * @return this configuration
+   */
+  public <T> TypedWebSocket onObject(Class<T> type, MessageHandler<T> handler) {
+    Objects.requireNonNull(type);
+    Objects.requireNonNull(handler);
+    super.onBinary(
+        (connection, bytes) ->
+            handler.handle(
+                (TypedWebSocketConnection) connection,
+                Objects.requireNonNull(codec.read(bytes, type), "Codec returned null object")));
     return this;
   }
 

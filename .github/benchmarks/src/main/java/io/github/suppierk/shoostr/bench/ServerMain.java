@@ -34,6 +34,7 @@ public final class ServerMain {
     int port = args.length > 0 ? Integer.parseInt(args[0]) : 18080;
     int routeGroups = args.length > 1 ? Integer.parseInt(args[1]) : 1000;
     var staticRoot = args.length > 2 ? Path.of(args[2]) : null;
+
     fixture(routeGroups, staticRoot)
         .modifyServer(
             nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(port))
@@ -62,26 +63,41 @@ public final class ServerMain {
     try {
       return app.routes(
           routes -> {
-            routes.get("/plaintext", (ignored, res) -> res.body("text/plain;charset=utf-8", PLAIN));
-            routes.get("/json-bytes", (ignored2, res) -> res.body("application/json", JSON));
+            routes.get(
+                "/plaintext",
+                (ignored, response) -> response.body("text/plain;charset=utf-8", PLAIN));
+            routes.get(
+                "/json-bytes",
+                (ignoredRequest, response) -> response.body("application/json", JSON));
             routes.post(
-                "/echo", (req, res) -> res.body("application/octet-stream", req.bodyBytes()));
+                "/echo",
+                (request, response) ->
+                    response.body("application/octet-stream", request.bodyBytes()));
             routes.get(
                 "/stream",
-                (ignored3, res) -> {
-                  var stream = res.startStream("application/octet-stream");
+                (ignoredRequest, response) -> {
+                  var stream = response.startStream("application/octet-stream");
+
                   for (int index = 0; index < EVENT_COUNT; index++) {
                     stream.write(CHUNK);
                   }
                 });
             routes.get(
                 "/virtual",
-                (ignored4, res) -> res.text(Boolean.toString(Thread.currentThread().isVirtual())));
-            routes.sse("/sse-burst", (ignored5, res) -> sendEvents(res, 0, EVENT_PAYLOAD));
-            routes.sse("/sse-paced", (ignored6, res) -> sendEvents(res, 20, EVENT_PAYLOAD));
-            routes.sse("/sse-slow", (ignored7, res) -> sendEvents(res, 0, LARGE_EVENT_PAYLOAD));
-            routes.websocket("/ws-text", (ignored8, ignored9) -> new EchoListener());
-            routes.websocket("/ws-binary", (ignored10, ignored11) -> new EchoListener());
+                (ignoredRequest, response) ->
+                    response.text(Boolean.toString(Thread.currentThread().isVirtual())));
+            routes.sse(
+                "/sse-burst", (ignoredRequest, response) -> sendEvents(response, 0, EVENT_PAYLOAD));
+            routes.sse(
+                "/sse-paced",
+                (ignoredRequest, response) -> sendEvents(response, 20, EVENT_PAYLOAD));
+            routes.sse(
+                "/sse-slow",
+                (ignoredRequest, response) -> sendEvents(response, 0, LARGE_EVENT_PAYLOAD));
+            routes.websocket(
+                "/ws-text", (ignoredRequest, ignoredServerUpgradeResponse) -> new EchoListener());
+            routes.websocket(
+                "/ws-binary", (ignoredRequest, ignoredServerUpgradeResponse) -> new EchoListener());
             if (staticRoot != null) {
               routes.staticFiles("/static", staticRoot);
             }
@@ -112,8 +128,10 @@ public final class ServerMain {
   private static void sendEvents(Response response, int pauseMillis, String payload)
       throws Exception {
     var stream = response.startEventStream();
+
     for (int index = 0; index < EVENT_COUNT; index++) {
       stream.send(index + ":" + payload);
+
       if (pauseMillis > 0) {
         Thread.sleep(pauseMillis);
       }
@@ -135,23 +153,32 @@ public final class ServerMain {
                   "/orders",
                   orders -> {
                     orders.get(
-                        "/latest", (ignored12, res) -> res.body("text/plain;charset=utf-8", PLAIN));
-                    orders.get("/{id}", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
+                        "/latest",
+                        (ignoredRequest, response) ->
+                            response.body("text/plain;charset=utf-8", PLAIN));
+                    orders.get(
+                        "/{id}",
+                        (request, response) ->
+                            response.text(request.pathParam("id").orElseThrow()));
                     orders.post(
                         "/{orderId}",
-                        (req, res) -> res.text(req.pathParam("orderId").orElseThrow()));
-                    orders.get("/fixed/details", (ignored13, res) -> res.text("details"));
+                        (request, response) ->
+                            response.text(request.pathParam("orderId").orElseThrow()));
                     orders.get(
-                        "/{id}/events", (req, res) -> res.text(req.pathParam("id").orElseThrow()));
+                        "/fixed/details", (ignoredRequest, response) -> response.text("details"));
+                    orders.get(
+                        "/{id}/events",
+                        (request, response) ->
+                            response.text(request.pathParam("id").orElseThrow()));
                     orders.get(
                         "/{id}/items/{itemId}",
-                        (req, res) ->
-                            res.text(
-                                req.pathParam("id").orElseThrow()
+                        (request, response) ->
+                            response.text(
+                                request.pathParam("id").orElseThrow()
                                     + "/"
-                                    + req.pathParam("itemId").orElseThrow()));
-                    orders.get("/shadowed", (ignored14, res) -> res.text("literal"));
-                    orders.post("/latest", (ignored15, res) -> res.text("latest"));
+                                    + request.pathParam("itemId").orElseThrow()));
+                    orders.get("/shadowed", (ignoredRequest, response) -> response.text("literal"));
+                    orders.post("/latest", (ignoredRequest, response) -> response.text("latest"));
                   }));
     }
   }

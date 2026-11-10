@@ -100,6 +100,7 @@ public class BufferedRequestBenchmark {
   public void setup() {
     payload = new byte[bytes];
     Arrays.fill(payload, (byte) 0x5A);
+
     textCharset =
         switch (charset) {
           case "UTF-8" -> StandardCharsets.UTF_8;
@@ -107,12 +108,7 @@ public class BufferedRequestBenchmark {
           case "UTF-16BE" -> StandardCharsets.UTF_16BE;
           default -> throw new IllegalArgumentException("Unknown benchmark charset: " + charset);
         };
-    var unit =
-        switch (content) {
-          case "ascii" -> "Z";
-          case "unicode" -> "é";
-          default -> throw new IllegalArgumentException("Unknown benchmark text: " + content);
-        };
+    var unit = textUnit();
     int unitBytes = unit.getBytes(textCharset).length;
     if (bytes % unitBytes != 0) {
       throw new IllegalArgumentException("Body size must contain complete encoded text units");
@@ -120,6 +116,7 @@ public class BufferedRequestBenchmark {
 
     textPayload = unit.repeat(bytes / unitBytes).getBytes(textCharset);
     contentLength = payload.length;
+
     var defaults = new Options();
     options = new Options();
     options.setMaxRequestBytes(LIMIT);
@@ -127,12 +124,14 @@ public class BufferedRequestBenchmark {
     options.setStreamBufferBytes(defaults.getStreamBufferBytes());
     options.setMaxParameters(1000);
     options.setMultipart(MultipartOptions.defaults());
+
     var fields = HttpFields.build();
     for (int index = 0; index < headers; index++) {
       fields.add("X-Benchmark-" + index, "value-" + index);
     }
 
     var inboundHeaders = fields.asImmutable();
+
     delegate =
         (Request)
             Proxy.newProxyInstance(
@@ -151,12 +150,13 @@ public class BufferedRequestBenchmark {
                       case "addHttpStreamWrapper" -> null;
                       default -> throw new UnsupportedOperationException(method.getName());
                     });
+
     sink =
         (Response)
             Proxy.newProxyInstance(
                 BufferedRequestBenchmark.class.getClassLoader(),
                 new Class<?>[] {Response.class},
-                (ignored2, method, ignored3) -> {
+                (ignoredObject, method, ignoredObjectValues) -> {
                   throw new UnsupportedOperationException(method.getName());
                 });
 
@@ -169,6 +169,20 @@ public class BufferedRequestBenchmark {
   }
 
   /**
+   * Selects the text fixture for the configured request-body scenario.
+   *
+   * @return text unit repeated to build the request body
+   * @throws IllegalArgumentException if the configured benchmark scenario is unknown
+   */
+  private String textUnit() {
+    return switch (content) {
+      case "ascii" -> "Z";
+      case "unicode" -> "é";
+      default -> throw new IllegalArgumentException("Unknown benchmark text: " + content);
+    };
+  }
+
+  /**
    * Pairs one fresh content source with its exact declared length and framework wrapper.
    *
    * @param body prepared encoded bytes
@@ -177,6 +191,7 @@ public class BufferedRequestBenchmark {
   private io.github.suppierk.shoostr.Request request(byte[] body) {
     contentLength = body.length;
     source = new ByteBufferContentSource(ByteBuffer.wrap(body));
+
     return io.github.suppierk.shoostr.Request.create(delegate, sink, options, Callback.NOOP);
   }
 }

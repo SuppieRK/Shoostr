@@ -7,6 +7,7 @@ import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.http.HttpMethods;
 import io.github.suppierk.shoostr.http.MediaType;
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
@@ -19,19 +20,24 @@ class JsonExampleTest {
   void rejectsTrailingContentAfterAValidJsonObject(String body) throws Exception {
 
     try (var test = TestServer.start(JsonExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/users")
-                      .method(HttpMethods.POST)
-                      .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON.value())
-                      .body(body.getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForRejectsTrailingContentAfterAValidJsonObject(test, body);
+
       assertAll(
           () -> assertEquals(400, response.statusCode()),
           () -> assertEquals("{\"error\":\"invalid_user\"}", response.body()));
     }
+  }
+
+  private HttpResponse<String> sendResponseForRejectsTrailingContentAfterAValidJsonObject(
+      TestServer test, String body) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/users")
+                .method(HttpMethods.POST)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON.value())
+                .body(body.getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -39,18 +45,25 @@ class JsonExampleTest {
 
     try (var test = TestServer.start(JsonExample.application())) {
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/users")
-                      .method(HttpMethods.POST)
-                      .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON.value())
-                      .body("{not-json".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+          sendResponseForRendersMalformedJsonAsAnInputErrorRatherThanAServerFailure(test);
+
       assertAll(
           () -> assertEquals(400, response.statusCode()),
           () -> assertEquals("{\"error\":\"invalid_user\"}", response.body()));
     }
+  }
+
+  private HttpResponse<String>
+      sendResponseForRendersMalformedJsonAsAnInputErrorRatherThanAServerFailure(TestServer test)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/users")
+                .method(HttpMethods.POST)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON.value())
+                .body("{not-json".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @Test
@@ -60,6 +73,7 @@ class JsonExampleTest {
       var response =
           test.send(
               request -> request.path("/users/failure"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(500, response.statusCode()),
           () -> assertEquals("{\"error\":\"internal_error\"}", response.body()),
@@ -76,6 +90,7 @@ class JsonExampleTest {
     try (var test = TestServer.start(JsonExample.application())) {
       var response =
           test.send(request -> request.path("/users/help"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () -> assertEquals("POST a JSON object with a nonblank name", response.body()),
@@ -90,15 +105,8 @@ class JsonExampleTest {
   void rendersInvalidUserInputThroughTheScopedErrorHandler() throws Exception {
 
     try (var test = TestServer.start(JsonExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/users")
-                      .method(HttpMethods.POST)
-                      .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON.value())
-                      .body("{\"name\":\" \"}".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForRendersInvalidUserInputThroughTheScopedErrorHandler(test);
+
       assertAll(
           () -> assertEquals(400, response.statusCode()),
           () -> assertEquals("{\"error\":\"invalid_user\"}", response.body()),
@@ -109,19 +117,24 @@ class JsonExampleTest {
     }
   }
 
+  private HttpResponse<String> sendResponseForRendersInvalidUserInputThroughTheScopedErrorHandler(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/users")
+                .method(HttpMethods.POST)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON.value())
+                .body("{\"name\":\" \"}".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void returnsTheValidatedTypedUserAsJson() throws Exception {
 
     try (var test = TestServer.start(JsonExample.application())) {
-      var response =
-          test.send(
-              request ->
-                  request
-                      .path("/users")
-                      .method(HttpMethods.POST)
-                      .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON.value())
-                      .body("{\"name\":\"Ada\"}".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var response = sendResponseForReturnsTheValidatedTypedUserAsJson(test);
+
       assertAll(
           () -> assertEquals(201, response.statusCode()),
           () -> assertEquals("{\"name\":\"Ada\"}", response.body()),
@@ -130,5 +143,17 @@ class JsonExampleTest {
                   MediaType.APPLICATION_JSON.value(),
                   response.headers().firstValue(HttpHeaders.CONTENT_TYPE.value()).orElseThrow()));
     }
+  }
+
+  private HttpResponse<String> sendResponseForReturnsTheValidatedTypedUserAsJson(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/users")
+                .method(HttpMethods.POST)
+                .header(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON.value())
+                .body("{\"name\":\"Ada\"}".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 }

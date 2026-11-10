@@ -17,6 +17,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.Closeable;
 import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
 import java.net.http.WebSocketHandshakeException;
@@ -29,8 +30,10 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
+import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -43,6 +46,7 @@ import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.handler.ContextHandler;
 import org.eclipse.jetty.server.handler.ContextHandler.ContextScopeListener;
 import org.eclipse.jetty.util.component.LifeCycle;
+import org.eclipse.jetty.util.component.LifeCycle.Listener;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.websocket.api.Session;
 import org.eclipse.jetty.websocket.api.WebSocketSessionListener;
@@ -62,6 +66,7 @@ class ManagedWebSocketTest {
       try (Closeable appCleanup = app::close) {
         var routes = app.routes();
         routes.websocket("/echo", events -> events.onText(WebSocketConnection::send));
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
@@ -82,23 +87,11 @@ class ManagedWebSocketTest {
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new CompletableFuture<String>();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/echo", null, null),
-                  new WebSocket.Listener() {
-                    @Override
-                    public CompletionStage<?> onText(
-                        WebSocket webSocket, CharSequence data, boolean last) {
-                      received.complete(data.toString());
-                      return CompletableFuture.completedFuture(null);
-                    }
-                  })
-              .get(3, TimeUnit.SECONDS);
+      var socket = createSocketForEchoesTextThroughAnOrdinaryCallback(client, test, received);
 
       try {
         socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("hello", received.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -106,28 +99,29 @@ class ManagedWebSocketTest {
     }
   }
 
+  private WebSocket createSocketForEchoesTextThroughAnOrdinaryCallback(
+      HttpClient client, TestServer test, CompletableFuture<String> received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/echo", null, null),
+            new WebSocket.Listener() {
+              @Override
+              public CompletionStage<?> onText(
+                  WebSocket webSocket, CharSequence data, boolean last) {
+                received.complete(data.toString());
+
+                return CompletableFuture.completedFuture(null);
+              }
+            })
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(20)
   void servesHttpAndMessagesWithMoreIdleWebSocketsThanPlatformWorkers() throws Exception {
-    var app =
-        new Shoostr()
-            .modifyServer(
-                server ->
-                    assertInstanceOf(QueuedThreadPool.class, server.getThreadPool())
-                        .setMaxThreads(32))
-            .routes(
-                routes -> {
-                  routes.get("/probe", (request, response) -> response.text("available"));
-                  routes.websocket(
-                      "/idle",
-                      events -> {
-                        events.onOpen(
-                            connection ->
-                                connection.send(
-                                    Thread.currentThread().isVirtual() ? "virtual" : "platform"));
-                        events.onText(WebSocketConnection::send);
-                      });
-                });
+    var app = createAppForServesHttpAndMessagesWithMoreIdleWebSocketsThanPlatformWorkers();
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
@@ -138,20 +132,20 @@ class ManagedWebSocketTest {
         for (int index = 0; index < 64; index++) {
           var received = new Messages();
           var socket =
-              client
-                  .newWebSocketBuilder()
-                  .buildAsync(
-                      new URI("ws", test.baseUri().getRawAuthority(), "/idle", null, null),
-                      received)
-                  .get(3, TimeUnit.SECONDS);
+              createSocketForServesHttpAndMessagesWithMoreIdleWebSocketsThanPlatformWorkers(
+                  client, test, received);
           sockets.add(socket);
           messages.add(received);
+
           assertEquals("platform", received.text.poll(3, TimeUnit.SECONDS));
         }
 
         var response = test.send(request -> request.path("/probe").timeout(Duration.ofSeconds(3)));
+
         assertEquals(200, response.statusCode());
+
         sockets.get(63).sendText("still available", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("still available", messages.get(63).text.poll(3, TimeUnit.SECONDS));
       } finally {
         sockets.forEach(WebSocket::abort);
@@ -159,89 +153,134 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForServesHttpAndMessagesWithMoreIdleWebSocketsThanPlatformWorkers() {
+    return new Shoostr()
+        .modifyServer(
+            server ->
+                assertInstanceOf(QueuedThreadPool.class, server.getThreadPool()).setMaxThreads(32))
+        .routes(
+            routes -> {
+              routes.get("/probe", (request, response) -> response.text("available"));
+              routes.websocket(
+                  "/idle",
+                  events -> {
+                    events.onOpen(
+                        connection ->
+                            connection.send(
+                                Thread.currentThread().isVirtual() ? "virtual" : "platform"));
+                    events.onText(WebSocketConnection::send);
+                  });
+            });
+  }
+
+  private WebSocket createSocketForServesHttpAndMessagesWithMoreIdleWebSocketsThanPlatformWorkers(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), "/idle", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void rejectsInvalidInputBeforeTheWebSocketUpgrade() throws Exception {
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/rooms/{room}",
-                        events -> {
-                          events.beforeUpgrade(
-                              (request, ignored2) -> {
-                                if (request.pathParam("room").orElseThrow().length() > 32) {
-                                  throw new BadRequestException("Invalid room");
-                                }
-                              });
-                          events.onText(WebSocketConnection::send);
-                        }));
+    var app = createAppForRejectsInvalidInputBeforeTheWebSocketUpgrade();
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
-      var failure =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  client
-                      .newWebSocketBuilder()
-                      .buildAsync(
-                          new URI(
-                              "ws",
-                              test.baseUri().getRawAuthority(),
-                              "/rooms/" + "x".repeat(33),
-                              null,
-                              null),
-                          new WebSocket.Listener() {})
-                      .get(3, TimeUnit.SECONDS));
+      var failure = assertFailureForRejectsInvalidInputBeforeTheWebSocketUpgrade(client, test);
+
       var handshake = assertInstanceOf(WebSocketHandshakeException.class, failure.getCause());
       assertEquals(400, handshake.getResponse().statusCode());
     }
   }
 
+  private Shoostr createAppForRejectsInvalidInputBeforeTheWebSocketUpgrade() {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/rooms/{room}",
+                    events -> {
+                      events.beforeUpgrade(
+                          (request, ignoredResponse) -> {
+                            if (request.pathParam("room").orElseThrow().length() > 32) {
+                              throw new BadRequestException("Invalid room");
+                            }
+                          });
+                      events.onText(WebSocketConnection::send);
+                    }));
+  }
+
+  private ExecutionException assertFailureForRejectsInvalidInputBeforeTheWebSocketUpgrade(
+      HttpClient client, TestServer test) {
+    return assertThrows(
+        ExecutionException.class,
+        () ->
+            client
+                .newWebSocketBuilder()
+                .buildAsync(
+                    new URI(
+                        "ws",
+                        test.baseUri().getRawAuthority(),
+                        "/rooms/" + "x".repeat(33),
+                        null,
+                        null),
+                    new WebSocket.Listener() {})
+                .get(3, TimeUnit.SECONDS));
+  }
+
   @Test
   @Timeout(10)
   void suppliesDecodedPathParametersAfterUpgrade() throws Exception {
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/rooms/{room}",
-                        events ->
-                            events.onText(
-                                (connection, text) ->
-                                    connection.send(
-                                        connection.pathParam("room").orElseThrow()
-                                            + ": "
-                                            + text))));
+    var app = createAppForSuppliesDecodedPathParametersAfterUpgrade();
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new CompletableFuture<String>();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  URI.create("ws://" + test.baseUri().getRawAuthority() + "/rooms/team%20one"),
-                  new WebSocket.Listener() {
-                    @Override
-                    public CompletionStage<?> onText(
-                        WebSocket webSocket, CharSequence data, boolean last) {
-                      received.complete(data.toString());
-                      return CompletableFuture.completedFuture(null);
-                    }
-                  })
-              .get(3, TimeUnit.SECONDS);
+      var socket = createSocketForSuppliesDecodedPathParametersAfterUpgrade(client, test, received);
 
       try {
         socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("team one: hello", received.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
       }
     }
+  }
+
+  private Shoostr createAppForSuppliesDecodedPathParametersAfterUpgrade() {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/rooms/{room}",
+                    events ->
+                        events.onText(
+                            (connection, text) ->
+                                connection.send(
+                                    connection.pathParam("room").orElseThrow() + ": " + text))));
+  }
+
+  private WebSocket createSocketForSuppliesDecodedPathParametersAfterUpgrade(
+      HttpClient client, TestServer test, CompletableFuture<String> received)
+      throws InterruptedException, ExecutionException, TimeoutException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            URI.create("ws://" + test.baseUri().getRawAuthority() + "/rooms/team%20one"),
+            new WebSocket.Listener() {
+              @Override
+              public CompletionStage<?> onText(
+                  WebSocket webSocket, CharSequence data, boolean last) {
+                received.complete(data.toString());
+
+                return CompletableFuture.completedFuture(null);
+              }
+            })
+        .get(3, TimeUnit.SECONDS);
   }
 
   @ParameterizedTest
@@ -267,11 +306,7 @@ class ManagedWebSocketTest {
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/open", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForRunsTheOpeningCallbackOnTheConfiguredThreadKind(client, test, received);
 
       try {
         assertEquals(virtual ? "virtual" : "platform", received.text.poll(3, TimeUnit.SECONDS));
@@ -281,29 +316,31 @@ class ManagedWebSocketTest {
     }
   }
 
+  private WebSocket createSocketForRunsTheOpeningCallbackOnTheConfiguredThreadKind(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), "/open", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void echoesOwnedBytesFromACompleteFragmentedBinaryMessage() throws Exception {
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/binary", events -> events.onBinary(WebSocketConnection::send)));
+    var app = createAppForEchoesOwnedBytesFromACompleteFragmentedBinaryMessage();
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/binary", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForEchoesOwnedBytesFromACompleteFragmentedBinaryMessage(
+              client, test, received);
 
       try {
         socket.sendBinary(ByteBuffer.wrap(new byte[] {0, 1}), false).get(3, TimeUnit.SECONDS);
         socket.sendBinary(ByteBuffer.wrap(new byte[] {-1, 127}), true).get(3, TimeUnit.SECONDS);
+
         assertArrayEquals(new byte[] {0, 1, -1, 127}, received.binary.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -311,29 +348,36 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForEchoesOwnedBytesFromACompleteFragmentedBinaryMessage() {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket("/binary", events -> events.onBinary(WebSocketConnection::send)));
+  }
+
+  private WebSocket createSocketForEchoesOwnedBytesFromACompleteFragmentedBinaryMessage(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/binary", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void completesANormalServerInitiatedClose() throws Exception {
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/close",
-                        events -> events.onText((connection, ignored3) -> connection.close())));
+    var app = createAppForCompletesANormalServerInitiatedClose();
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = createSocketForCompletesANormalServerInitiatedClose(client, test, received);
 
       try {
         socket.sendText("finish", true).get(3, TimeUnit.SECONDS);
+
         assertEquals(1000, received.closeCode.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -341,33 +385,40 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForCompletesANormalServerInitiatedClose() {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/close",
+                    events -> events.onText((connection, ignoredString) -> connection.close())));
+  }
+
+  private WebSocket createSocketForCompletesANormalServerInitiatedClose(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void reportsThePeersCloseCodeAndReasonToTheCloseCallback() throws Exception {
     var observed = new CompletableFuture<String>();
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/close",
-                        events ->
-                            events.onClose(
-                                (ignored4, code, reason) ->
-                                    observed.complete(code + ":" + reason))));
+    var app = createAppForReportsThePeersCloseCodeAndReasonToTheCloseCallback(observed);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForReportsThePeersCloseCodeAndReasonToTheCloseCallback(
+              client, test, received);
 
       try {
         socket.sendClose(1000, "Finished").get(3, TimeUnit.SECONDS);
+
         assertEquals("1000:Finished", observed.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -375,30 +426,43 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForReportsThePeersCloseCodeAndReasonToTheCloseCallback(
+      CompletableFuture<String> observed) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/close",
+                    events ->
+                        events.onClose(
+                            (ignoredWebSocketConnection, code, reason) ->
+                                observed.complete(code + ":" + reason))));
+  }
+
+  private WebSocket createSocketForReportsThePeersCloseCodeAndReasonToTheCloseCallback(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @RepeatedTest(20)
   @Timeout(10)
   void acknowledgesANormalPeerClose() throws Exception {
     var ready = new CompletableFuture<Void>();
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/close", events -> events.onOpen(ignored5 -> ready.complete(null))));
+    var app = createAppForAcknowledgesANormalPeerClose(ready);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = createSocketForAcknowledgesANormalPeerClose(client, test, received);
 
       try {
         ready.get(3, TimeUnit.SECONDS);
         socket.sendClose(1000, "Finished").get(3, TimeUnit.SECONDS);
+
         assertEquals(1000, received.closeCode.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -406,33 +470,38 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForAcknowledgesANormalPeerClose(CompletableFuture<Void> ready) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/close",
+                    events -> events.onOpen(ignoredWebSocketConnection -> ready.complete(null))));
+  }
+
+  private WebSocket createSocketForAcknowledgesANormalPeerClose(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void reportsAnEmptyNonNullReasonWhenThePeerClosesWithoutAReason() throws Exception {
     var observed = new CompletableFuture<String>();
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/close",
-                        events ->
-                            events.onClose(
-                                (ignored6, code, reason) ->
-                                    observed.complete(code + ":" + reason))));
+    var app = createAppForReportsAnEmptyNonNullReasonWhenThePeerClosesWithoutAReason(observed);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null),
-                  new Messages())
-              .get(3, TimeUnit.SECONDS);
+          createSocketForReportsAnEmptyNonNullReasonWhenThePeerClosesWithoutAReason(client, test);
 
       try {
         socket.sendClose(1000, "").get(3, TimeUnit.SECONDS);
+
         assertEquals("1000:", observed.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -440,42 +509,78 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForReportsAnEmptyNonNullReasonWhenThePeerClosesWithoutAReason(
+      CompletableFuture<String> observed) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/close",
+                    events ->
+                        events.onClose(
+                            (ignoredWebSocketConnection, code, reason) ->
+                                observed.complete(code + ":" + reason))));
+  }
+
+  private WebSocket createSocketForReportsAnEmptyNonNullReasonWhenThePeerClosesWithoutAReason(
+      HttpClient client, TestServer test)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null), new Messages())
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void reportsAnUnexpectedCheckedFailureToTheErrorCallback() throws Exception {
     var observed = new CompletableFuture<String>();
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/failure",
-                        events -> {
-                          events.onText(
-                              (ignored7, ignored8) -> {
-                                throw new IOException("Fixture failure");
-                              });
-                          events.onError(
-                              (ignored9, failure) -> observed.complete(failure.getMessage()));
-                        }));
+    var app = createAppForReportsAnUnexpectedCheckedFailureToTheErrorCallback(observed);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForReportsAnUnexpectedCheckedFailureToTheErrorCallback(
+              client, test, received);
 
       try {
         socket.sendText("fail", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("Fixture failure", observed.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
       }
     }
+  }
+
+  private Shoostr createAppForReportsAnUnexpectedCheckedFailureToTheErrorCallback(
+      CompletableFuture<String> observed) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/failure",
+                    events -> {
+                      events.onText(
+                          (ignoredWebSocketConnection, ignoredString) -> {
+                            throw new IOException("Fixture failure");
+                          });
+                      events.onError(
+                          (ignoredWebSocketConnection, failure) ->
+                              observed.complete(failure.getMessage()));
+                    }));
+  }
+
+  private WebSocket createSocketForReportsAnUnexpectedCheckedFailureToTheErrorCallback(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null), received)
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -484,44 +589,53 @@ class ManagedWebSocketTest {
     try (var executor =
         Executors.newSingleThreadExecutor(
             task -> Thread.ofPlatform().name("ws-handshake").unstarted(task))) {
-      var app =
-          new Shoostr()
-              .routes(
-                  routes ->
-                      routes.websocket(
-                          "/executor",
-                          executor,
-                          events -> {
-                            events.beforeUpgrade(
-                                (request, ignored10) -> {
-                                  var name = Thread.currentThread().getName();
-                                  request.principal(() -> name);
-                                });
-                            events.onText(
-                                (connection, ignored11) ->
-                                    connection.send(
-                                        connection.principal().orElseThrow().getName()));
-                          }));
+      var app = createAppForRunsHandshakeAdmissionOnTheSuppliedExecutor(executor);
 
       try (var test = TestServer.start(app);
           var client = HttpClient.newHttpClient()) {
         var received = new Messages();
         var socket =
-            client
-                .newWebSocketBuilder()
-                .buildAsync(
-                    new URI("ws", test.baseUri().getRawAuthority(), "/executor", null, null),
-                    received)
-                .get(3, TimeUnit.SECONDS);
+            createSocketForRunsHandshakeAdmissionOnTheSuppliedExecutor(client, test, received);
 
         try {
           socket.sendText("who", true).get(3, TimeUnit.SECONDS);
+
           assertEquals("ws-handshake", received.text.poll(3, TimeUnit.SECONDS));
         } finally {
           socket.abort();
         }
       }
     }
+  }
+
+  private Shoostr createAppForRunsHandshakeAdmissionOnTheSuppliedExecutor(
+      ExecutorService executor) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/executor",
+                    executor,
+                    events -> {
+                      events.beforeUpgrade(
+                          (request, ignoredResponse) -> {
+                            var name = Thread.currentThread().getName();
+                            request.principal(() -> name);
+                          });
+                      events.onText(
+                          (connection, ignoredString) ->
+                              connection.send(connection.principal().orElseThrow().getName()));
+                    }));
+  }
+
+  private WebSocket createSocketForRunsHandshakeAdmissionOnTheSuppliedExecutor(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/executor", null, null), received)
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -534,6 +648,7 @@ class ManagedWebSocketTest {
       try (Closeable appCleanup1 = app::close) {
         app.routes().websocket("/echo", captured::set);
         var configuration = captured.get();
+
         assertNotNull(configuration);
         assertThrows(
             IllegalStateException.class, () -> configuration.onText(WebSocketConnection::send));
@@ -548,14 +663,16 @@ class ManagedWebSocketTest {
 
       try (Closeable appCleanup2 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
                 routes.websocket(
                     "/retry",
-                    ignored12 -> {
+                    ignoredWebSocket -> {
                       throw new IllegalArgumentException("Fixture failure");
                     }));
+
         app.routes().websocket("/retry", events -> events.onText(WebSocketConnection::send));
       }
     }
@@ -568,7 +685,8 @@ class ManagedWebSocketTest {
 
       try (Closeable appCleanup3 = app::close) {
         app.routes()
-            .websocket("/echo", ignored13 -> assertThrows(IllegalStateException.class, app::start));
+            .websocket(
+                "/echo", ignoredWebSocket -> assertThrows(IllegalStateException.class, app::start));
       }
     }
   }
@@ -592,7 +710,7 @@ class ManagedWebSocketTest {
                           executor,
                           events ->
                               events.onText(
-                                  (connection, ignored14) ->
+                                  (connection, ignoredString) ->
                                       connection.send(
                                           Thread.currentThread().isVirtual()
                                               ? "virtual"
@@ -602,15 +720,12 @@ class ManagedWebSocketTest {
           var client = HttpClient.newHttpClient()) {
         var received = new Messages();
         var socket =
-            client
-                .newWebSocketBuilder()
-                .buildAsync(
-                    new URI("ws", test.baseUri().getRawAuthority(), "/executor", null, null),
-                    received)
-                .get(3, TimeUnit.SECONDS);
+            createSocketForSeparatesTheHandshakeExecutorFromConfiguredMessageThreads(
+                client, test, received);
 
         try {
           socket.sendText("thread", true).get(3, TimeUnit.SECONDS);
+
           assertEquals(virtual ? "virtual" : "platform", received.text.poll(3, TimeUnit.SECONDS));
         } finally {
           socket.abort();
@@ -621,29 +736,25 @@ class ManagedWebSocketTest {
     }
   }
 
+  private WebSocket createSocketForSeparatesTheHandshakeExecutorFromConfiguredMessageThreads(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/executor", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void rejectsAnUnavailableManagedEndpointWith404() throws Exception {
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.when(
-                        () -> false,
-                        unavailable -> unavailable.websocket("/hidden", ignored15 -> {})));
+    var app = createAppForRejectsAnUnavailableManagedEndpointWith404();
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
-      var failure =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  client
-                      .newWebSocketBuilder()
-                      .buildAsync(
-                          new URI("ws", test.baseUri().getRawAuthority(), "/hidden", null, null),
-                          new Messages())
-                      .get(3, TimeUnit.SECONDS));
+      var failure = assertFailureForRejectsAnUnavailableManagedEndpointWith404(client, test);
+
       assertEquals(
           404,
           assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
@@ -652,31 +763,38 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForRejectsAnUnavailableManagedEndpointWith404() {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.when(
+                    () -> false,
+                    unavailable -> unavailable.websocket("/hidden", ignoredWebSocket -> {})));
+  }
+
+  private ExecutionException assertFailureForRejectsAnUnavailableManagedEndpointWith404(
+      HttpClient client, TestServer test) {
+    return assertThrows(
+        ExecutionException.class,
+        () ->
+            client
+                .newWebSocketBuilder()
+                .buildAsync(
+                    new URI("ws", test.baseUri().getRawAuthority(), "/hidden", null, null),
+                    new Messages())
+                .get(3, TimeUnit.SECONDS));
+  }
+
   @Test
   @Timeout(10)
   void requiresTheSelectedAuthenticatorBeforeUpgrade() throws Exception {
     var authentication = new FixtureAuthentication();
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/secure",
-                        ignored16 -> {},
-                        extensions -> extensions.withExtension(authentication)));
+    var app = createAppForRequiresTheSelectedAuthenticatorBeforeUpgrade(authentication);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
-      var failure =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  client
-                      .newWebSocketBuilder()
-                      .buildAsync(
-                          new URI("ws", test.baseUri().getRawAuthority(), "/secure", null, null),
-                          new Messages())
-                      .get(3, TimeUnit.SECONDS));
+      var failure = assertFailureForRequiresTheSelectedAuthenticatorBeforeUpgrade(client, test);
+
       assertEquals(
           401,
           assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
@@ -685,38 +803,45 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForRequiresTheSelectedAuthenticatorBeforeUpgrade(
+      FixtureAuthentication authentication) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/secure",
+                    ignoredWebSocket -> {},
+                    extensions -> extensions.withExtension(authentication)));
+  }
+
+  private ExecutionException assertFailureForRequiresTheSelectedAuthenticatorBeforeUpgrade(
+      HttpClient client, TestServer test) {
+    return assertThrows(
+        ExecutionException.class,
+        () ->
+            client
+                .newWebSocketBuilder()
+                .buildAsync(
+                    new URI("ws", test.baseUri().getRawAuthority(), "/secure", null, null),
+                    new Messages())
+                .get(3, TimeUnit.SECONDS));
+  }
+
   @Test
   @Timeout(10)
   void retainsTheAuthenticatedIdentityAfterTheHandshake() throws Exception {
     var authentication = new FixtureAuthentication();
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.path(
-                        "/secure",
-                        group ->
-                            group.websocket(
-                                events ->
-                                    events.onText(
-                                        (connection, ignored17) ->
-                                            connection.send(
-                                                connection.principal().orElseThrow().getName())),
-                                extensions -> extensions.withExtension(authentication))));
+    var app = createAppForRetainsTheAuthenticatedIdentityAfterTheHandshake(authentication);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .header("X-Identity", "alice")
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/secure", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForRetainsTheAuthenticatedIdentityAfterTheHandshake(client, test, received);
 
       try {
         socket.sendText("who", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("alice", received.text.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -724,38 +849,75 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForRetainsTheAuthenticatedIdentityAfterTheHandshake(
+      FixtureAuthentication authentication) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.path(
+                    "/secure",
+                    group ->
+                        group.websocket(
+                            events ->
+                                events.onText(
+                                    (connection, ignoredString) ->
+                                        connection.send(
+                                            connection.principal().orElseThrow().getName())),
+                            extensions -> extensions.withExtension(authentication))));
+  }
+
+  private WebSocket createSocketForRetainsTheAuthenticatedIdentityAfterTheHandshake(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .header("X-Identity", "alice")
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/secure", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void rejectsStagedOutputFromBeforeUpgradeAsAServerError() throws Exception {
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/invalid",
-                        events ->
-                            events.beforeUpgrade(
-                                (ignored18, response) ->
-                                    response.status(403).text("Not a rejection"))));
+    var app = createAppForRejectsStagedOutputFromBeforeUpgradeAsAServerError();
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var failure =
-          assertThrows(
-              ExecutionException.class,
-              () ->
-                  client
-                      .newWebSocketBuilder()
-                      .buildAsync(
-                          new URI("ws", test.baseUri().getRawAuthority(), "/invalid", null, null),
-                          new Messages())
-                      .get(3, TimeUnit.SECONDS));
+          assertFailureForRejectsStagedOutputFromBeforeUpgradeAsAServerError(client, test);
+
       assertEquals(
           500,
           assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
               .getResponse()
               .statusCode());
     }
+  }
+
+  private Shoostr createAppForRejectsStagedOutputFromBeforeUpgradeAsAServerError() {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/invalid",
+                    events ->
+                        events.beforeUpgrade(
+                            (ignoredRequest, response) ->
+                                response.status(403).text("Not a rejection"))));
+  }
+
+  private ExecutionException assertFailureForRejectsStagedOutputFromBeforeUpgradeAsAServerError(
+      HttpClient client, TestServer test) {
+    return assertThrows(
+        ExecutionException.class,
+        () ->
+            client
+                .newWebSocketBuilder()
+                .buildAsync(
+                    new URI("ws", test.baseUri().getRawAuthority(), "/invalid", null, null),
+                    new Messages())
+                .get(3, TimeUnit.SECONDS));
   }
 
   @ParameterizedTest
@@ -788,17 +950,17 @@ class ManagedWebSocketTest {
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/ordered", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForSerializesRapidMessagesUntilThePreviousCallbackReturns(
+              client, test, received);
 
       try {
         socket.sendText("first", true).get(3, TimeUnit.SECONDS);
+
         assertTrue(entered.await(3, TimeUnit.SECONDS));
+
         socket.sendText("second", true).get(3, TimeUnit.SECONDS);
         release.countDown();
+
         assertEquals("first", received.text.poll(3, TimeUnit.SECONDS));
         assertEquals("second", received.text.poll(3, TimeUnit.SECONDS));
       } finally {
@@ -806,6 +968,16 @@ class ManagedWebSocketTest {
         socket.abort();
       }
     }
+  }
+
+  private WebSocket createSocketForSerializesRapidMessagesUntilThePreviousCallbackReturns(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/ordered", null, null), received)
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -822,31 +994,22 @@ class ManagedWebSocketTest {
         var producers = Executors.newFixedThreadPool(2)) {
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/producer", null, null),
-                  received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForAllowsConcurrentProducersToRetainAndSendThroughTheConnection(
+              client, test, received);
 
       try {
         var connection = opened.get(3, TimeUnit.SECONDS);
         var first =
-            producers.submit(
-                () -> {
-                  connection.send("alpha");
-                  return null;
-                });
+            submitFirstForAllowsConcurrentProducersToRetainAndSendThroughTheConnection(
+                producers, connection);
         var second =
-            producers.submit(
-                () -> {
-                  connection.send("beta");
-                  return null;
-                });
+            submitSecondForAllowsConcurrentProducersToRetainAndSendThroughTheConnection(
+                producers, connection);
         first.get(3, TimeUnit.SECONDS);
         second.get(3, TimeUnit.SECONDS);
         var firstMessage = received.text.poll(3, TimeUnit.SECONDS);
         var secondMessage = received.text.poll(3, TimeUnit.SECONDS);
+
         assertNotNull(firstMessage);
         assertNotNull(secondMessage);
         assertEquals(Set.of("alpha", "beta"), Set.of(firstMessage, secondMessage));
@@ -854,6 +1017,37 @@ class ManagedWebSocketTest {
         socket.abort();
       }
     }
+  }
+
+  private WebSocket createSocketForAllowsConcurrentProducersToRetainAndSendThroughTheConnection(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/producer", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
+  private Future<Object> submitFirstForAllowsConcurrentProducersToRetainAndSendThroughTheConnection(
+      ExecutorService producers, WebSocketConnection connection) {
+    return producers.submit(
+        () -> {
+          connection.send("alpha");
+
+          return null;
+        });
+  }
+
+  private Future<Object>
+      submitSecondForAllowsConcurrentProducersToRetainAndSendThroughTheConnection(
+          ExecutorService producers, WebSocketConnection connection) {
+    return producers.submit(
+        () -> {
+          connection.send("beta");
+
+          return null;
+        });
   }
 
   @Test
@@ -867,22 +1061,26 @@ class ManagedWebSocketTest {
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null),
-                  new Messages())
-              .get(3, TimeUnit.SECONDS);
+      var socket = createSocketForRejectsWritesAfterPublicClose(client, test);
 
       try {
         var connection = opened.get(3, TimeUnit.SECONDS);
         connection.close();
+
         assertThrows(IOException.class, () -> connection.send("late"));
       } finally {
         socket.abort();
       }
     }
+  }
+
+  private WebSocket createSocketForRejectsWritesAfterPublicClose(HttpClient client, TestServer test)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null), new Messages())
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -891,7 +1089,7 @@ class ManagedWebSocketTest {
     var server = new AtomicReference<Server>();
     var app =
         new Shoostr()
-            .routes(routes -> routes.websocket("/limit", ignored19 -> {}))
+            .routes(routes -> routes.websocket("/limit", ignoredWebSocket -> {}))
             .modifyServer(server::set);
 
     try (var test = TestServer.start(app);
@@ -904,14 +1102,11 @@ class ManagedWebSocketTest {
           .setMaxTextMessageSize(16);
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/limit", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForPreservesTheNativeMessageTooLargeCloseCode(client, test, received);
 
       try {
         socket.sendText("x".repeat(17), true).get(3, TimeUnit.SECONDS);
+
         assertEquals(1009, received.closeCode.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -919,49 +1114,69 @@ class ManagedWebSocketTest {
     }
   }
 
+  private WebSocket createSocketForPreservesTheNativeMessageTooLargeCloseCode(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), "/limit", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void interruptsActiveManagedWorkWhenTheAppCloses() throws Exception {
     var entered = new CountDownLatch(1);
     var canceled = new CompletableFuture<String>();
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/work",
-                        events ->
-                            events.onText(
-                                (ignored20, ignored21) -> {
-                                  entered.countDown();
-
-                                  try {
-                                    new CountDownLatch(1).await();
-                                  } catch (InterruptedException failure) {
-                                    canceled.complete("interrupted");
-                                    throw failure;
-                                  }
-                                })));
+    var app = createAppForInterruptsActiveManagedWorkWhenTheAppCloses(entered, canceled);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/work", null, null),
-                  new Messages())
-              .get(3, TimeUnit.SECONDS);
+      var socket = createSocketForInterruptsActiveManagedWorkWhenTheAppCloses(client, test);
 
       try {
         socket.sendText("work", true).get(3, TimeUnit.SECONDS);
+
         assertTrue(entered.await(3, TimeUnit.SECONDS));
+
         test.close();
+
         assertEquals("interrupted", canceled.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
       }
     }
+  }
+
+  private Shoostr createAppForInterruptsActiveManagedWorkWhenTheAppCloses(
+      CountDownLatch entered, CompletableFuture<String> canceled) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/work",
+                    events ->
+                        events.onText(
+                            (ignoredWebSocketConnection, ignoredString) -> {
+                              entered.countDown();
+
+                              try {
+                                new CountDownLatch(1).await();
+                              } catch (InterruptedException failure) {
+                                canceled.complete("interrupted");
+                                throw failure;
+                              }
+                            })));
+  }
+
+  private WebSocket createSocketForInterruptsActiveManagedWorkWhenTheAppCloses(
+      HttpClient client, TestServer test)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/work", null, null), new Messages())
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -970,53 +1185,68 @@ class ManagedWebSocketTest {
     var closed = new CompletableFuture<Integer>();
     var observedDuringNativeStop = new CompletableFuture<Void>();
     var app =
-        new Shoostr()
-            .modifyServer(
-                server ->
-                    server.addEventListener(
-                        new LifeCycle.Listener() {
-                          @Override
-                          public void lifeCycleStopping(LifeCycle event) {
-                            try {
-                              closed.get(5, TimeUnit.SECONDS);
-                              observedDuringNativeStop.complete(null);
-                            } catch (InterruptedException failure) {
-                              Thread.currentThread().interrupt();
-                              observedDuringNativeStop.completeExceptionally(failure);
-                            } catch (ExecutionException | TimeoutException failure) {
-                              observedDuringNativeStop.completeExceptionally(failure);
-                            }
-                          }
-                        }))
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/idle-close",
-                        events -> {
-                          events.onOpen(connection -> connection.send("ready"));
-                          events.onClose((connection, code, reason) -> closed.complete(code));
-                        }));
+        createAppForObservesAnIdleConnectionsCloseWhileNativeShutdownStillAllowsDispatch(
+            closed, observedDuringNativeStop);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/idle-close", null, null),
-                  received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForObservesAnIdleConnectionsCloseWhileNativeShutdownStillAllowsDispatch(
+              client, test, received);
 
       try {
         assertEquals("ready", received.text.poll(3, TimeUnit.SECONDS));
+
         test.close();
         observedDuringNativeStop.get(1, TimeUnit.SECONDS);
+
         assertEquals(1001, closed.get(1, TimeUnit.SECONDS));
       } finally {
         socket.abort();
       }
     }
+  }
+
+  private Shoostr createAppForObservesAnIdleConnectionsCloseWhileNativeShutdownStillAllowsDispatch(
+      CompletableFuture<Integer> closed, CompletableFuture<Void> observedDuringNativeStop) {
+    return new Shoostr()
+        .modifyServer(
+            server ->
+                server.addEventListener(
+                    new LifeCycle.Listener() {
+                      @Override
+                      public void lifeCycleStopping(LifeCycle event) {
+                        try {
+                          closed.get(5, TimeUnit.SECONDS);
+                          observedDuringNativeStop.complete(null);
+                        } catch (InterruptedException failure) {
+                          Thread.currentThread().interrupt();
+                          observedDuringNativeStop.completeExceptionally(failure);
+                        } catch (ExecutionException | TimeoutException failure) {
+                          observedDuringNativeStop.completeExceptionally(failure);
+                        }
+                      }
+                    }))
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/idle-close",
+                    events -> {
+                      events.onOpen(connection -> connection.send("ready"));
+                      events.onClose((connection, code, reason) -> closed.complete(code));
+                    }));
+  }
+
+  private WebSocket
+      createSocketForObservesAnIdleConnectionsCloseWhileNativeShutdownStillAllowsDispatch(
+          HttpClient client, TestServer test, Messages received)
+          throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/idle-close", null, null), received)
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -1030,61 +1260,44 @@ class ManagedWebSocketTest {
       var nativeServer = new AtomicReference<Server>();
       var closed = new CompletableFuture<Integer>();
       var app =
-          new Shoostr()
-              .modifyServer(
-                  server -> {
-                    nativeServer.set(server);
-                    var pool = assertInstanceOf(QueuedThreadPool.class, server.getThreadPool());
-                    pool.setReservedThreads(1);
-                    pool.setVirtualThreadsExecutor(borrowed);
-                  })
-              .routes(
-                  routes ->
-                      routes.websocket(
-                          "/queued-close",
-                          events -> {
-                            events.onOpen(connection -> connection.send("ready"));
-                            events.onClose((connection, code, reason) -> closed.complete(code));
-                          }));
+          createAppForDoesNotRunAQueuedCloseObserverAfterApplicationShutdown(
+              nativeServer, borrowed, closed);
 
       try (var test = TestServer.start(app);
           var client = HttpClient.newHttpClient()) {
         var received = new Messages();
         var socket =
-            client
-                .newWebSocketBuilder()
-                .buildAsync(
-                    new URI("ws", test.baseUri().getRawAuthority(), "/queued-close", null, null),
-                    received)
-                .get(5, TimeUnit.SECONDS);
+            createSocketForDoesNotRunAQueuedCloseObserverAfterApplicationShutdown(
+                client, test, received);
 
         try {
           assertEquals("ready", received.text.poll(5, TimeUnit.SECONDS));
+
           var occupied = new CountDownLatch(1);
           var blocker =
-              borrowed.submit(
-                  () -> {
-                    occupied.countDown();
-                    assertTrue(release.await(15, TimeUnit.SECONDS));
-                    return "released";
-                  });
+              submitBlockerForDoesNotRunAQueuedCloseObserverAfterApplicationShutdown(
+                  borrowed, occupied, release);
+
           assertTrue(occupied.await(5, TimeUnit.SECONDS));
 
           socket.sendClose(1000, "done").get(5, TimeUnit.SECONDS);
+
           assertEquals(1000, received.closeCode.get(5, TimeUnit.SECONDS));
+
           var container =
-              nativeServer
-                  .get()
-                  .getContainedBeans(ServerWebSocketContainer.class)
-                  .iterator()
-                  .next();
+              createContainerForDoesNotRunAQueuedCloseObserverAfterApplicationShutdown(
+                  nativeServer);
           await().atMost(Duration.ofSeconds(5)).until(() -> container.getOpenSessions().isEmpty());
           await().atMost(Duration.ofSeconds(5)).until(() -> !borrowed.getQueue().isEmpty());
+
           assertFalse(closed.isDone());
 
           test.close();
+
           assertFalse(borrowed.isShutdown());
+
           release.countDown();
+
           assertEquals("released", blocker.get(5, TimeUnit.SECONDS));
           assertEquals("usable", borrowed.submit(() -> "usable").get(5, TimeUnit.SECONDS));
           assertFalse(closed.isDone());
@@ -1096,6 +1309,58 @@ class ManagedWebSocketTest {
     } finally {
       release.countDown();
     }
+  }
+
+  private Shoostr createAppForDoesNotRunAQueuedCloseObserverAfterApplicationShutdown(
+      AtomicReference<Server> nativeServer,
+      ThreadPoolExecutor borrowed,
+      CompletableFuture<Integer> closed) {
+    return new Shoostr()
+        .modifyServer(
+            server -> {
+              nativeServer.set(server);
+
+              var pool = assertInstanceOf(QueuedThreadPool.class, server.getThreadPool());
+
+              pool.setReservedThreads(1);
+              pool.setVirtualThreadsExecutor(borrowed);
+            })
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/queued-close",
+                    events -> {
+                      events.onOpen(connection -> connection.send("ready"));
+                      events.onClose((connection, code, reason) -> closed.complete(code));
+                    }));
+  }
+
+  private WebSocket createSocketForDoesNotRunAQueuedCloseObserverAfterApplicationShutdown(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/queued-close", null, null), received)
+        .get(5, TimeUnit.SECONDS);
+  }
+
+  private Future<String> submitBlockerForDoesNotRunAQueuedCloseObserverAfterApplicationShutdown(
+      ThreadPoolExecutor borrowed, CountDownLatch occupied, CountDownLatch release) {
+    return borrowed.submit(
+        () -> {
+          occupied.countDown();
+
+          assertTrue(release.await(15, TimeUnit.SECONDS));
+
+          return "released";
+        });
+  }
+
+  private ServerWebSocketContainer
+      createContainerForDoesNotRunAQueuedCloseObserverAfterApplicationShutdown(
+          AtomicReference<Server> nativeServer) {
+    return nativeServer.get().getContainedBeans(ServerWebSocketContainer.class).iterator().next();
   }
 
   @Test
@@ -1110,82 +1375,27 @@ class ManagedWebSocketTest {
     var nativeCallbackEntered = new CountDownLatch(1);
     var releaseNativeCallback = new CountDownLatch(1);
     var nativeGateCompleted = new CompletableFuture<Void>();
-    var stopFailure =
-        new LifeCycle.Listener() {
-          @Override
-          public void lifeCycleStopping(LifeCycle event) {
-            throw new IllegalStateException("Fixture native stop failure");
-          }
-        };
-    var app =
-        new Shoostr()
-            .modifyServer(
-                server -> {
-                  nativeServer.set(server);
-                  server.addEventListener(stopFailure);
-                  var container =
-                      server.getContainedBeans(ServerWebSocketContainer.class).iterator().next();
-                  container.addSessionListener(
-                      new WebSocketSessionListener() {
-                        @Override
-                        public void onWebSocketSessionOpened(Session session) {
-                          nativeOpened.complete(session);
-                        }
+    var stopFailure = createStopFailureForDoesNotDispatchALateNativeCloseAfterNativeStopFails();
+    var app = new Shoostr();
 
-                        @Override
-                        public void onWebSocketSessionClosed(Session session) {
-                          nativeClosed.countDown();
-                        }
-                      });
-                  var context = server.getContainedBeans(ContextHandler.class).iterator().next();
-                  context.addEventListener(
-                      new ContextScopeListener() {
-                        @Override
-                        public void enterScope(
-                            Context scope, org.eclipse.jetty.server.Request request) {
-                          var session = nativeOpened.getNow(null);
-                          if (request != null
-                              || session == null
-                              || session.isOpen()
-                              || !holdNativeCallback.compareAndSet(true, false)) {
-                            return;
-                          }
-
-                          nativeCallbackEntered.countDown();
-
-                          try {
-                            if (releaseNativeCallback.await(10, TimeUnit.SECONDS)) {
-                              nativeGateCompleted.complete(null);
-                            } else {
-                              nativeGateCompleted.completeExceptionally(
-                                  new IOException("Native callback release timed out"));
-                            }
-                          } catch (InterruptedException failure) {
-                            Thread.currentThread().interrupt();
-                            nativeGateCompleted.completeExceptionally(failure);
-                          }
-                        }
-                      });
-                })
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/late-close",
-                        events -> {
-                          events.onOpen(opened::complete);
-                          events.onClose((connection, code, reason) -> closed.incrementAndGet());
-                        }));
+    configureLateNativeClose(
+        app,
+        nativeServer,
+        stopFailure,
+        nativeOpened,
+        nativeClosed,
+        holdNativeCallback,
+        nativeCallbackEntered,
+        releaseNativeCallback,
+        nativeGateCompleted,
+        opened,
+        closed);
 
     try {
       try (var test = TestServer.start(app);
           var client = HttpClient.newHttpClient()) {
         var socket =
-            client
-                .newWebSocketBuilder()
-                .buildAsync(
-                    new URI("ws", test.baseUri().getRawAuthority(), "/late-close", null, null),
-                    new Messages())
-                .get(5, TimeUnit.SECONDS);
+            createSocketForDoesNotDispatchALateNativeCloseAfterNativeStopFails(client, test);
         CompletableFuture<Void> closing = null;
 
         try {
@@ -1194,15 +1404,19 @@ class ManagedWebSocketTest {
           holdNativeCallback.set(true);
           closing =
               CompletableFuture.runAsync(() -> connection.close(1001, "Delay native callback"));
+
           assertTrue(nativeCallbackEntered.await(5, TimeUnit.SECONDS));
           assertEquals(0, closed.get());
 
           assertThrows(IOException.class, test::close);
           assertEquals(0, closed.get());
+
           releaseNativeCallback.countDown();
           closing.get(5, TimeUnit.SECONDS);
           nativeGateCompleted.get(5, TimeUnit.SECONDS);
+
           assertTrue(nativeClosed.await(5, TimeUnit.SECONDS));
+
           await()
               .during(Duration.ofMillis(100))
               .atMost(Duration.ofSeconds(1))
@@ -1225,6 +1439,96 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Listener createStopFailureForDoesNotDispatchALateNativeCloseAfterNativeStopFails() {
+    return new LifeCycle.Listener() {
+      @Override
+      public void lifeCycleStopping(LifeCycle event) {
+        throw new IllegalStateException("Fixture native stop failure");
+      }
+    };
+  }
+
+  private void configureLateNativeClose(
+      Shoostr app,
+      AtomicReference<Server> nativeServer,
+      Listener stopFailure,
+      CompletableFuture<Session> nativeOpened,
+      CountDownLatch nativeClosed,
+      AtomicBoolean holdNativeCallback,
+      CountDownLatch nativeCallbackEntered,
+      CountDownLatch releaseNativeCallback,
+      CompletableFuture<Void> nativeGateCompleted,
+      CompletableFuture<WebSocketConnection> opened,
+      AtomicInteger closed) {
+    app.modifyServer(
+            server -> {
+              nativeServer.set(server);
+              server.addEventListener(stopFailure);
+              var container =
+                  server.getContainedBeans(ServerWebSocketContainer.class).iterator().next();
+              container.addSessionListener(
+                  new WebSocketSessionListener() {
+                    @Override
+                    public void onWebSocketSessionOpened(Session session) {
+                      nativeOpened.complete(session);
+                    }
+
+                    @Override
+                    public void onWebSocketSessionClosed(Session session) {
+                      nativeClosed.countDown();
+                    }
+                  });
+              var context = server.getContainedBeans(ContextHandler.class).iterator().next();
+              context.addEventListener(
+                  new ContextScopeListener() {
+                    @Override
+                    public void enterScope(
+                        Context scope, org.eclipse.jetty.server.Request request) {
+                      var session = nativeOpened.getNow(null);
+                      if (request != null
+                          || session == null
+                          || session.isOpen()
+                          || !holdNativeCallback.compareAndSet(true, false)) {
+                        return;
+                      }
+
+                      nativeCallbackEntered.countDown();
+
+                      try {
+                        if (releaseNativeCallback.await(10, TimeUnit.SECONDS)) {
+                          nativeGateCompleted.complete(null);
+                        } else {
+                          nativeGateCompleted.completeExceptionally(
+                              new IOException("Native callback release timed out"));
+                        }
+                      } catch (InterruptedException failure) {
+                        Thread.currentThread().interrupt();
+                        nativeGateCompleted.completeExceptionally(failure);
+                      }
+                    }
+                  });
+            })
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/late-close",
+                    events -> {
+                      events.onOpen(opened::complete);
+                      events.onClose((connection, code, reason) -> closed.incrementAndGet());
+                    }));
+  }
+
+  private WebSocket createSocketForDoesNotDispatchALateNativeCloseAfterNativeStopFails(
+      HttpClient client, TestServer test)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/late-close", null, null),
+            new Messages())
+        .get(5, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(25)
   void interruptsAnActiveCloseObserverDuringBothShutdownPhases() throws Exception {
@@ -1236,72 +1540,35 @@ class ManagedWebSocketTest {
       var firstInterrupt = new CompletableFuture<Void>();
       var secondInterrupt = new CompletableFuture<Void>();
       var firstInterruptBeforeNativeStop = new CompletableFuture<Void>();
-      var app =
-          new Shoostr()
-              .modifyServer(
-                  server -> {
-                    assertInstanceOf(QueuedThreadPool.class, server.getThreadPool())
-                        .setVirtualThreadsExecutor(borrowed);
-                    server.addEventListener(
-                        new LifeCycle.Listener() {
-                          @Override
-                          public void lifeCycleStopping(LifeCycle event) {
-                            try {
-                              firstInterrupt.get(5, TimeUnit.SECONDS);
-                              firstInterruptBeforeNativeStop.complete(null);
-                            } catch (InterruptedException failure) {
-                              Thread.currentThread().interrupt();
-                              firstInterruptBeforeNativeStop.completeExceptionally(failure);
-                            } catch (ExecutionException | TimeoutException failure) {
-                              firstInterruptBeforeNativeStop.completeExceptionally(failure);
-                            }
-                          }
-                        });
-                  })
-              .routes(
-                  routes ->
-                      routes.websocket(
-                          "/cancel-observer",
-                          events -> {
-                            events.onOpen(opened::complete);
-                            events.onClose(
-                                (connection, code, reason) -> {
-                                  observerEntered.countDown();
+      var app = new Shoostr();
 
-                                  try {
-                                    releaseObserver.await();
-                                  } catch (InterruptedException first) {
-                                    firstInterrupt.complete(null);
-
-                                    try {
-                                      releaseObserver.await();
-                                    } catch (InterruptedException second) {
-                                      secondInterrupt.complete(null);
-                                      throw second;
-                                    }
-                                  }
-                                });
-                          }));
+      configureBlockedCloseObserver(
+          app,
+          borrowed,
+          firstInterrupt,
+          firstInterruptBeforeNativeStop,
+          opened,
+          observerEntered,
+          releaseObserver,
+          secondInterrupt);
 
       try (var test = TestServer.start(app);
           var client = HttpClient.newHttpClient()) {
         var received = new Messages();
         var socket =
-            client
-                .newWebSocketBuilder()
-                .buildAsync(
-                    new URI("ws", test.baseUri().getRawAuthority(), "/cancel-observer", null, null),
-                    received)
-                .get(5, TimeUnit.SECONDS);
+            createSocketForInterruptsAnActiveCloseObserverDuringBothShutdownPhases(
+                client, test, received);
 
         try {
           opened.get(5, TimeUnit.SECONDS);
           socket.sendClose(1000, "Observe close").get(5, TimeUnit.SECONDS);
+
           assertTrue(observerEntered.await(5, TimeUnit.SECONDS));
 
           test.close();
           firstInterruptBeforeNativeStop.get(1, TimeUnit.SECONDS);
           secondInterrupt.get(5, TimeUnit.SECONDS);
+
           assertFalse(borrowed.isShutdown());
         } finally {
           releaseObserver.countDown();
@@ -1313,6 +1580,72 @@ class ManagedWebSocketTest {
     }
   }
 
+  private void configureBlockedCloseObserver(
+      Shoostr app,
+      ExecutorService borrowed,
+      CompletableFuture<Void> firstInterrupt,
+      CompletableFuture<Void> firstInterruptBeforeNativeStop,
+      CompletableFuture<WebSocketConnection> opened,
+      CountDownLatch observerEntered,
+      CountDownLatch releaseObserver,
+      CompletableFuture<Void> secondInterrupt) {
+    app.modifyServer(
+            server -> {
+              assertInstanceOf(QueuedThreadPool.class, server.getThreadPool())
+                  .setVirtualThreadsExecutor(borrowed);
+              server.addEventListener(
+                  new LifeCycle.Listener() {
+                    @Override
+                    public void lifeCycleStopping(LifeCycle event) {
+                      try {
+                        firstInterrupt.get(5, TimeUnit.SECONDS);
+                        firstInterruptBeforeNativeStop.complete(null);
+                      } catch (InterruptedException failure) {
+                        Thread.currentThread().interrupt();
+                        firstInterruptBeforeNativeStop.completeExceptionally(failure);
+                      } catch (ExecutionException | TimeoutException failure) {
+                        firstInterruptBeforeNativeStop.completeExceptionally(failure);
+                      }
+                    }
+                  });
+            })
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/cancel-observer",
+                    events -> {
+                      events.onOpen(opened::complete);
+                      events.onClose(
+                          (connection, code, reason) -> {
+                            observerEntered.countDown();
+
+                            try {
+                              releaseObserver.await();
+                            } catch (InterruptedException first) {
+                              firstInterrupt.complete(null);
+
+                              try {
+                                releaseObserver.await();
+                              } catch (InterruptedException second) {
+                                secondInterrupt.complete(null);
+                                throw second;
+                              }
+                            }
+                          });
+                    }));
+  }
+
+  private WebSocket createSocketForInterruptsAnActiveCloseObserverDuringBothShutdownPhases(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/cancel-observer", null, null),
+            received)
+        .get(5, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(20)
   void reusesACancelledCallbacksNativeWorkerWithoutInterruptingItsNextTask() throws Exception {
@@ -1321,50 +1654,28 @@ class ManagedWebSocketTest {
     var worker = new CompletableFuture<Thread>();
     var cancelled = new CompletableFuture<Void>();
     var app =
-        new Shoostr()
-            .modifyServer(
-                server -> {
-                  var nativePool = assertInstanceOf(QueuedThreadPool.class, server.getThreadPool());
-                  nativePool.setMaxThreads(32);
-                  pool.set(nativePool);
-                })
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/cancel",
-                        events -> {
-                          events.onOpen(opened::complete);
-                          events.onText(
-                              (connection, text) -> {
-                                worker.complete(Thread.currentThread());
-
-                                try {
-                                  new CountDownLatch(1).await();
-                                } catch (InterruptedException failure) {
-                                  cancelled.complete(null);
-                                  throw failure;
-                                }
-                              });
-                        }));
+        createAppForReusesACancelledCallbacksNativeWorkerWithoutInterruptingItsNextTask(
+            pool, opened, worker, cancelled);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/cancel", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForReusesACancelledCallbacksNativeWorkerWithoutInterruptingItsNextTask(
+              client, test, received);
       var release = new CountDownLatch(1);
       var sentinels = new ArrayList<CompletableFuture<Void>>();
 
       try {
         socket.sendText("work", true).get(3, TimeUnit.SECONDS);
         var previousWorker = worker.get(3, TimeUnit.SECONDS);
+
         assertFalse(previousWorker.isVirtual());
+
         opened.get(3, TimeUnit.SECONDS).close(1001, "Cancel work");
+
         assertEquals(1001, received.closeCode.get(3, TimeUnit.SECONDS));
+
         cancelled.get(3, TimeUnit.SECONDS);
 
         var reused = new CompletableFuture<Boolean>();
@@ -1399,6 +1710,7 @@ class ManagedWebSocketTest {
         }
 
         assertFalse(reused.get(3, TimeUnit.SECONDS));
+
         await()
             .during(Duration.ofMillis(100))
             .atMost(Duration.ofSeconds(1))
@@ -1417,6 +1729,50 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForReusesACancelledCallbacksNativeWorkerWithoutInterruptingItsNextTask(
+      AtomicReference<QueuedThreadPool> pool,
+      CompletableFuture<WebSocketConnection> opened,
+      CompletableFuture<Thread> worker,
+      CompletableFuture<Void> cancelled) {
+    return new Shoostr()
+        .modifyServer(
+            server -> {
+              var nativePool = assertInstanceOf(QueuedThreadPool.class, server.getThreadPool());
+
+              nativePool.setMaxThreads(32);
+              pool.set(nativePool);
+            })
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/cancel",
+                    events -> {
+                      events.onOpen(opened::complete);
+                      events.onText(
+                          (connection, text) -> {
+                            worker.complete(Thread.currentThread());
+
+                            try {
+                              new CountDownLatch(1).await();
+                            } catch (InterruptedException failure) {
+                              cancelled.complete(null);
+                              throw failure;
+                            }
+                          });
+                    }));
+  }
+
+  private WebSocket
+      createSocketForReusesACancelledCallbacksNativeWorkerWithoutInterruptingItsNextTask(
+          HttpClient client, TestServer test, Messages received)
+          throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/cancel", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void doesNotWaitForInterruptionIgnoringWorkDuringAppClose() throws Exception {
@@ -1424,40 +1780,55 @@ class ManagedWebSocketTest {
     var release = new CountDownLatch(1);
     var exited = new CountDownLatch(1);
     var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/work",
-                        events ->
-                            events.onText(
-                                (ignored22, ignored23) -> {
-                                  entered.countDown();
-                                  ignoreInterruptsUntilReleased(release);
-                                  exited.countDown();
-                                })));
+        createAppForDoesNotWaitForInterruptionIgnoringWorkDuringAppClose(entered, release, exited);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/work", null, null),
-                  new Messages())
-              .get(3, TimeUnit.SECONDS);
+          createSocketForDoesNotWaitForInterruptionIgnoringWorkDuringAppClose(client, test);
 
       try {
         socket.sendText("work", true).get(3, TimeUnit.SECONDS);
+
         assertTrue(entered.await(3, TimeUnit.SECONDS));
+
         test.close();
+
         assertEquals(1, exited.getCount());
       } finally {
         release.countDown();
+
         assertTrue(exited.await(3, TimeUnit.SECONDS));
+
         socket.abort();
       }
     }
+  }
+
+  private Shoostr createAppForDoesNotWaitForInterruptionIgnoringWorkDuringAppClose(
+      CountDownLatch entered, CountDownLatch release, CountDownLatch exited) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/work",
+                    events ->
+                        events.onText(
+                            (ignoredWebSocketConnection, ignoredString) -> {
+                              entered.countDown();
+                              ignoreInterruptsUntilReleased(release);
+                              exited.countDown();
+                            })));
+  }
+
+  private WebSocket createSocketForDoesNotWaitForInterruptionIgnoringWorkDuringAppClose(
+      HttpClient client, TestServer test)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/work", null, null), new Messages())
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -1469,45 +1840,31 @@ class ManagedWebSocketTest {
     var release = new CountDownLatch(1);
     var active = new AtomicBoolean();
     var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/work",
-                        events -> {
-                          events.onOpen(opened::complete);
-                          events.onText(
-                              (ignored24, ignored25) -> {
-                                active.set(true);
-                                entered.countDown();
-                                ignoreInterruptsUntilReleased(release);
-                                active.set(false);
-                              });
-                          events.onClose(
-                              (ignored26, ignored27, ignored28) ->
-                                  observedOverlap.complete(active.get()));
-                        }));
+        createAppForDefersTheCloseObserverUntilActiveApplicationWorkActuallyUnwinds(
+            opened, active, entered, release, observedOverlap);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/work", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForDefersTheCloseObserverUntilActiveApplicationWorkActuallyUnwinds(
+              client, test, received);
 
       try {
         socket.sendText("work", true).get(3, TimeUnit.SECONDS);
+
         assertTrue(entered.await(3, TimeUnit.SECONDS));
+
         opened.get(3, TimeUnit.SECONDS).close(1011, "Stopped");
+
         assertEquals(1011, received.closeCode.get(3, TimeUnit.SECONDS));
+
         await()
             .during(Duration.ofMillis(100))
             .atMost(Duration.ofSeconds(1))
             .untilAsserted(() -> assertFalse(observedOverlap.isDone()));
         release.countDown();
+
         assertFalse(observedOverlap.get(3, TimeUnit.SECONDS));
       } finally {
         release.countDown();
@@ -1516,45 +1873,91 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForDefersTheCloseObserverUntilActiveApplicationWorkActuallyUnwinds(
+      CompletableFuture<WebSocketConnection> opened,
+      AtomicBoolean active,
+      CountDownLatch entered,
+      CountDownLatch release,
+      CompletableFuture<Boolean> observedOverlap) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/work",
+                    events -> {
+                      events.onOpen(opened::complete);
+                      events.onText(
+                          (ignoredWebSocketConnection, ignoredString) -> {
+                            active.set(true);
+                            entered.countDown();
+                            ignoreInterruptsUntilReleased(release);
+                            active.set(false);
+                          });
+                      events.onClose(
+                          (ignoredWebSocketConnection, ignoredIndex, ignoredString) ->
+                              observedOverlap.complete(active.get()));
+                    }));
+  }
+
+  private WebSocket createSocketForDefersTheCloseObserverUntilActiveApplicationWorkActuallyUnwinds(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), "/work", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void stillNotifiesCloseWhenTheErrorObserverThrows() throws Exception {
     var closed = new CompletableFuture<Integer>();
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/failure",
-                        events -> {
-                          events.onText(
-                              (ignored29, ignored30) -> {
-                                throw new IOException("Fixture failure");
-                              });
-                          events.onError(
-                              (ignored31, ignored32) -> {
-                                throw new IllegalStateException("Observer failure");
-                              });
-                          events.onClose((ignored33, code, ignored34) -> closed.complete(code));
-                        }));
+    var app = createAppForStillNotifiesCloseWhenTheErrorObserverThrows(closed);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null),
-                  new Messages())
-              .get(3, TimeUnit.SECONDS);
+      var socket = createSocketForStillNotifiesCloseWhenTheErrorObserverThrows(client, test);
 
       try {
         socket.sendText("fail", true).get(3, TimeUnit.SECONDS);
+
         assertEquals(1011, closed.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
       }
     }
+  }
+
+  private Shoostr createAppForStillNotifiesCloseWhenTheErrorObserverThrows(
+      CompletableFuture<Integer> closed) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/failure",
+                    events -> {
+                      events.onText(
+                          (ignoredWebSocketConnection, ignoredString) -> {
+                            throw new IOException("Fixture failure");
+                          });
+                      events.onError(
+                          (ignoredWebSocketConnection, ignoredFailure) -> {
+                            throw new IllegalStateException("Observer failure");
+                          });
+                      events.onClose(
+                          (ignoredWebSocketConnection, code, ignoredString) ->
+                              closed.complete(code));
+                    }));
+  }
+
+  private WebSocket createSocketForStillNotifiesCloseWhenTheErrorObserverThrows(
+      HttpClient client, TestServer test)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null), new Messages())
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -1563,38 +1966,18 @@ class ManagedWebSocketTest {
     var observed = new CompletableFuture<Boolean>();
     var fatal = new LinkageError("Observer failure");
     var app =
-        new Shoostr()
-            .routes(
-                routes -> {
-                  routes.get("/probe", (request, response) -> response.text("available"));
-                  routes.websocket(
-                      "/failure",
-                      events -> {
-                        events.onText(
-                            (ignored36, ignored37) -> {
-                              Thread.currentThread().interrupt();
-                              throw new IOException("Fixture failure");
-                            });
-                        events.onError(
-                            (ignored38, ignored39) -> {
-                              observed.complete(Thread.currentThread().isInterrupted());
-                              throw fatal;
-                            });
-                      });
-                });
+        createAppForKeepsServingRequestsAfterAnInterruptedCallbackAndFatalErrorObserver(
+            observed, fatal);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null),
-                  new Messages())
-              .get(3, TimeUnit.SECONDS);
+          createSocketForKeepsServingRequestsAfterAnInterruptedCallbackAndFatalErrorObserver(
+              client, test);
 
       try {
         socket.sendText("fail", true).get(3, TimeUnit.SECONDS);
+
         assertFalse(observed.get(3, TimeUnit.SECONDS));
         assertEquals(
             200,
@@ -1606,50 +1989,97 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForKeepsServingRequestsAfterAnInterruptedCallbackAndFatalErrorObserver(
+      CompletableFuture<Boolean> observed, LinkageError fatal) {
+    return new Shoostr()
+        .routes(
+            routes -> {
+              routes.get("/probe", (request, response) -> response.text("available"));
+              routes.websocket(
+                  "/failure",
+                  events -> {
+                    events.onText(
+                        (ignoredWebSocketConnection, ignoredString) -> {
+                          Thread.currentThread().interrupt();
+                          throw new IOException("Fixture failure");
+                        });
+                    events.onError(
+                        (ignoredWebSocketConnection, ignoredFailure) -> {
+                          observed.complete(Thread.currentThread().isInterrupted());
+                          throw fatal;
+                        });
+                  });
+            });
+  }
+
+  private WebSocket
+      createSocketForKeepsServingRequestsAfterAnInterruptedCallbackAndFatalErrorObserver(
+          HttpClient client, TestServer test)
+          throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null), new Messages())
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void completesInterruptibleCloseWorkAfterAnErrorObserverIsInterrupted() throws Exception {
     var observed = new CompletableFuture<Boolean>();
     var ready = new CountDownLatch(0);
     var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/failure",
-                        events -> {
-                          events.onText(
-                              (ignored40, ignored41) -> {
-                                throw new IOException("Fixture failure");
-                              });
-                          events.onError(
-                              (ignored42, ignored43) -> {
-                                throw new InterruptedException("Observer interrupted");
-                              });
-                          events.onClose(
-                              (ignored44, ignored45, ignored46) -> {
-                                ready.await();
-                                observed.complete(true);
-                              });
-                        }));
+        createAppForCompletesInterruptibleCloseWorkAfterAnErrorObserverIsInterrupted(
+            ready, observed);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null),
-                  new Messages())
-              .get(3, TimeUnit.SECONDS);
+          createSocketForCompletesInterruptibleCloseWorkAfterAnErrorObserverIsInterrupted(
+              client, test);
 
       try {
         socket.sendText("fail", true).get(3, TimeUnit.SECONDS);
+
         assertTrue(observed.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
       }
     }
+  }
+
+  private Shoostr createAppForCompletesInterruptibleCloseWorkAfterAnErrorObserverIsInterrupted(
+      CountDownLatch ready, CompletableFuture<Boolean> observed) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/failure",
+                    events -> {
+                      events.onText(
+                          (ignoredWebSocketConnection, ignoredString) -> {
+                            throw new IOException("Fixture failure");
+                          });
+                      events.onError(
+                          (ignoredWebSocketConnection, ignoredFailure) -> {
+                            throw new InterruptedException("Observer interrupted");
+                          });
+                      events.onClose(
+                          (ignoredWebSocketConnection, ignoredIndex, ignoredString) -> {
+                            ready.await();
+                            observed.complete(true);
+                          });
+                    }));
+  }
+
+  private WebSocket createSocketForCompletesInterruptibleCloseWorkAfterAnErrorObserverIsInterrupted(
+      HttpClient client, TestServer test)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null), new Messages())
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -1666,24 +2096,35 @@ class ManagedWebSocketTest {
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/validation", null, null),
-                  received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForValidatesCloseArgumentsBeforeChangingConnectionState(
+              client, test, received);
 
       try {
         var connection = opened.get(3, TimeUnit.SECONDS);
+
         assertThrows(IllegalArgumentException.class, () -> connection.close(1006, "Invalid"));
+
         var oversizedReason = "x".repeat(124);
+
         assertThrows(IllegalArgumentException.class, () -> connection.close(1000, oversizedReason));
+
         connection.send("still open");
+
         assertEquals("still open", received.text.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
       }
     }
+  }
+
+  private WebSocket createSocketForValidatesCloseArgumentsBeforeChangingConnectionState(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/validation", null, null), received)
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -1693,37 +2134,28 @@ class ManagedWebSocketTest {
     Arrays.fill(bytes, (byte) 1);
     var sent = new CompletableFuture<Void>();
     var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/bytes",
-                        events ->
-                            events.onText(
-                                (connection, ignored47) -> {
-                                  connection.send(bytes);
-                                  sent.complete(null);
-                                })));
+        createAppForSnapshotsMutableBinaryOutputBeforeWaitingForTransportCompletion(bytes, sent);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new PausedBinaryMessages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/bytes", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForSnapshotsMutableBinaryOutputBeforeWaitingForTransportCompletion(
+              client, test, received);
 
       try {
         socket.sendText("bytes", true).get(3, TimeUnit.SECONDS);
         received.first.get(3, TimeUnit.SECONDS);
+
         assertFalse(sent.isDone());
+
         Arrays.fill(bytes, (byte) 2);
         received.release.complete(null);
         var expected = new byte[16 * 1024 * 1024];
         Arrays.fill(expected, (byte) 1);
+
         assertArrayEquals(expected, received.payload.get(10, TimeUnit.SECONDS));
+
         sent.get(3, TimeUnit.SECONDS);
       } finally {
         received.release.complete(null);
@@ -1732,45 +2164,49 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForSnapshotsMutableBinaryOutputBeforeWaitingForTransportCompletion(
+      byte[] bytes, CompletableFuture<Void> sent) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/bytes",
+                    events ->
+                        events.onText(
+                            (connection, ignoredString) -> {
+                              connection.send(bytes);
+                              sent.complete(null);
+                            })));
+  }
+
+  private WebSocket createSocketForSnapshotsMutableBinaryOutputBeforeWaitingForTransportCompletion(
+      HttpClient client, TestServer test, PausedBinaryMessages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), "/bytes", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(15)
   void settlesABlockedSendWhenTheAppCloses() throws Exception {
     var settled = new CompletableFuture<String>();
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/bytes",
-                        events ->
-                            events.onText(
-                                (connection, ignored48) -> {
-                                  try {
-                                    connection.send(new byte[16 * 1024 * 1024]);
-                                    settled.complete("sent");
-                                  } catch (IOException | InterruptedException failure) {
-                                    settled.complete("settled");
-                                    if (failure instanceof InterruptedException) {
-                                      Thread.currentThread().interrupt();
-                                    }
-                                  }
-                                })));
+    var app = createAppForSettlesABlockedSendWhenTheAppCloses(settled);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new PausedBinaryMessages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/bytes", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = createSocketForSettlesABlockedSendWhenTheAppCloses(client, test, received);
 
       try {
         socket.sendText("bytes", true).get(3, TimeUnit.SECONDS);
         received.first.get(3, TimeUnit.SECONDS);
+
         assertFalse(settled.isDone());
+
         test.close();
+
         assertEquals("settled", settled.get(3, TimeUnit.SECONDS));
       } finally {
         received.release.complete(null);
@@ -1779,33 +2215,52 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForSettlesABlockedSendWhenTheAppCloses(
+      CompletableFuture<String> settled) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/bytes",
+                    events ->
+                        events.onText(
+                            (connection, ignoredString) -> {
+                              try {
+                                connection.send(new byte[16 * 1024 * 1024]);
+                                settled.complete("sent");
+                              } catch (IOException | InterruptedException failure) {
+                                settled.complete("settled");
+                                if (failure instanceof InterruptedException) {
+                                  Thread.currentThread().interrupt();
+                                }
+                              }
+                            })));
+  }
+
+  private WebSocket createSocketForSettlesABlockedSendWhenTheAppCloses(
+      HttpClient client, TestServer test, PausedBinaryMessages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), "/bytes", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void completesTheNormalServerCloseHandshakeBeforeNotifyingItsObserver() throws Exception {
     var closed = new CompletableFuture<Integer>();
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/close",
-                        events -> {
-                          events.onText((connection, ignored49) -> connection.close());
-                          events.onClose((ignored50, code, ignored51) -> closed.complete(code));
-                        }));
+    var app = createAppForCompletesTheNormalServerCloseHandshakeBeforeNotifyingItsObserver(closed);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null),
-                  new Messages())
-              .get(3, TimeUnit.SECONDS);
+          createSocketForCompletesTheNormalServerCloseHandshakeBeforeNotifyingItsObserver(
+              client, test);
 
       try {
         socket.sendText("finish", true).get(3, TimeUnit.SECONDS);
+
         assertEquals(1000, closed.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -1813,22 +2268,37 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForCompletesTheNormalServerCloseHandshakeBeforeNotifyingItsObserver(
+      CompletableFuture<Integer> closed) {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/close",
+                    events -> {
+                      events.onText((connection, ignoredString) -> connection.close());
+                      events.onClose(
+                          (ignoredWebSocketConnection, code, ignoredString) ->
+                              closed.complete(code));
+                    }));
+  }
+
+  private WebSocket createSocketForCompletesTheNormalServerCloseHandshakeBeforeNotifyingItsObserver(
+      HttpClient client, TestServer test)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/close", null, null), new Messages())
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void reportsNativeSendRejectionWithoutLeavingTheCallerWaiting() throws Exception {
     var server = new AtomicReference<Server>();
     var failure = new CompletableFuture<Throwable>();
-    var app =
-        new Shoostr()
-            .modifyServer(server::set)
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/reject",
-                        events -> {
-                          events.onText((connection, ignored52) -> connection.send("x".repeat(64)));
-                          events.onError((ignored53, cause) -> failure.complete(cause));
-                        }));
+    var app = createAppForReportsNativeSendRejectionWithoutLeavingTheCallerWaiting(server, failure);
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
@@ -1837,15 +2307,11 @@ class ManagedWebSocketTest {
       container.setMaxFrameSize(32);
       container.setAutoFragment(false);
       var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/reject", null, null),
-                  new Messages())
-              .get(3, TimeUnit.SECONDS);
+          createSocketForReportsNativeSendRejectionWithoutLeavingTheCallerWaiting(client, test);
 
       try {
         socket.sendText("rejected", true).get(3, TimeUnit.SECONDS);
+
         assertInstanceOf(IOException.class, failure.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -1853,39 +2319,73 @@ class ManagedWebSocketTest {
     }
   }
 
+  private Shoostr createAppForReportsNativeSendRejectionWithoutLeavingTheCallerWaiting(
+      AtomicReference<Server> server, CompletableFuture<Throwable> failure) {
+    return new Shoostr()
+        .modifyServer(server::set)
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/reject",
+                    events -> {
+                      events.onText((connection, ignoredString) -> connection.send("x".repeat(64)));
+                      events.onError(
+                          (ignoredWebSocketConnection, cause) -> failure.complete(cause));
+                    }));
+  }
+
+  private WebSocket createSocketForReportsNativeSendRejectionWithoutLeavingTheCallerWaiting(
+      HttpClient client, TestServer test)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/reject", null, null), new Messages())
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void closesSafelyWhenAnApplicationErrorEscapes() throws Exception {
-    var app =
-        new Shoostr()
-            .routes(
-                routes ->
-                    routes.websocket(
-                        "/failure",
-                        events ->
-                            events.onText(
-                                (ignored54, ignored55) -> {
-                                  throw new LinkageError("Private fixture failure");
-                                })));
+    var app = createAppForClosesSafelyWhenAnApplicationErrorEscapes();
 
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = createSocketForClosesSafelyWhenAnApplicationErrorEscapes(client, test, received);
 
       try {
         socket.sendText("fail", true).get(3, TimeUnit.SECONDS);
+
         assertEquals(1011, received.closeCode.get(3, TimeUnit.SECONDS));
         assertEquals("Processing failed", received.closeReason.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
       }
     }
+  }
+
+  private Shoostr createAppForClosesSafelyWhenAnApplicationErrorEscapes() {
+    return new Shoostr()
+        .routes(
+            routes ->
+                routes.websocket(
+                    "/failure",
+                    events ->
+                        events.onText(
+                            (ignoredWebSocketConnection, ignoredString) -> {
+                              throw new LinkageError("Private fixture failure");
+                            })));
+  }
+
+  private WebSocket createSocketForClosesSafelyWhenAnApplicationErrorEscapes(
+      HttpClient client, TestServer test, Messages received)
+      throws InterruptedException, ExecutionException, TimeoutException, URISyntaxException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/failure", null, null), received)
+        .get(3, TimeUnit.SECONDS);
   }
 
   private static final class PausedBinaryMessages implements WebSocket.Listener {
@@ -1914,10 +2414,12 @@ class ManagedWebSocketTest {
       if (!paused) {
         paused = true;
         first.complete(null);
+
         return release.thenRun(() -> socket.request(1));
       }
 
       socket.request(1);
+
       return CompletableFuture.completedFuture(null);
     }
   }
@@ -1928,7 +2430,7 @@ class ManagedWebSocketTest {
       try {
         release.await();
         break;
-      } catch (InterruptedException ignored56) {
+      } catch (InterruptedException ignoredFailure) {
         interrupted = true;
       }
     }
@@ -1976,6 +2478,7 @@ class ManagedWebSocketTest {
       }
 
       socket.request(1);
+
       return CompletableFuture.completedFuture(null);
     }
 
@@ -1990,6 +2493,7 @@ class ManagedWebSocketTest {
       }
 
       socket.request(1);
+
       return CompletableFuture.completedFuture(null);
     }
 
@@ -1997,6 +2501,7 @@ class ManagedWebSocketTest {
     public CompletionStage<?> onClose(WebSocket socket, int code, String reason) {
       closeCode.complete(code);
       closeReason.complete(reason);
+
       return CompletableFuture.completedFuture(null);
     }
 

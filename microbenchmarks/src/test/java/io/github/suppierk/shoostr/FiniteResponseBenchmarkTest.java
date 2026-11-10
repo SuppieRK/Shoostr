@@ -23,6 +23,7 @@ class FiniteResponseBenchmarkTest {
     benchmark.stage();
 
     var expected = ("ascii".equals(shape) ? "x" : "é").repeat(characters);
+
     assertArrayEquals(expected.getBytes(StandardCharsets.UTF_8), benchmark.complete());
   }
 
@@ -37,9 +38,11 @@ class FiniteResponseBenchmarkTest {
     benchmark.setup();
 
     var first = benchmark.stage();
+
     assertSame(first, benchmark.stage());
 
     var expected = ("ascii".equals(shape) ? "x" : "é").repeat(characters);
+
     assertArrayEquals(expected.getBytes(StandardCharsets.UTF_8), benchmark.complete());
   }
 

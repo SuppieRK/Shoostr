@@ -12,11 +12,14 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.http.HttpHeaders;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
+import java.net.http.WebSocket.Builder;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
@@ -27,6 +30,7 @@ import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 import org.eclipse.jetty.server.ServerConnector;
@@ -50,16 +54,24 @@ class WebSocketExampleTest {
         var client = HttpClient.newHttpClient()) {
       var issued = sessionCookie(client, test, "/fixture/authenticated");
       var cookie =
-          switch (sessionState) {
-            case "missing" -> "";
-            case "unknown" -> issued.split("=", 2)[0] + "=not-issued";
-            case "anonymous" -> sessionCookie(client, test, "/fixture/anonymous");
-            default -> throw new IllegalArgumentException(sessionState);
-          };
+          createCookieForDeniesUnauthenticatedSessionsDespiteAnAllowedOriginAndAuthorizationHeader(
+              sessionState, issued, client, test);
+
       assertDenied(client, test, "/session-echo", cookie, List.of("https://app.example"));
       assertDenied(client, test, "/fixture/native", cookie, List.of("https://app.example"));
       assertEquals(0, listenerCreations.get());
     }
+  }
+
+  private String
+      createCookieForDeniesUnauthenticatedSessionsDespiteAnAllowedOriginAndAuthorizationHeader(
+          String sessionState, String issued, HttpClient client, TestServer test) throws Exception {
+    return switch (sessionState) {
+      case "missing" -> "";
+      case "unknown" -> issued.split("=", 2)[0] + "=not-issued";
+      case "anonymous" -> sessionCookie(client, test, "/fixture/anonymous");
+      default -> throw new IllegalArgumentException(sessionState);
+    };
   }
 
   @ParameterizedTest
@@ -72,6 +84,7 @@ class WebSocketExampleTest {
     try (var test = TestServer.start(sessionApplication(listenerCreations));
         var client = HttpClient.newHttpClient()) {
       var cookie = sessionCookie(client, test, "/fixture/authenticated");
+
       assertDenied(client, test, "/session-echo", cookie, origins);
       assertDenied(client, test, "/fixture/native", cookie, origins);
       assertEquals(0, listenerCreations.get());
@@ -88,33 +101,20 @@ class WebSocketExampleTest {
       var cookie = sessionCookie(client, test, "/fixture/authenticated");
       var received = new Messages();
       var socket =
-          client
-              .newWebSocketBuilder()
-              .connectTimeout(Duration.ofSeconds(3))
-              .header("Origin", "https://app.example")
-              .header("Cookie", cookie)
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/session-echo", null, null),
-                  received)
-              .get(3, TimeUnit.SECONDS);
+          createSocketForEchoesPrivateMessagesForAnAuthenticatedSessionWithTheExactOrigin(
+              client, cookie, test, received);
 
       try {
         socket.sendText("private message", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("private message", received.text.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
       }
 
       var nativeSocket =
-          client
-              .newWebSocketBuilder()
-              .connectTimeout(Duration.ofSeconds(3))
-              .header("Origin", "https://app.example")
-              .header("Cookie", cookie)
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/fixture/native", null, null),
-                  new Messages())
-              .get(3, TimeUnit.SECONDS);
+          createNativeSocketForEchoesPrivateMessagesForAnAuthenticatedSessionWithTheExactOrigin(
+              client, cookie, test);
 
       try {
         assertEquals(1, listenerCreations.get());
@@ -122,6 +122,34 @@ class WebSocketExampleTest {
         nativeSocket.abort();
       }
     }
+  }
+
+  private WebSocket createSocketForEchoesPrivateMessagesForAnAuthenticatedSessionWithTheExactOrigin(
+      HttpClient client, String cookie, TestServer test, Messages received)
+      throws URISyntaxException, InterruptedException, ExecutionException, TimeoutException {
+    return client
+        .newWebSocketBuilder()
+        .connectTimeout(Duration.ofSeconds(3))
+        .header("Origin", "https://app.example")
+        .header("Cookie", cookie)
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/session-echo", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
+  private WebSocket
+      createNativeSocketForEchoesPrivateMessagesForAnAuthenticatedSessionWithTheExactOrigin(
+          HttpClient client, String cookie, TestServer test)
+          throws URISyntaxException, InterruptedException, ExecutionException, TimeoutException {
+    return client
+        .newWebSocketBuilder()
+        .connectTimeout(Duration.ofSeconds(3))
+        .header("Origin", "https://app.example")
+        .header("Cookie", cookie)
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/fixture/native", null, null),
+            new Messages())
+        .get(3, TimeUnit.SECONDS);
   }
 
   @ParameterizedTest
@@ -132,15 +160,11 @@ class WebSocketExampleTest {
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/numbers", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = connectNumbers(client, test, received);
 
       try {
         socket.sendText(input, true).get(3, TimeUnit.SECONDS);
+
         assertEquals(expected, received.text.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -155,16 +179,12 @@ class WebSocketExampleTest {
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/echo", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = connectEcho(client, test, received);
 
       try {
         socket.sendText("hel", false).get(3, TimeUnit.SECONDS);
         socket.sendText("lo", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("hello", received.text.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -179,15 +199,11 @@ class WebSocketExampleTest {
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/echo", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = connectEcho(client, test, received);
 
       try {
         socket.sendClose(WebSocket.NORMAL_CLOSURE, "Finished").get(3, TimeUnit.SECONDS);
+
         assertEquals(1000, received.closeCode.get(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -202,15 +218,11 @@ class WebSocketExampleTest {
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/numbers", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = connectNumbers(client, test, received);
 
       try {
         socket.sendBinary(ByteBuffer.wrap(new byte[] {1}), true).get(3, TimeUnit.SECONDS);
+
         assertAll(
             () -> assertEquals(1003, received.closeCode.get(3, TimeUnit.SECONDS)),
             () ->
@@ -229,15 +241,11 @@ class WebSocketExampleTest {
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/numbers", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = connectNumbers(client, test, received);
 
       try {
         socket.sendText("fail", true).get(3, TimeUnit.SECONDS);
+
         assertAll(
             () -> assertEquals(1011, received.closeCode.get(3, TimeUnit.SECONDS)),
             () -> assertEquals("Processing failed", received.closeReason.get(3, TimeUnit.SECONDS)));
@@ -254,17 +262,15 @@ class WebSocketExampleTest {
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/numbers", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = connectNumbers(client, test, received);
 
       try {
         socket.sendText("not a number", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("error: integer required", received.text.poll(3, TimeUnit.SECONDS));
+
         socket.sendText("21", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("double=42", received.text.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -279,20 +285,25 @@ class WebSocketExampleTest {
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/numbers", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = connectNumbers(client, test, received);
 
       try {
         socket.sendText("21", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("double=42", received.text.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
       }
     }
+  }
+
+  private WebSocket connectNumbers(HttpClient client, TestServer test, Messages received)
+      throws URISyntaxException, InterruptedException, ExecutionException, TimeoutException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/numbers", null, null), received)
+        .get(3, TimeUnit.SECONDS);
   }
 
   @Test
@@ -301,26 +312,10 @@ class WebSocketExampleTest {
 
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
-      var failure =
-          assertThrows(
-              ExecutionException.class,
-              () -> {
-                var socket =
-                    client
-                        .newWebSocketBuilder()
-                        .buildAsync(
-                            new URI(
-                                "ws",
-                                test.baseUri().getRawAuthority(),
-                                "/rooms/" + "x".repeat(33),
-                                null,
-                                null),
-                            new Messages())
-                        .get(3, TimeUnit.SECONDS);
-                socket.abort();
-              });
+      var failure = assertFailureForRejectsAnOversizedRoomDuringTheHttpHandshake(client, test);
       var response =
           assertInstanceOf(WebSocketHandshakeException.class, failure.getCause()).getResponse();
+
       assertAll(
           () -> assertEquals(400, response.statusCode()),
           () -> assertEquals("Invalid room", response.body()),
@@ -331,6 +326,27 @@ class WebSocketExampleTest {
     }
   }
 
+  private ExecutionException assertFailureForRejectsAnOversizedRoomDuringTheHttpHandshake(
+      HttpClient client, TestServer test) {
+    return assertThrows(
+        ExecutionException.class,
+        () -> {
+          var socket = createSocketForRejectsAnOversizedRoomDuringTheHttpHandshake(client, test);
+          socket.abort();
+        });
+  }
+
+  private WebSocket createSocketForRejectsAnOversizedRoomDuringTheHttpHandshake(
+      HttpClient client, TestServer test)
+      throws URISyntaxException, InterruptedException, ExecutionException, TimeoutException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/rooms/" + "x".repeat(33), null, null),
+            new Messages())
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(15)
   void keepsRoomContextSeparateBetweenConnections() throws Exception {
@@ -339,26 +355,17 @@ class WebSocketExampleTest {
         var client = HttpClient.newHttpClient()) {
       var alphaMessages = new Messages();
       var alpha =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/rooms/alpha", null, null),
-                  alphaMessages)
-              .get(3, TimeUnit.SECONDS);
+          createAlphaForKeepsRoomContextSeparateBetweenConnections(client, test, alphaMessages);
 
       try {
         var betaMessages = new Messages();
         var beta =
-            client
-                .newWebSocketBuilder()
-                .buildAsync(
-                    new URI("ws", test.baseUri().getRawAuthority(), "/rooms/beta", null, null),
-                    betaMessages)
-                .get(3, TimeUnit.SECONDS);
+            createBetaForKeepsRoomContextSeparateBetweenConnections(client, test, betaMessages);
 
         try {
           alpha.sendText("hello", true).get(3, TimeUnit.SECONDS);
           beta.sendText("hello", true).get(3, TimeUnit.SECONDS);
+
           assertAll(
               () -> assertEquals("alpha: hello", alphaMessages.text.poll(3, TimeUnit.SECONDS)),
               () -> assertEquals("beta: hello", betaMessages.text.poll(3, TimeUnit.SECONDS)));
@@ -371,6 +378,28 @@ class WebSocketExampleTest {
     }
   }
 
+  private WebSocket createAlphaForKeepsRoomContextSeparateBetweenConnections(
+      HttpClient client, TestServer test, Messages alphaMessages)
+      throws URISyntaxException, InterruptedException, ExecutionException, TimeoutException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/rooms/alpha", null, null),
+            alphaMessages)
+        .get(3, TimeUnit.SECONDS);
+  }
+
+  private WebSocket createBetaForKeepsRoomContextSeparateBetweenConnections(
+      HttpClient client, TestServer test, Messages betaMessages)
+      throws URISyntaxException, InterruptedException, ExecutionException, TimeoutException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/rooms/beta", null, null),
+            betaMessages)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   @Timeout(10)
   void echoesBinaryThenContinuesWithText() throws Exception {
@@ -378,17 +407,15 @@ class WebSocketExampleTest {
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/echo", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = connectEcho(client, test, received);
 
       try {
         socket.sendBinary(ByteBuffer.wrap(new byte[] {0, 1, -1}), true).get(3, TimeUnit.SECONDS);
+
         assertArrayEquals(new byte[] {0, 1, -1}, received.binary.poll(3, TimeUnit.SECONDS));
+
         socket.sendText("after binary", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("after binary", received.text.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -403,17 +430,15 @@ class WebSocketExampleTest {
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
       var received = new Messages();
-      var socket =
-          client
-              .newWebSocketBuilder()
-              .buildAsync(
-                  new URI("ws", test.baseUri().getRawAuthority(), "/echo", null, null), received)
-              .get(3, TimeUnit.SECONDS);
+      var socket = connectEcho(client, test, received);
 
       try {
         socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("hello", received.text.poll(3, TimeUnit.SECONDS));
+
         socket.sendText("again", true).get(3, TimeUnit.SECONDS);
+
         assertEquals("again", received.text.poll(3, TimeUnit.SECONDS));
       } finally {
         socket.abort();
@@ -421,11 +446,20 @@ class WebSocketExampleTest {
     }
   }
 
+  private WebSocket connectEcho(HttpClient client, TestServer test, Messages received)
+      throws URISyntaxException, InterruptedException, ExecutionException, TimeoutException {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), "/echo", null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @Test
   void servesThePlainTextEndpointList() throws Exception {
 
     try (var test = TestServer.start(WebSocketExample.application())) {
       var response = test.send(request -> request.path("/"), HttpResponse.BodyHandlers.ofString());
+
       assertAll(
           () -> assertEquals(200, response.statusCode()),
           () ->
@@ -462,9 +496,31 @@ class WebSocketExampleTest {
             (request, ignored) -> {
               WebSocketExample.requireSessionOrigin(request);
               listenerCreations.incrementAndGet();
+
               return new Listener() {};
             });
+
     return app;
+  }
+
+  private static String sessionCookie(HttpClient client, TestServer test, String path)
+      throws Exception {
+    var created = sendCreatedRequestForSessionCookie(client, test, path);
+
+    assertEquals(200, created.statusCode());
+    assertEquals("created", created.body());
+
+    return created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+  }
+
+  private static HttpResponse<String> sendCreatedRequestForSessionCookie(
+      HttpClient client, TestServer test, String path) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(test.baseUri().resolve(path))
+            .timeout(Duration.ofSeconds(3))
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   private static Stream<List<String>> rejectedOrigins() {
@@ -493,52 +549,50 @@ class WebSocketExampleTest {
       builder.header("Origin", origin);
     }
     var received = new Messages();
-    var failure =
-        assertThrows(
-            ExecutionException.class,
-            () -> {
-              var socket =
-                  builder
-                      .buildAsync(
-                          new URI("ws", test.baseUri().getRawAuthority(), path, null, null),
-                          received)
-                      .get(3, TimeUnit.SECONDS);
-              socket.abort();
-            });
+    var failure = assertFailureForAssertDenied(builder, test, path, received);
     var response =
         assertInstanceOf(WebSocketHandshakeException.class, failure.getCause()).getResponse();
+
     assertEquals(403, response.statusCode());
     assertTrue(response.headers().allValues("Set-Cookie").isEmpty());
     assertNull(received.text.poll());
   }
 
-  private static String sessionCookie(HttpClient client, TestServer test, String path)
-      throws Exception {
-    var created =
-        client.send(
-            HttpRequest.newBuilder(test.baseUri().resolve(path))
-                .timeout(Duration.ofSeconds(3))
-                .POST(HttpRequest.BodyPublishers.noBody())
-                .build(),
-            HttpResponse.BodyHandlers.ofString());
-    assertEquals(200, created.statusCode());
-    assertEquals("created", created.body());
-    return created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+  private static ExecutionException assertFailureForAssertDenied(
+      Builder builder, TestServer test, String path, Messages received) {
+    return assertThrows(
+        ExecutionException.class,
+        () -> {
+          var socket = createSocketForAssertDenied(builder, test, path, received);
+          socket.abort();
+        });
+  }
+
+  private static WebSocket createSocketForAssertDenied(
+      Builder builder, TestServer test, String path, Messages received)
+      throws URISyntaxException, InterruptedException, ExecutionException, TimeoutException {
+    return builder
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), path, null, null), received)
+        .get(3, TimeUnit.SECONDS);
   }
 
   private static final class Messages implements WebSocket.Listener {
     private final BlockingQueue<String> text;
     private final StringBuilder partialText;
+
     private final BlockingQueue<byte[]> binary;
     private final ByteArrayOutputStream partialBinary;
+
     private final CompletableFuture<Integer> closeCode;
     private final CompletableFuture<String> closeReason;
 
     private Messages() {
       this.text = new LinkedBlockingQueue<>();
       this.partialText = new StringBuilder();
+
       this.binary = new LinkedBlockingQueue<>();
       this.partialBinary = new ByteArrayOutputStream();
+
       this.closeCode = new CompletableFuture<>();
       this.closeReason = new CompletableFuture<>();
     }
@@ -552,6 +606,7 @@ class WebSocketExampleTest {
       }
 
       socket.request(1);
+
       return CompletableFuture.completedFuture(null);
     }
 
@@ -566,6 +621,7 @@ class WebSocketExampleTest {
       }
 
       socket.request(1);
+
       return CompletableFuture.completedFuture(null);
     }
 
@@ -573,6 +629,7 @@ class WebSocketExampleTest {
     public CompletionStage<?> onClose(WebSocket socket, int statusCode, String reason) {
       closeCode.complete(statusCode);
       closeReason.complete(reason);
+
       return CompletableFuture.completedFuture(null);
     }
 

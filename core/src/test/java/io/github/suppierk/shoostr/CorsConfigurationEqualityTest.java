@@ -26,14 +26,14 @@ class CorsConfigurationEqualityTest {
         app.routes()
             .get(
                 "/first",
-                (ignored, ignored2) -> {},
+                (ignored, ignoredResponse) -> {},
                 extensions -> {
                   extensions.withExtension(cors);
                   endpoints.add(extensions);
                 })
             .get(
                 "/second",
-                (ignored3, ignored4) -> {},
+                (ignoredRequest, ignoredResponse) -> {},
                 extensions -> {
                   extensions.withExtension(cors).policy(secondPolicy);
                   endpoints.add(extensions);
@@ -63,10 +63,11 @@ class CorsConfigurationEqualityTest {
         app.routes()
             .get(
                 "/first",
-                (ignored, ignored2) -> {},
+                (ignored, ignoredResponse) -> {},
                 extensions -> {
                   var configuration = extensions.withExtension(cors);
                   var hash = configuration.hashCode();
+
                   assertTrue(configurations.add(configuration));
 
                   configuration.policy(replacement);
@@ -77,9 +78,10 @@ class CorsConfigurationEqualityTest {
                 })
             .get(
                 "/second",
-                (ignored3, ignored4) -> {},
+                (ignoredRequest, ignoredResponse) -> {},
                 extensions -> {
                   var configuration = extensions.withExtension(cors);
+
                   assertSame(configuration, extensions.withExtension(cors));
                   assertTrue(configurations.add(configuration));
                 });

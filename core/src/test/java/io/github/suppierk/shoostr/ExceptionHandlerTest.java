@@ -20,7 +20,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.jetty.server.ServerConnector;
@@ -65,21 +67,14 @@ class ExceptionHandlerTest {
     app.routes()
         .post(
             "/orders/{id}",
-            (ignored2, response) -> {
+            (ignoredRequest, response) -> {
               response.status(201).setHeader("X-Leak", "secret").text("discard");
               throw new UnauthorizedException("private diagnostics");
             });
 
     try (var test = TestServer.start(app)) {
-      var result =
-          test.send(
-              request ->
-                  request
-                      .path("/orders/42")
-                      .timeout(Duration.ofSeconds(3))
-                      .method("POST")
-                      .body("payload".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var result = sendResultForWritesCustomErrorsWithALiveRequestAndCleanResponse(test);
+
       assertEquals(401, result.statusCode());
       assertEquals("POST 42 payload", result.body());
       assertEquals(
@@ -88,24 +83,37 @@ class ExceptionHandlerTest {
     }
   }
 
+  private HttpResponse<String> sendResultForWritesCustomErrorsWithALiveRequestAndCleanResponse(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/orders/42")
+                .timeout(Duration.ofSeconds(3))
+                .method("POST")
+                .body("payload".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void selectsMostSpecificSuperclass(boolean specificFirst) throws Exception {
     ExceptionHandler<HttpException> broad =
-        (ignored3, ignored4, response) -> response.text("broad");
+        (ignoredFailure, ignoredRequest, response) -> response.text("broad");
     ExceptionHandler<HttpClientException> narrow =
-        (ignored5, ignored6, response) -> response.text("client");
+        (ignoredFailure, ignoredRequest, response) -> response.text("client");
     if (specificFirst) {
       app.exception(HttpClientException.class, narrow).exception(HttpException.class, broad);
     } else {
       app.exception(HttpException.class, broad).exception(HttpClientException.class, narrow);
     }
 
-    app.exception(Exception.class, (ignored7, ignored8, response) -> response.text("catch-all"));
+    app.exception(
+        Exception.class, (ignoredFailure, ignoredRequest, response) -> response.text("catch-all"));
     app.routes()
         .get(
             "/missing",
-            (ignored9, ignored10) -> {
+            (ignoredRequest, ignoredResponse) -> {
               throw new NotFoundException();
             });
 
@@ -114,6 +122,7 @@ class ExceptionHandlerTest {
           test.send(
               request -> request.path("/missing").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(404, result.statusCode());
       assertEquals("client", result.body());
     }
@@ -125,7 +134,7 @@ class ExceptionHandlerTest {
     var calls = new AtomicInteger();
     app.exception(
         Exception.class,
-        (ignored11, ignored12, response) -> {
+        (ignoredFailure, ignoredRequest, response) -> {
           calls.incrementAndGet();
           response.setHeader("X-Leak", "private").text("private body");
           if (failureMode == 0) {
@@ -141,7 +150,7 @@ class ExceptionHandlerTest {
     app.routes()
         .get(
             "/error",
-            (ignored13, ignored14) -> {
+            (ignoredRequest, ignoredResponse) -> {
               throw new NotFoundException();
             });
 
@@ -150,6 +159,7 @@ class ExceptionHandlerTest {
           test.send(
               request -> request.path("/error").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(500, result.statusCode());
       assertEquals("Internal Server Error", result.body());
       assertTrue(result.headers().firstValue("X-Leak").isEmpty());
@@ -160,7 +170,8 @@ class ExceptionHandlerTest {
   @ParameterizedTest
   @ValueSource(ints = {0, 1, 2})
   void rejectsDuplicateOrLateRegistration(int phase) throws Exception {
-    app.exception(Exception.class, (ignored15, ignored16, response) -> response.text("first"));
+    app.exception(
+        Exception.class, (ignoredFailure, ignoredRequest, response) -> response.text("first"));
     if (phase == 1) {
       app.start();
     } else if (phase == 2) {
@@ -169,11 +180,13 @@ class ExceptionHandlerTest {
 
     Class<? extends RuntimeException> expected =
         phase == 0 ? IllegalArgumentException.class : IllegalStateException.class;
+
     assertThrows(
         expected,
         () ->
             app.exception(
-                Exception.class, (ignored17, ignored18, response) -> response.text("second")));
+                Exception.class,
+                (ignoredFailure, ignoredRequest, response) -> response.text("second")));
   }
 
   @Test
@@ -197,23 +210,28 @@ class ExceptionHandlerTest {
                 });
     app.exception(
         ContentTooLargeException.class,
-        (ignored19, request, response) ->
+        (ignoredFailure, request, response) ->
             response.text("too large: " + request.pathParam("id").orElseThrow()));
-    app.routes().post("/orders/{id}", (ignored20, response) -> response.text("must not run"));
+    app.routes().post("/orders/{id}", (ignoredRequest, response) -> response.text("must not run"));
 
     try (var test = TestServer.start(app)) {
-      var result =
-          test.send(
-              request ->
-                  request
-                      .path("/orders/42")
-                      .timeout(Duration.ofSeconds(3))
-                      .method("POST")
-                      .body("12345".getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofString());
+      var result = sendResultForExposesMatchedParametersForEarlyBodyLimitFailures(test);
+
       assertEquals(413, result.statusCode());
       assertEquals("too large: 42", result.body());
     }
+  }
+
+  private HttpResponse<String> sendResultForExposesMatchedParametersForEarlyBodyLimitFailures(
+      TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/orders/42")
+                .timeout(Duration.ofSeconds(3))
+                .method("POST")
+                .body("12345".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -221,21 +239,10 @@ class ExceptionHandlerTest {
   void abortsCommittedOutputWithoutRedispatch(boolean inErrorHandler) throws Exception {
     var release = new CountDownLatch(1);
     var calls = new AtomicInteger();
-    Handler streamHandler =
-        (ignored21, response) -> {
-          var stream = response.startStream("text/plain");
-          stream.write("visible");
-          stream.flush();
-          if (!release.await(5, TimeUnit.SECONDS)) {
-            throw new IllegalStateException("Reader timed out");
-          }
-
-          stream.write("secret");
-          throw new NotFoundException();
-        };
+    Handler streamHandler = createStreamHandlerForAbortsCommittedOutputWithoutRedispatch(release);
     app.exception(
         Exception.class,
-        (ignored22, request, response) -> {
+        (ignoredFailure, request, response) -> {
           calls.incrementAndGet();
           if (inErrorHandler) {
             streamHandler.handle(request, response);
@@ -261,12 +268,15 @@ class ExceptionHandlerTest {
             test.send(
                 request -> request.path("/stream").timeout(Duration.ofSeconds(3)),
                 HttpResponse.BodyHandlers.ofInputStream());
+
         assertEquals(inErrorHandler ? 404 : 200, result.statusCode());
 
         try (var input = result.body()) {
           assertEquals("visible", new String(input.readNBytes(7), StandardCharsets.UTF_8));
+
           release.countDown();
           var received = new StringBuilder();
+
           assertThrows(
               IOException.class,
               () -> {
@@ -285,12 +295,27 @@ class ExceptionHandlerTest {
     }
   }
 
+  private Handler createStreamHandlerForAbortsCommittedOutputWithoutRedispatch(
+      CountDownLatch release) throws IOException, InterruptedException {
+    return (ignoredRequest, response) -> {
+      var stream = response.startStream("text/plain");
+      stream.write("visible");
+      stream.flush();
+      if (!release.await(5, TimeUnit.SECONDS)) {
+        throw new IllegalStateException("Reader timed out");
+      }
+
+      stream.write("secret");
+      throw new NotFoundException();
+    };
+  }
+
   @Test
   void registrationRacingStartupIsIncludedOrRejected() throws Exception {
     app.routes()
         .get(
             "/error",
-            (ignored23, ignored24) -> {
+            (ignoredRequest, ignoredResponse) -> {
               throw new NotFoundException();
             });
     var release = new CountDownLatch(1);
@@ -300,38 +325,55 @@ class ExceptionHandlerTest {
     try (var executor = Executors.newVirtualThreadPerTaskExecutor();
         var client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build()) {
       var registration =
-          executor.submit(
-              () -> {
-                release.await();
-
-                try {
-                  app.exception(
-                      NotFoundException.class,
-                      (ignored25, ignored26, response) -> response.text("registered"));
-                  return true;
-                } catch (IllegalStateException ignored27) {
-                  return false;
-                }
-              });
+          submitRegistrationForRegistrationRacingStartupIsIncludedOrRejected(executor, release);
       var startup =
-          executor.submit(
-              () -> {
-                release.await();
-                return app.start();
-              });
+          submitStartupForRegistrationRacingStartupIsIncludedOrRejected(executor, release);
       release.countDown();
 
       startup.get(5, TimeUnit.SECONDS);
       boolean accepted = registration.get(5, TimeUnit.SECONDS);
-      var result =
-          client.send(
-              HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/error"))
-                  .timeout(Duration.ofSeconds(3))
-                  .build(),
-              HttpResponse.BodyHandlers.ofString());
+      var result = sendResultForRegistrationRacingStartupIsIncludedOrRejected(client);
+
       assertEquals(404, result.statusCode());
       assertEquals(accepted ? "registered" : "Not Found", result.body());
     }
+  }
+
+  private Future<Boolean> submitRegistrationForRegistrationRacingStartupIsIncludedOrRejected(
+      ExecutorService executor, CountDownLatch release) {
+    return executor.submit(
+        () -> {
+          release.await();
+
+          try {
+            app.exception(
+                NotFoundException.class,
+                (ignoredFailure, ignoredRequest, response) -> response.text("registered"));
+
+            return true;
+          } catch (IllegalStateException ignoredFailure) {
+            return false;
+          }
+        });
+  }
+
+  private Future<Shoostr> submitStartupForRegistrationRacingStartupIsIncludedOrRejected(
+      ExecutorService executor, CountDownLatch release) {
+    return executor.submit(
+        () -> {
+          release.await();
+
+          return app.start();
+        });
+  }
+
+  private HttpResponse<String> sendResultForRegistrationRacingStartupIsIncludedOrRejected(
+      HttpClient client) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/error"))
+            .timeout(Duration.ofSeconds(3))
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
   }
 
   @ParameterizedTest
@@ -339,30 +381,20 @@ class ExceptionHandlerTest {
   void doesNotMapOrdinaryStatusesOrUnwrapCauses(int status) throws Exception {
 
     app.exception(
-        HttpException.class, (ignored28, ignored29, response) -> response.text("must not run"));
-    app.routes().get("/known", (ignored30, response) -> response.text("ok"));
+        HttpException.class,
+        (ignoredFailure, ignoredRequest, response) -> response.text("must not run"));
+    app.routes().get("/known", (ignoredRequest, response) -> response.text("ok"));
     app.routes()
         .get(
             "/wrapped",
-            (ignored31, ignored32) -> {
+            (ignoredRequest, ignoredResponse) -> {
               throw new CompletionException(new NotFoundException());
             });
 
     try (var test = TestServer.start(app)) {
-      var path =
-          switch (status) {
-            case 404 -> "/absent";
-            case 405 -> "/known";
-            default -> "/wrapped";
-          };
-      var result =
-          test.send(
-              request ->
-                  request
-                      .path(path)
-                      .method(status == 405 ? "POST" : "GET")
-                      .timeout(Duration.ofSeconds(3)),
-              HttpResponse.BodyHandlers.ofString());
+      var path = createPathForDoesNotMapOrdinaryStatusesOrUnwrapCauses(status);
+      var result = sendResultForDoesNotMapOrdinaryStatusesOrUnwrapCauses(test, path, status);
+
       assertEquals(status, result.statusCode());
       assertEquals(
           switch (status) {
@@ -374,20 +406,39 @@ class ExceptionHandlerTest {
     }
   }
 
+  private String createPathForDoesNotMapOrdinaryStatusesOrUnwrapCauses(int status) {
+    return switch (status) {
+      case 404 -> "/absent";
+      case 405 -> "/known";
+      default -> "/wrapped";
+    };
+  }
+
+  private HttpResponse<String> sendResultForDoesNotMapOrdinaryStatusesOrUnwrapCauses(
+      TestServer test, String path, int status) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path(path)
+                .method(status == 405 ? "POST" : "GET")
+                .timeout(Duration.ofSeconds(3)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void abortsFatalErrors(boolean inErrorHandler) throws Exception {
     var calls = new AtomicInteger();
     app.exception(
         Exception.class,
-        (ignored33, ignored34, ignored35) -> {
+        (ignoredFailure, ignoredRequest, ignoredResponse) -> {
           calls.incrementAndGet();
           throw new Error("fatal mapper failure");
         });
     app.routes()
         .post(
             "/fatal",
-            (ignored36, ignored37) -> {
+            (ignoredRequest, ignoredResponse) -> {
               if (inErrorHandler) {
                 throw new NotFoundException();
               }
@@ -410,15 +461,17 @@ class ExceptionHandlerTest {
   void handlesInvalidOutputDetectedAfterRouteReturn() throws Exception {
     app.exception(
         IllegalStateException.class,
-        (ignored38, request, response) -> response.text("invalid response for " + request.path()));
+        (ignoredFailure, request, response) ->
+            response.text("invalid response for " + request.path()));
     app.routes()
-        .get("/invalid", (ignored39, response) -> response.status(204).text("forbidden body"));
+        .get("/invalid", (ignoredRequest, response) -> response.status(204).text("forbidden body"));
 
     try (var test = TestServer.start(app)) {
       var result =
           test.send(
               request -> request.path("/invalid").timeout(Duration.ofSeconds(3)),
               HttpResponse.BodyHandlers.ofString());
+
       assertEquals(500, result.statusCode());
       assertEquals("invalid response for /invalid", result.body());
     }

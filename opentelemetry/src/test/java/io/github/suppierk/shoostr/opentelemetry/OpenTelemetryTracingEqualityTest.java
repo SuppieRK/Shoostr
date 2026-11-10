@@ -9,8 +9,10 @@ import io.github.suppierk.shoostr.testing.TestServer;
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
+import io.opentelemetry.sdk.OpenTelemetrySdkBuilder;
 import io.opentelemetry.sdk.testing.exporter.InMemorySpanExporter;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
+import io.opentelemetry.sdk.trace.SdkTracerProviderBuilder;
 import io.opentelemetry.sdk.trace.export.SimpleSpanProcessor;
 import java.io.Closeable;
 import java.util.HashSet;
@@ -23,16 +25,11 @@ import org.junit.jupiter.api.Test;
 class OpenTelemetryTracingEqualityTest {
   @Test
   void comparesAllStoredProviderState() {
-    try (var firstProvider =
-            SdkTracerProvider.builder()
-                .addSpanProcessor(SimpleSpanProcessor.create(InMemorySpanExporter.create()))
-                .build();
-        var secondProvider =
-            SdkTracerProvider.builder()
-                .addSpanProcessor(SimpleSpanProcessor.create(InMemorySpanExporter.create()))
-                .build()) {
-      var first = OpenTelemetrySdk.builder().setTracerProvider(firstProvider).build();
-      var second = OpenTelemetrySdk.builder().setTracerProvider(secondProvider).build();
+    try (var firstProvider = openTracerProvider();
+        var secondProvider = openTracerProvider()) {
+      var first = createTelemetry(firstProvider);
+      var second = createTelemetry(secondProvider);
+
       EqualsVerifier.forClass(OpenTelemetryTracing.class)
           .withPrefabValues(OpenTelemetry.class, first, second)
           .withPrefabValues(Tracer.class, first.getTracer("first"), second.getTracer("second"))
@@ -48,28 +45,32 @@ class OpenTelemetryTracingEqualityTest {
     var completed = new LinkedBlockingQueue<RequestOutcome>();
     var exporter = InMemorySpanExporter.create();
 
-    try (var provider =
-        SdkTracerProvider.builder()
-            .addSpanProcessor(SimpleSpanProcessor.create(exporter))
-            .build()) {
+    try (var provider = openTracerProvider(exporter)) {
       var app = new Shoostr().afterRequest(completed::add);
 
       try (Closeable appCleanup = app::close) {
-        var telemetry = OpenTelemetrySdk.builder().setTracerProvider(provider).build();
+        var telemetry = createTelemetry(provider);
         var first = new OpenTelemetryTracing(telemetry);
         var second = new OpenTelemetryTracing(telemetry);
+
         assertEquals(first, second);
         assertEquals(first.hashCode(), second.hashCode());
 
         app.withExtension(first);
+
         assertEquals(first, second);
+
         app.withExtension(second);
+
         assertEquals(first, second);
         assertEquals(first.hashCode(), second.hashCode());
+
         var values = new HashSet<OpenTelemetryTracing>();
         values.add(first);
         values.add(second);
+
         assertEquals(1, values.size());
+
         app.routes().get("/tracing", (request, response) -> response.text("done"));
 
         try (var server = TestServer.start(app)) {
@@ -79,5 +80,30 @@ class OpenTelemetryTracingEqualityTest {
         }
       }
     }
+  }
+
+  private SdkTracerProvider openTracerProvider() {
+    return tracerProviderProperties().build();
+  }
+
+  private SdkTracerProvider openTracerProvider(InMemorySpanExporter exporter) {
+    return tracerProviderProperties(exporter).build();
+  }
+
+  private SdkTracerProviderBuilder tracerProviderProperties() {
+    return SdkTracerProvider.builder()
+        .addSpanProcessor(SimpleSpanProcessor.create(InMemorySpanExporter.create()));
+  }
+
+  private SdkTracerProviderBuilder tracerProviderProperties(InMemorySpanExporter exporter) {
+    return SdkTracerProvider.builder().addSpanProcessor(SimpleSpanProcessor.create(exporter));
+  }
+
+  private OpenTelemetrySdk createTelemetry(SdkTracerProvider provider) {
+    return telemetryProperties(provider).build();
+  }
+
+  private OpenTelemetrySdkBuilder telemetryProperties(SdkTracerProvider provider) {
+    return OpenTelemetrySdk.builder().setTracerProvider(provider);
   }
 }

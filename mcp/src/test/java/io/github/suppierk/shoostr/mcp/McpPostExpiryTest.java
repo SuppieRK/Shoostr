@@ -12,13 +12,16 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.json.McpJsonDefaults;
+import io.modelcontextprotocol.server.McpAsyncServer;
 import io.modelcontextprotocol.server.McpServer;
 import io.modelcontextprotocol.server.McpServerFeatures;
 import io.modelcontextprotocol.spec.McpSchema;
+import io.modelcontextprotocol.spec.McpSchema.Tool;
 import io.modelcontextprotocol.spec.McpStreamableServerSession;
 import io.modelcontextprotocol.spec.McpStreamableServerTransportProvider;
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -29,7 +32,9 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
@@ -46,41 +51,11 @@ class McpPostExpiryTest {
     var cancellations = new AtomicInteger();
     var nativeSession = new AtomicReference<McpStreamableServerSession>();
     var security =
-        new McpHttpSecurity(
-            Set.of(),
-            request -> {
-              var verifiedExpiry =
-                  Instant.now().plusSeconds(request.header("X-Old-Token").isPresent() ? 2 : 10);
-              if (request.header("X-Old-Token").isPresent()) {
-                expiry.set(verifiedExpiry);
-              }
-
-              return new McpIdentity("alice:client", McpTransportContext.EMPTY, verifiedExpiry);
-            },
-            (ignored, ignored2) -> {});
+        createSecurityForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(expiry);
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
     var mcp =
-        Mcp.async(
-            security,
-            transport ->
-                McpServer.async(captureSession(transport, nativeSession))
-                    .requestTimeout(Duration.ofSeconds(10))
-                    .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
-                    .tools(
-                        McpServerFeatures.AsyncToolSpecification.builder()
-                            .tool(tool)
-                            .callHandler(
-                                (exchange, ignored3) ->
-                                    exchange
-                                        .ping()
-                                        .doOnSuccess(ignored4 -> nativeCompleted.countDown())
-                                        .doOnCancel(cancellations::incrementAndGet)
-                                        .thenReturn(
-                                            McpSchema.CallToolResult.builder()
-                                                .addTextContent("native ping completed")
-                                                .build()))
-                            .build())
-                    .build());
+        createMcpForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(
+            security, nativeSession, tool, nativeCompleted, cancellations);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
     app.afterRequest(
@@ -93,39 +68,12 @@ class McpPostExpiryTest {
     try (var readers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {
       var initialized =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .body(
-                          """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"post-expiry-fixture","version":"1.0"}}}
-              """
-                              .getBytes(StandardCharsets.UTF_8)));
+          sendInitializedRequestForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(
+              test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var response =
-          test.send(
-              request ->
-                  request
-                      .path("/mcp")
-                      .method("POST")
-                      .header("Content-Type", "application/json")
-                      .header("Accept", "application/json, text/event-stream")
-                      .header("Mcp-Session-Id", sessionId)
-                      .header("MCP-Protocol-Version", "2025-11-25")
-                      .header("X-Old-Token", "true")
-                      .body(
-                          """
-              {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-                "name":"ping-client","arguments":{}}}
-              """
-                              .getBytes(StandardCharsets.UTF_8)),
-              HttpResponse.BodyHandlers.ofInputStream());
+          sendResponseForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(
+              test, sessionId);
       var mapper = McpJsonDefaults.getMapper();
 
       var body = response.body();
@@ -134,56 +82,168 @@ class McpPostExpiryTest {
       try (var reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8));
           body) {
         assertEquals(200, response.statusCode());
+
         String line;
         do {
           line = reader.readLine();
+
           assertNotNull(line, "The native ping must arrive before token expiry");
         } while (!line.startsWith("data:"));
+
         var ping =
             assertInstanceOf(
                 McpSchema.JSONRPCRequest.class,
                 McpSchema.deserializeJsonRpcMessage(mapper, line.substring(5).strip()));
         assertEquals("ping", ping.method());
-        var ended =
-            readers.submit(
-                () -> {
-                  try {
-                    while (reader.readLine() != null) {
-                      // Read until the committed response ends or its transport fails.
-                    }
-                  } catch (IOException ignored5) {
-                    // A token deadline cannot replace already committed200 with a401.
-                  }
 
-                  return Instant.now();
-                });
+        var ended =
+            submitEndedForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(
+                readers, reader);
         var verifiedExpiry = expiry.get();
         awaitTermination(verifiedExpiry, () -> ended.isDone() && httpEnded.getCount() == 0);
+
         assertNotBeforeExpiry(verifiedExpiry, ended.get());
         assertEquals(0, cancellations.get());
         assertFalse(
             Objects.requireNonNull(nativeSession.get()).hasOpenStream(),
             "Ended HTTP must release its SDK stream while the native request stays pending");
+
         var replyBody =
             mapper.writeValueAsBytes(McpSchema.JSONRPCResponse.result(ping.id(), Map.of()));
         var reply =
-            test.send(
-                request ->
-                    request
-                        .path("/mcp")
-                        .method("POST")
-                        .header("Content-Type", "application/json")
-                        .header("Accept", "application/json, text/event-stream")
-                        .header("Mcp-Session-Id", sessionId)
-                        .header("MCP-Protocol-Version", "2025-11-25")
-                        .body(replyBody));
+            sendReplyRequestForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(
+                test, sessionId, replyBody);
+
         assertEquals(202, reply.statusCode());
+
         await("fresh reply completes the outstanding native request")
             .atMost(Duration.ofSeconds(5))
             .until(() -> nativeCompleted.getCount() == 0);
+
         assertEquals(0, cancellations.get());
       }
     }
+  }
+
+  private McpHttpSecurity
+      createSecurityForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(
+          AtomicReference<Instant> expiry) {
+    return new McpHttpSecurity(
+        Set.of(),
+        request -> {
+          var verifiedExpiry =
+              Instant.now().plusSeconds(request.header("X-Old-Token").isPresent() ? 2 : 10);
+          if (request.header("X-Old-Token").isPresent()) {
+            expiry.set(verifiedExpiry);
+          }
+
+          return new McpIdentity("alice:client", McpTransportContext.EMPTY, verifiedExpiry);
+        },
+        (ignored, ignoredJSONRPCMessage) -> {});
+  }
+
+  private Mcp<McpAsyncServer>
+      createMcpForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(
+          McpHttpSecurity security,
+          AtomicReference<McpStreamableServerSession> nativeSession,
+          Tool tool,
+          CountDownLatch nativeCompleted,
+          AtomicInteger cancellations) {
+    return Mcp.async(
+        security,
+        transport ->
+            McpServer.async(captureSession(transport, nativeSession))
+                .requestTimeout(Duration.ofSeconds(10))
+                .capabilities(McpSchema.ServerCapabilities.builder().tools(false).build())
+                .tools(
+                    McpServerFeatures.AsyncToolSpecification.builder()
+                        .tool(tool)
+                        .callHandler(
+                            (exchange, ignoredCallToolRequest) ->
+                                exchange
+                                    .ping()
+                                    .doOnSuccess(ignoredObject -> nativeCompleted.countDown())
+                                    .doOnCancel(cancellations::incrementAndGet)
+                                    .thenReturn(
+                                        McpSchema.CallToolResult.builder()
+                                            .addTextContent("native ping completed")
+                                            .build()))
+                        .build())
+                .build());
+  }
+
+  private HttpResponse<byte[]>
+      sendInitializedRequestForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(
+          TestServer test) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(
+                    """
+              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                "protocolVersion":"2025-11-25","capabilities":{},
+                "clientInfo":{"name":"post-expiry-fixture","version":"1.0"}}}
+              """
+                        .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private HttpResponse<InputStream>
+      sendResponseForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(
+          TestServer test, String sessionId) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", sessionId)
+                .header("MCP-Protocol-Version", "2025-11-25")
+                .header("X-Old-Token", "true")
+                .body(
+                    """
+              {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                "name":"ping-client","arguments":{}}}
+              """
+                        .getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofInputStream());
+  }
+
+  private Future<Instant>
+      submitEndedForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(
+          ExecutorService readers, BufferedReader reader) {
+    return readers.submit(
+        () -> {
+          try {
+            while (reader.readLine() != null) {
+              // Read until the committed response ends or its transport fails.
+            }
+          } catch (IOException ignoredFailure) {
+            // A token deadline cannot replace already committed200 with a401.
+          }
+
+          return Instant.now();
+        });
+  }
+
+  private HttpResponse<byte[]>
+      sendReplyRequestForAFreshReplyCompletesAnIssuedNativeRequestAfterThePostTokenExpires(
+          TestServer test, String sessionId, byte[] replyBody)
+          throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("Mcp-Session-Id", sessionId)
+                .header("MCP-Protocol-Version", "2025-11-25")
+                .body(replyBody));
   }
 
   private static McpStreamableServerTransportProvider captureSession(
@@ -196,6 +256,7 @@ class McpPostExpiryTest {
             parameters -> {
               var initialized = factory.startSession(parameters);
               session.set(initialized.session());
+
               return initialized;
             });
       }

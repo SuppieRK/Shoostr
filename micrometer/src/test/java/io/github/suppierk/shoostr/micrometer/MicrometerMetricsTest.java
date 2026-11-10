@@ -14,6 +14,7 @@ import io.github.suppierk.shoostr.Shoostr;
 import io.github.suppierk.shoostr.testing.TestServer;
 import io.micrometer.core.instrument.Meter;
 import io.micrometer.core.instrument.Tag;
+import io.micrometer.core.instrument.Timer;
 import io.micrometer.core.instrument.config.MeterFilter;
 import io.micrometer.core.instrument.config.MeterFilterReply;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
@@ -27,11 +28,13 @@ import java.nio.file.attribute.FileTime;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -104,21 +107,22 @@ class MicrometerMetricsTest {
                 "/drain",
                 (ignored, response) -> {
                   entered.countDown();
+
                   assertTrue(release.await(5, TimeUnit.SECONDS));
+
                   response.text("drained");
                 });
 
         try (var test = TestServer.start(app)) {
           var pending =
-              requests.submit(
-                  () ->
-                      test.send(
-                          request -> request.path("/drain"),
-                          HttpResponse.BodyHandlers.discarding()));
+              submitPendingForKeepsRegistryOpenUntilDrainingRequestsAndExtensionCleanupFinish(
+                  requests, test);
 
           try {
             assertTrue(entered.await(5, TimeUnit.SECONDS));
+
             app.close();
+
             assertEquals(200, pending.get(5, TimeUnit.SECONDS).statusCode());
             assertTrue(consumed.get());
             assertTrue(registry.isClosed());
@@ -130,6 +134,13 @@ class MicrometerMetricsTest {
     } finally {
       registry.close();
     }
+  }
+
+  private Future<HttpResponse<Void>>
+      submitPendingForKeepsRegistryOpenUntilDrainingRequestsAndExtensionCleanupFinish(
+          ExecutorService requests, TestServer test) {
+    return requests.submit(
+        () -> test.send(request -> request.path("/drain"), HttpResponse.BodyHandlers.discarding()));
   }
 
   @ParameterizedTest
@@ -147,9 +158,11 @@ class MicrometerMetricsTest {
         var metrics = new MicrometerMetrics(registry);
 
         app.withExtension(metrics);
-        app.afterRequest(ignored2 -> completed.complete(null));
+        app.afterRequest(ignoredRequestOutcome -> completed.complete(null));
         app.routes()
-            .get("/status/{id}", (ignored3, response) -> response.status(status).text("explicit"));
+            .get(
+                "/status/{id}",
+                (ignoredRequest, response) -> response.status(status).text("explicit"));
 
         try (var test = TestServer.start(app)) {
           var result =
@@ -158,7 +171,9 @@ class MicrometerMetricsTest {
                   HttpResponse.BodyHandlers.discarding());
 
           assertEquals(status, result.statusCode());
+
           completed.get(3, TimeUnit.SECONDS);
+
           assertCompletedTimerTags(registry, "/status/{id}", status, error);
           assertEquals(1, registry.find("http.server.requests").timers().size());
         }
@@ -181,7 +196,7 @@ class MicrometerMetricsTest {
         var metrics = new MicrometerMetrics(registry);
 
         app.observe(metrics);
-        app.afterRequest(ignored4 -> completed.complete(null));
+        app.afterRequest(ignoredRequestOutcome -> completed.complete(null));
 
         try (var test = TestServer.start(app)) {
           var result =
@@ -190,7 +205,9 @@ class MicrometerMetricsTest {
                   HttpResponse.BodyHandlers.discarding());
 
           assertEquals(404, result.statusCode());
+
           completed.get(3, TimeUnit.SECONDS);
+
           assertCompletedTimerTags(registry, "UNMATCHED", 404, "none");
           assertEquals(1, registry.find("http.server.requests").timers().size());
         }
@@ -213,11 +230,11 @@ class MicrometerMetricsTest {
         var metrics = new MicrometerMetrics(registry);
 
         app.withExtension(metrics);
-        app.afterRequest(ignored5 -> completed.complete(null));
+        app.afterRequest(ignoredRequestOutcome -> completed.complete(null));
         app.routes()
             .get(
                 "/failure/{id}",
-                (ignored6, ignored7) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new IllegalStateException("private failure details");
                 });
 
@@ -228,7 +245,9 @@ class MicrometerMetricsTest {
                   HttpResponse.BodyHandlers.discarding());
 
           assertEquals(500, result.statusCode());
+
           completed.get(3, TimeUnit.SECONDS);
+
           assertCompletedTimerTags(registry, "/failure/{id}", 500, "application");
           assertEquals(1, registry.find("http.server.requests").timers().size());
         }
@@ -251,9 +270,10 @@ class MicrometerMetricsTest {
         var metrics = new MicrometerMetrics(registry);
 
         app.withExtension(metrics);
-        app.afterRequest(ignored8 -> completed.complete(null));
-        app.routes().get("/redirect/{id}", (ignored9, response) -> response.redirect("/target"));
-        app.routes().get("/target", (ignored10, response) -> response.text("target"));
+        app.afterRequest(ignoredRequestOutcome -> completed.complete(null));
+        app.routes()
+            .get("/redirect/{id}", (ignoredRequest, response) -> response.redirect("/target"));
+        app.routes().get("/target", (ignoredRequest, response) -> response.text("target"));
 
         try (var test = TestServer.start(app)) {
           var result =
@@ -263,7 +283,9 @@ class MicrometerMetricsTest {
 
           assertEquals(302, result.statusCode());
           assertEquals("/target", result.headers().firstValue("Location").orElseThrow());
+
           completed.get(3, TimeUnit.SECONDS);
+
           assertCompletedTimerTags(registry, "/redirect/{id}", 302, "none");
           assertEquals(1, registry.find("http.server.requests").timers().size());
         }
@@ -290,25 +312,23 @@ class MicrometerMetricsTest {
 
         app.withExtension(metrics);
         app.afterRequest(completed::add);
-        app.routes().get("/asset/{id}", (ignored11, response) -> response.file(file, "text/plain"));
+        app.routes()
+            .get("/asset/{id}", (ignoredRequest, response) -> response.file(file, "text/plain"));
 
         try (var test = TestServer.start(app)) {
 
           var full =
               test.send(
                   request -> request.path("/asset/private-id").timeout(Duration.ofSeconds(3)));
+
           assertEquals(200, full.statusCode());
           assertArrayEquals("metered file: €\n".getBytes(StandardCharsets.UTF_8), full.body());
           assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+
           var etag = full.headers().firstValue("ETag").orElseThrow();
 
           var conditional =
-              test.send(
-                  request ->
-                      request
-                          .path("/asset/private-id")
-                          .timeout(Duration.ofSeconds(3))
-                          .header("If-None-Match", etag));
+              sendConditionalRequestForRecordsExact304TagsForAConditionalFileRequest(test, etag);
 
           assertEquals(304, conditional.statusCode());
           assertEquals(0, conditional.body().length);
@@ -323,6 +343,17 @@ class MicrometerMetricsTest {
     }
   }
 
+  private HttpResponse<byte[]>
+      sendConditionalRequestForRecordsExact304TagsForAConditionalFileRequest(
+          TestServer test, String etag) throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/asset/private-id")
+                .timeout(Duration.ofSeconds(3))
+                .header("If-None-Match", etag));
+  }
+
   @Test
   void applicationActivationRecordsSelectedEndpointsAndLeavesTheRegistryBorrowed()
       throws Exception {
@@ -335,13 +366,16 @@ class MicrometerMetricsTest {
         var metrics = new MicrometerMetrics(registry);
         var completed = new CompletableFuture<Void>();
         app.withExtension(metrics).afterRequest(ignored -> completed.complete(null));
-        app.routes().get("/", (ignored12, response) -> response.text("ok"));
+        app.routes().get("/", (ignoredRequest, response) -> response.text("ok"));
 
         try (var test = TestServer.start(app)) {
           test.send(request -> request.path("/"), HttpResponse.BodyHandlers.discarding());
           completed.get(3, TimeUnit.SECONDS);
+
           assertEquals(1, registry.get("http.server.requests").timer().count());
+
           test.close();
+
           assertFalse(registry.isClosed());
         }
       }
@@ -362,16 +396,21 @@ class MicrometerMetricsTest {
 
       try (Closeable appCleanup7 = app::close) {
         app.withExtension(new MicrometerMetrics(registry));
-        app.afterRequest(ignored13 -> completed.complete(null));
+        app.afterRequest(ignoredRequestOutcome -> completed.complete(null));
         app.routes()
-            .get("/explicit", (ignored14, response) -> response.status(status).text("explicit"));
+            .get(
+                "/explicit",
+                (ignoredRequest, response) -> response.status(status).text("explicit"));
 
         try (var test = TestServer.start(app)) {
           var result =
               test.send(
                   request -> request.path("/explicit"), HttpResponse.BodyHandlers.discarding());
+
           assertEquals(status, result.statusCode());
+
           completed.get(5, TimeUnit.SECONDS);
+
           assertEquals(
               1,
               registry
@@ -402,12 +441,12 @@ class MicrometerMetricsTest {
         app.routes()
             .get(
                 "/failure",
-                (ignored15, ignored16) -> {
+                (ignoredRequest, ignoredResponse) -> {
                   throw new IllegalStateException("private");
                 });
-        app.routes().get("/transport", (ignored17, response) -> response.text("ok"));
+        app.routes().get("/transport", (ignoredRequest, response) -> response.text("ok"));
         app.afterResponseFlush(
-            (request, ignored18) -> {
+            (request, ignoredResponse) -> {
               if (request.routePattern().filter("/transport"::equals).isPresent()) {
                 throw new IOException("private");
               }
@@ -417,11 +456,14 @@ class MicrometerMetricsTest {
           for (String path : new String[] {"/missing-a", "/missing-b", "/failure", "/transport"}) {
             test.send(request -> request.path(path), HttpResponse.BodyHandlers.discarding());
             var outcome = outcomes.poll(5, TimeUnit.SECONDS);
+
             assertNotNull(outcome);
+
             if ("/transport".equals(path)) {
               assertNotNull(outcome.transportFailure());
             }
           }
+
           assertEquals(
               2, registry.get("http.server.requests").tag("route", "UNMATCHED").timer().count());
           assertEquals(
@@ -473,23 +515,22 @@ class MicrometerMetricsTest {
       try (Closeable appCleanup10 = app::close;
           var testRequests = Executors.newVirtualThreadPerTaskExecutor()) {
         app.withExtension(new MicrometerMetrics(registry));
-        app.afterRequest(ignored19 -> completed.complete(null));
+        app.afterRequest(ignoredRequestOutcome -> completed.complete(null));
         app.routes()
             .get(
                 "/orders/{id}",
-                (ignored20, response) -> {
+                (ignoredRequest, response) -> {
                   entered.countDown();
+
                   assertTrue(release.await(5, TimeUnit.SECONDS));
+
                   response.text("ok");
                 });
 
         try (var test = TestServer.start(app)) {
           var pending =
-              testRequests.submit(
-                  () ->
-                      test.send(
-                          request -> request.path("/orders/private-id"),
-                          HttpResponse.BodyHandlers.discarding()));
+              submitPendingForCountsActiveAndCompletedRequestsUsingRouteTemplates(
+                  testRequests, test);
 
           try {
             assertTrue(entered.await(5, TimeUnit.SECONDS));
@@ -500,15 +541,14 @@ class MicrometerMetricsTest {
           }
 
           assertEquals(200, pending.get(5, TimeUnit.SECONDS).statusCode());
+
           completed.get(5, TimeUnit.SECONDS);
+
           assertEquals(
               0, registry.get("http.server.requests.active").longTaskTimer().activeTasks());
-          var timer =
-              registry
-                  .get("http.server.requests")
-                  .tag("route", "/orders/{id}")
-                  .tag("method", "GET")
-                  .timer();
+
+          var timer = createTimerForCountsActiveAndCompletedRequestsUsingRouteTemplates(registry);
+
           assertEquals(1, timer.count());
           assertTrue(timer.totalTime(TimeUnit.NANOSECONDS) > 0);
           assertEquals("none", timer.getId().getTag("error"));
@@ -517,6 +557,25 @@ class MicrometerMetricsTest {
     } finally {
       registry.close();
     }
+  }
+
+  private Future<HttpResponse<Void>>
+      submitPendingForCountsActiveAndCompletedRequestsUsingRouteTemplates(
+          ExecutorService testRequests, TestServer test) {
+    return testRequests.submit(
+        () ->
+            test.send(
+                request -> request.path("/orders/private-id"),
+                HttpResponse.BodyHandlers.discarding()));
+  }
+
+  private Timer createTimerForCountsActiveAndCompletedRequestsUsingRouteTemplates(
+      SimpleMeterRegistry registry) {
+    return registry
+        .get("http.server.requests")
+        .tag("route", "/orders/{id}")
+        .tag("method", "GET")
+        .timer();
   }
 
   @Test
@@ -562,10 +621,12 @@ class MicrometerMetricsTest {
 
                   response.status(503).text("busy");
                 });
+
         assertTrue(registry.find("http.server.requests").timers().isEmpty());
 
         try (var server = TestServer.start(app)) {
           assertTrue(registry.find("http.server.requests").timers().isEmpty());
+
           var pending = new ArrayList<Future<?>>();
           for (int index = 0; index < 24; index++) {
             final int id = index;
@@ -574,14 +635,11 @@ class MicrometerMetricsTest {
                     () -> {
                       int kind = id % 3;
                       var result =
-                          server.send(
-                              request ->
-                                  request
-                                      .method(kind == 1 ? "POST" : "GET")
-                                      .path((kind == 2 ? "/missing/" : "/items/") + "private-" + id)
-                                      .timeout(Duration.ofSeconds(3)),
-                              HttpResponse.BodyHandlers.discarding());
+                          sendResultForSharesOneObserverAcrossConcurrentFilteredMeterIdsWithoutEagerCompletedMeters(
+                              server, kind, id);
+
                       assertEquals(kind == 0 ? 200 : kind == 1 ? 503 : 404, result.statusCode());
+
                       return null;
                     }));
           }
@@ -593,14 +651,17 @@ class MicrometerMetricsTest {
           }
 
           for (var request : pending) request.get(5, TimeUnit.SECONDS);
+
           assertTrue(terminal.await(3, TimeUnit.SECONDS));
           assertEquals(3, registry.find("http.server.requests").timers().size());
+
           for (var timer : registry.find("http.server.requests").timers()) {
             assertEquals(8, timer.count());
             assertEquals("Terminal request count and duration", timer.getId().getDescription());
             assertEquals("test", timer.getId().getTag("deployment"));
             assertEquals(5, timer.getId().getTags().size());
           }
+
           assertEquals(
               8,
               registry
@@ -635,6 +696,18 @@ class MicrometerMetricsTest {
     }
   }
 
+  private HttpResponse<Void>
+      sendResultForSharesOneObserverAcrossConcurrentFilteredMeterIdsWithoutEagerCompletedMeters(
+          TestServer server, int kind, int id) throws IOException, InterruptedException {
+    return server.send(
+        request ->
+            request
+                .method(kind == 1 ? "POST" : "GET")
+                .path((kind == 2 ? "/missing/" : "/items/") + "private-" + id)
+                .timeout(Duration.ofSeconds(3)),
+        HttpResponse.BodyHandlers.discarding());
+  }
+
   @Test
   @Timeout(10)
   void releasesTheActiveSampleWhenCompletedMeterRegistrationFails() throws Exception {
@@ -666,6 +739,7 @@ class MicrometerMetricsTest {
           var response =
               server.send(
                   request -> request.path("/metrics"), HttpResponse.BodyHandlers.ofString());
+
           assertEquals(200, response.statusCode());
           assertEquals("done", response.body());
           assertTrue(completed.await(3, TimeUnit.SECONDS));
@@ -683,16 +757,31 @@ class MicrometerMetricsTest {
 
   private static void assertCompletedTimerTags(
       SimpleMeterRegistry registry, String route, int status, String error) {
-    var timer =
-        registry
-            .get("http.server.requests")
-            .tag("route", route)
-            .tag("status", Integer.toString(status))
-            .timer();
+    var timer = createTimerForAssertCompletedTimerTags(registry, route, status);
+
     assertEquals(
-        Map.of("method", "GET", "route", route, "status", Integer.toString(status), "error", error),
+        expectedTimerTags(route, status, error),
         timer.getId().getTags().stream().collect(Collectors.toMap(Tag::getKey, Tag::getValue)));
     assertEquals(1L, timer.count());
+  }
+
+  private static Timer createTimerForAssertCompletedTimerTags(
+      SimpleMeterRegistry registry, String route, int status) {
+    return registry
+        .get("http.server.requests")
+        .tag("route", route)
+        .tag("status", Integer.toString(status))
+        .timer();
+  }
+
+  private static Map<String, String> expectedTimerTags(String route, int status, String error) {
+    var entries = new LinkedHashMap<String, String>();
+    entries.put("method", "GET");
+    entries.put("route", route);
+    entries.put("status", Integer.toString(status));
+    entries.put("error", error);
+
+    return Map.copyOf(entries);
   }
 
   private record RegistryConsumer(SimpleMeterRegistry registry, AtomicBoolean consumed)
@@ -712,6 +801,7 @@ class MicrometerMetricsTest {
     public void close() {
       assertFalse(registry.isClosed());
       assertEquals(1, registry.get("http.server.requests").tag("route", "/drain").timer().count());
+
       consumed.set(true);
     }
   }

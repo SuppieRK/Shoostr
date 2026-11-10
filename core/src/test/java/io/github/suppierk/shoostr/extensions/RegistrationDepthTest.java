@@ -28,8 +28,13 @@ class RegistrationDepthTest {
                   nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
 
       try (Closeable appCleanup = app::close) {
-        nested(app.routes(), 10, false, routes -> routes.get("/leaf", (ignored, ignored2) -> {}));
+        nested(
+            app.routes(),
+            10,
+            false,
+            routes -> routes.get("/leaf", (ignored, ignoredResponse) -> {}));
         app.start();
+
         assertTrue(app.port() > 0);
       }
     }
@@ -44,6 +49,7 @@ class RegistrationDepthTest {
 
       try (Closeable appCleanup1 = app::close) {
         conditions(app.routes(), 10, entered);
+
         assertEquals(10, entered.get());
       }
     }
@@ -61,7 +67,8 @@ class RegistrationDepthTest {
             true,
             routes ->
                 assertThrows(
-                    IllegalStateException.class, () -> routes.when(() -> true, ignored3 -> {})));
+                    IllegalStateException.class,
+                    () -> routes.when(() -> true, ignoredRoutes -> {})));
       }
     }
   }
@@ -75,6 +82,7 @@ class RegistrationDepthTest {
 
       try (Closeable appCleanup3 = app::close) {
         var routes = app.routes();
+
         assertThrows(IllegalStateException.class, () -> capturedRoot(routes, 11, entered));
         assertEquals(10, entered.get());
       }
@@ -91,7 +99,8 @@ class RegistrationDepthTest {
       try (Closeable appCleanup4 = app::close) {
         nested(app.routes(), 10, false, retained::set);
         var child = retained.get();
-        assertThrows(IllegalStateException.class, () -> child.path("/child", ignored4 -> {}));
+
+        assertThrows(IllegalStateException.class, () -> child.path("/child", ignoredRoutes -> {}));
       }
     }
   }
@@ -106,6 +115,7 @@ class RegistrationDepthTest {
 
       try (Closeable appCleanup5 = app::close) {
         var routes = app.routes();
+
         assertThrows(
             IllegalArgumentException.class,
             () ->
@@ -113,11 +123,17 @@ class RegistrationDepthTest {
                     routes,
                     10,
                     true,
-                    ignored5 -> {
+                    ignoredRoutes -> {
                       throw new IllegalArgumentException("registration failed");
                     }));
-        nested(routes, 10, true, child -> child.get("/recovered", (ignored6, ignored7) -> {}));
+
+        nested(
+            routes,
+            10,
+            true,
+            child -> child.get("/recovered", (ignoredRequest, ignoredResponse) -> {}));
         app.start();
+
         assertTrue(app.port() > 0);
       }
     }
@@ -128,14 +144,7 @@ class RegistrationDepthTest {
   void rejectsExcessDepthBeforeConfigurationOrInheritedProvidersRun() throws Exception {
     var configured = new AtomicInteger();
     var userCalls = new AtomicInteger();
-    var provider =
-        new TestExtension<>() {
-          @Override
-          public Object configure(Lifecycle endpoint, Object inherited) {
-            configured.incrementAndGet();
-            return new Object();
-          }
-        };
+    var provider = countingProvider(configured);
 
     {
       var app =
@@ -159,17 +168,31 @@ class RegistrationDepthTest {
                               () ->
                                   limit.path(
                                       "/blocked",
-                                      ignored8 -> userCalls.incrementAndGet(),
-                                      ignored9 -> userCalls.incrementAndGet()));
+                                      ignoredRoutes -> userCalls.incrementAndGet(),
+                                      ignoredLifecycle -> userCalls.incrementAndGet()));
                           assertEquals(10, configured.get());
                         }),
-                e -> e.withExtension(provider));
+                lifecycle -> lifecycle.withExtension(provider));
+
         assertEquals(0, userCalls.get());
-        app.routes().get("/recovered", (ignored10, ignored11) -> {});
+
+        app.routes().get("/recovered", (ignoredRequest, ignoredResponse) -> {});
         app.start();
+
         assertTrue(app.port() > 0);
       }
     }
+  }
+
+  private TestExtension<Object> countingProvider(AtomicInteger configured) {
+    return new TestExtension<>() {
+      @Override
+      public Object configure(Lifecycle endpoint, Object inherited) {
+        configured.incrementAndGet();
+
+        return new Object();
+      }
+    };
   }
 
   @Test
@@ -181,23 +204,26 @@ class RegistrationDepthTest {
 
       try (Closeable appCleanup7 = app::close;
           var executor = Executors.newVirtualThreadPerTaskExecutor()) {
-        Runnable registration =
-            () ->
-                nested(
-                    app.routes(),
-                    10,
-                    true,
-                    ignored12 -> {
-                      reached.countDown();
-
-                      assertDoesNotThrow(() -> assertTrue(reached.await(5, TimeUnit.SECONDS)));
-                    });
+        Runnable registration = nestedRegistration(app, reached);
         var first = executor.submit(registration);
         var second = executor.submit(registration);
         first.get(10, TimeUnit.SECONDS);
         second.get(10, TimeUnit.SECONDS);
       }
     }
+  }
+
+  private Runnable nestedRegistration(Shoostr app, CountDownLatch reached) {
+    return () ->
+        nested(
+            app.routes(),
+            10,
+            true,
+            ignoredRoutes -> {
+              reached.countDown();
+
+              assertDoesNotThrow(() -> assertTrue(reached.await(5, TimeUnit.SECONDS)));
+            });
   }
 
   @Test
@@ -209,6 +235,7 @@ class RegistrationDepthTest {
 
       try (Closeable appCleanup8 = app::close) {
         var routes = app.routes();
+
         assertThrows(IllegalStateException.class, () -> conditions(routes, 11, entered));
         assertEquals(10, entered.get());
       }
@@ -224,6 +251,7 @@ class RegistrationDepthTest {
 
       try (Closeable appCleanup9 = app::close) {
         var routes = app.routes();
+
         assertThrows(IllegalStateException.class, () -> paths(routes, 11, entered));
         assertEquals(10, entered.get());
       }
@@ -270,7 +298,7 @@ class RegistrationDepthTest {
     if (remaining > 0) {
       root.path(
           "/",
-          ignored13 -> {
+          ignoredRoutes -> {
             entered.incrementAndGet();
             capturedRoot(root, remaining - 1, entered);
           });
