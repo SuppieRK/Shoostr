@@ -37,11 +37,18 @@ Repeated selection is deduplicated, and repeated `policy(...)` calls use the las
 
 An origin or header wildcard absorbs the other values in that collection.
 For method and request-header wildcards, Shoostr answers preflight with the validated requested names.
-Policies are immutable and validated at construction; scoped configurators stop accepting changes when registration finishes.
+Serving copies are validated before selection; scoped configurators stop accepting changes when registration finishes.
 The [Fetch specification](https://fetch.spec.whatwg.org/#http-cors-protocol) explains how browsers enforce these permissions.
 
 Builder collection methods accept required-first varargs for literal values and sets for computed or explicitly empty permissions.
 Each call replaces that builder setting, and `build()` validates a complete policy.
+
+`CorsPolicy` is also a mutable JavaBean with a public no-argument constructor, field defaults, and ordinary getters and setters.
+Load configuration directly into `CorsPolicy`, then pass it to `new Cors(policy)` or a scoped replacement.
+Both operations validate and copy the complete policy; later edits to the source or to a value returned by `cors.policy()` cannot change serving permissions.
+Omitted properties keep the defaults above; null setter values restore those defaults.
+For YAML wildcard methods, supply both `methods: []` and `allMethods: true`; the setters are independent of key order, and provider selection rejects a wildcard combined with finite methods.
+Configure your chosen loader in the application.
 
 Keep configured headers available to application code through their typed accessors:
 
@@ -50,7 +57,7 @@ Keep configured headers available to application code through their typed access
 | `policy.allowedHeaders()` | Request headers permitted during preflight.           |
 | `policy.exposedHeaders()` | Additional response headers browser scripts may read. |
 
-Both return immutable sets of `HttpHeaders`; `cors.policy()` returns the owner's base policy.
+Both return immutable sets of `HttpHeaders`; `cors.policy()` returns a defensive copy of the owner's base policy.
 Keep a replacement policy in a variable when its header names are also needed elsewhere.
 
 An admitted OPTIONS preflight receives `204`, the configured cache lifetime and the required `Vary` fields without an OPTIONS handler.

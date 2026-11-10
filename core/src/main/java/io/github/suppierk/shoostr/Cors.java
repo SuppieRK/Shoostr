@@ -17,10 +17,10 @@ import org.jspecify.annotations.Nullable;
 /**
  * Scoped browser response sharing, resolved before authentication and request admission.
  *
- * <p>Equality compares the immutable policy. Installation and route selection identify the exact
- * extension instance independently of this value comparison.
+ * <p>Equality compares the private policy snapshot. Installation and route selection identify the
+ * exact extension instance independently of this value comparison.
  *
- * @param policy immutable cross-origin permissions
+ * @param policy mutable cross-origin configuration copied on construction
  */
 public record Cors(CorsPolicy policy)
     implements ApplicationExtension<Cors.Configuration>, RouteExtension<Cors.Configuration> {
@@ -38,20 +38,20 @@ public record Cors(CorsPolicy policy)
   /**
    * Creates immutable sharing behavior from validated permissions.
    *
-   * @param policy immutable permissions
+   * @param policy permissions to snapshot
    */
   public Cors {
-    Objects.requireNonNull(policy);
+    policy = new CorsPolicy(Objects.requireNonNull(policy));
   }
 
   /**
-   * Returns the immutable configuration, including typed allowed/exposed headers.
+   * Returns a defensive configuration copy, including typed allowed/exposed headers.
    *
-   * @return configured policy
+   * @return independent policy copy
    */
   @Override
   public CorsPolicy policy() {
-    return policy;
+    return new CorsPolicy(policy);
   }
 
   /** {@inheritDoc} */
@@ -83,14 +83,14 @@ public record Cors(CorsPolicy policy)
     /**
      * Replaces the complete policy without changing the selected owner.
      *
-     * @param contribution complete immutable replacement
+     * @param contribution complete replacement copied before publication
      * @return this configuration
      * @throws IllegalStateException if registration has finished
      * @throws IllegalArgumentException if the resolved permissions are invalid
      */
     public Configuration policy(CorsPolicy contribution) {
       endpoint.requireMutable();
-      var combined = Objects.requireNonNull(contribution);
+      var combined = new CorsPolicy(Objects.requireNonNull(contribution));
       endpoint.cors(cors, combined);
 
       policy = combined;
@@ -118,7 +118,7 @@ public record Cors(CorsPolicy policy)
   /**
    * Selects immutable response fields before application processing.
    *
-   * @param policy immutable effective permissions for this binding
+   * @param policy private effective permissions for this binding
    * @param request invocation input
    * @param response output receiving required sharing fields
    * @return whether this is an admitted preflight
@@ -200,7 +200,7 @@ public record Cors(CorsPolicy policy)
   /**
    * Adds response headers that differ between preflight and ordinary CORS requests.
    *
-   * @param policy immutable effective permissions
+   * @param policy private effective permissions
    * @param fields mutable response fields
    * @param request incoming request
    * @param method validated requested method
@@ -232,7 +232,7 @@ public record Cors(CorsPolicy policy)
   /**
    * Combines requested-header list fields, validates tokens and applies explicit permissions.
    *
-   * @param policy immutable effective permissions
+   * @param policy private effective permissions
    * @param request invocation input
    * @return unique lowercase header names in stable order
    * @throws ForbiddenException if a requested header is not allowed

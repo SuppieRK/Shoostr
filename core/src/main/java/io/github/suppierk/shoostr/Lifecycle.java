@@ -325,7 +325,7 @@ public final class Lifecycle {
   }
 
   /**
-   * Selects the immutable CSRF owner.
+   * Selects the CSRF owner by instance identity.
    *
    * <p>ReferenceEquality is suppressed because selection requires the same installed instance, even
    * when two extensions trust the same origins.
@@ -344,13 +344,13 @@ public final class Lifecycle {
   }
 
   /**
-   * Selects the immutable CORS owner.
+   * Selects the CORS owner by instance identity.
    *
    * <p>ReferenceEquality is suppressed because selection requires the same installed instance, even
    * when two extensions have equal policies.
    *
    * @param owner selected sharing policy
-   * @param policy resolved immutable permissions
+   * @param policy private permissions snapshot
    * @throws IllegalArgumentException if a different CORS owner is already selected
    */
   @SuppressWarnings("ReferenceEquality")

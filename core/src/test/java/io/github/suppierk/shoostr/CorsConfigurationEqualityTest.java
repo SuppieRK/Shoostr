@@ -42,6 +42,7 @@ class CorsConfigurationEqualityTest {
         // Each mutable configurator belongs to one registration scope.
         EqualsVerifier.forClass(Cors.Configuration.class)
             .withPrefabValues(Lifecycle.class, endpoints.get(0), endpoints.get(1))
+            .withPrefabValues(Cors.class, cors, new Cors(secondPolicy))
             .withNonnullFields("endpoint", "cors", "policy")
             .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED)
             .verify();

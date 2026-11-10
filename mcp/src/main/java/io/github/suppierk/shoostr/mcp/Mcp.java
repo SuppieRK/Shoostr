@@ -861,11 +861,11 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
      * @param limits configured session capacity and idle timeout
      */
     private Provider(McpSessionLimits limits) {
-      this.limits = limits;
+      this.limits = new McpSessionLimits(limits);
       idleNanos =
-          limits.idleTimeout().compareTo(Duration.ofNanos(Long.MAX_VALUE)) > 0
+          this.limits.idleTimeout().compareTo(Duration.ofNanos(Long.MAX_VALUE)) > 0
               ? Long.MAX_VALUE
-              : limits.idleTimeout().toNanos();
+              : this.limits.idleTimeout().toNanos();
       owners = new HashMap<>();
       closing = new HashMap<>();
       initializing = new HashMap<>();

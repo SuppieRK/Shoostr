@@ -39,6 +39,47 @@ class McpSessionLimitsTest {
         "clientInfo":{"name":"session-limits","version":"1.0"}}}
       """;
 
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  @Timeout(15)
+  void capturesLimitsBeforeTheNativeFactoryAndRetainsThemAfterSourceEdits(boolean asynchronous)
+      throws Exception {
+    var limits = new McpSessionLimits(2, 1, Duration.ofMinutes(30));
+    Runnable mutate =
+        () -> {
+          limits.setMaxSessions(8);
+          limits.setMaxSessionsPerOwner(8);
+          limits.setIdleTimeout(Duration.ofNanos(1));
+        };
+    var mcp =
+        asynchronous
+            ? Mcp.async(
+                security(),
+                limits,
+                transport -> {
+                  mutate.run();
+                  return McpServer.async(transport).build();
+                })
+            : Mcp.sync(
+                security(),
+                limits,
+                transport -> {
+                  mutate.run();
+                  return McpServer.sync(transport).build();
+                });
+    limits.setMaxSessions(null);
+    limits.setMaxSessionsPerOwner(null);
+    var app = new Shoostr();
+    app.routes(routes -> routes.path("/mcp", mcp::routes));
+
+    try (var test = TestServer.start(app)) {
+      assertEquals(200, initialize(test, "alice:client").statusCode());
+      assertEquals(429, initialize(test, "alice:client").statusCode());
+      assertEquals(200, initialize(test, "bob:client").statusCode());
+      assertEquals(503, initialize(test, "carol:client").statusCode());
+    }
+  }
+
   @Test
   @Timeout(20)
   void boundsSessionsSharingAVerifiedOwnerWithTheDefaultPolicy() throws Exception {

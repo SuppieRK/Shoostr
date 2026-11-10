@@ -57,11 +57,13 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
   private static final String HEADER = "X-CSRF-Token";
 
   private final SecureRandom random;
-  private final Set<String> trustedOrigins;
+  private Set<String> trustedOrigins = Set.of();
+  private final @Nullable Lifecycle lifecycle;
 
   /** Creates a same-origin CSRF policy for a browser's cookie-authenticated routes. */
   public Csrf() {
-    this(Set.of());
+    random = new SecureRandom();
+    lifecycle = null;
   }
 
   /**
@@ -72,20 +74,57 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
    * @throws IllegalArgumentException if an origin is malformed or opaque
    */
   public Csrf(Set<String> trustedOrigins) {
-    this.trustedOrigins = Set.copyOf(trustedOrigins);
-    for (var origin : this.trustedOrigins) {
+    this();
+    setTrustedOrigins(Objects.requireNonNull(trustedOrigins));
+  }
+
+  /**
+   * Creates a detached registration-owned selection while sharing the token generator.
+   *
+   * @param source source settings or inherited selection
+   * @param lifecycle contribution scope controlling configuration lifetime
+   */
+  private Csrf(Csrf source, Lifecycle lifecycle) {
+    trustedOrigins = Set.copyOf(source.trustedOrigins);
+    random = source.random;
+    this.lifecycle = Objects.requireNonNull(lifecycle);
+  }
+
+  /**
+   * Returns additional trusted origins without exposing a mutable collection.
+   *
+   * @return exact HTTP(S) origins, defaulting to none
+   */
+  public Set<String> getTrustedOrigins() {
+    return trustedOrigins;
+  }
+
+  /**
+   * Replaces additional trusted origins. Source beans remain mutable; selected copies freeze when
+   * their registration scope finishes.
+   *
+   * @param value exact HTTP(S) origins, or null to restore same-origin defaults
+   * @throws IllegalStateException if the selected registration scope has finished
+   * @throws IllegalArgumentException if an origin is malformed, opaque or a wildcard
+   */
+  public void setTrustedOrigins(@Nullable Set<String> value) {
+    if (lifecycle != null) {
+      lifecycle.requireMutable();
+    }
+
+    var resolved = value == null ? Set.<String>of() : Set.copyOf(value);
+    for (var origin : resolved) {
       if ("null".equals(origin) || HttpCharacters.ASTERISK_STRING.equals(origin)) {
         throw new IllegalArgumentException("CSRF requires explicit HTTP(S) origins");
       }
 
       Origins.validateOrigin(origin);
     }
-
-    random = new SecureRandom();
+    trustedOrigins = resolved;
   }
 
   /**
-   * Creates a builder for immutable browser-origin permissions.
+   * Creates a builder for independent browser-origin permissions.
    *
    * @return independent builder
    */
@@ -105,7 +144,7 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
   }
 
   /**
-   * Computes a hash from the immutable trusted origins.
+   * Computes a hash from the current trusted origins.
    *
    * @return trusted-origin set hash
    */
@@ -118,8 +157,9 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
   @Override
   public Csrf configure(Lifecycle endpoint, @Nullable Csrf inherited) {
     endpoint.csrf(this);
-    endpoint.beforeRouteHandler(this::verify);
-    return this;
+    var selected = new Csrf(inherited == null ? this : inherited, endpoint);
+    endpoint.beforeRouteHandler(selected::verify);
+    return selected;
   }
 
   /**
@@ -269,7 +309,7 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
     }
   }
 
-  /** Builds immutable CSRF protection without enabling native sessions or selecting endpoints. */
+  /** Builds independent CSRF protection without enabling native sessions or selecting endpoints. */
   public static final class Builder {
     private Set<String> trustedOrigins;
 
@@ -309,7 +349,7 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
     /**
      * Constructs protection and validates all configured origins.
      *
-     * @return immutable origin policy with an independent random source
+     * @return independent mutable origin policy and token generator
      */
     public Csrf build() {
       return new Csrf(trustedOrigins);

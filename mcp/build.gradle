@@ -2,7 +2,7 @@ plugins {
 	id 'java-library'
 }
 
-version = '2026.11.10.0'
+version = '2026.11.10.1'
 
 dependencies {
 	api shoostrDependency('core', '2026.11.10.0')
@@ -14,6 +14,7 @@ dependencies {
 	api platform('com.fasterxml.jackson:jackson-bom:2.22.4')
 	implementation 'io.modelcontextprotocol.sdk:mcp-json-jackson2'
 	testImplementation project(':test')
+	testImplementation 'org.yaml:snakeyaml:2.7'
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 	testImplementation 'org.awaitility:awaitility:4.3.0'
 }

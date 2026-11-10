@@ -29,6 +29,10 @@ class RegistrationEqualityTest {
         EqualsVerifier.forClass(Lifecycle.class)
             .withPrefabValues(Lifecycle.class, scopes.get(0), scopes.get(1))
             .withPrefabValues(
+                CorsPolicy.class,
+                CorsPolicy.builder().origins("https://first.example").build(),
+                CorsPolicy.builder().origins("https://second.example").build())
+            .withPrefabValues(
                 Csrf.class,
                 new Csrf(Set.of("https://first.example")),
                 new Csrf(Set.of("https://second.example")))

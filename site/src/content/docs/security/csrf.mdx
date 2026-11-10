@@ -30,6 +30,13 @@ The default source policy requires the target origin, using `Referer` only when 
 For cross-origin scripts, configure additional exact origins through `Csrf.builder().trustedOrigins(...)` and a separate [CORS policy](../cors/).
 The builder accepts required-first varargs or a set, and `build()` validates the origin policy before it can be installed.
 
+`Csrf` is also a mutable JavaBean for configuration loaders, with a public no-argument constructor and `trustedOrigins` getters and setters.
+An omitted or null value keeps the same-origin default without additional trusted origins.
+Selecting the extension copies its settings, so later edits to the source do not change application defaults or registered routes.
+Customize a selected copy through `app.withExtension(csrf, selected -> selected.setTrustedOrigins(origins))` or `lifecycle.withExtension(csrf).setTrustedOrigins(origins)` during registration.
+Selected copies stop accepting changes when registration finishes; the original source object remains mutable.
+Configure your chosen loader in the application.
+
 | Operation                  | Token behavior                                                                                                                                      |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `csrf.token(request)`      | Create a session if needed and return its stable, unpredictable token.                                                                              |

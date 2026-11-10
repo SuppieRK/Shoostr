@@ -9,24 +9,36 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.Closeable;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import nl.jqno.equalsverifier.EqualsVerifier;
+import nl.jqno.equalsverifier.Warning;
 import org.junit.jupiter.api.Test;
 
 class CsrfEqualityTest {
   @Test
-  void satisfiesEqualsAndHashCodeContract() {
+  void satisfiesEqualsAndHashCodeContract() throws Exception {
     var firstRandom = new SecureRandom(new byte[] {1});
     var secondRandom = new SecureRandom(new byte[] {2});
 
-    EqualsVerifier.forClass(Csrf.class)
-        .withNonnullFields("random", "trustedOrigins")
-        .withIgnoredFields("random")
-        .withPrefabValues(SecureRandom.class, firstRandom, secondRandom)
-        .verify();
+    var app = new Shoostr();
+
+    try (Closeable cleanup = app::close) {
+      var scopes = new ArrayList<Lifecycle>();
+      app.routes()
+          .get("/first", (request, response) -> {}, scopes::add)
+          .get("/second", (request, response) -> {}, scopes::add);
+      EqualsVerifier.forClass(Csrf.class)
+          .withNonnullFields("random", "trustedOrigins")
+          .withIgnoredFields("random", "lifecycle")
+          .suppress(Warning.NONFINAL_FIELDS)
+          .withPrefabValues(SecureRandom.class, firstRandom, secondRandom)
+          .withPrefabValues(Lifecycle.class, scopes.get(0), scopes.get(1))
+          .verify();
+    }
   }
 
   @Test

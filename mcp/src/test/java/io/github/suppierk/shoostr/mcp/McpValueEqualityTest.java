@@ -12,6 +12,7 @@ import java.util.Set;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import nl.jqno.equalsverifier.EqualsVerifier;
+import nl.jqno.equalsverifier.Warning;
 import org.junit.jupiter.api.Test;
 
 class McpValueEqualityTest {
@@ -51,6 +52,7 @@ class McpValueEqualityTest {
             new McpSessionLimits(32, 8, Duration.ofMinutes(1)),
             new McpSessionLimits(64, 16, Duration.ofMinutes(2)))
         .withNonnullFields("idleTimeout")
+        .suppress(Warning.NONFINAL_FIELDS)
         .verify();
   }
 

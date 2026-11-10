@@ -38,6 +38,11 @@ class InstanceFieldInitializationTest {
         "package io.github.suppierk.shoostr; class Example { int port = 8080; }",
         "package io.github.suppierk.shoostr; class Options { class Nested { int port = 8080; } }",
         "package io.github.suppierk.shoostr; class Example { class Options { int port = 8080; } }",
+        "package io.github.suppierk.shoostr; class CorsPolicy { class Builder { int value = 1; } }",
+        "package io.github.suppierk.fixture; class Csrf { int value = 1; }",
+        "package io.github.suppierk.shoostr; class CorsPolicy { class Nested { int value = 1; } }",
+        "package io.github.suppierk.shoostr.mcp; class Mcp { static class Options { int value = 1; } }",
+        "package io.github.suppierk.shoostr; class Csrf { Object value; { value = null; } }",
         "package io.github.suppierk.shoostr; class Options { Object field; { field = new Object(); } }"
       })
   void rejectsInstanceInitializationOutsideConstructors(String source) throws Exception {
@@ -59,6 +64,9 @@ class InstanceFieldInitializationTest {
         "@interface Example { String VALUE = \"value\"; String value() default \"value\"; }",
         "record Example(Object value) { Example { value = new Object(); } }",
         "enum Example { VALUE; final Object field; Example() { field = new Object(); } }",
+        "package io.github.suppierk.shoostr; class CorsPolicy { int maxAgeSeconds = 5; }",
+        "package io.github.suppierk.shoostr; class Csrf { Object trustedOrigins = null; }",
+        "package io.github.suppierk.shoostr.mcp; class McpSessionLimits { int maxSessions = 1024; }",
         "package io.github.suppierk.shoostr; class Options { private String host = \"0.0.0.0\"; private Integer port = 8080; private Boolean virtualThreads = false; }"
       })
   void permitsConstructorsStaticFieldsAndLocalVariables(String source) throws Exception {

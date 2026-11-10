@@ -2,35 +2,189 @@ package io.github.suppierk.shoostr.mcp;
 
 import java.time.Duration;
 import java.util.Objects;
+import org.jspecify.annotations.Nullable;
 
 /**
- * Bounds session ownership within one MCP capability, including initialization and cleanup.
- *
- * @param maxSessions maximum simultaneous session allocations in this capability
- * @param maxSessionsPerOwner maximum allocations sharing one verified session-owner key
- * @param idleTimeout quiescent interval after accepted activity or completion of native work
+ * Mutable session limits; MCP captures a copy before constructing its native server. Allocations
+ * include initialization and cleanup. The idle timeout measures the quiescent interval after
+ * accepted activity or completion of native work.
  */
-public record McpSessionLimits(int maxSessions, int maxSessionsPerOwner, Duration idleTimeout) {
+public final class McpSessionLimits {
+  private int maxSessions = 1024;
+  private int maxSessionsPerOwner = 32;
+  private Duration idleTimeout = Duration.ofMinutes(30);
+
+  /** Creates the existing capacity and idle-time defaults. */
+  public McpSessionLimits() {}
+
   /**
-   * Validates finite capacity and a positive idle interval before native server construction.
+   * Creates validated session limits.
    *
-   * @throws NullPointerException if the timeout is absent
-   * @throws IllegalArgumentException if a capacity or the idle timeout is not positive
+   * @param maxSessions maximum simultaneous allocations
+   * @param maxSessionsPerOwner maximum allocations for one verified owner
+   * @param idleTimeout positive quiescent interval
    */
-  public McpSessionLimits {
-    Objects.requireNonNull(idleTimeout);
-    if (maxSessions <= 0 || maxSessionsPerOwner <= 0 || !idleTimeout.isPositive()) {
-      throw new IllegalArgumentException(
-          "MCP session capacities and idle timeout must be positive");
-    }
+  public McpSessionLimits(int maxSessions, int maxSessionsPerOwner, Duration idleTimeout) {
+    setMaxSessions(maxSessions);
+    setMaxSessionsPerOwner(maxSessionsPerOwner);
+    setIdleTimeout(Objects.requireNonNull(idleTimeout));
   }
 
   /**
-   * Returns operational defaults, which applications can tune for their verified owner model.
+   * Captures limits before native server construction.
    *
-   * @return 1024 total sessions, 32 per owner and a 30-minute quiescent timeout
+   * @param source mutable caller configuration
+   */
+  McpSessionLimits(McpSessionLimits source) {
+    this(source.maxSessions, source.maxSessionsPerOwner, source.idleTimeout);
+  }
+
+  /**
+   * Returns a new configuration with 1024 sessions, 32 per owner and a 30-minute timeout.
+   *
+   * @return a new configuration with 1024 sessions, 32 per owner and a 30-minute timeout
    */
   public static McpSessionLimits defaults() {
-    return new McpSessionLimits(1024, 32, Duration.ofMinutes(30));
+    return new McpSessionLimits();
+  }
+
+  /**
+   * Returns maximum simultaneous allocations.
+   *
+   * @return maximum simultaneous allocations
+   */
+  public int maxSessions() {
+    return maxSessions;
+  }
+
+  /**
+   * Returns maximum allocations for one verified owner.
+   *
+   * @return maximum allocations for one verified owner
+   */
+  public int maxSessionsPerOwner() {
+    return maxSessionsPerOwner;
+  }
+
+  /**
+   * Returns positive quiescent interval.
+   *
+   * @return positive quiescent interval
+   */
+  public Duration idleTimeout() {
+    return idleTimeout;
+  }
+
+  /**
+   * Returns maximum simultaneous allocations.
+   *
+   * @return maximum simultaneous allocations
+   */
+  public Integer getMaxSessions() {
+    return maxSessions;
+  }
+
+  /**
+   * Sets the total capacity.
+   *
+   * @param value positive capacity, or null to restore 1024
+   * @throws IllegalArgumentException if the supplied value is not positive
+   */
+  public void setMaxSessions(@Nullable Integer value) {
+    int resolved = value == null ? 1024 : value;
+    if (resolved <= 0) {
+      throw new IllegalArgumentException("MCP session capacity must be positive");
+    }
+
+    maxSessions = resolved;
+  }
+
+  /**
+   * Returns maximum allocations for one verified owner.
+   *
+   * @return maximum allocations for one verified owner
+   */
+  public Integer getMaxSessionsPerOwner() {
+    return maxSessionsPerOwner;
+  }
+
+  /**
+   * Sets the per-owner capacity.
+   *
+   * @param value positive capacity, or null to restore 32
+   * @throws IllegalArgumentException if the supplied value is not positive
+   */
+  public void setMaxSessionsPerOwner(@Nullable Integer value) {
+    int resolved = value == null ? 32 : value;
+    if (resolved <= 0) {
+      throw new IllegalArgumentException("MCP owner capacity must be positive");
+    }
+
+    maxSessionsPerOwner = resolved;
+  }
+
+  /**
+   * Returns positive quiescent interval.
+   *
+   * @return positive quiescent interval
+   */
+  public Duration getIdleTimeout() {
+    return idleTimeout;
+  }
+
+  /**
+   * Sets the idle timeout.
+   *
+   * @param value positive timeout, or null to restore 30 minutes
+   * @throws IllegalArgumentException if the supplied value is not positive
+   */
+  public void setIdleTimeout(@Nullable Duration value) {
+    var resolved = value == null ? Duration.ofMinutes(30) : value;
+    if (!resolved.isPositive()) {
+      throw new IllegalArgumentException("MCP idle timeout must be positive");
+    }
+
+    idleTimeout = resolved;
+  }
+
+  /**
+   * Compares current limits by value.
+   *
+   * @param other candidate configuration
+   * @return whether all three settings are equal
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return this == other
+        || (other instanceof McpSessionLimits that
+            && maxSessions == that.maxSessions
+            && maxSessionsPerOwner == that.maxSessionsPerOwner
+            && idleTimeout.equals(that.idleTimeout));
+  }
+
+  /**
+   * Hashes the current mutable settings.
+   *
+   * @return hash of the three limits
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(maxSessions, maxSessionsPerOwner, idleTimeout);
+  }
+
+  /**
+   * Describes the current settings.
+   *
+   * @return capacity and timeout values
+   */
+  @Override
+  public String toString() {
+    return "McpSessionLimits[maxSessions="
+        + maxSessions
+        + ", maxSessionsPerOwner="
+        + maxSessionsPerOwner
+        + ", idleTimeout="
+        + idleTimeout
+        + "]";
   }
 }

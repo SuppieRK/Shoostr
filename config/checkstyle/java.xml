@@ -6,9 +6,9 @@
 	<property name="charset" value="UTF-8"/>
 	<property name="severity" value="error"/>
 	<module name="TreeWalker">
-		<!-- Options exposes field defaults for standard JavaBean configuration binding. -->
+		<!-- Explicit configuration beans expose field defaults for JavaBean configuration binding. -->
 		<module name="MatchXpath">
-			<property name="query" value="//VARIABLE_DEF[parent::OBJBLOCK[not(parent::INTERFACE_DEF or parent::ANNOTATION_DEF)]][not(MODIFIERS/LITERAL_STATIC)][ASSIGN][not(parent::OBJBLOCK/parent::CLASS_DEF[IDENT[@text='Options']][parent::COMPILATION_UNIT[PACKAGE_DEF/DOT[IDENT[@text='shoostr']]/DOT[IDENT[@text='suppierk']]/DOT[IDENT[1][@text='io']][IDENT[2][@text='github']]]])] | //INSTANCE_INIT"/>
+			<property name="query" value="//VARIABLE_DEF[parent::OBJBLOCK[not(parent::INTERFACE_DEF or parent::ANNOTATION_DEF)]][not(MODIFIERS/LITERAL_STATIC)][ASSIGN][not(parent::OBJBLOCK/parent::CLASS_DEF[IDENT[@text='Options' or @text='CorsPolicy' or @text='Csrf']][parent::COMPILATION_UNIT[PACKAGE_DEF/DOT[IDENT[@text='shoostr']]/DOT[IDENT[@text='suppierk']]/DOT[IDENT[1][@text='io']][IDENT[2][@text='github']]]] or parent::OBJBLOCK/parent::CLASS_DEF[IDENT[@text='McpSessionLimits']][parent::COMPILATION_UNIT[PACKAGE_DEF/DOT[IDENT[@text='mcp']]/DOT[IDENT[@text='shoostr']]/DOT[IDENT[@text='suppierk']]/DOT[IDENT[1][@text='io']][IDENT[2][@text='github']]]])] | //INSTANCE_INIT"/>
 			<message key="matchxpath.match" value="Initialize instance fields in a constructor, not at declaration or in an instance initializer block."/>
 		</module>
 		<module name="MissingJavadocType">

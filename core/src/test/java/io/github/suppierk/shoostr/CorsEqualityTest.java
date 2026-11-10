@@ -14,7 +14,13 @@ import org.junit.jupiter.api.Test;
 class CorsEqualityTest {
   @Test
   void satisfiesEqualsAndHashCodeContract() {
-    EqualsVerifier.forClass(Cors.class).withNonnullFields("policy").verify();
+    EqualsVerifier.forClass(Cors.class)
+        .withPrefabValues(
+            CorsPolicy.class,
+            CorsPolicy.builder().origins("https://first.example").build(),
+            CorsPolicy.builder().origins("https://second.example").build())
+        .withNonnullFields("policy")
+        .verify();
   }
 
   @Test
