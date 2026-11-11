@@ -131,7 +131,7 @@ class ResponseBodyExampleTest {
   }
 
   @Test
-  void sendsNoContentWithoutAResponseBody() throws Exception {
+  void sendsNoContentWithoutResponseBody() throws Exception {
 
     try (var test = TestServer.start(ResponseBodyExample.application())) {
       var response = test.send(request -> request.path("/messages").method("DELETE"));

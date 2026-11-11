@@ -45,7 +45,7 @@ class RedirectExampleTest {
   }
 
   @Test
-  void preservesALargePostBodyWhenFollowingATemporaryRedirect() throws Exception {
+  void preservesLargePostBodyWhenFollowingTemporaryRedirect() throws Exception {
     var payload = "payload".repeat(32768);
 
     try (var test =
@@ -55,7 +55,7 @@ class RedirectExampleTest {
       // Replay spans multiple input buffers; the redirect handler leaves the original body
       // unread.
       var response =
-          sendResponseForPreservesALargePostBodyWhenFollowingATemporaryRedirect(test, payload);
+          sendResponseForPreservesLargePostBodyWhenFollowingTemporaryRedirect(test, payload);
 
       assertEquals(200, response.statusCode());
       assertEquals("/receiver", response.uri().getPath());
@@ -64,9 +64,8 @@ class RedirectExampleTest {
     }
   }
 
-  private HttpResponse<String>
-      sendResponseForPreservesALargePostBodyWhenFollowingATemporaryRedirect(
-          TestServer test, String payload) throws IOException, InterruptedException {
+  private HttpResponse<String> sendResponseForPreservesLargePostBodyWhenFollowingTemporaryRedirect(
+      TestServer test, String payload) throws IOException, InterruptedException {
     return test.send(
         request ->
             request.path("/forward").method("POST").body(payload.getBytes(StandardCharsets.UTF_8)),
@@ -74,7 +73,7 @@ class RedirectExampleTest {
   }
 
   @Test
-  void keepsTheApplicationSelectedDestinationWhenAQuerySuggestsAnother() throws Exception {
+  void keepsTheApplicationSelectedDestinationWhenQuerySuggestsAnother() throws Exception {
 
     try (var test = TestServer.start(RedirectExample.application())) {
       var response =

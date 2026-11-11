@@ -49,6 +49,129 @@ import reactor.core.publisher.Sinks.One;
 class McpInitializationCleanupTest {
   private static final String INITIALIZE = initializationRequest();
 
+  private static String initializationRequest() {
+    return
+        """
+        {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+          "protocolVersion":"2025-11-25","capabilities":{},
+          "clientInfo":{"name":"initialization-cleanup","version":"1.0"}}}
+        """;
+  }
+
+  private static Mcp<McpSyncServer> trackedMcp(
+      AtomicInteger closes, CountDownLatch closed, AtomicReference<String> sessionId) {
+    return trackedMcp(closes, closed, sessionId, Mono::just);
+  }
+
+  private static Mcp<McpSyncServer> trackedMcp(
+      AtomicInteger closes,
+      CountDownLatch closed,
+      AtomicReference<String> sessionId,
+      Function<McpSchema.InitializeResult, Mono<McpSchema.InitializeResult>> results) {
+    return trackedMcp(closes, closed, sessionId, results, Mono::empty);
+  }
+
+  private static Mcp<McpSyncServer> trackedMcp(
+      AtomicInteger closes,
+      CountDownLatch closed,
+      AtomicReference<String> sessionId,
+      Function<McpSchema.InitializeResult, Mono<McpSchema.InitializeResult>> results,
+      Supplier<Mono<Void>> cleanup) {
+    return trackedMcp(closes, closed, sessionId, results, cleanup, () -> {});
+  }
+
+  private static Mcp<McpSyncServer> trackedMcp(
+      AtomicInteger closes,
+      CountDownLatch closed,
+      AtomicReference<String> sessionId,
+      Function<McpSchema.InitializeResult, Mono<McpSchema.InitializeResult>> results,
+      Supplier<Mono<Void>> cleanup,
+      Runnable beforeAllocation) {
+    return Mcp.sync(
+        new McpHttpSecurity(
+            Set.of(),
+            request ->
+                new McpIdentity(
+                    "alice:client",
+                    McpTransportContext.EMPTY,
+                    request.header("X-Expiring").isPresent() ? Instant.now().plusSeconds(1) : null),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
+        new McpSessionLimits(1, 1, Duration.ofMinutes(30)),
+        transport ->
+            McpServer.sync(
+                    trackedTransport(
+                        transport, closes, closed, sessionId, results, cleanup, beforeAllocation))
+                .build());
+  }
+
+  private static McpStreamableServerTransportProvider trackedTransport(
+      McpStreamableServerTransportProvider transport,
+      AtomicInteger closes,
+      CountDownLatch closed,
+      AtomicReference<String> sessionId,
+      Function<McpSchema.InitializeResult, Mono<McpSchema.InitializeResult>> results,
+      Supplier<Mono<Void>> cleanup,
+      Runnable beforeAllocation) {
+    return new McpStreamableServerTransportProvider() {
+      @Override
+      public void setSessionFactory(McpStreamableServerSession.Factory factory) {
+        transport.setSessionFactory(
+            parameters -> {
+              beforeAllocation.run();
+              var id = UUID.randomUUID().toString();
+              sessionId.set(id);
+              var session = trackedSession(id, closes, closed, cleanup);
+              var result = initializationResult();
+
+              return new McpStreamableServerSession.McpStreamableServerSessionInit(
+                  session, results.apply(result));
+            });
+      }
+
+      @Override
+      public Mono<Void> notifyClients(String method, Object parameters) {
+        return transport.notifyClients(method, parameters);
+      }
+
+      @Override
+      public Mono<Void> closeGracefully() {
+        return transport.closeGracefully();
+      }
+
+      @Override
+      public List<String> protocolVersions() {
+        return transport.protocolVersions();
+      }
+    };
+  }
+
+  private static McpStreamableServerSession trackedSession(
+      String id, AtomicInteger closes, CountDownLatch closed, Supplier<Mono<Void>> cleanup) {
+    return new McpStreamableServerSession(
+        id,
+        McpSchema.ClientCapabilities.builder().build(),
+        McpSchema.Implementation.builder("cleanup-client", "1.0").build(),
+        Duration.ofSeconds(5),
+        Map.of(),
+        Map.of(),
+        () ->
+            Mono.fromRunnable(
+                    () -> {
+                      closes.incrementAndGet();
+                      closed.countDown();
+                    })
+                .then(Mono.defer(cleanup)),
+        McpJsonDefaults.getSchemaValidator());
+  }
+
+  private static InitializeResult initializationResult() {
+    return McpSchema.InitializeResult.builder(
+            "2025-11-25",
+            McpSchema.ServerCapabilities.builder().build(),
+            McpSchema.Implementation.builder("cleanup-server", "1.0").build())
+        .build();
+  }
+
   @Test
   @Timeout(15)
   void closesTheNewSessionExactlyOnceWhenInitializationCannotFlush() throws Exception {
@@ -280,6 +403,7 @@ class McpInitializationCleanupTest {
         closingExtensions.countDown();
       }
     }
+
     app.routes(
         routes ->
             routes
@@ -353,7 +477,7 @@ class McpInitializationCleanupTest {
 
   @Test
   @Timeout(25)
-  void shutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor()
+  void shutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnBorrowedExecutor()
       throws Exception {
     var closes = new AtomicInteger();
     var closed = new CountDownLatch(1);
@@ -362,8 +486,7 @@ class McpInitializationCleanupTest {
     var held = Sinks.<McpSchema.InitializeResult>one();
     var releaseCleanup = Sinks.<Void>empty();
     var mcp =
-        createMcpForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
-            closes, closed, held, subscribed, canceled, releaseCleanup);
+        createMcpWithPendingCleanup(closes, closed, held, subscribed, canceled, releaseCleanup);
     var app = new Shoostr();
 
     try (var selected = Executors.newSingleThreadExecutor();
@@ -371,15 +494,11 @@ class McpInitializationCleanupTest {
       app.routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
 
       try (var test = TestServer.start(app)) {
-        var pending =
-            submitPendingForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
-                workers, test);
+        final var pending = submitPendingInitialization(workers, test);
 
         assertTrue(subscribed.await(3, TimeUnit.SECONDS));
 
-        var stopping =
-            submitStoppingForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
-                workers, app);
+        var stopping = submitApplicationShutdown(workers, app);
 
         try {
           assertTrue(
@@ -411,14 +530,13 @@ class McpInitializationCleanupTest {
     assertEquals(1, closes.get());
   }
 
-  private Mcp<McpSyncServer>
-      createMcpForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
-          AtomicInteger closes,
-          CountDownLatch closed,
-          One<InitializeResult> held,
-          CountDownLatch subscribed,
-          CountDownLatch canceled,
-          Empty<Void> releaseCleanup) {
+  private Mcp<McpSyncServer> createMcpWithPendingCleanup(
+      AtomicInteger closes,
+      CountDownLatch closed,
+      One<InitializeResult> held,
+      CountDownLatch subscribed,
+      CountDownLatch canceled,
+      Empty<Void> releaseCleanup) {
     return trackedMcp(
         closes,
         closed,
@@ -430,9 +548,8 @@ class McpInitializationCleanupTest {
         releaseCleanup::asMono);
   }
 
-  private Future<HttpResponse<byte[]>>
-      submitPendingForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
-          ExecutorService workers, TestServer test) {
+  private Future<HttpResponse<byte[]>> submitPendingInitialization(
+      ExecutorService workers, TestServer test) {
     return workers.submit(
         () ->
             test.send(
@@ -445,9 +562,7 @@ class McpInitializationCleanupTest {
                         .body(INITIALIZE.getBytes(StandardCharsets.UTF_8))));
   }
 
-  private Future<Object>
-      submitStoppingForShutdownCancelsPendingInitializationAndAwaitsItsNativeCleanupOnABorrowedExecutor(
-          ExecutorService workers, Shoostr app) {
+  private Future<Object> submitApplicationShutdown(ExecutorService workers, Shoostr app) {
     return workers.submit(
         () -> {
           app.close();
@@ -538,7 +653,7 @@ class McpInitializationCleanupTest {
 
   @Test
   @Timeout(20)
-  void expiresAFiniteInitializationDuringFinalFlushAndReleasesItsSession() throws Exception {
+  void expiresFiniteInitializationDuringFinalFlushAndReleasesItsSession() throws Exception {
     var closes = new AtomicInteger();
     var closed = new CountDownLatch(1);
     var interrupted = new CountDownLatch(1);
@@ -569,7 +684,7 @@ class McpInitializationCleanupTest {
 
     try (var test = TestServer.start(app)) {
       var expired =
-          sendExpiredRequestForExpiresAFiniteInitializationDuringFinalFlushAndReleasesItsSession(
+          sendExpiredRequestForExpiresFiniteInitializationDuringFinalFlushAndReleasesItsSession(
               test);
 
       assertEquals(
@@ -579,8 +694,7 @@ class McpInitializationCleanupTest {
       assertEquals(1, closes.get());
 
       var retry =
-          sendRetryRequestForExpiresAFiniteInitializationDuringFinalFlushAndReleasesItsSession(
-              test);
+          sendRetryRequestForExpiresFiniteInitializationDuringFinalFlushAndReleasesItsSession(test);
 
       assertEquals(
           200, retry.statusCode(), "Failed finite delivery must release admission capacity");
@@ -590,7 +704,7 @@ class McpInitializationCleanupTest {
   }
 
   private HttpResponse<byte[]>
-      sendExpiredRequestForExpiresAFiniteInitializationDuringFinalFlushAndReleasesItsSession(
+      sendExpiredRequestForExpiresFiniteInitializationDuringFinalFlushAndReleasesItsSession(
           TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -604,7 +718,7 @@ class McpInitializationCleanupTest {
   }
 
   private HttpResponse<byte[]>
-      sendRetryRequestForExpiresAFiniteInitializationDuringFinalFlushAndReleasesItsSession(
+      sendRetryRequestForExpiresFiniteInitializationDuringFinalFlushAndReleasesItsSession(
           TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -618,14 +732,14 @@ class McpInitializationCleanupTest {
 
   @Test
   @Timeout(25)
-  void closesALateFactoryResultWithoutSubscribingAfterApplicationShutdown() throws Exception {
+  void closesLateFactoryResultWithoutSubscribingAfterApplicationShutdown() throws Exception {
     var closes = new AtomicInteger();
     var closed = new CountDownLatch(1);
     var factoryEntered = new CountDownLatch(1);
     var releaseFactory = new CountDownLatch(1);
     var subscriptions = new AtomicInteger();
     var mcp =
-        createMcpForClosesALateFactoryResultWithoutSubscribingAfterApplicationShutdown(
+        createMcpForClosesLateFactoryResultWithoutSubscribingAfterApplicationShutdown(
             closes, closed, factoryEntered, releaseFactory, subscriptions);
     var app = new Shoostr();
 
@@ -634,8 +748,8 @@ class McpInitializationCleanupTest {
       app.routes(routes -> routes.path("/mcp", group -> mcp.routes(group, selected)));
 
       try (var test = TestServer.start(app)) {
-        var pending =
-            submitPendingForClosesALateFactoryResultWithoutSubscribingAfterApplicationShutdown(
+        final var pending =
+            submitPendingForClosesLateFactoryResultWithoutSubscribingAfterApplicationShutdown(
                 workers, test);
 
         assertTrue(factoryEntered.await(3, TimeUnit.SECONDS));
@@ -650,7 +764,8 @@ class McpInitializationCleanupTest {
                       assertInstanceOf(
                           TimeoutException.class,
                           failure.getCause(),
-                          "A deliberately blocked borrowed handler can exhaust Jetty's drain timeout");
+                          "A deliberately blocked borrowed handler can "
+                              + "exhaust Jetty's drain timeout");
                     }
 
                     return null;
@@ -679,7 +794,7 @@ class McpInitializationCleanupTest {
   }
 
   private Mcp<McpSyncServer>
-      createMcpForClosesALateFactoryResultWithoutSubscribingAfterApplicationShutdown(
+      createMcpForClosesLateFactoryResultWithoutSubscribingAfterApplicationShutdown(
           AtomicInteger closes,
           CountDownLatch closed,
           CountDownLatch factoryEntered,
@@ -707,7 +822,7 @@ class McpInitializationCleanupTest {
   }
 
   private Future<Integer>
-      submitPendingForClosesALateFactoryResultWithoutSubscribingAfterApplicationShutdown(
+      submitPendingForClosesLateFactoryResultWithoutSubscribingAfterApplicationShutdown(
           ExecutorService workers, TestServer test) {
     return workers.submit(
         () -> {
@@ -729,13 +844,13 @@ class McpInitializationCleanupTest {
 
   @Test
   @Timeout(20)
-  void preservesAFatalFactoryErrorInsteadOfReplacingItWithAnExpiryChallenge() throws Exception {
+  void preservesFatalFactoryErrorInsteadOfReplacingItWithAnExpiryChallenge() throws Exception {
     var fatal = new LinkageError("Native factory failed fatally");
     var observed = new AtomicReference<Throwable>();
     var completed = new CountDownLatch(1);
     var first = new AtomicBoolean(true);
     var mcp =
-        createMcpForPreservesAFatalFactoryErrorInsteadOfReplacingItWithAnExpiryChallenge(
+        createMcpForPreservesFatalFactoryErrorInsteadOfReplacingItWithAnExpiryChallenge(
             first, fatal);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
@@ -782,7 +897,7 @@ class McpInitializationCleanupTest {
   }
 
   private Mcp<McpSyncServer>
-      createMcpForPreservesAFatalFactoryErrorInsteadOfReplacingItWithAnExpiryChallenge(
+      createMcpForPreservesFatalFactoryErrorInsteadOfReplacingItWithAnExpiryChallenge(
           AtomicBoolean first, LinkageError fatal) {
     return trackedMcp(
         new AtomicInteger(),
@@ -801,115 +916,5 @@ class McpInitializationCleanupTest {
             throw new IllegalStateException("The verified deadline must interrupt the factory");
           }
         });
-  }
-
-  private static String initializationRequest() {
-    return """
-      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-11-25","capabilities":{},
-        "clientInfo":{"name":"initialization-cleanup","version":"1.0"}}}
-      """;
-  }
-
-  private static Mcp<McpSyncServer> trackedMcp(
-      AtomicInteger closes, CountDownLatch closed, AtomicReference<String> sessionId) {
-    return trackedMcp(closes, closed, sessionId, Mono::just);
-  }
-
-  private static Mcp<McpSyncServer> trackedMcp(
-      AtomicInteger closes,
-      CountDownLatch closed,
-      AtomicReference<String> sessionId,
-      Function<McpSchema.InitializeResult, Mono<McpSchema.InitializeResult>> results) {
-    return trackedMcp(closes, closed, sessionId, results, Mono::empty);
-  }
-
-  private static Mcp<McpSyncServer> trackedMcp(
-      AtomicInteger closes,
-      CountDownLatch closed,
-      AtomicReference<String> sessionId,
-      Function<McpSchema.InitializeResult, Mono<McpSchema.InitializeResult>> results,
-      Supplier<Mono<Void>> cleanup) {
-    return trackedMcp(closes, closed, sessionId, results, cleanup, () -> {});
-  }
-
-  private static Mcp<McpSyncServer> trackedMcp(
-      AtomicInteger closes,
-      CountDownLatch closed,
-      AtomicReference<String> sessionId,
-      Function<McpSchema.InitializeResult, Mono<McpSchema.InitializeResult>> results,
-      Supplier<Mono<Void>> cleanup,
-      Runnable beforeAllocation) {
-    return Mcp.sync(
-        new McpHttpSecurity(
-            Set.of(),
-            request ->
-                new McpIdentity(
-                    "alice:client",
-                    McpTransportContext.EMPTY,
-                    request.header("X-Expiring").isPresent() ? Instant.now().plusSeconds(1) : null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
-        new McpSessionLimits(1, 1, Duration.ofMinutes(30)),
-        transport ->
-            McpServer.sync(
-                    new McpStreamableServerTransportProvider() {
-                      @Override
-                      public void setSessionFactory(McpStreamableServerSession.Factory factory) {
-                        transport.setSessionFactory(
-                            parameters -> {
-                              beforeAllocation.run();
-                              var id = UUID.randomUUID().toString();
-                              sessionId.set(id);
-                              var session = trackedSession(id, closes, closed, cleanup);
-                              var result = initializationResult();
-
-                              return new McpStreamableServerSession.McpStreamableServerSessionInit(
-                                  session, results.apply(result));
-                            });
-                      }
-
-                      @Override
-                      public Mono<Void> notifyClients(String method, Object parameters) {
-                        return transport.notifyClients(method, parameters);
-                      }
-
-                      @Override
-                      public Mono<Void> closeGracefully() {
-                        return transport.closeGracefully();
-                      }
-
-                      @Override
-                      public List<String> protocolVersions() {
-                        return transport.protocolVersions();
-                      }
-                    })
-                .build());
-  }
-
-  private static McpStreamableServerSession trackedSession(
-      String id, AtomicInteger closes, CountDownLatch closed, Supplier<Mono<Void>> cleanup) {
-    return new McpStreamableServerSession(
-        id,
-        McpSchema.ClientCapabilities.builder().build(),
-        McpSchema.Implementation.builder("cleanup-client", "1.0").build(),
-        Duration.ofSeconds(5),
-        Map.of(),
-        Map.of(),
-        () ->
-            Mono.fromRunnable(
-                    () -> {
-                      closes.incrementAndGet();
-                      closed.countDown();
-                    })
-                .then(Mono.defer(cleanup)),
-        McpJsonDefaults.getSchemaValidator());
-  }
-
-  private static InitializeResult initializationResult() {
-    return McpSchema.InitializeResult.builder(
-            "2025-11-25",
-            McpSchema.ServerCapabilities.builder().build(),
-            McpSchema.Implementation.builder("cleanup-server", "1.0").build())
-        .build();
   }
 }

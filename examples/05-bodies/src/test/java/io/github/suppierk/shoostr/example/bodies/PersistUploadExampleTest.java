@@ -26,6 +26,31 @@ import org.junit.jupiter.params.provider.ValueSource;
 class PersistUploadExampleTest {
   @TempDir Path directory;
 
+  private static HttpResponse<String> send(TestServer test, String filename, byte[] bytes)
+      throws Exception {
+    return test.send(
+        request ->
+            request
+                .path("/documents")
+                .method("POST")
+                .header("Content-Type", "multipart/form-data; boundary=example")
+                .body(multipart(filename, bytes)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static byte[] multipart(String filename, byte[] bytes) {
+    var body = new ByteArrayOutputStream();
+    body.writeBytes(
+        ("--example\r\nContent-Disposition: form-data; name=\"document\"; filename=\""
+                + filename
+                + "\"\r\nContent-Type: application/octet-stream\r\n\r\n")
+            .getBytes(StandardCharsets.UTF_8));
+    body.writeBytes(bytes);
+    body.writeBytes("\r\n--example--\r\n".getBytes(StandardCharsets.US_ASCII));
+
+    return body.toByteArray();
+  }
+
   @ParameterizedTest
   @ValueSource(ints = {4, 20_000})
   void keepsInMemoryAndSpilledUploadsAfterTheApplicationCloses(int size) throws Exception {
@@ -102,7 +127,7 @@ class PersistUploadExampleTest {
   }
 
   @Test
-  void rejectsMissingUploadsWithoutCreatingADestination() throws Exception {
+  void rejectsMissingUploadsWithoutCreatingDestination() throws Exception {
 
     try (var test = TestServer.start(PersistUploadExample.application(directory))) {
       var response =
@@ -134,30 +159,5 @@ class PersistUploadExampleTest {
 
     assertThrows(IOException.class, () -> PersistUploadExample.application(file));
     assertThrows(NullPointerException.class, () -> PersistUploadExample.application(null));
-  }
-
-  private static HttpResponse<String> send(TestServer test, String filename, byte[] bytes)
-      throws Exception {
-    return test.send(
-        request ->
-            request
-                .path("/documents")
-                .method("POST")
-                .header("Content-Type", "multipart/form-data; boundary=example")
-                .body(multipart(filename, bytes)),
-        HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static byte[] multipart(String filename, byte[] bytes) {
-    var body = new ByteArrayOutputStream();
-    body.writeBytes(
-        ("--example\r\nContent-Disposition: form-data; name=\"document\"; filename=\""
-                + filename
-                + "\"\r\nContent-Type: application/octet-stream\r\n\r\n")
-            .getBytes(StandardCharsets.UTF_8));
-    body.writeBytes(bytes);
-    body.writeBytes("\r\n--example--\r\n".getBytes(StandardCharsets.US_ASCII));
-
-    return body.toByteArray();
   }
 }

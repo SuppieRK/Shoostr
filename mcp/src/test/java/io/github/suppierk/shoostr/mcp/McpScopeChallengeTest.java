@@ -14,7 +14,7 @@ class McpScopeChallengeTest {
   @ParameterizedTest
   @ValueSource(
       strings = {"", "two scopes", "quote\"", "back\\slash", "newline\n", "tab\t", "é", "\u007f"})
-  void rejectsInvalidOAuthScopeTokensBeforeCreatingAChallenge(String scope) {
+  void rejectsInvalidOauthScopeTokensBeforeCreatingChallenge(String scope) {
     var scopes = Set.of(scope);
     var metadata = URI.create("https://example.com/.well-known/oauth-protected-resource");
 

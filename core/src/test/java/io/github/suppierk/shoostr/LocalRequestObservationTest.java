@@ -17,6 +17,15 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class LocalRequestObservationTest {
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void inheritsTheSameFactoryOnceAndCompletesWithoutAppObservers(boolean virtualApplication)
@@ -167,14 +176,5 @@ class LocalRequestObservationTest {
             () -> lifecycle.observe(ignoredRequest -> ignoredRequestOutcome -> {}));
       }
     }
-  }
-
-  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
-    options.setVirtualThreads(virtualApplication);
-
-    return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

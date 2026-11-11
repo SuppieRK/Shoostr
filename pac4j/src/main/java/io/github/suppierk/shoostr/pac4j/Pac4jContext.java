@@ -36,6 +36,20 @@ final class Pac4jContext implements WebContext {
     this.response = response;
   }
 
+  /**
+   * Appends form values after query values for the provider's combined parameter view.
+   *
+   * @param query query values in wire order
+   * @param form form values in wire order
+   * @return independent array retaining query-first precedence
+   */
+  private static String[] concatenate(String[] query, String[] form) {
+    var combined = Arrays.copyOf(query, query.length + form.length);
+    System.arraycopy(form, 0, combined, query.length, form.length);
+
+    return combined;
+  }
+
   /** {@inheritDoc} */
   @Override
   public Optional<String> getRequestParameter(String name) {
@@ -218,20 +232,6 @@ final class Pac4jContext implements WebContext {
   @Override
   public Optional<String> getQueryString() {
     return request.queryString();
-  }
-
-  /**
-   * Appends form values after query values for the provider's combined parameter view.
-   *
-   * @param query query values in wire order
-   * @param form form values in wire order
-   * @return independent array retaining query-first precedence
-   */
-  private static String[] concatenate(String[] query, String[] form) {
-    var combined = Arrays.copyOf(query, query.length + form.length);
-    System.arraycopy(form, 0, combined, query.length, form.length);
-
-    return combined;
   }
 
   /**

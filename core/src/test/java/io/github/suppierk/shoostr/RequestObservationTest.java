@@ -25,6 +25,15 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class RequestObservationTest {
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  }
+
   @ParameterizedTest
   @CsvSource({"false,false", "false,true", "true,false", "true,true"})
   void keepsTheObservationOpenAfterInvocationUntilTheSlowTransportTerminates(
@@ -225,14 +234,5 @@ class RequestObservationTest {
         }
       }
     }
-  }
-
-  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
-    options.setVirtualThreads(virtualApplication);
-
-    return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

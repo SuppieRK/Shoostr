@@ -16,6 +16,15 @@ import nl.jqno.equalsverifier.Warning;
 import org.junit.jupiter.api.Test;
 
 class McpValueEqualityTest {
+  static McpHttpSecurity security(String owner) {
+    return new McpHttpSecurity(
+        Set.of(), new IdentityExtractor(identity(owner)), new IdentityAuthorizer(owner));
+  }
+
+  private static McpIdentity identity(String owner) {
+    return new McpIdentity(owner, new DetachedContext(Map.of("owner", owner)), null);
+  }
+
   @Test
   void securityComparesItsValidatedOriginsCallbacksAndMetadata() {
     var first = identity("first");
@@ -55,15 +64,6 @@ class McpValueEqualityTest {
         .withNonnullFields("idleTimeout")
         .suppress(Warning.NONFINAL_FIELDS)
         .verify();
-  }
-
-  static McpHttpSecurity security(String owner) {
-    return new McpHttpSecurity(
-        Set.of(), new IdentityExtractor(identity(owner)), new IdentityAuthorizer(owner));
-  }
-
-  private static McpIdentity identity(String owner) {
-    return new McpIdentity(owner, new DetachedContext(Map.of("owner", owner)), null);
   }
 
   private record DetachedContext(Map<String, Object> values) implements McpTransportContext {

@@ -45,6 +45,65 @@ final class OpenApiUi implements Handler {
   }
 
   /**
+   * Supplies the fixed page that loads the packaged Swagger UI assets.
+   *
+   * @return page contents shared by UI instances
+   */
+  private static String htmlPage() {
+    return
+        """
+        <!doctype html>
+        <html lang="en">
+        <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>API documentation</title><link rel="stylesheet" href="swagger-ui.css"></head>
+        <body><div id="swagger-ui"></div><script src="swagger-ui-bundle.js"></script>
+        <script src="swagger-initializer.js"></script></body></html>
+        """;
+  }
+
+  /**
+   * Loads a fixed private packaged asset once during startup; names never come from requests.
+   *
+   * @param name known bundled asset name
+   * @return owned asset bytes
+   * @throws IOException if packaging omitted the asset or reading fails
+   */
+  static byte[] asset(String name) throws IOException {
+    try (var source = OpenApiUi.class.getResourceAsStream("ui/" + name)) {
+      if (source == null) {
+        throw new IOException("Missing packaged Swagger UI asset: " + name);
+      }
+
+      return source.readAllBytes();
+    }
+  }
+
+  /**
+   * Validates a literal same-origin path without queries, fragments, templates or dot segments.
+   *
+   * @param value configured path
+   * @return unchanged validated path
+   * @throws IllegalArgumentException if the value is not a literal absolute local path
+   */
+  private static String path(String value) {
+    var uri = URI.create(OpenApi.text(value));
+    if (!value.startsWith("/")
+        || value.startsWith("//")
+        || uri.isAbsolute()
+        || uri.getRawAuthority() != null
+        || uri.getRawQuery() != null
+        || uri.getRawFragment() != null
+        || !uri.normalize().equals(uri)
+        || value.contains("{")
+        || value.contains("%")
+        || value.contains("//")) {
+      throw new IllegalArgumentException("UI resources require absolute literal same-origin paths");
+    }
+
+    return value;
+  }
+
+  /**
    * Compares configured paths independently of startup asset preparation.
    *
    * @param other candidate UI handler
@@ -114,7 +173,8 @@ final class OpenApiUi implements Handler {
   private String initializationScript(ObjectNode config) throws JacksonException {
     return "window.addEventListener('load', () => { window.ui = SwaggerUIBundle(Object.assign("
         + Json31.mapper().writeValueAsString(config)
-        + """
+        +
+            """
             , {requestInterceptor: request => {
               if (!request.loadSpec) {
                 request.credentials = 'omit';
@@ -122,22 +182,6 @@ final class OpenApiUi implements Handler {
               return request;
             }})); });
             """;
-  }
-
-  /**
-   * Supplies the fixed page that loads the packaged Swagger UI assets.
-   *
-   * @return page contents shared by UI instances
-   */
-  private static String htmlPage() {
-    return """
-      <!doctype html>
-      <html lang="en">
-      <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-      <title>API documentation</title><link rel="stylesheet" href="swagger-ui.css"></head>
-      <body><div id="swagger-ui"></div><script src="swagger-ui-bundle.js"></script>
-      <script src="swagger-initializer.js"></script></body></html>
-      """;
   }
 
   /**
@@ -163,48 +207,6 @@ final class OpenApiUi implements Handler {
     }
 
     response.startStream(resource.contentType).write(resource.bytes);
-  }
-
-  /**
-   * Loads a fixed private packaged asset once during startup; names never come from requests.
-   *
-   * @param name known bundled asset name
-   * @return owned asset bytes
-   * @throws IOException if packaging omitted the asset or reading fails
-   */
-  static byte[] asset(String name) throws IOException {
-    try (var source = OpenApiUi.class.getResourceAsStream("ui/" + name)) {
-      if (source == null) {
-        throw new IOException("Missing packaged Swagger UI asset: " + name);
-      }
-
-      return source.readAllBytes();
-    }
-  }
-
-  /**
-   * Validates a literal same-origin path without queries, fragments, templates or dot segments.
-   *
-   * @param value configured path
-   * @return unchanged validated path
-   * @throws IllegalArgumentException if the value is not a literal absolute local path
-   */
-  private static String path(String value) {
-    var uri = URI.create(OpenApi.text(value));
-    if (!value.startsWith("/")
-        || value.startsWith("//")
-        || uri.isAbsolute()
-        || uri.getRawAuthority() != null
-        || uri.getRawQuery() != null
-        || uri.getRawFragment() != null
-        || !uri.normalize().equals(uri)
-        || value.contains("{")
-        || value.contains("%")
-        || value.contains("//")) {
-      throw new IllegalArgumentException("UI resources require absolute literal same-origin paths");
-    }
-
-    return value;
   }
 
   /** Private immutable resource metadata and owned bytes, never exposed to callers. */

@@ -41,15 +41,39 @@ import org.junit.jupiter.params.provider.ValueSource;
 class McpFiniteExpiryTest {
   private static final String INITIALIZE = initializationRequest();
 
+  private static List<String> responseHeaders(Socket socket) throws IOException {
+    var input =
+        new BufferedReader(
+            new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1));
+    var headers = new ArrayList<String>();
+    for (String line; (line = input.readLine()) != null; ) {
+      if (line.isEmpty()) {
+        return headers;
+      }
+
+      headers.add(line);
+    }
+    throw new EOFException("MCP response ended before its headers were complete");
+  }
+
+  private static String initializationRequest() {
+    return
+        """
+        {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+          "protocolVersion":"2025-11-25","capabilities":{},
+          "clientInfo":{"name":"finite-expiry","version":"1.0"}}}
+        """;
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"initialize", "notification", "reply"})
   @Timeout(15)
-  void rejectsAFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(String kind) throws Exception {
+  void rejectsFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(String kind) throws Exception {
     var extracted = new CountDownLatch(1);
     var expiry = new AtomicReference<Instant>();
     var authorizations = new AtomicInteger();
     var mcp =
-        createMcpForRejectsAFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
+        createMcpForRejectsFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
             expiry, extracted, authorizations);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
@@ -58,7 +82,7 @@ class McpFiniteExpiryTest {
       String sessionHeader = "";
       if (!"initialize".equals(kind)) {
         var initialized =
-            sendInitializedRequestForRejectsAFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(test);
+            sendInitializedRequestForRejectsFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(test);
 
         assertEquals(200, initialized.statusCode());
 
@@ -73,16 +97,15 @@ class McpFiniteExpiryTest {
 
       try (var reader = Executors.newSingleThreadExecutor();
           var socket = new Socket(test.baseUri().getHost(), test.baseUri().getPort())) {
-        var message =
-            createMessageForRejectsAFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(kind);
+        var message = createMessageForRejectsFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(kind);
         var body = message.getBytes(StandardCharsets.UTF_8);
         var headers =
-            createHeadersForRejectsAFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
+            createHeadersForRejectsFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
                 sessionHeader, body);
         socket.getOutputStream().write(headers.getBytes(StandardCharsets.UTF_8));
         socket.getOutputStream().flush();
         // Read the early rejection while the upload is delayed, before a later write can reset it.
-        var received = reader.submit(() -> responseHeaders(socket));
+        final var received = reader.submit(() -> responseHeaders(socket));
         await("MCP identity extracted")
             .atMost(Duration.ofSeconds(5))
             .until(() -> extracted.getCount() == 0);
@@ -120,7 +143,7 @@ class McpFiniteExpiryTest {
     }
   }
 
-  private Mcp<McpSyncServer> createMcpForRejectsAFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
+  private Mcp<McpSyncServer> createMcpForRejectsFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
       AtomicReference<Instant> expiry, CountDownLatch extracted, AtomicInteger authorizations) {
     return Mcp.sync(
         new McpHttpSecurity(
@@ -136,12 +159,12 @@ class McpFiniteExpiryTest {
 
               return new McpIdentity("alice:client", McpTransportContext.EMPTY, deadline);
             },
-            (ignored, ignoredJSONRPCMessage) -> authorizations.incrementAndGet()),
+            (ignored, ignoredJsonRpcMessage) -> authorizations.incrementAndGet()),
         transport -> McpServer.sync(transport).build());
   }
 
   private HttpResponse<byte[]>
-      sendInitializedRequestForRejectsAFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
+      sendInitializedRequestForRejectsFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
           TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -153,7 +176,7 @@ class McpFiniteExpiryTest {
                 .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)));
   }
 
-  private String createMessageForRejectsAFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
+  private String createMessageForRejectsFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
       String kind) {
     return switch (kind) {
       case "notification" -> "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}";
@@ -162,7 +185,7 @@ class McpFiniteExpiryTest {
     };
   }
 
-  private String createHeadersForRejectsAFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
+  private String createHeadersForRejectsFiniteMessageWhoseBodyArrivesAfterVerifiedExpiry(
       String sessionHeader, byte[] body) {
     return "POST /mcp HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n"
         + "Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
@@ -179,18 +202,14 @@ class McpFiniteExpiryTest {
     var expiry = new AtomicReference<Instant>();
     var interruptedAt = new AtomicReference<Instant>();
     var hold = new CountDownLatch(1);
-    var mcp =
-        createMcpForReturnsTheExpiryChallengeWhenInitializationAuthorizationOutlivesItsToken(
-            expiry, hold, interruptedAt);
+    var mcp = createMcpForExpiredInitialization(expiry, hold, interruptedAt);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var client = Executors.newSingleThreadExecutor();
         var test = TestServer.start(app)) {
       try {
-        var received =
-            submitReceivedForReturnsTheExpiryChallengeWhenInitializationAuthorizationOutlivesItsToken(
-                client, test);
+        var received = submitReceivedForExpiredInitialization(client, test);
         await("authorization received a verified identity")
             .atMost(Duration.ofSeconds(5))
             .until(() -> expiry.get() != null);
@@ -210,11 +229,10 @@ class McpFiniteExpiryTest {
     }
   }
 
-  private Mcp<McpSyncServer>
-      createMcpForReturnsTheExpiryChallengeWhenInitializationAuthorizationOutlivesItsToken(
-          AtomicReference<Instant> expiry,
-          CountDownLatch hold,
-          AtomicReference<Instant> interruptedAt) {
+  private Mcp<McpSyncServer> createMcpForExpiredInitialization(
+      AtomicReference<Instant> expiry,
+      CountDownLatch hold,
+      AtomicReference<Instant> interruptedAt) {
     return Mcp.sync(
         new McpHttpSecurity(
             Set.of(),
@@ -224,7 +242,7 @@ class McpFiniteExpiryTest {
 
               return new McpIdentity("alice:client", McpTransportContext.EMPTY, verifiedExpiry);
             },
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {
               try {
                 // Keep authorization interruptible so the deadline can abort it.
                 hold.await();
@@ -237,9 +255,8 @@ class McpFiniteExpiryTest {
         transport -> McpServer.sync(transport).build());
   }
 
-  private Future<HttpResponse<String>>
-      submitReceivedForReturnsTheExpiryChallengeWhenInitializationAuthorizationOutlivesItsToken(
-          ExecutorService client, TestServer test) {
+  private Future<HttpResponse<String>> submitReceivedForExpiredInitialization(
+      ExecutorService client, TestServer test) {
     return client.submit(
         () ->
             test.send(
@@ -251,28 +268,5 @@ class McpFiniteExpiryTest {
                         .header("Accept", "application/json, text/event-stream")
                         .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)),
                 HttpResponse.BodyHandlers.ofString()));
-  }
-
-  private static List<String> responseHeaders(Socket socket) throws IOException {
-    var input =
-        new BufferedReader(
-            new InputStreamReader(socket.getInputStream(), StandardCharsets.ISO_8859_1));
-    var headers = new ArrayList<String>();
-    for (String line; (line = input.readLine()) != null; ) {
-      if (line.isEmpty()) {
-        return headers;
-      }
-
-      headers.add(line);
-    }
-    throw new EOFException("MCP response ended before its headers were complete");
-  }
-
-  private static String initializationRequest() {
-    return """
-      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-11-25","capabilities":{},
-        "clientInfo":{"name":"finite-expiry","version":"1.0"}}}
-      """;
   }
 }

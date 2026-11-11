@@ -79,7 +79,7 @@ public final class TestServer implements Closeable {
    */
   public static TestServer start(Shoostr app, Consumer<HttpClient.Builder> configureClient)
       throws Exception {
-    return start(app, 0, 0, configureClient);
+    return startFixture(app, 0, 0, configureClient);
   }
 
   /**
@@ -114,7 +114,7 @@ public final class TestServer implements Closeable {
       throw new IllegalArgumentException("Fixed test port must be between 1 and 65535");
     }
 
-    return start(app, port, port, configureClient);
+    return startFixture(app, port, port, configureClient);
   }
 
   /**
@@ -156,104 +156,7 @@ public final class TestServer implements Closeable {
           "Test port range must satisfy 1 <= minimum <= maximum <= 65535");
     }
 
-    return start(app, minimum, maximum, configureClient);
-  }
-
-  /**
-   * Sends one configured request and consumes its response as exact bytes, including error bodies.
-   *
-   * @param configure synchronous request configuration callback
-   * @return ordinary JDK response with a byte-array body
-   * @throws IOException if transport fails
-   * @throws InterruptedException if the calling thread is interrupted
-   * @throws NullPointerException if configure is null
-   * @throws IllegalStateException if the fixture is closed or no path is configured
-   */
-  public HttpResponse<byte[]> send(Consumer<TestRequest> configure)
-      throws IOException, InterruptedException {
-    return send(configure, HttpResponse.BodyHandlers.ofByteArray());
-  }
-
-  /**
-   * Sends one configured request using an explicit JDK body handler. The caller must consume or
-   * close returned streams and cancel subscriptions; fixture shutdown cancels outstanding work.
-   *
-   * @param configure synchronous request configuration callback
-   * @param bodyHandler explicit response consumption strategy
-   * @param <T> response body type
-   * @return ordinary JDK response
-   * @throws IOException if transport fails
-   * @throws InterruptedException if the calling thread is interrupted
-   * @throws NullPointerException if an argument is null
-   * @throws IllegalStateException if the fixture is closed or no path is configured
-   */
-  public <T> HttpResponse<T> send(
-      Consumer<TestRequest> configure, HttpResponse.BodyHandler<T> bodyHandler)
-      throws IOException, InterruptedException {
-    Objects.requireNonNull(configure);
-    Objects.requireNonNull(bodyHandler);
-    var request = new TestRequest(baseUri());
-    HttpRequest outgoing;
-
-    try {
-      configure.accept(request);
-      outgoing = request.build();
-    } finally {
-      request.finish();
-    }
-
-    return client.send(outgoing, bodyHandler);
-  }
-
-  /**
-   * Returns the actual loopback origin for browser debugging or independently owned native clients.
-   * Ordinary requests use {@link #send(Consumer)} instead of assembling URLs.
-   *
-   * @return base HTTP or HTTPS URI with a trailing slash
-   * @throws IllegalStateException if the server is closed
-   */
-  public URI baseUri() {
-    if (closed) {
-      throw new IllegalStateException("TestServer is closed");
-    }
-
-    app.port();
-
-    return baseUri;
-  }
-
-  /**
-   * Makes owned-client termination independently observable by the harness's lifetime tests.
-   *
-   * @return fixture-owned client while running
-   * @throws IllegalStateException if the fixture is closed
-   */
-  HttpClient httpClient() {
-    baseUri();
-
-    return client;
-  }
-
-  /**
-   * Cancels owned client work, then stops the application and releases its listener. Safe to call
-   * repeatedly. Waits at most three seconds for client termination, not indefinitely for a body.
-   * Application shutdown retains its native drain timeout and reports stop failures; it does not
-   * promise to finish caller-owned work or an uncooperative handler.
-   *
-   * @throws IOException if the application cannot stop cleanly
-   */
-  @Override
-  public synchronized void close() throws IOException {
-    if (closed) {
-      return;
-    }
-
-    closed = true;
-
-    try (var ignoredServerSocketChannel = reservation;
-        Closeable application = app::close) {
-      closeClient(client);
-    }
+    return startFixture(app, minimum, maximum, configureClient);
   }
 
   /**
@@ -268,7 +171,7 @@ public final class TestServer implements Closeable {
    */
   // S2445: use Shoostr's own monitor to keep eligibility, registration and start atomic.
   @SuppressWarnings({"java:S1181", "java:S2445"}) // Cleanup must also run after Error.
-  private static TestServer start(
+  private static TestServer startFixture(
       Shoostr app, int minimum, int maximum, Consumer<HttpClient.Builder> configureClient)
       throws Exception {
     Objects.requireNonNull(app);
@@ -498,6 +401,103 @@ public final class TestServer implements Closeable {
     } catch (InterruptedException interrupted) {
       Thread.currentThread().interrupt();
       throw new IOException("Interrupted while closing HTTP test client", interrupted);
+    }
+  }
+
+  /**
+   * Sends one configured request and consumes its response as exact bytes, including error bodies.
+   *
+   * @param configure synchronous request configuration callback
+   * @return ordinary JDK response with a byte-array body
+   * @throws IOException if transport fails
+   * @throws InterruptedException if the calling thread is interrupted
+   * @throws NullPointerException if configure is null
+   * @throws IllegalStateException if the fixture is closed or no path is configured
+   */
+  public HttpResponse<byte[]> send(Consumer<TestRequest> configure)
+      throws IOException, InterruptedException {
+    return send(configure, HttpResponse.BodyHandlers.ofByteArray());
+  }
+
+  /**
+   * Sends one configured request using an explicit JDK body handler. The caller must consume or
+   * close returned streams and cancel subscriptions; fixture shutdown cancels outstanding work.
+   *
+   * @param configure synchronous request configuration callback
+   * @param bodyHandler explicit response consumption strategy
+   * @param <T> response body type
+   * @return ordinary JDK response
+   * @throws IOException if transport fails
+   * @throws InterruptedException if the calling thread is interrupted
+   * @throws NullPointerException if an argument is null
+   * @throws IllegalStateException if the fixture is closed or no path is configured
+   */
+  public <T> HttpResponse<T> send(
+      Consumer<TestRequest> configure, HttpResponse.BodyHandler<T> bodyHandler)
+      throws IOException, InterruptedException {
+    Objects.requireNonNull(configure);
+    Objects.requireNonNull(bodyHandler);
+    var request = new TestRequest(baseUri());
+    HttpRequest outgoing;
+
+    try {
+      configure.accept(request);
+      outgoing = request.build();
+    } finally {
+      request.finish();
+    }
+
+    return client.send(outgoing, bodyHandler);
+  }
+
+  /**
+   * Returns the actual loopback origin for browser debugging or independently owned native clients.
+   * Ordinary requests use {@link #send(Consumer)} instead of assembling URLs.
+   *
+   * @return base HTTP or HTTPS URI with a trailing slash
+   * @throws IllegalStateException if the server is closed
+   */
+  public URI baseUri() {
+    if (closed) {
+      throw new IllegalStateException("TestServer is closed");
+    }
+
+    app.port();
+
+    return baseUri;
+  }
+
+  /**
+   * Makes owned-client termination independently observable by the harness's lifetime tests.
+   *
+   * @return fixture-owned client while running
+   * @throws IllegalStateException if the fixture is closed
+   */
+  HttpClient httpClient() {
+    baseUri();
+
+    return client;
+  }
+
+  /**
+   * Cancels owned client work, then stops the application and releases its listener. Safe to call
+   * repeatedly. Waits at most three seconds for client termination, not indefinitely for a body.
+   * Application shutdown retains its native drain timeout and reports stop failures; it does not
+   * promise to finish caller-owned work or an uncooperative handler.
+   *
+   * @throws IOException if the application cannot stop cleanly
+   */
+  @Override
+  public synchronized void close() throws IOException {
+    if (closed) {
+      return;
+    }
+
+    closed = true;
+
+    try (var ignoredServerSocketChannel = reservation;
+        Closeable application = app::close) {
+      closeClient(client);
     }
   }
 }

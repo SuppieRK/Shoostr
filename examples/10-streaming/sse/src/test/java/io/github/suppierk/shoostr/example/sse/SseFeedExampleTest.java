@@ -108,7 +108,7 @@ class SseFeedExampleTest {
   }
 
   @Test
-  void returnsNoContentWithoutStartingAStreamAfterTheFinalEntry() throws Exception {
+  void returnsNoContentWithoutStartingStreamAfterTheFinalEntry() throws Exception {
 
     try (var test = TestServer.start(SseFeedExample.application())) {
       var response = test.send(request -> request.path("/replay").header("Last-Event-ID", "3"));

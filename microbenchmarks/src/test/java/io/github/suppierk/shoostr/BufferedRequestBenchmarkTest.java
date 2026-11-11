@@ -10,37 +10,6 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class BufferedRequestBenchmarkTest {
-  @ParameterizedTest
-  @MethodSource("cases")
-  void readsRealJettyAdapterForEachMeasuredBodyAndHeaderShape(int size, String length, int headers)
-      throws Exception {
-    var benchmark = new BufferedRequestBenchmark();
-    benchmark.bytes = size;
-    benchmark.length = length;
-    benchmark.headers = headers;
-    benchmark.setup();
-
-    var expected = new byte[size];
-    Arrays.fill(expected, (byte) 0x5A);
-
-    assertArrayEquals(expected, benchmark.bodyBytes());
-  }
-
-  @ParameterizedTest
-  @MethodSource("textCases")
-  void decodesTheConfiguredTextThroughTheBoundedRequestAdapter(
-      int size, String length, String charset, String content, String expected) throws Exception {
-    var benchmark = new BufferedRequestBenchmark();
-    benchmark.bytes = size;
-    benchmark.length = length;
-    benchmark.headers = 4;
-    benchmark.charset = charset;
-    benchmark.content = content;
-    benchmark.setup();
-
-    assertEquals(expected, benchmark.bodyText());
-  }
-
   private static Stream<Arguments> textCases() {
     return Stream.of("UTF-8", "ISO-8859-1", "UTF-16BE")
         .flatMap(
@@ -79,5 +48,36 @@ class BufferedRequestBenchmarkTest {
                         length ->
                             Stream.of(0, 4, 12)
                                 .map(headers -> Arguments.of(bytes, length, headers))));
+  }
+
+  @ParameterizedTest
+  @MethodSource("cases")
+  void readsRealJettyAdapterForEachMeasuredBodyAndHeaderShape(int size, String length, int headers)
+      throws Exception {
+    var benchmark = new BufferedRequestBenchmark();
+    benchmark.bytes = size;
+    benchmark.length = length;
+    benchmark.headers = headers;
+    benchmark.setup();
+
+    var expected = new byte[size];
+    Arrays.fill(expected, (byte) 0x5A);
+
+    assertArrayEquals(expected, benchmark.bodyBytes());
+  }
+
+  @ParameterizedTest
+  @MethodSource("textCases")
+  void decodesTheConfiguredTextThroughTheBoundedRequestAdapter(
+      int size, String length, String charset, String content, String expected) throws Exception {
+    var benchmark = new BufferedRequestBenchmark();
+    benchmark.bytes = size;
+    benchmark.length = length;
+    benchmark.headers = 4;
+    benchmark.charset = charset;
+    benchmark.content = content;
+    benchmark.setup();
+
+    assertEquals(expected, benchmark.bodyText());
   }
 }

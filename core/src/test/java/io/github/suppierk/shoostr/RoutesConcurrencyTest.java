@@ -26,6 +26,24 @@ import org.junit.jupiter.api.Timeout;
 
 @Timeout(20)
 class RoutesConcurrencyTest {
+  private static List<Routes> scopes(Shoostr app) {
+    var scopes = new ArrayList<Routes>();
+    scopes.add(app.routes());
+    app.routes().path("/api", scopes::add);
+    app.routes().path("/api", scopes::add);
+
+    return scopes;
+  }
+
+  private static String prefix(int index) {
+    return index % 3 == 0 ? "/api/" : "/";
+  }
+
+  private static void await(CountDownLatch latch) {
+    assertDoesNotThrow(
+        () -> assertTrue(latch.await(5, TimeUnit.SECONDS), "Coordination timed out"));
+  }
+
   @Test
   void preservesRegistrationsAcrossRootAndSharedPathScopes() throws Exception {
     {
@@ -421,23 +439,5 @@ class RoutesConcurrencyTest {
 
           return app.start();
         });
-  }
-
-  private static List<Routes> scopes(Shoostr app) {
-    var scopes = new ArrayList<Routes>();
-    scopes.add(app.routes());
-    app.routes().path("/api", scopes::add);
-    app.routes().path("/api", scopes::add);
-
-    return scopes;
-  }
-
-  private static String prefix(int index) {
-    return index % 3 == 0 ? "/api/" : "/";
-  }
-
-  private static void await(CountDownLatch latch) {
-    assertDoesNotThrow(
-        () -> assertTrue(latch.await(5, TimeUnit.SECONDS), "Coordination timed out"));
   }
 }

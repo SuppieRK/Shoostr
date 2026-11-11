@@ -1,3 +1,4 @@
+/** JMH fixtures for isolated Shoostr operations. */
 @NullMarked
 package io.github.suppierk.shoostr;
 

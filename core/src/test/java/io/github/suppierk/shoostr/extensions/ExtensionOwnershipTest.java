@@ -27,6 +27,69 @@ import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 
 class ExtensionOwnershipTest {
+  private static AuthenticationExtension owningAuthenticator(OwnedCapability capability) {
+    return new AuthenticationExtension() {
+      @Override
+      public void claimOwnership() {
+        capability.claimOwnership();
+      }
+
+      @Override
+      public void handle(Request request, Response response) {
+        // This ownership fixture deliberately contributes no request behavior.
+      }
+
+      @Override
+      public void close() {
+        capability.close();
+      }
+    };
+  }
+
+  private static boolean installAfterRelease(
+      Shoostr app, OwnedCapability capability, CountDownLatch ready, CountDownLatch release)
+      throws InterruptedException {
+    ready.countDown();
+
+    assertTrue(release.await(5, TimeUnit.SECONDS));
+
+    try {
+      app.withExtension(capability);
+
+      return true;
+    } catch (IllegalStateException ignoredFailure) {
+      return false;
+    }
+  }
+
+  private static ApplicationExtension<Object> loggedCapability(
+      String name, List<String> events, boolean failsSetup) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void claimOwnership() {
+        events.add("claim-" + name);
+      }
+
+      @Override
+      public void install(ApplicationCallbacks callbacks) {
+        events.add("install-" + name);
+        if (failsSetup) {
+          throw new IllegalArgumentException("setup failed");
+        }
+      }
+
+      @Override
+      public void close() {
+        events.add("close-" + name);
+      }
+    };
+  }
+
   @Test
   void rejectedReuseLeavesTheOwningApplicationOperational() throws Exception {
     var capability = new OwnedCapability();
@@ -96,7 +159,7 @@ class ExtensionOwnershipTest {
   }
 
   @Test
-  void failedSetupDoesNotAttemptOwnershipOfALaterProvider() throws Exception {
+  void failedSetupDoesNotAttemptOwnershipOfLaterProvider() throws Exception {
     var foreign = new OwnedCapability();
     var setups = new AtomicInteger();
     var closes = new AtomicInteger();
@@ -285,6 +348,7 @@ class ExtensionOwnershipTest {
         throw new IOException("cleanup failed");
       }
     }
+
     ApplicationExtension<Object> prefix = new FailingCleanup();
     class RejectedClaim implements ApplicationExtension<Object> {
       @Override
@@ -297,6 +361,7 @@ class ExtensionOwnershipTest {
         throw rejection;
       }
     }
+
     ApplicationExtension<Object> rejected = new RejectedClaim();
 
     {
@@ -376,6 +441,7 @@ class ExtensionOwnershipTest {
             assertThrows(IllegalStateException.class, () -> app.withExtension(nested));
           }
         }
+
         ApplicationExtension<Object> first = new ReentrantInstallation();
         app.withExtension(first);
         app.withExtension(nested)
@@ -411,6 +477,7 @@ class ExtensionOwnershipTest {
             assertThrows(IllegalStateException.class, () -> app.withExtension(nested));
           }
         }
+
         ApplicationExtension<Object> first = new ReentrantAuthentication();
         app.withExtension(first);
         app.withExtension(nested)
@@ -443,6 +510,7 @@ class ExtensionOwnershipTest {
             assertThrows(IllegalStateException.class, app::start);
           }
         }
+
         ApplicationExtension<Object> first = new ReentrantStartup();
         app.withExtension(first)
             .routes()
@@ -456,7 +524,7 @@ class ExtensionOwnershipTest {
   }
 
   @Test
-  void closesASuccessfullyClaimedResourceWhenTheClaimClosesTheApplication() throws Exception {
+  void closesSuccessfullyClaimedResourceWhenTheClaimClosesTheApplication() throws Exception {
     var closes = new AtomicInteger();
 
     {
@@ -488,69 +556,6 @@ class ExtensionOwnershipTest {
       @Override
       public void close() {
         closes.incrementAndGet();
-      }
-    };
-  }
-
-  private static AuthenticationExtension owningAuthenticator(OwnedCapability capability) {
-    return new AuthenticationExtension() {
-      @Override
-      public void claimOwnership() {
-        capability.claimOwnership();
-      }
-
-      @Override
-      public void handle(Request request, Response response) {
-        // This ownership fixture deliberately contributes no request behavior.
-      }
-
-      @Override
-      public void close() {
-        capability.close();
-      }
-    };
-  }
-
-  private static boolean installAfterRelease(
-      Shoostr app, OwnedCapability capability, CountDownLatch ready, CountDownLatch release)
-      throws InterruptedException {
-    ready.countDown();
-
-    assertTrue(release.await(5, TimeUnit.SECONDS));
-
-    try {
-      app.withExtension(capability);
-
-      return true;
-    } catch (IllegalStateException ignoredFailure) {
-      return false;
-    }
-  }
-
-  private static ApplicationExtension<Object> loggedCapability(
-      String name, List<String> events, boolean failsSetup) {
-    return new ApplicationExtension<Object>() {
-      @Override
-      public Object configure(Lifecycle lifecycle, Object inherited) {
-        return this;
-      }
-
-      @Override
-      public void claimOwnership() {
-        events.add("claim-" + name);
-      }
-
-      @Override
-      public void install(ApplicationCallbacks callbacks) {
-        events.add("install-" + name);
-        if (failsSetup) {
-          throw new IllegalArgumentException("setup failed");
-        }
-      }
-
-      @Override
-      public void close() {
-        events.add("close-" + name);
       }
     };
   }

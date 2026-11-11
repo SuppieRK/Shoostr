@@ -21,48 +21,6 @@ import org.eclipse.jetty.util.Callback;
 import org.junit.jupiter.api.Test;
 
 class ResponseResourceTest {
-  @Test
-  void closesTheDescriptorWhenSeekingTheSelectedResourceFails() throws Exception {
-    var channel = new TrackingChannel("0123456789", true);
-    var response = response(HttpFields.build(), HttpFields.build(), new ByteArrayOutputStream());
-
-    response.resource(channel, 10, Instant.EPOCH, "text/plain");
-
-    assertThrows(IOException.class, response::complete);
-    assertTrue(channel.closed());
-  }
-
-  @Test
-  void seeksToTheRangeBeforeReadingTheSelectedResource() throws Exception {
-    var requestHeaders = HttpFields.build();
-    requestHeaders.add(HttpHeaders.RANGE.value(), "bytes=3-5");
-    var body = new ByteArrayOutputStream();
-    var channel = new TrackingChannel("0123456789", false);
-    var response = response(requestHeaders, HttpFields.build(), body);
-
-    response.resource(channel, 10, Instant.EPOCH, "text/plain");
-    response.complete();
-
-    assertEquals(List.of(3L), channel.readPositions());
-    assertEquals("345", body.toString(StandardCharsets.UTF_8));
-  }
-
-  @Test
-  void returnsTheStagedResponseForFurtherHeaderConfiguration() throws Exception {
-    var responseHeaders = HttpFields.build();
-    var body = new ByteArrayOutputStream();
-    var channel = new TrackingChannel("0123456789", false);
-    var response = response(HttpFields.build(), responseHeaders, body);
-
-    var chained =
-        response.resource(channel, 10, Instant.EPOCH, "text/plain").setHeader("X-Chain", "ok");
-    response.complete();
-
-    assertSame(response, chained);
-    assertEquals("ok", responseHeaders.get("X-Chain"));
-    assertEquals("0123456789", body.toString(StandardCharsets.UTF_8));
-  }
-
   private static Response response(
       HttpFields requestHeaders, HttpFields responseHeaders, ByteArrayOutputStream body) {
     var request = createRequestForResponse(requestHeaders);
@@ -110,6 +68,48 @@ class ResponseResourceTest {
                   }
                   default -> throw new UnsupportedOperationException(method.getName());
                 });
+  }
+
+  @Test
+  void closesTheDescriptorWhenSeekingTheSelectedResourceFails() throws Exception {
+    var channel = new TrackingChannel("0123456789", true);
+    var response = response(HttpFields.build(), HttpFields.build(), new ByteArrayOutputStream());
+
+    response.resource(channel, 10, Instant.EPOCH, "text/plain");
+
+    assertThrows(IOException.class, response::complete);
+    assertTrue(channel.closed());
+  }
+
+  @Test
+  void seeksToTheRangeBeforeReadingTheSelectedResource() throws Exception {
+    var requestHeaders = HttpFields.build();
+    requestHeaders.add(HttpHeaders.RANGE.value(), "bytes=3-5");
+    var body = new ByteArrayOutputStream();
+    var channel = new TrackingChannel("0123456789", false);
+    var response = response(requestHeaders, HttpFields.build(), body);
+
+    response.resource(channel, 10, Instant.EPOCH, "text/plain");
+    response.complete();
+
+    assertEquals(List.of(3L), channel.readPositions());
+    assertEquals("345", body.toString(StandardCharsets.UTF_8));
+  }
+
+  @Test
+  void returnsTheStagedResponseForFurtherHeaderConfiguration() throws Exception {
+    var responseHeaders = HttpFields.build();
+    var body = new ByteArrayOutputStream();
+    var channel = new TrackingChannel("0123456789", false);
+    var response = response(HttpFields.build(), responseHeaders, body);
+
+    var chained =
+        response.resource(channel, 10, Instant.EPOCH, "text/plain").setHeader("X-Chain", "ok");
+    response.complete();
+
+    assertSame(response, chained);
+    assertEquals("ok", responseHeaders.get("X-Chain"));
+    assertEquals("0123456789", body.toString(StandardCharsets.UTF_8));
   }
 
   private static final class TrackingChannel implements SeekableByteChannel {

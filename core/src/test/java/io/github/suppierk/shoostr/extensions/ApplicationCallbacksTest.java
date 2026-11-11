@@ -32,6 +32,36 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class ApplicationCallbacksTest {
+  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
+  private static ApplicationExtension<Object> extension(
+      Consumer<ApplicationCallbacks> installation) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void install(ApplicationCallbacks callbacks) {
+        installation.accept(callbacks);
+      }
+    };
+  }
+
+  private static List<Consumer<ApplicationCallbacks>> registrations() {
+    Handler handler = (ignoredRequest, ignoredResponse) -> {};
+
+    return List.of(
+        c -> c.onRequestHeaders(handler),
+        c -> c.onRouteMatched(handler),
+        c -> c.beforeRouteHandler(handler),
+        c -> c.afterRouteHandler(handler),
+        c -> c.beforeResponseFlush(handler),
+        c -> c.afterResponseFlush(handler),
+        c -> c.afterRequest(ignoredRequestOutcome -> {}),
+        c -> c.observe(ignoredRequest -> ignoredRequestOutcome -> {}));
+  }
+
   @Test
   void exposesOnlyTheEightApprovedRegistrationMethods() {
     var methods =
@@ -460,35 +490,5 @@ class ApplicationCallbacksTest {
         }
       }
     }
-  }
-
-  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
-  private static ApplicationExtension<Object> extension(
-      Consumer<ApplicationCallbacks> installation) {
-    return new ApplicationExtension<Object>() {
-      @Override
-      public Object configure(Lifecycle lifecycle, Object inherited) {
-        return this;
-      }
-
-      @Override
-      public void install(ApplicationCallbacks callbacks) {
-        installation.accept(callbacks);
-      }
-    };
-  }
-
-  private static List<Consumer<ApplicationCallbacks>> registrations() {
-    Handler handler = (ignoredRequest, ignoredResponse) -> {};
-
-    return List.of(
-        c -> c.onRequestHeaders(handler),
-        c -> c.onRouteMatched(handler),
-        c -> c.beforeRouteHandler(handler),
-        c -> c.afterRouteHandler(handler),
-        c -> c.beforeResponseFlush(handler),
-        c -> c.afterResponseFlush(handler),
-        c -> c.afterRequest(ignoredRequestOutcome -> {}),
-        c -> c.observe(ignoredRequest -> ignoredRequestOutcome -> {}));
   }
 }

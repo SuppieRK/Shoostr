@@ -1,7 +1,9 @@
+import io.github.suppierk.build.GoogleTextBlockFormatting
 import io.github.suppierk.build.StatementSpacingCheck
 
 buildscript {
 	dependencies {
+		classpath 'io.github.suppierk:shoostr-build-logic'
 		classpath(platform('com.fasterxml.jackson:jackson-bom:2.22.4')) {
 			because 'Align Jib build dependencies with the patched Jackson version used by the project.'
 		}
@@ -54,6 +56,7 @@ allprojects {
 	checkstyle {
 		toolVersion = '14.3.0'
 		configFile = rootProject.file('config/checkstyle/checkstyle.xml')
+		maxWarnings = 0
 	}
 	dependencies {
 		constraints {
@@ -66,7 +69,7 @@ allprojects {
 		testImplementation 'org.junit.jupiter:junit-jupiter'
 		testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
 		checkstyle 'com.puppycrawl.tools:checkstyle:14.3.0'
-		checkstyle files(rootProject.file('buildSrc/build/libs/buildSrc.jar'))
+		checkstyle 'io.github.suppierk:shoostr-build-logic'
 	}
 }
 
@@ -88,16 +91,19 @@ subprojects { targetProject ->
 	spotless {
 		java {
 			googleJavaFormat()
-			// Bump both Java custom-step versions when StatementSpacingCheck changes.
-			bumpThisNumberIfACustomStepChanges(4)
+			// Bump both Java custom-step versions when a custom formatter changes.
+			bumpThisNumberIfACustomStepChanges(5)
 			custom 'statement spacing', { String source ->
 				StatementSpacingCheck.format(source)
+			}
+			custom 'Google text block indentation', { String source ->
+				GoogleTextBlockFormatting.format(source)
 			}
 		}
 	}
 
 	sourceSets.configureEach { sourceSet ->
-		def javaRules = registerJavaRules(targetProject, sourceSet)
+		def javaRules = this.registerJavaRules(targetProject, sourceSet)
 
 		tasks.named("checkstyle${sourceSet.name.capitalize()}") {
 			dependsOn javaRules
@@ -108,20 +114,23 @@ subprojects { targetProject ->
 
 spotless {
 	groovyGradle {
-		target '*.gradle', 'buildSrc/*.gradle', 'config/gradle/*.gradle', 'core/src/test/resources/published-consumer/*.gradle'
+		target '*.gradle', 'build-logic/*.gradle', 'config/gradle/*.gradle', 'core/src/test/resources/published-consumer/*.gradle'
 	}
 	java {
-		target 'buildSrc/src/**/*.java', 'config/checkstyle/tests/**/*.java', 'core/src/test/resources/published-consumer/*.java'
+		target 'build-logic/src/**/*.java', 'config/checkstyle/tests/**/*.java', 'core/src/test/resources/published-consumer/**/*.java'
 		googleJavaFormat()
-		bumpThisNumberIfACustomStepChanges(4)
+		bumpThisNumberIfACustomStepChanges(5)
 		custom 'statement spacing', { String source ->
 			StatementSpacingCheck.format(source)
+		}
+		custom 'Google text block indentation', { String source ->
+			GoogleTextBlockFormatting.format(source)
 		}
 	}
 }
 
 def checkstyleBuildLogic = tasks.register('checkstyleBuildLogic', Checkstyle) {
-	source fileTree('buildSrc/src') { include '**/*.java' }
+	source fileTree('build-logic/src') { include '**/*.java' }
 	classpath = files()
 	configFile = file('config/checkstyle/java.xml')
 }
@@ -129,6 +138,26 @@ def checkstyleBuildLogicTests = tasks.register('checkstyleBuildLogicTests', Chec
 	source fileTree('config/checkstyle/tests') { include '**/*.java' }
 	classpath = files()
 	configFile = file('config/checkstyle/java-test.xml')
+}
+def googleProfile = resources.text.fromArchiveEntry(configurations.checkstyle.filter {
+	it.name == "checkstyle-${checkstyle.toolVersion}.jar"
+}, 'google_checks.xml', 'UTF-8')
+def checkstyleGoogle = tasks.register('checkstyleGoogle', Checkstyle) {
+	group = 'verification'
+	description = 'Checks Java sources with the Google profile bundled with Checkstyle.'
+	source fileTree('build-logic/src') { include '**/*.java' }
+	source fileTree('core/src/test/resources/published-consumer') {
+		include '**/*.java'
+	}
+	source sourceSets.main.allJava, sourceSets.test.allJava
+	classpath = files()
+	config = googleProfile
+	configProperties = ['org.checkstyle.google.severity': 'error']
+}
+subprojects {
+	sourceSets.configureEach { sourceSet ->
+		checkstyleGoogle.configure { source sourceSet.allJava }
+	}
 }
 sourceSets.test.java.srcDirs = ['config/checkstyle/tests']
 dependencies {
@@ -138,10 +167,10 @@ dependencies {
 		}
 	}
 	testImplementation 'com.puppycrawl.tools:checkstyle:14.3.0'
-	testImplementation files('buildSrc/build/libs/buildSrc.jar')
+	testImplementation 'io.github.suppierk:shoostr-build-logic'
 }
 tasks.named('check') {
-	dependsOn checkstyleBuildLogic, checkstyleBuildLogicTests
+	dependsOn checkstyleBuildLogic, checkstyleBuildLogicTests, checkstyleGoogle
 }
 tasks.named('checkstyleMain') { dependsOn checkstyleBuildLogic }
 tasks.named('checkstyleTest') { dependsOn checkstyleBuildLogicTests }
@@ -178,18 +207,22 @@ tasks.register('ciBuild') {
 	}
 }
 
-configure(frameworkProjects) {
-	apply plugin: 'info.solidsoft.pitest'
-
-	pitest {
-		pitestVersion = '1.30.1'
-		junit5PluginVersion = '1.2.3'
-		targetClasses = ['io.github.suppierk.*']
-		targetTests = ['io.github.suppierk.*']
-		mutators = ['DEFAULTS']
-		threads = 2
-		outputFormats = ['HTML', 'XML']
-		timestampedReports = true
+configure(frameworkProjects) { library ->
+	// PIT is a separate diagnostic. Its plugin still configures deprecated Gradle properties.
+	library.tasks.addRule('Pattern: pitest (runs mutation testing)') { taskName ->
+		if (taskName == 'pitest') {
+			library.pluginManager.apply('info.solidsoft.pitest')
+			def pitest = library.extensions.getByName('pitest')
+			pitest.pitestVersion.set('1.30.1')
+			pitest.junit5PluginVersion.set('1.2.3')
+			pitest.targetClasses.set(['io.github.suppierk.*'])
+			pitest.targetTests.set(['io.github.suppierk.*'])
+			pitest.mutators.set(['DEFAULTS'])
+			pitest.threads.set(2)
+			pitest.outputFormats.set(['HTML', 'XML'])
+			pitest.timestampedReports.set(true)
+			library.tasks.named('pitest').get()
+		}
 	}
 }
 
@@ -352,18 +385,18 @@ configure([
 		dependsOn prepareConsumerRepository
 	}
 }
-project(':core') {
-	tasks.withType(Test).configureEach {
+gradle.projectsEvaluated {
+	def core = project(':core')
+	def http = project(':http')
+	core.tasks.withType(Test).configureEach {
 		dependsOn ':http:publishMavenJavaPublicationToConsumerVerificationRepository',
 				':core:publishMavenJavaPublicationToConsumerVerificationRepository'
 		inputs.dir(consumerRepository)
-		outputs.dir(layout.buildDirectory.dir('reports/published-consumer'))
-		doFirst {
-			systemProperty 'shoostr.core.version', project.version.toString()
-			systemProperty 'shoostr.http.version', project(':http').version.toString()
-			systemProperty 'shoostr.core.jar', tasks.named('jar').get().archiveFile.get().asFile.absolutePath
-			systemProperty 'shoostr.http.jar', project(':http').tasks.named('jar').get().archiveFile.get().asFile.absolutePath
-		}
+		outputs.dir(core.layout.buildDirectory.dir('reports/published-consumer'))
+		systemProperty 'shoostr.core.version', core.version.toString()
+		systemProperty 'shoostr.http.version', http.version.toString()
+		systemProperty 'shoostr.core.jar', core.tasks.named('jar', Jar).get().archiveFile.get().asFile.absolutePath
+		systemProperty 'shoostr.http.jar', http.tasks.named('jar', Jar).get().archiveFile.get().asFile.absolutePath
 	}
 }
 

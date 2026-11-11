@@ -49,9 +49,7 @@ class McpUrlElicitationTest {
         });
 
     try (var test = TestServer.start(app);
-        var client =
-            openClientForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
-                test, completed)) {
+        var client = openClientForNativeUrlCompletion(test, completed)) {
       client.initialize();
 
       assertTrue(listening.await(5, TimeUnit.SECONDS));
@@ -79,7 +77,7 @@ class McpUrlElicitationTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
         transport ->
             McpServer.sync(transport)
                 .requestTimeout(Duration.ofSeconds(5))
@@ -90,9 +88,7 @@ class McpUrlElicitationTest {
                         .callHandler(
                             (exchange, ignoredCallToolRequest) -> {
                               session.complete(exchange.sessionId());
-                              var result =
-                                  sendResultForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
-                                      exchange);
+                              var result = sendResultForNativeUrlCompletion(exchange);
 
                               return McpSchema.CallToolResult.builder()
                                   .addTextContent(result.action().name())
@@ -102,8 +98,7 @@ class McpUrlElicitationTest {
                 .build());
   }
 
-  private ElicitResult sendResultForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
-      McpSyncServerExchange exchange) {
+  private ElicitResult sendResultForNativeUrlCompletion(McpSyncServerExchange exchange) {
     return exchange.createElicitation(
         McpSchema.ElicitUrlRequest.builder(
                 "Authorize the external service",
@@ -112,17 +107,13 @@ class McpUrlElicitationTest {
             .build());
   }
 
-  private McpSyncClient
-      openClientForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
-          TestServer test, CompletableFuture<ElicitationCompleteNotification> completed) {
-    return clientPropertiesForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
-            test, completed)
-        .build();
+  private McpSyncClient openClientForNativeUrlCompletion(
+      TestServer test, CompletableFuture<ElicitationCompleteNotification> completed) {
+    return clientPropertiesForNativeUrlCompletion(test, completed).build();
   }
 
-  private SyncSpec
-      clientPropertiesForDeliversNativeUrlElicitationCompletionAfterTheToolResponseEnded(
-          TestServer test, CompletableFuture<ElicitationCompleteNotification> completed) {
+  private SyncSpec clientPropertiesForNativeUrlCompletion(
+      TestServer test, CompletableFuture<ElicitationCompleteNotification> completed) {
     return McpClient.sync(
             HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
                 .endpoint("/mcp")
@@ -171,7 +162,7 @@ class McpUrlElicitationTest {
         new McpHttpSecurity(
             Set.of(),
             ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
         transport ->
             McpServer.sync(transport)
                 .serverInfo("url-elicitation", "1.0")

@@ -400,6 +400,18 @@ final class AcceptNegotiation {
     }
 
     /**
+     * Compares charset names case-insensitively and other parameter values exactly.
+     *
+     * @param name parameter name
+     * @param first candidate value
+     * @param second range value
+     * @return whether the values are equivalent
+     */
+    private static boolean equals(String name, String first, String second) {
+      return "charset".equals(name) ? first.equalsIgnoreCase(second) : first.equals(second);
+    }
+
+    /**
      * Tests whether this range applies to a concrete representation.
      *
      * @param representation concrete candidate
@@ -447,18 +459,6 @@ final class AcceptNegotiation {
       }
 
       return HttpCharacters.ASTERISK_STRING.equals(subtype) ? 1 : 2;
-    }
-
-    /**
-     * Compares charset names case-insensitively and other parameter values exactly.
-     *
-     * @param name parameter name
-     * @param first candidate value
-     * @param second range value
-     * @return whether the values are equivalent
-     */
-    private static boolean equals(String name, String first, String second) {
-      return "charset".equals(name) ? first.equalsIgnoreCase(second) : first.equals(second);
     }
   }
 }

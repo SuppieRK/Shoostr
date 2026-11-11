@@ -35,12 +35,71 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class EffectiveSecurityTest {
+  private static Shoostr application(ForwardedHeaders family, boolean trusted) {
+    var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+    app.trustedProxies(address -> trusted && address.isLoopbackAddress(), family)
+        .routes()
+        .get(
+            "/security",
+            (request, response) ->
+                response.text(request.isSecure() + ":" + request.isEffectivelySecure()));
+
+    return app;
+  }
+
+  private static void forwarding(TestRequest request, ForwardedHeaders family, String protocol) {
+    if (family == ForwardedHeaders.RFC7239) {
+      request.header(
+          "Forwarded",
+          "for=203.0.113.7" + ("missing".equals(protocol) ? "" : ";proto=" + protocol));
+    } else {
+      request.header("X-Forwarded-For", "203.0.113.7");
+      if (!"missing".equals(protocol)) {
+        request.header("X-Forwarded-Proto", protocol);
+      }
+    }
+  }
+
+  private static Stream<Arguments> unprovenHttpsTargets() {
+    return Stream.of(
+        Arguments.of(ForwardedHeaders.RFC7239, ""),
+        Arguments.of(ForwardedHeaders.RFC7239, "Forwarded: for=203.0.113.7\r\n"),
+        Arguments.of(
+            ForwardedHeaders.RFC7239, "Forwarded: for=203.0.113.7, for=127.0.0.2;proto=https\r\n"),
+        Arguments.of(
+            ForwardedHeaders.RFC7239, "Forwarded: for=203.0.113.7\r\nX-Forwarded-Proto: https\r\n"),
+        Arguments.of(ForwardedHeaders.X_FORWARDED, "X-Forwarded-For: 203.0.113.7\r\n"),
+        Arguments.of(ForwardedHeaders.X_FORWARDED, "X-Forwarded-Proto: https\r\n"),
+        Arguments.of(
+            ForwardedHeaders.X_FORWARDED,
+            "X-Forwarded-For: 203.0.113.7\r\nForwarded: proto=https\r\n"));
+  }
+
+  private static KeyStore identity() throws Exception {
+    var identity = KeyStore.getInstance("PKCS12");
+
+    try (var input =
+        Objects.requireNonNull(
+            EffectiveSecurityTest.class.getResourceAsStream("/localhost-test.p12"))) {
+      identity.load(input, "changeit".toCharArray());
+    }
+
+    return identity;
+  }
+
   @ParameterizedTest
   @CsvSource({
-    "RFC7239, https, true", "RFC7239, http, false", "RFC7239, HtTpS, true",
-        "RFC7239, missing, false",
-    "X_FORWARDED, https, true", "X_FORWARDED, http, false", "X_FORWARDED, HtTpS, true",
-        "X_FORWARDED, missing, false"
+    "RFC7239, https, true",
+    "RFC7239, http, false",
+    "RFC7239, HtTpS, true",
+    "RFC7239, missing, false",
+    "X_FORWARDED, https, true",
+    "X_FORWARDED, http, false",
+    "X_FORWARDED, HtTpS, true",
+    "X_FORWARDED, missing, false"
   })
   void usesOnlyAnExplicitTrustedProtocolOnPlainTransport(
       ForwardedHeaders family, String protocol, boolean effective) throws Exception {
@@ -157,7 +216,7 @@ class EffectiveSecurityTest {
 
   @ParameterizedTest
   @MethodSource("unprovenHttpsTargets")
-  void neverUsesAForgedTargetOrAnotherHopAsEvidenceOfHttps(ForwardedHeaders family, String headers)
+  void neverUsesForgedTargetOrAnotherHopAsEvidenceOfHttps(ForwardedHeaders family, String headers)
       throws Exception {
 
     try (var test = TestServer.start(application(family, true));
@@ -284,60 +343,5 @@ class EffectiveSecurityTest {
         }
       }
     }
-  }
-
-  private static Shoostr application(ForwardedHeaders family, boolean trusted) {
-    var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-    app.trustedProxies(address -> trusted && address.isLoopbackAddress(), family)
-        .routes()
-        .get(
-            "/security",
-            (request, response) ->
-                response.text(request.isSecure() + ":" + request.isEffectivelySecure()));
-
-    return app;
-  }
-
-  private static void forwarding(TestRequest request, ForwardedHeaders family, String protocol) {
-    if (family == ForwardedHeaders.RFC7239) {
-      request.header(
-          "Forwarded",
-          "for=203.0.113.7" + ("missing".equals(protocol) ? "" : ";proto=" + protocol));
-    } else {
-      request.header("X-Forwarded-For", "203.0.113.7");
-      if (!"missing".equals(protocol)) {
-        request.header("X-Forwarded-Proto", protocol);
-      }
-    }
-  }
-
-  private static Stream<Arguments> unprovenHttpsTargets() {
-    return Stream.of(
-        Arguments.of(ForwardedHeaders.RFC7239, ""),
-        Arguments.of(ForwardedHeaders.RFC7239, "Forwarded: for=203.0.113.7\r\n"),
-        Arguments.of(
-            ForwardedHeaders.RFC7239, "Forwarded: for=203.0.113.7, for=127.0.0.2;proto=https\r\n"),
-        Arguments.of(
-            ForwardedHeaders.RFC7239, "Forwarded: for=203.0.113.7\r\nX-Forwarded-Proto: https\r\n"),
-        Arguments.of(ForwardedHeaders.X_FORWARDED, "X-Forwarded-For: 203.0.113.7\r\n"),
-        Arguments.of(ForwardedHeaders.X_FORWARDED, "X-Forwarded-Proto: https\r\n"),
-        Arguments.of(
-            ForwardedHeaders.X_FORWARDED,
-            "X-Forwarded-For: 203.0.113.7\r\nForwarded: proto=https\r\n"));
-  }
-
-  private static KeyStore identity() throws Exception {
-    var identity = KeyStore.getInstance("PKCS12");
-
-    try (var input =
-        Objects.requireNonNull(
-            EffectiveSecurityTest.class.getResourceAsStream("/localhost-test.p12"))) {
-      identity.load(input, "changeit".toCharArray());
-    }
-
-    return identity;
   }
 }

@@ -20,6 +20,34 @@ import org.junit.jupiter.api.io.TempDir;
 class CoreRecordEqualityTest {
   @TempDir Path directory;
 
+  private static RadixRoutes.Endpoint endpoint(String path, String parameter, int segment) {
+    return new RadixRoutes.Endpoint(
+        segment == 1 ? HttpMethods.GET : HttpMethods.POST,
+        path,
+        path,
+        (request, response) -> response.text(parameter),
+        Map.of(parameter, segment),
+        segment + 1,
+        segment,
+        null);
+  }
+
+  private static Class<?> nested(Class<?> owner, String name) throws ClassNotFoundException {
+    return Class.forName(owner.getName() + "$" + name);
+  }
+
+  private static Object constructRecord(Class<?> type, Object... components)
+      throws ReflectiveOperationException {
+    var signature =
+        Arrays.stream(type.getRecordComponents())
+            .map(RecordComponent::getType)
+            .toArray(Class<?>[]::new);
+    var constructor = type.getDeclaredConstructor(signature);
+    constructor.setAccessible(true);
+
+    return constructor.newInstance(components);
+  }
+
   @Test
   void acceptParametersCompareAllComponents() throws ReflectiveOperationException {
     var type = nested(AcceptNegotiation.class, "Parameters");
@@ -199,33 +227,5 @@ class CoreRecordEqualityTest {
   @Test
   void bodyRepresentationUsesEnumEquality() throws ClassNotFoundException {
     EqualsVerifier.forClass(nested(Request.class, "BodyRepresentation")).verify();
-  }
-
-  private static RadixRoutes.Endpoint endpoint(String path, String parameter, int segment) {
-    return new RadixRoutes.Endpoint(
-        segment == 1 ? HttpMethods.GET : HttpMethods.POST,
-        path,
-        path,
-        (request, response) -> response.text(parameter),
-        Map.of(parameter, segment),
-        segment + 1,
-        segment,
-        null);
-  }
-
-  private static Class<?> nested(Class<?> owner, String name) throws ClassNotFoundException {
-    return Class.forName(owner.getName() + "$" + name);
-  }
-
-  private static Object constructRecord(Class<?> type, Object... components)
-      throws ReflectiveOperationException {
-    var signature =
-        Arrays.stream(type.getRecordComponents())
-            .map(RecordComponent::getType)
-            .toArray(Class<?>[]::new);
-    var constructor = type.getDeclaredConstructor(signature);
-    constructor.setAccessible(true);
-
-    return constructor.newInstance(components);
   }
 }

@@ -41,15 +41,164 @@ import reactor.core.publisher.Mono;
 
 @Timeout(20)
 class McpMailboxAdmissionTest {
+  private static Map<String, Object> pausing(
+      AtomicInteger traversals, CountDownLatch entered, CountDownLatch release) {
+    return observed(
+        traversals,
+        () -> {
+          if (traversals.get() == 1) {
+            entered.countDown();
+            await(release, 5);
+          }
+        });
+  }
+
+  private static void await(CountDownLatch latch, int seconds) {
+    assertDoesNotThrow(() -> assertTrue(latch.await(seconds, TimeUnit.SECONDS)));
+  }
+
+  private static void finish(Future<?> action) {
+    assertDoesNotThrow(() -> action.get(2, TimeUnit.SECONDS));
+  }
+
+  private static HttpResponse<String> withStream(Consumer<McpStreamableServerTransport> exercise)
+      throws Exception {
+    var mcp = applicationTransport(exercise);
+    var app = new Shoostr().routes(routes -> routes.path("/mcp", mcp::routes));
+
+    try (var test = TestServer.start(app)) {
+      var initialized = sendInitializedRequestForWithStream(test);
+
+      assertEquals(200, initialized.statusCode());
+
+      var session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
+
+      return test.send(
+          request ->
+              request
+                  .path("/mcp")
+                  .header("Accept", "text/event-stream")
+                  .header("Mcp-Session-Id", session)
+                  .header("MCP-Protocol-Version", "2025-11-25"),
+          HttpResponse.BodyHandlers.ofString());
+    }
+  }
+
+  private static HttpResponse<byte[]> sendInitializedRequestForWithStream(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .body(
+                    """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                    "protocolVersion":"2025-11-25","capabilities":{},
+                    "clientInfo":{"name":"mailbox-test","version":"1.0"}}}
+                    """
+                        .getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private static Map<String, Object> observed(AtomicInteger traversals) {
+    return observed(traversals, () -> {});
+  }
+
+  private static Map<String, Object> observed(AtomicInteger traversals, Runnable traversal) {
+    return new AbstractMap<>() {
+      @Override
+      public Set<Entry<String, Object>> entrySet() {
+        traversals.incrementAndGet();
+        traversal.run();
+
+        return Map.<String, Object>of("value", "probe").entrySet();
+      }
+    };
+  }
+
+  private static Mcp<McpSyncServer> applicationTransport(
+      Consumer<McpStreamableServerTransport> exercise) {
+    return Mcp.sync(
+        new McpHttpSecurity(
+            Set.of(),
+            request -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (identity, message) -> {}),
+        transport -> McpServer.sync(listeningTransport(transport, exercise)).build());
+  }
+
+  private static McpStreamableServerTransportProvider listeningTransport(
+      McpStreamableServerTransportProvider transport,
+      Consumer<McpStreamableServerTransport> exercise) {
+    return new McpStreamableServerTransportProvider() {
+      @Override
+      public void setSessionFactory(McpStreamableServerSession.Factory factory) {
+        transport.setSessionFactory(
+            parameters -> {
+              var session = listeningSession(exercise);
+              var result = initializationResult();
+
+              return new McpStreamableServerSession.McpStreamableServerSessionInit(
+                  session, Mono.just(result));
+            });
+      }
+
+      @Override
+      public Mono<Void> notifyClients(String method, Object parameters) {
+        return transport.notifyClients(method, parameters);
+      }
+
+      @Override
+      public Mono<Void> closeGracefully() {
+        return transport.closeGracefully();
+      }
+
+      @Override
+      public List<String> protocolVersions() {
+        return transport.protocolVersions();
+      }
+    };
+  }
+
+  private static McpStreamableServerSession listeningSession(
+      Consumer<McpStreamableServerTransport> exercise) {
+    return new McpStreamableServerSession(
+        UUID.randomUUID().toString(),
+        McpSchema.ClientCapabilities.builder().build(),
+        McpSchema.Implementation.builder("mailbox-client", "1.0").build(),
+        Duration.ofSeconds(5),
+        Map.of(),
+        Map.of(),
+        Mono::empty,
+        McpJsonDefaults.getSchemaValidator()) {
+      @Override
+      public McpStreamableServerSessionStream listeningStream(McpStreamableServerTransport stream) {
+        var listening = super.listeningStream(stream);
+        exercise.accept(stream);
+
+        return listening;
+      }
+    };
+  }
+
+  private static InitializeResult initializationResult() {
+    return McpSchema.InitializeResult.builder(
+            "2025-11-25",
+            McpSchema.ServerCapabilities.builder().build(),
+            McpSchema.Implementation.builder("mailbox-server", "1.0").build())
+        .build();
+  }
+
   @Test
-  void rejectsAKnownFullMailboxWithoutTraversingTheRejectedPayload() throws Exception {
+  void rejectsKnownFullMailboxWithoutTraversingTheRejectedPayload() throws Exception {
     var acceptedTraversal = new AtomicInteger();
     var rejectedTraversal = new AtomicInteger();
     var acknowledgments = new AtomicInteger();
     var failures = new CopyOnWriteArrayList<Throwable>();
     var rejected = new AtomicReference<Throwable>();
     var response =
-        sendResponseForRejectsAKnownFullMailboxWithoutTraversingTheRejectedPayload(
+        sendResponseForRejectsKnownFullMailboxWithoutTraversingTheRejectedPayload(
             acceptedTraversal, failures, acknowledgments, rejectedTraversal, rejected);
 
     assertEquals(200, response.statusCode());
@@ -62,7 +211,7 @@ class McpMailboxAdmissionTest {
   }
 
   private HttpResponse<String>
-      sendResponseForRejectsAKnownFullMailboxWithoutTraversingTheRejectedPayload(
+      sendResponseForRejectsKnownFullMailboxWithoutTraversingTheRejectedPayload(
           AtomicInteger acceptedTraversal,
           CopyOnWriteArrayList<Throwable> failures,
           AtomicInteger acknowledgments,
@@ -249,151 +398,5 @@ class McpMailboxAdmissionTest {
                     new McpSchema.JSONRPCNotification(
                         "probe", pausing(traversals, entered, release)))
                 .subscribe(ignored -> {}, rejected::set));
-  }
-
-  private static Map<String, Object> pausing(
-      AtomicInteger traversals, CountDownLatch entered, CountDownLatch release) {
-    return observed(
-        traversals,
-        () -> {
-          if (traversals.get() == 1) {
-            entered.countDown();
-            await(release, 5);
-          }
-        });
-  }
-
-  private static void await(CountDownLatch latch, int seconds) {
-    assertDoesNotThrow(() -> assertTrue(latch.await(seconds, TimeUnit.SECONDS)));
-  }
-
-  private static void finish(Future<?> action) {
-    assertDoesNotThrow(() -> action.get(2, TimeUnit.SECONDS));
-  }
-
-  private static HttpResponse<String> withStream(Consumer<McpStreamableServerTransport> exercise)
-      throws Exception {
-    var mcp = applicationTransport(exercise);
-    var app = new Shoostr().routes(routes -> routes.path("/mcp", mcp::routes));
-
-    try (var test = TestServer.start(app)) {
-      var initialized = sendInitializedRequestForWithStream(test);
-
-      assertEquals(200, initialized.statusCode());
-
-      var session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
-
-      return test.send(
-          request ->
-              request
-                  .path("/mcp")
-                  .header("Accept", "text/event-stream")
-                  .header("Mcp-Session-Id", session)
-                  .header("MCP-Protocol-Version", "2025-11-25"),
-          HttpResponse.BodyHandlers.ofString());
-    }
-  }
-
-  private static HttpResponse<byte[]> sendInitializedRequestForWithStream(TestServer test)
-      throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .body(
-                    """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-              "protocolVersion":"2025-11-25","capabilities":{},
-              "clientInfo":{"name":"mailbox-test","version":"1.0"}}}
-              """
-                        .getBytes(StandardCharsets.UTF_8)));
-  }
-
-  private static Map<String, Object> observed(AtomicInteger traversals) {
-    return observed(traversals, () -> {});
-  }
-
-  private static Map<String, Object> observed(AtomicInteger traversals, Runnable traversal) {
-    return new AbstractMap<>() {
-      @Override
-      public Set<Entry<String, Object>> entrySet() {
-        traversals.incrementAndGet();
-        traversal.run();
-
-        return Map.<String, Object>of("value", "probe").entrySet();
-      }
-    };
-  }
-
-  private static Mcp<McpSyncServer> applicationTransport(
-      Consumer<McpStreamableServerTransport> exercise) {
-    return Mcp.sync(
-        new McpHttpSecurity(
-            Set.of(),
-            request -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (identity, message) -> {}),
-        transport ->
-            McpServer.sync(
-                    new McpStreamableServerTransportProvider() {
-                      @Override
-                      public void setSessionFactory(McpStreamableServerSession.Factory factory) {
-                        transport.setSessionFactory(
-                            parameters -> {
-                              var session = listeningSession(exercise);
-                              var result = initializationResult();
-
-                              return new McpStreamableServerSession.McpStreamableServerSessionInit(
-                                  session, Mono.just(result));
-                            });
-                      }
-
-                      @Override
-                      public Mono<Void> notifyClients(String method, Object parameters) {
-                        return transport.notifyClients(method, parameters);
-                      }
-
-                      @Override
-                      public Mono<Void> closeGracefully() {
-                        return transport.closeGracefully();
-                      }
-
-                      @Override
-                      public List<String> protocolVersions() {
-                        return transport.protocolVersions();
-                      }
-                    })
-                .build());
-  }
-
-  private static McpStreamableServerSession listeningSession(
-      Consumer<McpStreamableServerTransport> exercise) {
-    return new McpStreamableServerSession(
-        UUID.randomUUID().toString(),
-        McpSchema.ClientCapabilities.builder().build(),
-        McpSchema.Implementation.builder("mailbox-client", "1.0").build(),
-        Duration.ofSeconds(5),
-        Map.of(),
-        Map.of(),
-        Mono::empty,
-        McpJsonDefaults.getSchemaValidator()) {
-      @Override
-      public McpStreamableServerSessionStream listeningStream(McpStreamableServerTransport stream) {
-        var listening = super.listeningStream(stream);
-        exercise.accept(stream);
-
-        return listening;
-      }
-    };
-  }
-
-  private static InitializeResult initializationResult() {
-    return McpSchema.InitializeResult.builder(
-            "2025-11-25",
-            McpSchema.ServerCapabilities.builder().build(),
-            McpSchema.Implementation.builder("mailbox-server", "1.0").build())
-        .build();
   }
 }

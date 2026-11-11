@@ -85,6 +85,74 @@ class LoginLogoutExampleTest {
         .start();
   }
 
+  private static Optional<String> verifyCredentials(String username, String password) {
+    return "reader".equals(username) && "local-only".equals(password)
+        ? Optional.of("account-42")
+        : Optional.empty();
+  }
+
+  private static TestServer start(BiFunction<String, String, Optional<String>> authenticate)
+      throws Exception {
+    var app = LoginLogoutExample.application(authenticate);
+    app.tls(
+        tls -> {
+          tls.setKeyStore(identity);
+          tls.setKeyStorePassword("local-test-password");
+        });
+
+    return TestServer.start(
+        app,
+        client ->
+            client
+                .sslContext(clientTls)
+                .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)));
+  }
+
+  private static HttpResponse<String> bootstrap(TestServer test) throws Exception {
+    var response =
+        test.send(request -> request.path("/login"), HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, response.statusCode());
+
+    return response;
+  }
+
+  private static HttpResponse<String> account(TestServer test, String cookies) throws Exception {
+    return test.send(
+        request -> request.path("/account/me").header("Cookie", cookies),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static HttpResponse<String> post(
+      TestServer test, String path, String cookies, String proof, String form) throws Exception {
+    return test.send(
+        request ->
+            request
+                .path(path)
+                .method("POST")
+                .header("Cookie", cookies)
+                .header(
+                    "Origin", test.baseUri().getScheme() + "://" + test.baseUri().getRawAuthority())
+                .header("X-CSRF-Token", proof)
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .body(form.getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static String cookies(HttpResponse<?> response) {
+    return response.headers().allValues("Set-Cookie").stream()
+        .map(value -> value.split(";", 2)[0])
+        .collect(Collectors.joining("; "));
+  }
+
+  private static String cookie(HttpResponse<?> response) {
+    return response.headers().allValues("Set-Cookie").stream()
+        .filter(value -> value.startsWith("__Host-SHOOSTR-AUTH="))
+        .map(value -> value.split(";", 2)[0])
+        .findFirst()
+        .orElseThrow();
+  }
+
   @Test
   void concurrentLoginsPublishOneIdentityAndRejectTheOldIdentifierAndProof() throws Exception {
     var entered = new CountDownLatch(2);
@@ -117,7 +185,7 @@ class LoginLogoutExampleTest {
 
       var winner = alice.statusCode() == 200 ? alice : bob;
       var loser = alice.statusCode() == 409 ? alice : bob;
-      var account = alice.statusCode() == 200 ? "alice" : "bob";
+      final var account = alice.statusCode() == 200 ? "alice" : "bob";
 
       assertEquals(1, winner.headers().allValues("Set-Cookie").size());
       assertTrue(loser.headers().allValues("Set-Cookie").isEmpty());
@@ -401,7 +469,7 @@ class LoginLogoutExampleTest {
   }
 
   @Test
-  void logoutInvalidatesIdentityExpiresTheSessionCookieAndAllowsAFreshLoginInALaterRequest()
+  void logoutInvalidatesIdentityExpiresTheSessionCookieAndAllowsFreshLoginInLaterRequest()
       throws Exception {
     try (var test = start(LoginLogoutExampleTest::verifyCredentials)) {
       var anonymous = bootstrap(test);
@@ -453,73 +521,5 @@ class LoginLogoutExampleTest {
         cookies(anonymous),
         anonymous.body(),
         "username=reader&password=local-only");
-  }
-
-  private static Optional<String> verifyCredentials(String username, String password) {
-    return "reader".equals(username) && "local-only".equals(password)
-        ? Optional.of("account-42")
-        : Optional.empty();
-  }
-
-  private static TestServer start(BiFunction<String, String, Optional<String>> authenticate)
-      throws Exception {
-    var app = LoginLogoutExample.application(authenticate);
-    app.tls(
-        tls -> {
-          tls.setKeyStore(identity);
-          tls.setKeyStorePassword("local-test-password");
-        });
-
-    return TestServer.start(
-        app,
-        client ->
-            client
-                .sslContext(clientTls)
-                .cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)));
-  }
-
-  private static HttpResponse<String> bootstrap(TestServer test) throws Exception {
-    var response =
-        test.send(request -> request.path("/login"), HttpResponse.BodyHandlers.ofString());
-
-    assertEquals(200, response.statusCode());
-
-    return response;
-  }
-
-  private static HttpResponse<String> account(TestServer test, String cookies) throws Exception {
-    return test.send(
-        request -> request.path("/account/me").header("Cookie", cookies),
-        HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static HttpResponse<String> post(
-      TestServer test, String path, String cookies, String proof, String form) throws Exception {
-    return test.send(
-        request ->
-            request
-                .path(path)
-                .method("POST")
-                .header("Cookie", cookies)
-                .header(
-                    "Origin", test.baseUri().getScheme() + "://" + test.baseUri().getRawAuthority())
-                .header("X-CSRF-Token", proof)
-                .header("Content-Type", "application/x-www-form-urlencoded")
-                .body(form.getBytes(StandardCharsets.UTF_8)),
-        HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static String cookies(HttpResponse<?> response) {
-    return response.headers().allValues("Set-Cookie").stream()
-        .map(value -> value.split(";", 2)[0])
-        .collect(Collectors.joining("; "));
-  }
-
-  private static String cookie(HttpResponse<?> response) {
-    return response.headers().allValues("Set-Cookie").stream()
-        .filter(value -> value.startsWith("__Host-SHOOSTR-AUTH="))
-        .map(value -> value.split(";", 2)[0])
-        .findFirst()
-        .orElseThrow();
   }
 }

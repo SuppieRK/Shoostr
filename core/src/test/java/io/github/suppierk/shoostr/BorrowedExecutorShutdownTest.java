@@ -96,13 +96,15 @@ class BorrowedExecutorShutdownTest {
             try {
               assertTrue(entered.await(5, TimeUnit.SECONDS));
 
-              var unrelated = submitBlockedUnrelatedTask(workers, blockerEntered, releaseBlocker);
+              final var unrelated =
+                  submitBlockedUnrelatedTask(workers, blockerEntered, releaseBlocker);
 
               assertTrue(blockerEntered.await(5, TimeUnit.SECONDS));
 
-              var queued = drivers.submit(() -> firstTest.send(request -> request.path("/queued")));
+              final var queued =
+                  drivers.submit(() -> firstTest.send(request -> request.path("/queued")));
               await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 1);
-              var otherApp = submitSecondApplicationRequest(drivers, secondTest);
+              final var otherApp = submitSecondApplicationRequest(drivers, secondTest);
               await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 2);
               first.close();
 
@@ -162,7 +164,7 @@ class BorrowedExecutorShutdownTest {
   }
 
   @Test
-  void cancelsARegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns() throws Exception {
+  void cancelsRegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns() throws Exception {
     var submitting = new CountDownLatch(1);
     var releaseSubmission = new Semaphore(0);
     var firstSubmission = new AtomicBoolean(true);
@@ -171,7 +173,7 @@ class BorrowedExecutorShutdownTest {
     var completions = new AtomicInteger();
 
     try (var workers =
-            openWorkersForCancelsARegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns(
+            openWorkersForCancelsRegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns(
                 firstSubmission, submitting, releaseSubmission);
         var driver = Executors.newVirtualThreadPerTaskExecutor()) {
       var app =
@@ -190,7 +192,7 @@ class BorrowedExecutorShutdownTest {
             .get("/racing", workers, (ignoredRequest, ignoredResponse) -> invoked.set(true));
 
         try (var test = TestServer.start(app)) {
-          var sent = driver.submit(() -> test.send(request -> request.path("/racing")));
+          final var sent = driver.submit(() -> test.send(request -> request.path("/racing")));
 
           try {
             assertTrue(submitting.await(5, TimeUnit.SECONDS));
@@ -222,7 +224,7 @@ class BorrowedExecutorShutdownTest {
   }
 
   private ThreadPoolExecutor
-      openWorkersForCancelsARegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns(
+      openWorkersForCancelsRegisteredExchangeWhenCloseWinsBeforeExecutorSubmissionReturns(
           AtomicBoolean firstSubmission, CountDownLatch submitting, Semaphore releaseSubmission) {
     return new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>()) {
       @Override
@@ -281,7 +283,7 @@ class BorrowedExecutorShutdownTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var sent = driver.submit(() -> test.send(request -> request.path("/active")));
+          final var sent = driver.submit(() -> test.send(request -> request.path("/active")));
 
           try {
             assertTrue(entered.await(5, TimeUnit.SECONDS));
@@ -312,7 +314,7 @@ class BorrowedExecutorShutdownTest {
   }
 
   @Test
-  void doesNotInterruptUnrelatedWorkHelpedByARunningForkJoinHandler() throws Exception {
+  void doesNotInterruptUnrelatedWorkHelpedByRunningForkJoinHandler() throws Exception {
     var entered = new CountDownLatch(1);
     var allowHelping = new CountDownLatch(1);
     var helped = new CountDownLatch(1);
@@ -352,8 +354,8 @@ class BorrowedExecutorShutdownTest {
           try {
             assertTrue(entered.await(5, TimeUnit.SECONDS));
 
-            var unrelated =
-                submitUnrelatedForDoesNotInterruptUnrelatedWorkHelpedByARunningForkJoinHandler(
+            final var unrelated =
+                submitUnrelatedForDoesNotInterruptUnrelatedWorkHelpedByRunningForkJoinHandler(
                     workers, helpedThread, helped, release, interrupted);
             allowHelping.countDown();
 
@@ -387,7 +389,7 @@ class BorrowedExecutorShutdownTest {
   }
 
   private ForkJoinTask<Boolean>
-      submitUnrelatedForDoesNotInterruptUnrelatedWorkHelpedByARunningForkJoinHandler(
+      submitUnrelatedForDoesNotInterruptUnrelatedWorkHelpedByRunningForkJoinHandler(
           ForkJoinPool workers,
           CompletableFuture<Thread> helpedThread,
           CountDownLatch helped,

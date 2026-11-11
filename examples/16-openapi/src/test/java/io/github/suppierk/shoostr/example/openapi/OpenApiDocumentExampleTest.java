@@ -146,7 +146,7 @@ class OpenApiDocumentExampleTest {
       assertEquals(200, response.statusCode());
 
       var internal = Json31.mapper().readTree(response.body());
-      var external =
+      final var external =
           Json31.mapper().readTree(test.send(request -> request.path("/openapi.json")).body());
 
       assertEquals("Operations API", internal.path("info").path("title").asString());

@@ -33,12 +33,11 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class RouteExceptionTest {
-  @TempDir Path directory;
-
   private static final Handler REJECT =
       (ignored, ignoredResponse) -> {
         throw new IllegalArgumentException("private");
       };
+  @TempDir Path directory;
 
   @Test
   void appliesGroupMappingToAnEarlierDescendantWithoutAnExtension() throws Exception {
@@ -76,7 +75,7 @@ class RouteExceptionTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void usesAChildExactTypeOverrideRegardlessOfParentRegistrationOrder(boolean parentFirst)
+  void usesChildExactTypeOverrideRegardlessOfParentRegistrationOrder(boolean parentFirst)
       throws Exception {
     {
       var app = new Shoostr();
@@ -114,7 +113,7 @@ class RouteExceptionTest {
   }
 
   @Test
-  void preservesAMoreSpecificParentMappingOverABroaderChildMapping() throws Exception {
+  void preservesMoreSpecificParentMappingOverBroaderChildMapping() throws Exception {
     {
       var app = new Shoostr();
 
@@ -232,7 +231,7 @@ class RouteExceptionTest {
   }
 
   @Test
-  void allowsARetainedGroupToConfigureEarlierBindingsBeforeStartup() throws Exception {
+  void allowsRetainedGroupToConfigureEarlierBindingsBeforeStartup() throws Exception {
     var retained = new AtomicReference<Routes>();
 
     {
@@ -362,7 +361,7 @@ class RouteExceptionTest {
   }
 
   @Test
-  void mapsAStaticMountAdmissionFailure() throws Exception {
+  void mapsStaticMountAdmissionFailure() throws Exception {
     Files.writeString(directory.resolve("hello.txt"), "hello");
 
     {
@@ -389,7 +388,7 @@ class RouteExceptionTest {
   }
 
   @Test
-  void mapsAWebSocketHandshakeFactoryFailure() throws Exception {
+  void mapsWebSocketHandshakeFactoryFailure() throws Exception {
     {
       var app = new Shoostr();
 
@@ -408,7 +407,7 @@ class RouteExceptionTest {
             var client = HttpClient.newHttpClient()) {
           var url =
               URI.create("ws:" + test.baseUri().getRawSchemeSpecificPart()).resolve("/socket");
-          var failure = assertFailureForMapsAWebSocketHandshakeFactoryFailure(client, url);
+          var failure = assertFailureForMapsWebSocketHandshakeFactoryFailure(client, url);
 
           assertEquals(
               422,
@@ -420,7 +419,7 @@ class RouteExceptionTest {
     }
   }
 
-  private ExecutionException assertFailureForMapsAWebSocketHandshakeFactoryFailure(
+  private ExecutionException assertFailureForMapsWebSocketHandshakeFactoryFailure(
       HttpClient client, URI url) {
     return assertThrows(
         ExecutionException.class,
@@ -464,7 +463,7 @@ class RouteExceptionTest {
   }
 
   @Test
-  void mapsAPreCommitFlushFailureWithTheBoundScope() throws Exception {
+  void mapsPreCommitFlushFailureWithTheBoundScope() throws Exception {
     {
       var app = new Shoostr();
 

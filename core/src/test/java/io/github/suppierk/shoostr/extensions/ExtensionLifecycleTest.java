@@ -40,6 +40,28 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class ExtensionLifecycleTest {
+  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
+  private static TestExtension<Object> callbackProvider(
+      String name, LinkedBlockingQueue<String> events) {
+    return new TestExtension<>() {
+      @Override
+      public Object configure(Lifecycle endpoint, Object inherited) {
+        endpoint.beforeRouteHandler((ignoredRequest, ignoredResponse) -> events.add(name));
+
+        return new Object();
+      }
+    };
+  }
+
+  private static AuthenticationExtension authenticator(Handler handler) {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) throws Exception {
+        handler.handle(request, response);
+      }
+    };
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"csrf", "cors"})
   void exclusionDoesNotAllowReplacingAnInheritedSecurityOwner(String policy) throws Exception {
@@ -192,7 +214,7 @@ class ExtensionLifecycleTest {
         try (var test = TestServer.start(app)) {
           var excluded =
               test.send(request -> request.path("/excluded"), HttpResponse.BodyHandlers.ofString());
-          var included =
+          final var included =
               test.send(request -> request.path("/included"), HttpResponse.BodyHandlers.ofString());
 
           assertEquals(200, excluded.statusCode());
@@ -228,7 +250,7 @@ class ExtensionLifecycleTest {
         try (var test = TestServer.start(app)) {
           var first =
               test.send(request -> request.path("/first"), HttpResponse.BodyHandlers.ofString());
-          var second =
+          final var second =
               test.send(
                   request -> request.path("/nested/second"), HttpResponse.BodyHandlers.ofString());
 
@@ -303,7 +325,7 @@ class ExtensionLifecycleTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup12 = app::close) {
-        var routes = app.routes();
+        final var routes = app.routes();
 
         var failure =
             assertThrows(
@@ -320,7 +342,7 @@ class ExtensionLifecycleTest {
     assertEquals(List.of("install-first", "install-broken", "close-broken", "close-first"), events);
   }
 
-  private ApplicationExtension<Object> setupFailingProvider(ArrayList<String> events) {
+  private ApplicationExtension<Object> setupFailingProvider(List<String> events) {
     return new ApplicationExtension<Object>() {
       @Override
       public Object configure(Lifecycle lifecycle, Object inherited) {
@@ -969,7 +991,8 @@ class ExtensionLifecycleTest {
   }
 
   @Test
-  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
+  @SuppressWarnings("java:S9357")
+  // Extension has no abstract methods and cannot be a lambda.
   void rejectsProviderSideNestedAuthenticationSelectionWithoutPublishingTheEndpoint()
       throws Exception {
     var calls = new AtomicInteger();
@@ -1070,28 +1093,6 @@ class ExtensionLifecycleTest {
         }
       }
     }
-  }
-
-  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
-  private static TestExtension<Object> callbackProvider(
-      String name, LinkedBlockingQueue<String> events) {
-    return new TestExtension<>() {
-      @Override
-      public Object configure(Lifecycle endpoint, Object inherited) {
-        endpoint.beforeRouteHandler((ignoredRequest, ignoredResponse) -> events.add(name));
-
-        return new Object();
-      }
-    };
-  }
-
-  private static AuthenticationExtension authenticator(Handler handler) {
-    return new AuthenticationExtension() {
-      @Override
-      public void handle(Request request, Response response) throws Exception {
-        handler.handle(request, response);
-      }
-    };
   }
 
   private record Capability(String name, List<String> events) implements TestExtension<Object> {

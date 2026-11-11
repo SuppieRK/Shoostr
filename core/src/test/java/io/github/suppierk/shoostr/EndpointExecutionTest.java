@@ -42,6 +42,80 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class EndpointExecutionTest {
+  private static ExecutorService executor(String type, Set<Thread> owned) {
+    ThreadFactory factory = createFactoryForExecutor(type, owned);
+
+    return switch (type) {
+      case "platform" -> Executors.newFixedThreadPool(1, factory);
+      case "virtual" -> Executors.newThreadPerTaskExecutor(factory);
+      case "fork-join" -> forkJoin(owned);
+      case "wrapped-fork-join" -> Executors.unconfigurableExecutorService(forkJoin(owned));
+      default -> throw new IllegalArgumentException(type);
+    };
+  }
+
+  private static ThreadFactory createFactoryForExecutor(String type, Set<Thread> owned) {
+    return task -> {
+      var thread =
+          "virtual".equals(type)
+              ? Thread.ofVirtual().unstarted(task)
+              : Thread.ofPlatform().unstarted(task);
+      owned.add(thread);
+
+      return thread;
+    };
+  }
+
+  private static ForkJoinPool forkJoin(Set<Thread> owned) {
+    return new ForkJoinPool(
+        1,
+        pool -> {
+          var worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
+          owned.add(worker);
+
+          return worker;
+        },
+        null,
+        false);
+  }
+
+  private static Stream<Arguments> callbackPhases() {
+    return Stream.of("platform", "virtual", "fork-join", "wrapped-fork-join")
+        .flatMap(
+            executorType ->
+                Stream.of(
+                    Arguments.of(
+                        "matched",
+                        executorType,
+                        (BiConsumer<Lifecycle, Handler>)
+                            (scope, hook) -> scope.onRouteMatched(hook),
+                        (BiConsumer<Shoostr, Handler>) Shoostr::onRouteMatched),
+                    Arguments.of(
+                        "before",
+                        executorType,
+                        (BiConsumer<Lifecycle, Handler>)
+                            (scope, hook) -> scope.beforeRouteHandler(hook),
+                        (BiConsumer<Shoostr, Handler>) Shoostr::beforeRouteHandler),
+                    Arguments.of(
+                        "after",
+                        executorType,
+                        (BiConsumer<Lifecycle, Handler>)
+                            (scope, hook) -> scope.afterRouteHandler(hook),
+                        (BiConsumer<Shoostr, Handler>) Shoostr::afterRouteHandler),
+                    Arguments.of(
+                        "before-flush",
+                        executorType,
+                        (BiConsumer<Lifecycle, Handler>)
+                            (scope, hook) -> scope.beforeResponseFlush(hook),
+                        (BiConsumer<Shoostr, Handler>) Shoostr::beforeResponseFlush),
+                    Arguments.of(
+                        "after-flush",
+                        executorType,
+                        (BiConsumer<Lifecycle, Handler>)
+                            (scope, hook) -> scope.afterResponseFlush(hook),
+                        (BiConsumer<Shoostr, Handler>) Shoostr::afterResponseFlush)));
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void cancelsQueuedSelectedRequestWithoutInvokingEndpoint(boolean wrapped) throws Exception {
@@ -93,7 +167,7 @@ class EndpointExecutionTest {
                         }));
 
         try (var test = TestServer.start(app)) {
-          var sent = driver.submit(() -> test.send(request -> request.path("/queued")));
+          final var sent = driver.submit(() -> test.send(request -> request.path("/queued")));
           await().atMost(Duration.ofSeconds(5)).until(() -> workers.getQueue().size() == 1);
           app.close();
           var outcome = completed.get(5, TimeUnit.SECONDS);
@@ -488,79 +562,5 @@ class EndpointExecutionTest {
         }
       }
     }
-  }
-
-  private static ExecutorService executor(String type, Set<Thread> owned) {
-    ThreadFactory factory = createFactoryForExecutor(type, owned);
-
-    return switch (type) {
-      case "platform" -> Executors.newFixedThreadPool(1, factory);
-      case "virtual" -> Executors.newThreadPerTaskExecutor(factory);
-      case "fork-join" -> forkJoin(owned);
-      case "wrapped-fork-join" -> Executors.unconfigurableExecutorService(forkJoin(owned));
-      default -> throw new IllegalArgumentException(type);
-    };
-  }
-
-  private static ThreadFactory createFactoryForExecutor(String type, Set<Thread> owned) {
-    return task -> {
-      var thread =
-          "virtual".equals(type)
-              ? Thread.ofVirtual().unstarted(task)
-              : Thread.ofPlatform().unstarted(task);
-      owned.add(thread);
-
-      return thread;
-    };
-  }
-
-  private static ForkJoinPool forkJoin(Set<Thread> owned) {
-    return new ForkJoinPool(
-        1,
-        pool -> {
-          var worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
-          owned.add(worker);
-
-          return worker;
-        },
-        null,
-        false);
-  }
-
-  private static Stream<Arguments> callbackPhases() {
-    return Stream.of("platform", "virtual", "fork-join", "wrapped-fork-join")
-        .flatMap(
-            executorType ->
-                Stream.of(
-                    Arguments.of(
-                        "matched",
-                        executorType,
-                        (BiConsumer<Lifecycle, Handler>)
-                            (scope, hook) -> scope.onRouteMatched(hook),
-                        (BiConsumer<Shoostr, Handler>) Shoostr::onRouteMatched),
-                    Arguments.of(
-                        "before",
-                        executorType,
-                        (BiConsumer<Lifecycle, Handler>)
-                            (scope, hook) -> scope.beforeRouteHandler(hook),
-                        (BiConsumer<Shoostr, Handler>) Shoostr::beforeRouteHandler),
-                    Arguments.of(
-                        "after",
-                        executorType,
-                        (BiConsumer<Lifecycle, Handler>)
-                            (scope, hook) -> scope.afterRouteHandler(hook),
-                        (BiConsumer<Shoostr, Handler>) Shoostr::afterRouteHandler),
-                    Arguments.of(
-                        "before-flush",
-                        executorType,
-                        (BiConsumer<Lifecycle, Handler>)
-                            (scope, hook) -> scope.beforeResponseFlush(hook),
-                        (BiConsumer<Shoostr, Handler>) Shoostr::beforeResponseFlush),
-                    Arguments.of(
-                        "after-flush",
-                        executorType,
-                        (BiConsumer<Lifecycle, Handler>)
-                            (scope, hook) -> scope.afterResponseFlush(hook),
-                        (BiConsumer<Shoostr, Handler>) Shoostr::afterResponseFlush)));
   }
 }

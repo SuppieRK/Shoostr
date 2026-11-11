@@ -180,7 +180,8 @@ class TypedCodecMediaTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Invalid inputs must be rejected before user conversion.
+  @SuppressWarnings("NullAway")
+  // Invalid inputs must be rejected before user conversion.
   void validatesAvailableInputsBeforeCallingCodec() throws Exception {
     var codec = createCodecForValidatesAvailableInputsBeforeCallingCodec();
 

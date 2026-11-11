@@ -34,6 +34,19 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 class McpExampleTest {
+  private static McpSyncClient client(TestServer test) {
+    return clientProperties(test).build();
+  }
+
+  private static SyncSpec clientProperties(TestServer test) {
+    return McpClient.sync(
+            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                .endpoint("/mcp")
+                .build())
+        .requestTimeout(Duration.ofSeconds(3))
+        .initializationTimeout(Duration.ofSeconds(3));
+  }
+
   @ParameterizedTest
   @CsvSource({
     "http://127.0.0.1:8080, OK",
@@ -55,7 +68,8 @@ class McpExampleTest {
   }
 
   private String createInitializeForEnforcesTheBrowserOriginIndependentlyOfTheBindAddress() {
-    return """
+    return
+        """
         {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
           "protocolVersion":"2025-11-25","capabilities":{},
           "clientInfo":{"name":"browser-origin-test","version":"1.0"}}}
@@ -224,18 +238,5 @@ class McpExampleTest {
     entries.put("additionalProperties", false);
 
     return Map.copyOf(entries);
-  }
-
-  private static McpSyncClient client(TestServer test) {
-    return clientProperties(test).build();
-  }
-
-  private static SyncSpec clientProperties(TestServer test) {
-    return McpClient.sync(
-            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                .endpoint("/mcp")
-                .build())
-        .requestTimeout(Duration.ofSeconds(3))
-        .initializationTimeout(Duration.ofSeconds(3));
   }
 }

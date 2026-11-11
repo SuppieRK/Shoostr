@@ -11,10 +11,10 @@ import org.junit.jupiter.api.Test;
 
 class TelemetryExampleTest {
   @Test
-  void servesTheGreetingWithoutADiagnosticTraceHeader() throws Exception {
+  void servesTheGreetingWithoutDiagnosticTraceHeader() throws Exception {
 
     try (var test = TestServer.start(TelemetryExample.application())) {
-      var response = sendResponseForServesTheGreetingWithoutADiagnosticTraceHeader(test);
+      var response = sendResponseForServesTheGreetingWithoutDiagnosticTraceHeader(test);
 
       assertAll(
           () -> assertEquals(200, response.statusCode()),
@@ -23,7 +23,7 @@ class TelemetryExampleTest {
     }
   }
 
-  private HttpResponse<String> sendResponseForServesTheGreetingWithoutADiagnosticTraceHeader(
+  private HttpResponse<String> sendResponseForServesTheGreetingWithoutDiagnosticTraceHeader(
       TestServer test) throws IOException, InterruptedException {
     return test.send(
         // An unsampled parent keeps this HTTP-only check independent of a trace backend.

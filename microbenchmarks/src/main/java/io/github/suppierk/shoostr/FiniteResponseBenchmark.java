@@ -35,12 +35,15 @@ import org.openjdk.jmh.annotations.Warmup;
 public class FiniteResponseBenchmark {
   private static final String CONTENT_TYPE = "text/plain; charset=utf-8";
 
+  /** Number of characters in the response body. */
   @Param({"0", "13", "1024", "16384"})
   public int characters;
 
+  /** Character repertoire used to build the response. */
   @Param({"ascii", "unicode"})
   public String shape;
 
+  /** Response API used to send the prepared body. */
   @Param({"bytes", "text"})
   public String representation;
 

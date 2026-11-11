@@ -19,8 +19,18 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(10)
 class CsrfProtectionExampleTest {
+  private static TestServer start() throws Exception {
+    return TestServer.start(
+        CsrfProtectionExample.application(),
+        client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)));
+  }
+
+  private static String origin(TestServer test) {
+    return test.baseUri().getScheme() + "://" + test.baseUri().getRawAuthority();
+  }
+
   @Test
-  void issuesANonCacheableTokenThatRemainsStableForTheSameSession() throws Exception {
+  void issuesNonCacheableTokenThatRemainsStableForTheSameSession() throws Exception {
     try (var test = start()) {
       var first =
           test.send(request -> request.path("/csrf-token"), HttpResponse.BodyHandlers.ofString());
@@ -280,15 +290,5 @@ class CsrfProtectionExampleTest {
             request.header("Origin", "https://other.example");
           }
         });
-  }
-
-  private static TestServer start() throws Exception {
-    return TestServer.start(
-        CsrfProtectionExample.application(),
-        client -> client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)));
-  }
-
-  private static String origin(TestServer test) {
-    return test.baseUri().getScheme() + "://" + test.baseUri().getRawAuthority();
   }
 }

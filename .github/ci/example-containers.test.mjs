@@ -201,7 +201,7 @@ function matrixExamples() {
 }
 
 function selectedExamples(files) {
-  const shared = /^(core|http|test|pac4j|micrometer|opentelemetry|openapi|mcp|buildSrc|config|gradle|\.github\/ci)\//;
+  const shared = /^(core|http|test|pac4j|micrometer|opentelemetry|openapi|mcp|build-logic|config|gradle|\.github\/ci)\//;
   const rootBuild = /^(build\.gradle|settings\.gradle|gradle\.properties|gradlew|gradlew\.bat|\.dockerignore|\.github\/workflows\/ci\.yml)$/;
   if (files.some(file => shared.test(file) || rootBuild.test(file)
     || (file.startsWith('examples/') && !examples.some(example => file.startsWith(example.directory + '/'))))) return examples;

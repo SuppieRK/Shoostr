@@ -22,7 +22,8 @@ class StatementSpacingTest {
   }
 
   private String tryWithAttachedComment() {
-    return """
+    return
+        """
         class AttachedTry {
           void run() {
             work();
@@ -62,7 +63,7 @@ class StatementSpacingTest {
   }
 
   @Test
-  void preservesAnExistingGapBetweenACommentAndTry() throws Exception {
+  void preservesAnExistingGapBetweenCommentAndTry() throws Exception {
     String source = commentedTry("    work();\n\n", "    // Separate explanation.\n\n");
 
     assertEquals(source, StatementSpacingCheck.format(source));
@@ -105,7 +106,8 @@ class StatementSpacingTest {
   }
 
   private String createInputForSeparatesNestedStatementsAndPreservesAttachedClauses() {
-    return """
+    return
+        """
         class Example {
           void run(boolean a, boolean b) {
             if (a) {
@@ -166,7 +168,8 @@ class StatementSpacingTest {
   }
 
   private String createSourceForDoesNotInsertBlankLinesBeforeSynchronizedClosingBraces() {
-    return """
+    return
+        """
         class Example {
           void run(Object lock, boolean enabled) {
             synchronized (lock) {
@@ -200,7 +203,8 @@ class StatementSpacingTest {
   }
 
   private String createFirstTryForPermitsTryAtStartOfAnyBlock() {
-    return """
+    return
+        """
         class FirstTry {
           void run(boolean enabled) {
             // A comment does not count as a preceding statement.
@@ -274,7 +278,8 @@ class StatementSpacingTest {
   }
 
   private String createFollowedTryForSeparatesCompleteTryAndFollowingComments() {
-    return """
+    return
+        """
         class FollowedTry {
           void run(boolean failed) {
             try {

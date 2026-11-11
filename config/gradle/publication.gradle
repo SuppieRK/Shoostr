@@ -24,7 +24,7 @@ configure(libraries.collect { project(":${it}") }) { library ->
 			return "io.github.suppierk:shoostr-${target}:${pinnedVersion}"
 		}
 
-		return project(":${target}")
+		return library.dependencies.project(":${target}")
 	}
 
 	if (binaryDependencies && library.name in selected) {

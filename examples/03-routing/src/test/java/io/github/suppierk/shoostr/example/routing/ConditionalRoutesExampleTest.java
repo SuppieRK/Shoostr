@@ -68,7 +68,7 @@ class ConditionalRoutesExampleTest {
   }
 
   @Test
-  void doesNotRetryTheCatchAllAfterAConditionFails() throws Exception {
+  void doesNotRetryTheCatchAllAfterConditionFails() throws Exception {
 
     try (var test = TestServer.start(ConditionalRoutesExample.application(() -> false))) {
       var unavailable = test.send(request -> request.path("/preview/latest?preview=true"));
@@ -111,7 +111,7 @@ class ConditionalRoutesExampleTest {
   }
 
   @Test
-  void rejectsANullFlagBeforeCreatingAnApplication() {
+  void rejectsNullFlagBeforeCreatingAnApplication() {
     assertThrows(NullPointerException.class, () -> ConditionalRoutesExample.application(null));
   }
 }

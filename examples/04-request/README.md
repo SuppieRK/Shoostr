@@ -11,7 +11,8 @@ docker compose -f examples/04-request/compose.yaml up --build -d
 
 Startup is asynchronous. Check diagnostics with `docker compose -f examples/04-request/compose.yaml logs -f app`.
 Open `http://127.0.0.1:8080/search/books?tag=java`. Expect category=books and tags=java.
-Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and
+use that port in requests.
 Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
 are for trusted local development. Direct Java runs use the default wildcard listener.
 
@@ -35,9 +36,13 @@ container validation is described in [CONTRIBUTING](../../CONTRIBUTING.md#exampl
 
 Each request recipe has a compiled factory and a live HTTP test:
 
-- Parameters: [example](src/main/java/io/github/suppierk/shoostr/example/request/ParametersExample.java) and [test](src/test/java/io/github/suppierk/shoostr/example/request/ParametersExampleTest.java).
-- Headers and cookies: [example](src/main/java/io/github/suppierk/shoostr/example/request/HeadersCookiesExample.java) and [test](src/test/java/io/github/suppierk/shoostr/example/request/HeadersCookiesExampleTest.java).
-- Request metadata: [example](src/main/java/io/github/suppierk/shoostr/example/request/MetadataExample.java) and [test](src/test/java/io/github/suppierk/shoostr/example/request/MetadataExampleTest.java).
-- Request-local state: [example](src/main/java/io/github/suppierk/shoostr/example/request/RequestStateExample.java) and [test](src/test/java/io/github/suppierk/shoostr/example/request/RequestStateExampleTest.java).
+- Parameters: [example](src/main/java/io/github/suppierk/shoostr/example/request/ParametersExample.java)
+  and [test](src/test/java/io/github/suppierk/shoostr/example/request/ParametersExampleTest.java).
+- Headers and cookies: [example](src/main/java/io/github/suppierk/shoostr/example/request/HeadersCookiesExample.java)
+  and [test](src/test/java/io/github/suppierk/shoostr/example/request/HeadersCookiesExampleTest.java).
+- Request metadata: [example](src/main/java/io/github/suppierk/shoostr/example/request/MetadataExample.java)
+  and [test](src/test/java/io/github/suppierk/shoostr/example/request/MetadataExampleTest.java).
+- Request-local state: [example](src/main/java/io/github/suppierk/shoostr/example/request/RequestStateExample.java)
+  and [test](src/test/java/io/github/suppierk/shoostr/example/request/RequestStateExampleTest.java).
 
 Run `./gradlew :request-example:test` from the repository root with Java 21.

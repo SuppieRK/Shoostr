@@ -42,9 +42,9 @@ public final class OpenApi
   private final List<Server> servers;
   private final List<Tag> tags;
   private final List<OpenApiUi> interfaces;
+  private final AtomicReference<byte @Nullable []> document;
   private boolean installed;
   private boolean prepared;
-  private final AtomicReference<byte @Nullable []> document;
 
   /**
    * Creates one independent document with required title and API version.
@@ -62,6 +62,49 @@ public final class OpenApi
     this.installed = false;
     this.prepared = false;
     this.document = new AtomicReference<>();
+  }
+
+  /**
+   * Detaches a Swagger model using its established OpenAPI 3.1 serializer/deserializer.
+   *
+   * @param value explicit library model; application models are never scanned
+   * @param type library model type
+   * @param <T> model type
+   * @return independent model graph
+   */
+  static <T> T copy(T value, Class<T> type) {
+    return Objects.requireNonNull(
+        Json31.mapper().convertValue(Objects.requireNonNull(value), type));
+  }
+
+  /**
+   * Validates a required human-readable value.
+   *
+   * @param value supplied text
+   * @return unchanged nonblank text
+   * @throws IllegalArgumentException if blank
+   */
+  static String text(String value) {
+    if (Objects.requireNonNull(value).isBlank()) {
+      throw new IllegalArgumentException("OpenAPI value must not be blank");
+    }
+
+    return value;
+  }
+
+  /**
+   * Validates an OpenAPI component name without JSON Pointer escaping ambiguity.
+   *
+   * @param value supplied component name
+   * @return valid component name
+   * @throws IllegalArgumentException if the name is not representable
+   */
+  static String componentName(String value) {
+    if (!text(value).matches("[A-Za-z0-9._-]+")) {
+      throw new IllegalArgumentException("Invalid OpenAPI component name: " + value);
+    }
+
+    return value;
   }
 
   /**
@@ -327,49 +370,6 @@ public final class OpenApi
     if (prepared) {
       throw new IllegalStateException("OpenAPI configuration is frozen at startup");
     }
-  }
-
-  /**
-   * Detaches a Swagger model using its established OpenAPI 3.1 serializer/deserializer.
-   *
-   * @param value explicit library model; application models are never scanned
-   * @param type library model type
-   * @param <T> model type
-   * @return independent model graph
-   */
-  static <T> T copy(T value, Class<T> type) {
-    return Objects.requireNonNull(
-        Json31.mapper().convertValue(Objects.requireNonNull(value), type));
-  }
-
-  /**
-   * Validates a required human-readable value.
-   *
-   * @param value supplied text
-   * @return unchanged nonblank text
-   * @throws IllegalArgumentException if blank
-   */
-  static String text(String value) {
-    if (Objects.requireNonNull(value).isBlank()) {
-      throw new IllegalArgumentException("OpenAPI value must not be blank");
-    }
-
-    return value;
-  }
-
-  /**
-   * Validates an OpenAPI component name without JSON Pointer escaping ambiguity.
-   *
-   * @param value supplied component name
-   * @return valid component name
-   * @throws IllegalArgumentException if the name is not representable
-   */
-  static String componentName(String value) {
-    if (!text(value).matches("[A-Za-z0-9._-]+")) {
-      throw new IllegalArgumentException("Invalid OpenAPI component name: " + value);
-    }
-
-    return value;
   }
 
   /**

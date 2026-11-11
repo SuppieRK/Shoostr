@@ -47,6 +47,24 @@ final class McpStream implements McpStreamableServerTransport {
   }
 
   /**
+   * Acknowledges a native frame only after the owner-thread HTTP write succeeds.
+   *
+   * @param output owner-thread event stream
+   * @param frame detached queued frame
+   * @throws IOException if the HTTP write fails
+   */
+  private static void send(Response.EventStream output, Frame frame) throws IOException {
+    try {
+      output.send(frame.event());
+
+      frame.acknowledgment().success();
+    } catch (IOException | RuntimeException error) {
+      frame.acknowledgment().error(error);
+      throw error;
+    }
+  }
+
+  /**
    * Writes queued frames exclusively through the response's owner-thread interface.
    *
    * @param response owner-thread HTTP output
@@ -96,24 +114,6 @@ final class McpStream implements McpStreamableServerTransport {
       throw new IOException("MCP stream interrupted", error);
     } finally {
       discardPending();
-    }
-  }
-
-  /**
-   * Acknowledges a native frame only after the owner-thread HTTP write succeeds.
-   *
-   * @param output owner-thread event stream
-   * @param frame detached queued frame
-   * @throws IOException if the HTTP write fails
-   */
-  private static void send(Response.EventStream output, Frame frame) throws IOException {
-    try {
-      output.send(frame.event());
-
-      frame.acknowledgment().success();
-    } catch (IOException | RuntimeException error) {
-      frame.acknowledgment().error(error);
-      throw error;
     }
   }
 

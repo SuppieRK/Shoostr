@@ -59,9 +59,7 @@ class ScopedCorsTest {
                 lifecycle -> lifecycle.withExtension(cors));
 
         try (var test = TestServer.start(app)) {
-          var preflight =
-              sendPreflightRequestForInheritedSsePolicySkipsPreflightWorkAndPreservesSharingThroughEventFlushes(
-                  test);
+          var preflight = sendPreflightRequestForInheritedSsePolicy(test);
 
           assertEquals(204, preflight.statusCode());
           assertEquals(
@@ -70,9 +68,7 @@ class ScopedCorsTest {
           assertEquals(0, conditions.get());
           assertEquals(0, handlers.get());
 
-          var stream =
-              sendStreamRequestForInheritedSsePolicySkipsPreflightWorkAndPreservesSharingThroughEventFlushes(
-                  test);
+          var stream = sendStreamRequestForInheritedSsePolicy(test);
 
           assertEquals(200, stream.statusCode());
           assertEquals(
@@ -90,9 +86,7 @@ class ScopedCorsTest {
           assertEquals(1, conditions.get());
           assertEquals(1, handlers.get());
 
-          var denied =
-              sendDeniedRequestForInheritedSsePolicySkipsPreflightWorkAndPreservesSharingThroughEventFlushes(
-                  test);
+          var denied = sendDeniedRequestForInheritedSsePolicy(test);
 
           assertEquals(403, denied.statusCode());
           assertFalse(denied.headers().firstValue("Access-Control-Allow-Origin").isPresent());
@@ -102,9 +96,8 @@ class ScopedCorsTest {
     }
   }
 
-  private HttpResponse<byte[]>
-      sendPreflightRequestForInheritedSsePolicySkipsPreflightWorkAndPreservesSharingThroughEventFlushes(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendPreflightRequestForInheritedSsePolicy(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -114,9 +107,8 @@ class ScopedCorsTest {
                 .header("Access-Control-Request-Method", "GET"));
   }
 
-  private HttpResponse<String>
-      sendStreamRequestForInheritedSsePolicySkipsPreflightWorkAndPreservesSharingThroughEventFlushes(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendStreamRequestForInheritedSsePolicy(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -126,9 +118,8 @@ class ScopedCorsTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<byte[]>
-      sendDeniedRequestForInheritedSsePolicySkipsPreflightWorkAndPreservesSharingThroughEventFlushes(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendDeniedRequestForInheritedSsePolicy(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -178,9 +169,7 @@ class ScopedCorsTest {
               "https://literal.example",
               fixed.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
 
-          var fixedPreflight =
-              sendFixedPreflightRequestForOverlappingRoutesUseTheMatchedPolicyWithoutBorrowingAnotherRoutesGrant(
-                  test);
+          var fixedPreflight = sendFixedPreflightRequestForOverlappingRoutes(test);
 
           assertEquals(204, fixedPreflight.statusCode());
           assertEquals(
@@ -192,9 +181,7 @@ class ScopedCorsTest {
           assertEquals(403, denied.statusCode());
           assertFalse(denied.headers().firstValue("Access-Control-Allow-Origin").isPresent());
 
-          var deniedPreflight =
-              sendDeniedPreflightRequestForOverlappingRoutesUseTheMatchedPolicyWithoutBorrowingAnotherRoutesGrant(
-                  test);
+          var deniedPreflight = sendDeniedPreflightRequestForOverlappingRoutes(test);
 
           assertEquals(403, deniedPreflight.statusCode());
           assertFalse(
@@ -208,9 +195,7 @@ class ScopedCorsTest {
               "https://parameter.example",
               parameter.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
 
-          var parameterPreflight =
-              sendParameterPreflightRequestForOverlappingRoutesUseTheMatchedPolicyWithoutBorrowingAnotherRoutesGrant(
-                  test);
+          var parameterPreflight = sendParameterPreflightRequestForOverlappingRoutes(test);
 
           assertEquals(204, parameterPreflight.statusCode());
           assertEquals(
@@ -223,9 +208,8 @@ class ScopedCorsTest {
     }
   }
 
-  private HttpResponse<byte[]>
-      sendFixedPreflightRequestForOverlappingRoutesUseTheMatchedPolicyWithoutBorrowingAnotherRoutesGrant(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendFixedPreflightRequestForOverlappingRoutes(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -242,9 +226,8 @@ class ScopedCorsTest {
             testRequest.path("/items/fixed").header("Origin", "https://parameter.example"));
   }
 
-  private HttpResponse<byte[]>
-      sendDeniedPreflightRequestForOverlappingRoutesUseTheMatchedPolicyWithoutBorrowingAnotherRoutesGrant(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendDeniedPreflightRequestForOverlappingRoutes(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -262,9 +245,8 @@ class ScopedCorsTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<byte[]>
-      sendParameterPreflightRequestForOverlappingRoutesUseTheMatchedPolicyWithoutBorrowingAnotherRoutesGrant(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendParameterPreflightRequestForOverlappingRoutes(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -307,16 +289,12 @@ class ScopedCorsTest {
             .staticFiles("/files", directory);
 
         try (var test = TestServer.start(app)) {
-          var missing =
-              sendMissingRequestForHandlesHeadOnlyForExplicitRoutesAndStaticFilesWithTheirSelectedPolicies(
-                  test);
+          var missing = sendMissingRequestForHeadPolicies(test);
 
           assertEquals(405, missing.statusCode());
           assertFalse(missing.headers().firstValue("Access-Control-Allow-Origin").isPresent());
 
-          var missingPreflight =
-              sendMissingPreflightRequestForHandlesHeadOnlyForExplicitRoutesAndStaticFilesWithTheirSelectedPolicies(
-                  test);
+          var missingPreflight = sendMissingPreflightRequestForHeadPolicies(test);
 
           assertEquals(405, missingPreflight.statusCode());
           assertFalse(
@@ -331,9 +309,7 @@ class ScopedCorsTest {
               "https://head.example",
               head.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
 
-          var preflight =
-              sendPreflightRequestForHandlesHeadOnlyForExplicitRoutesAndStaticFilesWithTheirSelectedPolicies(
-                  test);
+          var preflight = sendPreflightRequestForHeadPolicies(test);
 
           assertEquals(204, preflight.statusCode());
           assertEquals(
@@ -358,9 +334,7 @@ class ScopedCorsTest {
           assertEquals(200, get.statusCode());
           assertEquals("get", get.body());
 
-          var asset =
-              sendAssetRequestForHandlesHeadOnlyForExplicitRoutesAndStaticFilesWithTheirSelectedPolicies(
-                  test);
+          var asset = sendAssetRequestForHeadPolicies(test);
 
           assertEquals(200, asset.statusCode());
           assertEquals(0, asset.body().length);
@@ -369,9 +343,7 @@ class ScopedCorsTest {
               "https://reader.example",
               asset.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
 
-          var assetPreflight =
-              sendAssetPreflightRequestForHandlesHeadOnlyForExplicitRoutesAndStaticFilesWithTheirSelectedPolicies(
-                  test);
+          var assetPreflight = sendAssetPreflightRequestForHeadPolicies(test);
 
           assertEquals(204, assetPreflight.statusCode());
           assertEquals(
@@ -385,9 +357,8 @@ class ScopedCorsTest {
     }
   }
 
-  private HttpResponse<byte[]>
-      sendMissingRequestForHandlesHeadOnlyForExplicitRoutesAndStaticFilesWithTheirSelectedPolicies(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendMissingRequestForHeadPolicies(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -396,9 +367,8 @@ class ScopedCorsTest {
                 .header("Origin", "https://reader.example"));
   }
 
-  private HttpResponse<byte[]>
-      sendMissingPreflightRequestForHandlesHeadOnlyForExplicitRoutesAndStaticFilesWithTheirSelectedPolicies(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendMissingPreflightRequestForHeadPolicies(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -415,9 +385,8 @@ class ScopedCorsTest {
             testRequest.path("/value").method("HEAD").header("Origin", "https://head.example"));
   }
 
-  private HttpResponse<byte[]>
-      sendPreflightRequestForHandlesHeadOnlyForExplicitRoutesAndStaticFilesWithTheirSelectedPolicies(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendPreflightRequestForHeadPolicies(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -434,9 +403,8 @@ class ScopedCorsTest {
             testRequest.path("/value").method("HEAD").header("Origin", "https://reader.example"));
   }
 
-  private HttpResponse<byte[]>
-      sendAssetRequestForHandlesHeadOnlyForExplicitRoutesAndStaticFilesWithTheirSelectedPolicies(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendAssetRequestForHeadPolicies(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -445,9 +413,8 @@ class ScopedCorsTest {
                 .header("Origin", "https://reader.example"));
   }
 
-  private HttpResponse<byte[]>
-      sendAssetPreflightRequestForHandlesHeadOnlyForExplicitRoutesAndStaticFilesWithTheirSelectedPolicies(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendAssetPreflightRequestForHeadPolicies(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -584,8 +551,7 @@ class ScopedCorsTest {
   void permitsIndependentGroupsAtTheSamePrefixToSelectPoliciesForTheirOwnEndpoints()
       throws Exception {
     var reader = new Cors(CorsPolicy.builder().origins(Set.of("https://reader.example")).build());
-    var writer =
-        createWriterForPermitsIndependentGroupsAtTheSamePrefixToSelectPoliciesForTheirOwnEndpoints();
+    var writer = createWriterForIndependentGroups();
 
     {
       var app = new Shoostr();
@@ -615,9 +581,7 @@ class ScopedCorsTest {
               "https://reader.example",
               read.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
 
-          var written =
-              sendWrittenRequestForPermitsIndependentGroupsAtTheSamePrefixToSelectPoliciesForTheirOwnEndpoints(
-                  test);
+          var written = sendWrittenRequestForIndependentGroups(test);
 
           assertEquals(200, written.statusCode());
           assertEquals("written", written.body());
@@ -644,8 +608,7 @@ class ScopedCorsTest {
     }
   }
 
-  private Cors
-      createWriterForPermitsIndependentGroupsAtTheSamePrefixToSelectPoliciesForTheirOwnEndpoints() {
+  private Cors createWriterForIndependentGroups() {
     return new Cors(
         CorsPolicy.builder()
             .origins(Set.of("https://writer.example"))
@@ -653,9 +616,8 @@ class ScopedCorsTest {
             .build());
   }
 
-  private HttpResponse<String>
-      sendWrittenRequestForPermitsIndependentGroupsAtTheSamePrefixToSelectPoliciesForTheirOwnEndpoints(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendWrittenRequestForIndependentGroups(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -682,16 +644,12 @@ class ScopedCorsTest {
         app.routes().get("/api/independent", (request, response) -> response.text("independent"));
 
         try (var test = TestServer.start(app)) {
-          var missing =
-              sendMissingRequestForNeverGrantsGroupPolicyToMissingOrIndependentlyRegisteredTargets(
-                  test);
+          var missing = sendMissingRequestForMissingGroupTargets(test);
 
           assertEquals(404, missing.statusCode());
           assertFalse(missing.headers().firstValue("Access-Control-Allow-Origin").isPresent());
 
-          var wrongMethod =
-              sendWrongMethodRequestForNeverGrantsGroupPolicyToMissingOrIndependentlyRegisteredTargets(
-                  test);
+          var wrongMethod = sendWrongMethodRequestForMissingGroupTargets(test);
 
           assertEquals(405, wrongMethod.statusCode());
           assertFalse(wrongMethod.headers().firstValue("Access-Control-Allow-Origin").isPresent());
@@ -714,9 +672,8 @@ class ScopedCorsTest {
     }
   }
 
-  private HttpResponse<byte[]>
-      sendMissingRequestForNeverGrantsGroupPolicyToMissingOrIndependentlyRegisteredTargets(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendMissingRequestForMissingGroupTargets(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -726,9 +683,8 @@ class ScopedCorsTest {
                 .header("Access-Control-Request-Method", "GET"));
   }
 
-  private HttpResponse<byte[]>
-      sendWrongMethodRequestForNeverGrantsGroupPolicyToMissingOrIndependentlyRegisteredTargets(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendWrongMethodRequestForMissingGroupTargets(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -747,8 +703,7 @@ class ScopedCorsTest {
 
   @Test
   void replacesTheCompletePolicyWithoutLeakingInheritedGrantsOrMutatingSiblings() throws Exception {
-    var parent =
-        createParentForReplacesTheCompletePolicyWithoutLeakingInheritedGrantsOrMutatingSiblings();
+    var parent = createParentForReplacementPolicy();
     var replacement = CorsPolicy.builder().origins(Set.of("https://child.example")).build();
     var cors = new Cors(parent);
 
@@ -774,9 +729,7 @@ class ScopedCorsTest {
           assertEquals(403, denied.statusCode());
           assertFalse(denied.headers().firstValue("Access-Control-Allow-Origin").isPresent());
 
-          var accepted =
-              sendAcceptedRequestForReplacesTheCompletePolicyWithoutLeakingInheritedGrantsOrMutatingSiblings(
-                  test);
+          var accepted = sendAcceptedRequestForReplacementPolicy(test);
 
           assertEquals(204, accepted.statusCode());
           assertEquals("5", accepted.headers().firstValue("Access-Control-Max-Age").orElseThrow());
@@ -824,8 +777,7 @@ class ScopedCorsTest {
     }
   }
 
-  private CorsPolicy
-      createParentForReplacesTheCompletePolicyWithoutLeakingInheritedGrantsOrMutatingSiblings() {
+  private CorsPolicy createParentForReplacementPolicy() {
     return CorsPolicy.builder()
         .origins(Set.of("https://parent.example"))
         .methods(Set.of(HttpMethods.POST))
@@ -843,9 +795,8 @@ class ScopedCorsTest {
             testRequest.path("/child").method("POST").header("Origin", "https://parent.example"));
   }
 
-  private HttpResponse<byte[]>
-      sendAcceptedRequestForReplacesTheCompletePolicyWithoutLeakingInheritedGrantsOrMutatingSiblings(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendAcceptedRequestForReplacementPolicy(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -938,9 +889,7 @@ class ScopedCorsTest {
   }
 
   @Test
-  void
-      inheritsAnImmutableOwnerAndRejectsEvenAnEqualPolicyFromAnotherInstanceWithoutLeakingTheFailedRoute()
-          throws Exception {
+  void rejectsEqualPolicyFromAnotherOwnerAndKeepsRoutesUnchanged() throws Exception {
     var builder =
         CorsPolicy.builder()
             .origins(Set.of("https://parent.example"))
@@ -1057,8 +1006,7 @@ class ScopedCorsTest {
 
   @Test
   void resolvesTheRegisteredPreflightTargetWithoutEnteringItsSessionOrLifecycle() throws Exception {
-    var policy =
-        createPolicyForResolvesTheRegisteredPreflightTargetWithoutEnteringItsSessionOrLifecycle();
+    var policy = createPolicyForRegisteredPreflight();
     var cors = new Cors(policy);
     var csrf = new Csrf();
 
@@ -1088,9 +1036,7 @@ class ScopedCorsTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var accepted =
-              sendAcceptedRequestForResolvesTheRegisteredPreflightTargetWithoutEnteringItsSessionOrLifecycle(
-                  test);
+          var accepted = sendAcceptedRequestForRegisteredPreflight(test);
 
           assertEquals(204, accepted.statusCode());
           assertEquals(
@@ -1123,8 +1069,7 @@ class ScopedCorsTest {
     }
   }
 
-  private CorsPolicy
-      createPolicyForResolvesTheRegisteredPreflightTargetWithoutEnteringItsSessionOrLifecycle() {
+  private CorsPolicy createPolicyForRegisteredPreflight() {
     return CorsPolicy.builder()
         .origins(Set.of("https://client.example"))
         .methods(Set.of(HttpMethods.POST))
@@ -1132,9 +1077,8 @@ class ScopedCorsTest {
         .build();
   }
 
-  private HttpResponse<String>
-      sendAcceptedRequestForResolvesTheRegisteredPreflightTargetWithoutEnteringItsSessionOrLifecycle(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendAcceptedRequestForRegisteredPreflight(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request

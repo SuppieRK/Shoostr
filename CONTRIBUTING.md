@@ -13,7 +13,7 @@ For every tracked repository change, including documentation and benchmark fixtu
 Check available Gradle dependency and plugin updates with
 `./gradlew dependencyUpdates --reject-pre-releases --output-formatter plain,json`.
 The root task covers this build's projects and writes `build/dependencyUpdates/report.txt`
-and `build/dependencyUpdates/report.json`; the separate `buildSrc` build is excluded. Review proposed upgrades
+and `build/dependencyUpdates/report.json`. The included `build-logic` build is excluded. Review proposed upgrades
 and verify vulnerability fixes separately. Use `./gradlew buildEnvironment` to inspect
 transitive buildscript dependencies when investigating build-tool findings.
 

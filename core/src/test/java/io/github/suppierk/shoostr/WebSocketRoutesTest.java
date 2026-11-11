@@ -31,7 +31,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
-import java.net.http.WebSocket.Builder;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritePendingException;
@@ -87,8 +86,198 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
-public class WebSocketRoutesTest {
+class WebSocketRoutesTest {
   @TempDir Path temporaryDirectory;
+
+  private static AuthenticationExtension chatAuthentication() {
+    return new AuthenticationExtension() {
+      @Override
+      public void handle(Request request, Response response) {
+        if (request.header("Authorization").filter("Bearer secret"::equals).isEmpty()) {
+          throw new AuthenticationRequiredException("Bearer realm=\"chat\"");
+        }
+
+        request.principal(() -> "alice");
+      }
+    };
+  }
+
+  private static org.eclipse.jetty.http2.api.Session connectHttp2(HTTP2Client client, Shoostr app)
+      throws Exception {
+    return connectHttp2(client, app, false);
+  }
+
+  private static org.eclipse.jetty.http2.api.Session connectHttp2(
+      HTTP2Client client, Shoostr app, boolean secure) throws Exception {
+    var advertised = new CompletableFuture<Integer>();
+    client.setConnectTimeout(3000);
+    client.setIdleTimeout(3000);
+    client.start();
+    var connection = createConnectionForConnectHttp2(client, secure, app, advertised);
+
+    assertEquals(1, advertised.get(3, TimeUnit.SECONDS));
+
+    return connection;
+  }
+
+  private static org.eclipse.jetty.http2.api.Session createConnectionForConnectHttp2(
+      HTTP2Client client, boolean secure, Shoostr app, CompletableFuture<Integer> advertised)
+      throws InterruptedException, ExecutionException, TimeoutException, UnknownHostException {
+    return client
+        .connect(
+            secure ? client.getClientConnector().getSslContextFactory() : null,
+            new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
+            new Listener() {
+              @Override
+              public void onSettings(
+                  org.eclipse.jetty.http2.api.Session session, SettingsFrame frame) {
+                var enabled = frame.getSettings().get(SettingsFrame.ENABLE_CONNECT_PROTOCOL);
+                if (enabled != null) {
+                  advertised.complete(enabled);
+                }
+              }
+            })
+        .get(3, TimeUnit.SECONDS);
+  }
+
+  private static MetaData.Response http2ConnectResponse(
+      org.eclipse.jetty.http2.api.Session connection,
+      Shoostr app,
+      String path,
+      String protocol,
+      HttpFields fields)
+      throws Exception {
+    var received = new CompletableFuture<MetaData.Response>();
+    var request =
+        new MetaData.ConnectRequest(
+            "http", new HostPortHttpField("127.0.0.1:" + app.port()), path, fields, protocol);
+    connection
+        .newStream(
+            new HeadersFrame(request, null, false),
+            new Stream.Listener() {
+              @Override
+              public void onHeaders(Stream stream, HeadersFrame frame) {
+                received.complete(assertInstanceOf(MetaData.Response.class, frame.getMetaData()));
+                if (!frame.isEndStream()) {
+                  stream.demand();
+                }
+              }
+            })
+        .get(3, TimeUnit.SECONDS);
+    var response = received.get(3, TimeUnit.SECONDS);
+
+    assertEquals(HttpVersion.HTTP_2, response.getHttpVersion());
+
+    return response;
+  }
+
+  private static String sendAndReceive(HttpClient client, Shoostr app, String path)
+      throws Exception {
+    var received = new CompletableFuture<String>();
+    var socket =
+        client
+            .newWebSocketBuilder()
+            .buildAsync(URI.create("ws://127.0.0.1:" + app.port() + path), receiving(received))
+            .get(3, TimeUnit.SECONDS);
+    socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
+    String message = received.get(3, TimeUnit.SECONDS);
+    socket.abort();
+
+    return message;
+  }
+
+  private static void upgradeUnreadPeer(Socket peer, int port, String path) throws Exception {
+    peer.setReceiveBufferSize(1024);
+    peer.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], port));
+    peer.setSoTimeout(3000);
+    var handshake = createHandshakeForUpgradeUnreadPeer(path);
+    peer.getOutputStream().write(handshake.getBytes(StandardCharsets.US_ASCII));
+    var reader =
+        new BufferedReader(new InputStreamReader(peer.getInputStream(), StandardCharsets.US_ASCII));
+    var statusLine = reader.readLine();
+
+    assertTrue(statusLine.startsWith("HTTP/1.1 101"), statusLine);
+
+    String header;
+    boolean accepted = false;
+    while ((header = reader.readLine()) != null && !header.isEmpty()) {
+      accepted |= header.regionMatches(true, 0, "Sec-WebSocket-Accept:", 0, 21);
+    }
+
+    assertTrue(accepted);
+  }
+
+  private static String createHandshakeForUpgradeUnreadPeer(String path) {
+    return "GET "
+        + path
+        + " HTTP/1.1\r\n"
+        + "Host: localhost\r\n"
+        + "Upgrade: websocket\r\n"
+        + "Connection: Upgrade\r\n"
+        + "Sec-WebSocket-Version: 13\r\n"
+        + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+  }
+
+  private static List<String> handshake(Shoostr app, int version) throws Exception {
+    try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
+      socket.setSoTimeout(3000);
+      var request = createRequestForHandshake(version);
+      socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
+      var reader =
+          new BufferedReader(
+              new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
+      var lines = new ArrayList<String>();
+      String line;
+      while ((line = reader.readLine()) != null && !line.isEmpty()) {
+        lines.add(line);
+      }
+
+      return lines;
+    }
+  }
+
+  private static String createRequestForHandshake(int version) {
+    return "GET /wire HTTP/1.1\r\n"
+        + "Host: localhost\r\n"
+        + "Upgrade: websocket\r\n"
+        + "Connection: Upgrade\r\n"
+        + "Sec-WebSocket-Version: "
+        + version
+        + "\r\n"
+        + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
+  }
+
+  private static int failedHandshakeStatus(HttpClient client, Shoostr app, String path) {
+    var failure = assertFailureForFailedHandshakeStatus(client, app, path);
+
+    return assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
+        .getResponse()
+        .statusCode();
+  }
+
+  private static ExecutionException assertFailureForFailedHandshakeStatus(
+      HttpClient client, Shoostr app, String path) {
+    return assertThrows(
+        ExecutionException.class,
+        () ->
+            client
+                .newWebSocketBuilder()
+                .buildAsync(
+                    URI.create("ws://127.0.0.1:" + app.port() + path), new WebSocket.Listener() {})
+                .get(3, TimeUnit.SECONDS));
+  }
+
+  private static WebSocket.Listener receiving(CompletableFuture<String> message) {
+    return new WebSocket.Listener() {
+      @Override
+      public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
+        message.complete(data.toString());
+        webSocket.request(1);
+
+        return CompletableFuture.completedFuture(null);
+      }
+    };
+  }
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
@@ -249,7 +438,8 @@ public class WebSocketRoutesTest {
         + base
         + "\r\nAuthorization: Bearer secret\r\nCookie: "
         + cookie
-        + "\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nContent-Length: 0\r\n\r\n";
+        + "\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
+        + "Sec-WebSocket-Version: 13\r\nContent-Length: 0\r\n\r\n";
   }
 
   @ParameterizedTest
@@ -262,9 +452,7 @@ public class WebSocketRoutesTest {
     var cors =
         new Cors(
             CorsPolicy.builder().origins("https://http.example").methods(HttpMethods.POST).build());
-    Consumer<Request> admit =
-        createAdmitForUsesExplicitWebSocketOriginAdmissionInsteadOfHttpCorsForBothProtocols(
-            factories);
+    Consumer<Request> admit = createAdmitForExplicitOriginAdmission(factories);
 
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
@@ -300,9 +488,7 @@ public class WebSocketRoutesTest {
         app.start();
         var address = URI.create("ws://127.0.0.1:" + app.port() + "/socket");
         var message = new CompletableFuture<String>();
-        var socket =
-            createSocketForUsesExplicitWebSocketOriginAdmissionInsteadOfHttpCorsForBothProtocols(
-                http, address, message);
+        var socket = createSocketForExplicitOriginAdmission(http, address, message);
 
         try {
           socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
@@ -320,9 +506,7 @@ public class WebSocketRoutesTest {
             builder.header("Origin", origin);
           }
 
-          var failure =
-              assertFailureForUsesExplicitWebSocketOriginAdmissionInsteadOfHttpCorsForBothProtocols(
-                  builder, address);
+          var failure = assertFailureForExplicitOriginAdmission(builder, address);
 
           assertEquals(
               403,
@@ -330,9 +514,7 @@ public class WebSocketRoutesTest {
                   .getResponse()
                   .statusCode());
         }
-        var unauthenticated =
-            assertUnauthenticatedForUsesExplicitWebSocketOriginAdmissionInsteadOfHttpCorsForBothProtocols(
-                http, address);
+        var unauthenticated = assertUnauthenticatedForExplicitOriginAdmission(http, address);
 
         assertEquals(
             401,
@@ -386,9 +568,7 @@ public class WebSocketRoutesTest {
     }
   }
 
-  private Consumer<Request>
-      createAdmitForUsesExplicitWebSocketOriginAdmissionInsteadOfHttpCorsForBothProtocols(
-          AtomicInteger factories) {
+  private Consumer<Request> createAdmitForExplicitOriginAdmission(AtomicInteger factories) {
     return request -> {
       if (!request.headers("Origin").equals(List.of("https://socket.example"))) {
         throw new ForbiddenException();
@@ -400,10 +580,9 @@ public class WebSocketRoutesTest {
     };
   }
 
-  private WebSocket
-      createSocketForUsesExplicitWebSocketOriginAdmissionInsteadOfHttpCorsForBothProtocols(
-          HttpClient http, URI address, CompletableFuture<String> message)
-          throws InterruptedException, ExecutionException, TimeoutException {
+  private WebSocket createSocketForExplicitOriginAdmission(
+      HttpClient http, URI address, CompletableFuture<String> message)
+      throws InterruptedException, ExecutionException, TimeoutException {
     return http.newWebSocketBuilder()
         .header("Origin", "https://socket.example")
         .header("Authorization", "Bearer secret")
@@ -411,17 +590,15 @@ public class WebSocketRoutesTest {
         .get(3, TimeUnit.SECONDS);
   }
 
-  private ExecutionException
-      assertFailureForUsesExplicitWebSocketOriginAdmissionInsteadOfHttpCorsForBothProtocols(
-          Builder builder, URI address) {
+  private ExecutionException assertFailureForExplicitOriginAdmission(
+      WebSocket.Builder builder, URI address) {
     return assertThrows(
         ExecutionException.class,
         () -> builder.buildAsync(address, new WebSocket.Listener() {}).get(3, TimeUnit.SECONDS));
   }
 
-  private ExecutionException
-      assertUnauthenticatedForUsesExplicitWebSocketOriginAdmissionInsteadOfHttpCorsForBothProtocols(
-          HttpClient http, URI address) {
+  private ExecutionException assertUnauthenticatedForExplicitOriginAdmission(
+      HttpClient http, URI address) {
     return assertThrows(
         ExecutionException.class,
         () ->
@@ -510,7 +687,7 @@ public class WebSocketRoutesTest {
         var request =
             createRequestForEchoesTextOverNegotiatedHttp2WebSocketConnectWithoutBreakingHttp1(
                 secure, app);
-        var stream =
+        final var stream =
             createStreamForEchoesTextOverNegotiatedHttp2WebSocketConnectWithoutBreakingHttp1(
                 connection, request, headers, content, received);
         var result = headers.get(3, TimeUnit.SECONDS);
@@ -855,7 +1032,7 @@ public class WebSocketRoutesTest {
 
   @Test
   @Timeout(15)
-  void sendsAServerFirstMessageThenRepliesWithSuccessfulNativeSendCallbacks() throws Exception {
+  void sendsServerFirstMessageThenRepliesWithSuccessfulNativeSendCallbacks() throws Exception {
     var firstSent = new CompletableFuture<Void>();
     var replySent = new CompletableFuture<Void>();
     var received = new LinkedBlockingQueue<String>(2);
@@ -876,7 +1053,7 @@ public class WebSocketRoutesTest {
         app.start();
 
         var socket =
-            createSocketForSendsAServerFirstMessageThenRepliesWithSuccessfulNativeSendCallbacks(
+            createSocketForSendsServerFirstMessageThenRepliesWithSuccessfulNativeSendCallbacks(
                 client, app, pending, received);
 
         try {
@@ -898,7 +1075,7 @@ public class WebSocketRoutesTest {
   }
 
   private WebSocket
-      createSocketForSendsAServerFirstMessageThenRepliesWithSuccessfulNativeSendCallbacks(
+      createSocketForSendsServerFirstMessageThenRepliesWithSuccessfulNativeSendCallbacks(
           HttpClient client,
           Shoostr app,
           StringBuilder pending,
@@ -970,7 +1147,7 @@ public class WebSocketRoutesTest {
       HttpClient client,
       Shoostr app,
       StringBuilder partial,
-      ArrayList<String> messages,
+      List<String> messages,
       List<String> expected,
       CompletableFuture<List<String>> received)
       throws InterruptedException, ExecutionException, TimeoutException {
@@ -1007,7 +1184,7 @@ public class WebSocketRoutesTest {
 
   @Test
   @Timeout(10)
-  void echoesTextThroughAWebSocketRoute() throws Exception {
+  void echoesTextThroughWebSocketRoute() throws Exception {
     var received = new LinkedBlockingQueue<String>();
     var factoryCalls = new AtomicInteger();
     var completedSends = new CountDownLatch(3);
@@ -1038,7 +1215,7 @@ public class WebSocketRoutesTest {
 
         assertEquals("ordinary", ordinary.body());
 
-        var socket = createSocketForEchoesTextThroughAWebSocketRoute(client, app, received);
+        var socket = createSocketForEchoesTextThroughWebSocketRoute(client, app, received);
 
         socket.sendText("hel", false).get(3, TimeUnit.SECONDS);
         socket.sendText("lo", true).get(3, TimeUnit.SECONDS);
@@ -1057,7 +1234,7 @@ public class WebSocketRoutesTest {
     }
   }
 
-  private WebSocket createSocketForEchoesTextThroughAWebSocketRoute(
+  private WebSocket createSocketForEchoesTextThroughWebSocketRoute(
       HttpClient client, Shoostr app, LinkedBlockingQueue<String> received)
       throws InterruptedException, ExecutionException, TimeoutException {
     return client
@@ -1240,25 +1417,19 @@ public class WebSocketRoutesTest {
                         "/metadata",
                         (request, ignoredServerUpgradeResponse) -> {
                           var session = request.getSession().orElseThrow();
-                          var prefix =
-                              createPrefixForPassesHandshakeMetadataAndExistingSessionToTheListenerFactory(
-                                  request, session);
+                          var prefix = createPrefixForHandshakeSession(request, session);
 
                           return new EchoListener(prefix + "|");
                         }));
         app.start();
 
-        var created =
-            sendCreatedRequestForPassesHandshakeMetadataAndExistingSessionToTheListenerFactory(
-                client, app);
+        var created = sendCreatedRequestForHandshakeSession(client, app);
 
         assertEquals(200, created.statusCode());
         assertFalse(created.body().isBlank());
 
         var cookie = created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-        var socket =
-            createSocketForPassesHandshakeMetadataAndExistingSessionToTheListenerFactory(
-                client, cookie, app, received);
+        var socket = createSocketForHandshakeSession(client, cookie, app, received);
 
         try {
           socket.sendText("hello", true).get(3, TimeUnit.SECONDS);
@@ -1277,7 +1448,7 @@ public class WebSocketRoutesTest {
     }
   }
 
-  private String createPrefixForPassesHandshakeMetadataAndExistingSessionToTheListenerFactory(
+  private String createPrefixForHandshakeSession(
       Request request, org.eclipse.jetty.server.Session session) {
     return String.join(
         "|",
@@ -1289,9 +1460,8 @@ public class WebSocketRoutesTest {
         request.authority().orElseThrow());
   }
 
-  private HttpResponse<String>
-      sendCreatedRequestForPassesHandshakeMetadataAndExistingSessionToTheListenerFactory(
-          HttpClient client, Shoostr app) throws IOException, InterruptedException {
+  private HttpResponse<String> sendCreatedRequestForHandshakeSession(HttpClient client, Shoostr app)
+      throws IOException, InterruptedException {
     return client.send(
         HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/session"))
             .timeout(Duration.ofSeconds(3))
@@ -1300,7 +1470,7 @@ public class WebSocketRoutesTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private WebSocket createSocketForPassesHandshakeMetadataAndExistingSessionToTheListenerFactory(
+  private WebSocket createSocketForHandshakeSession(
       HttpClient client, String cookie, Shoostr app, CompletableFuture<String> received)
       throws InterruptedException, ExecutionException, TimeoutException {
     return client
@@ -1316,8 +1486,7 @@ public class WebSocketRoutesTest {
 
   @Test
   @Timeout(10)
-  void passesParsedProtocolsAndPathParametersToAListenerFactoryForEachConnection()
-      throws Exception {
+  void passesParsedProtocolsAndPathParametersToListenerFactoryForEachConnection() throws Exception {
     var factoryCalls = new AtomicInteger();
     var firstMessage = new CompletableFuture<String>();
     var secondMessage = new CompletableFuture<String>();
@@ -1346,10 +1515,10 @@ public class WebSocketRoutesTest {
         app.start();
 
         var first =
-            createFirstForPassesParsedProtocolsAndPathParametersToAListenerFactoryForEachConnection(
+            createFirstForPassesParsedProtocolsAndPathParametersToListenerFactoryForEachConnection(
                 client, app, firstMessage);
         var second =
-            createSecondForPassesParsedProtocolsAndPathParametersToAListenerFactoryForEachConnection(
+            createSecondForPassesParsedProtocolsAndPathParametersToListenerFactoryForEachConnection(
                 client, app, secondMessage);
 
         assertEquals("chat.v2", first.getSubprotocol());
@@ -1369,7 +1538,7 @@ public class WebSocketRoutesTest {
   }
 
   private WebSocket
-      createFirstForPassesParsedProtocolsAndPathParametersToAListenerFactoryForEachConnection(
+      createFirstForPassesParsedProtocolsAndPathParametersToListenerFactoryForEachConnection(
           HttpClient client, Shoostr app, CompletableFuture<String> firstMessage)
           throws InterruptedException, ExecutionException, TimeoutException {
     return client
@@ -1381,7 +1550,7 @@ public class WebSocketRoutesTest {
   }
 
   private WebSocket
-      createSecondForPassesParsedProtocolsAndPathParametersToAListenerFactoryForEachConnection(
+      createSecondForPassesParsedProtocolsAndPathParametersToListenerFactoryForEachConnection(
           HttpClient client, Shoostr app, CompletableFuture<String> secondMessage)
           throws InterruptedException, ExecutionException, TimeoutException {
     return client
@@ -1647,7 +1816,7 @@ public class WebSocketRoutesTest {
 
   @Test
   @Timeout(10)
-  void completesInvalidUpgradeWith426AndAllowsAFactoryHandshakeHeader() throws Exception {
+  void completesInvalidUpgradeWith426AndAllowsFactoryHandshakeHeader() throws Exception {
     var factoryCalls = new AtomicInteger();
 
     {
@@ -2059,7 +2228,7 @@ public class WebSocketRoutesTest {
                 (ignoredRequest, ignoredServerUpgradeResponse) ->
                     new SlowPeerListener(opened, terminal));
         app.start();
-        var container =
+        final var container =
             server.get().getContainedBeans(ServerWebSocketContainer.class).iterator().next();
         upgradeUnreadPeer(peer, app.port(), "/slow");
 
@@ -2158,7 +2327,7 @@ public class WebSocketRoutesTest {
                 (ignoredRequest, ignoredServerUpgradeResponse) ->
                     new SerializedProducerListener(opened, completed, sendFailure));
         app.start();
-        var socket =
+        final var socket =
             createSocketForSerializesConcurrentProducersUntilEachNativeSendCallbackCompletes(
                 client, app, current, received);
         var listener = opened.get(3, TimeUnit.SECONDS);
@@ -2225,196 +2394,6 @@ public class WebSocketRoutesTest {
               }
             })
         .get(3, TimeUnit.SECONDS);
-  }
-
-  private static AuthenticationExtension chatAuthentication() {
-    return new AuthenticationExtension() {
-      @Override
-      public void handle(Request request, Response response) {
-        if (request.header("Authorization").filter("Bearer secret"::equals).isEmpty()) {
-          throw new AuthenticationRequiredException("Bearer realm=\"chat\"");
-        }
-
-        request.principal(() -> "alice");
-      }
-    };
-  }
-
-  private static org.eclipse.jetty.http2.api.Session connectHttp2(HTTP2Client client, Shoostr app)
-      throws Exception {
-    return connectHttp2(client, app, false);
-  }
-
-  private static org.eclipse.jetty.http2.api.Session connectHttp2(
-      HTTP2Client client, Shoostr app, boolean secure) throws Exception {
-    var advertised = new CompletableFuture<Integer>();
-    client.setConnectTimeout(3000);
-    client.setIdleTimeout(3000);
-    client.start();
-    var connection = createConnectionForConnectHttp2(client, secure, app, advertised);
-
-    assertEquals(1, advertised.get(3, TimeUnit.SECONDS));
-
-    return connection;
-  }
-
-  private static org.eclipse.jetty.http2.api.Session createConnectionForConnectHttp2(
-      HTTP2Client client, boolean secure, Shoostr app, CompletableFuture<Integer> advertised)
-      throws InterruptedException, ExecutionException, TimeoutException, UnknownHostException {
-    return client
-        .connect(
-            secure ? client.getClientConnector().getSslContextFactory() : null,
-            new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
-            new Listener() {
-              @Override
-              public void onSettings(
-                  org.eclipse.jetty.http2.api.Session session, SettingsFrame frame) {
-                var enabled = frame.getSettings().get(SettingsFrame.ENABLE_CONNECT_PROTOCOL);
-                if (enabled != null) {
-                  advertised.complete(enabled);
-                }
-              }
-            })
-        .get(3, TimeUnit.SECONDS);
-  }
-
-  private static MetaData.Response http2ConnectResponse(
-      org.eclipse.jetty.http2.api.Session connection,
-      Shoostr app,
-      String path,
-      String protocol,
-      HttpFields fields)
-      throws Exception {
-    var received = new CompletableFuture<MetaData.Response>();
-    var request =
-        new MetaData.ConnectRequest(
-            "http", new HostPortHttpField("127.0.0.1:" + app.port()), path, fields, protocol);
-    connection
-        .newStream(
-            new HeadersFrame(request, null, false),
-            new Stream.Listener() {
-              @Override
-              public void onHeaders(Stream stream, HeadersFrame frame) {
-                received.complete(assertInstanceOf(MetaData.Response.class, frame.getMetaData()));
-                if (!frame.isEndStream()) {
-                  stream.demand();
-                }
-              }
-            })
-        .get(3, TimeUnit.SECONDS);
-    var response = received.get(3, TimeUnit.SECONDS);
-
-    assertEquals(HttpVersion.HTTP_2, response.getHttpVersion());
-
-    return response;
-  }
-
-  private static String sendAndReceive(HttpClient client, Shoostr app, String path)
-      throws Exception {
-    var received = new CompletableFuture<String>();
-    var socket =
-        client
-            .newWebSocketBuilder()
-            .buildAsync(URI.create("ws://127.0.0.1:" + app.port() + path), receiving(received))
-            .get(3, TimeUnit.SECONDS);
-    socket.sendText("ping", true).get(3, TimeUnit.SECONDS);
-    String message = received.get(3, TimeUnit.SECONDS);
-    socket.abort();
-
-    return message;
-  }
-
-  private static void upgradeUnreadPeer(Socket peer, int port, String path) throws Exception {
-    peer.setReceiveBufferSize(1024);
-    peer.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], port));
-    peer.setSoTimeout(3000);
-    var handshake = createHandshakeForUpgradeUnreadPeer(path);
-    peer.getOutputStream().write(handshake.getBytes(StandardCharsets.US_ASCII));
-    var reader =
-        new BufferedReader(new InputStreamReader(peer.getInputStream(), StandardCharsets.US_ASCII));
-    var statusLine = reader.readLine();
-
-    assertTrue(statusLine.startsWith("HTTP/1.1 101"), statusLine);
-
-    String header;
-    boolean accepted = false;
-    while ((header = reader.readLine()) != null && !header.isEmpty()) {
-      accepted |= header.regionMatches(true, 0, "Sec-WebSocket-Accept:", 0, 21);
-    }
-
-    assertTrue(accepted);
-  }
-
-  private static String createHandshakeForUpgradeUnreadPeer(String path) {
-    return "GET "
-        + path
-        + " HTTP/1.1\r\n"
-        + "Host: localhost\r\n"
-        + "Upgrade: websocket\r\n"
-        + "Connection: Upgrade\r\n"
-        + "Sec-WebSocket-Version: 13\r\n"
-        + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
-  }
-
-  private static List<String> handshake(Shoostr app, int version) throws Exception {
-    try (var socket = new Socket(InetAddress.getAllByName("127.0.0.1")[0], app.port())) {
-      socket.setSoTimeout(3000);
-      var request = createRequestForHandshake(version);
-      socket.getOutputStream().write(request.getBytes(StandardCharsets.US_ASCII));
-      var reader =
-          new BufferedReader(
-              new InputStreamReader(socket.getInputStream(), StandardCharsets.US_ASCII));
-      var lines = new ArrayList<String>();
-      String line;
-      while ((line = reader.readLine()) != null && !line.isEmpty()) {
-        lines.add(line);
-      }
-
-      return lines;
-    }
-  }
-
-  private static String createRequestForHandshake(int version) {
-    return "GET /wire HTTP/1.1\r\n"
-        + "Host: localhost\r\n"
-        + "Upgrade: websocket\r\n"
-        + "Connection: Upgrade\r\n"
-        + "Sec-WebSocket-Version: "
-        + version
-        + "\r\n"
-        + "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n\r\n";
-  }
-
-  private static int failedHandshakeStatus(HttpClient client, Shoostr app, String path) {
-    var failure = assertFailureForFailedHandshakeStatus(client, app, path);
-
-    return assertInstanceOf(WebSocketHandshakeException.class, failure.getCause())
-        .getResponse()
-        .statusCode();
-  }
-
-  private static ExecutionException assertFailureForFailedHandshakeStatus(
-      HttpClient client, Shoostr app, String path) {
-    return assertThrows(
-        ExecutionException.class,
-        () ->
-            client
-                .newWebSocketBuilder()
-                .buildAsync(
-                    URI.create("ws://127.0.0.1:" + app.port() + path), new WebSocket.Listener() {})
-                .get(3, TimeUnit.SECONDS));
-  }
-
-  private static WebSocket.Listener receiving(CompletableFuture<String> message) {
-    return new WebSocket.Listener() {
-      @Override
-      public CompletionStage<?> onText(WebSocket webSocket, CharSequence data, boolean last) {
-        message.complete(data.toString());
-        webSocket.request(1);
-
-        return CompletableFuture.completedFuture(null);
-      }
-    };
   }
 
   public static final class GreetingListener implements Session.Listener {

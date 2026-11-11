@@ -33,6 +33,15 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 class SelectiveTracingIsolationTest {
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  }
+
   @ParameterizedTest
   @CsvSource({"false,false", "false,true", "true,false", "true,true"})
   void preservesGlobalSpanWithSelectiveTracingInstalledInEitherOrder(
@@ -179,7 +188,7 @@ class SelectiveTracingIsolationTest {
                 .atMost(Duration.ofSeconds(5))
                 .until(() -> workers.getQueuedSubmissionCount() > 0);
             allowHelping.countDown();
-            var innerResponse = inner.get(5, TimeUnit.SECONDS);
+            final var innerResponse = inner.get(5, TimeUnit.SECONDS);
             var outerResponse = outer.get(5, TimeUnit.SECONDS);
 
             assertTrue(completed.await(5, TimeUnit.SECONDS));
@@ -233,14 +242,5 @@ class SelectiveTracingIsolationTest {
           ExecutorService drivers, TestServer test) {
     return drivers.submit(
         () -> test.send(request -> request.path("/inner"), HttpResponse.BodyHandlers.ofString()));
-  }
-
-  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
-    options.setVirtualThreads(virtualApplication);
-
-    return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

@@ -40,7 +40,8 @@ class RequestOutcomeTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Null method is deliberately rejected at construction.
+  @SuppressWarnings("NullAway")
+  // Null method is deliberately rejected at construction.
   void rejectsNullMethodAtConstruction() {
     assertThrows(
         NullPointerException.class, () -> new RequestOutcome(null, null, 0, 0, null, null));

@@ -31,6 +31,59 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 @Timeout(15)
 class MediaTypeResponseTest {
+  private static void negotiate(Request request, Response response) {
+    var type =
+        response.negotiate(
+            MediaType.APPLICATION_JSON,
+            MediaType.TEXT_PLAIN,
+            MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
+    response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static void negotiateUtf8Text(Request request, Response response) {
+    var type = response.negotiate(MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
+    response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
+  }
+
+  private static Stream<Arguments> nullAdditionalAcceptCases() {
+    return Stream.of(
+        Arguments.of("", 200, "application/json", List.of("Accept")),
+        Arguments.of("application/json", 200, "application/json", List.of("Accept")),
+        Arguments.of("application/json;q=0", 406, "Not Acceptable", List.of("Accept")),
+        Arguments.of("bad", 400, "Bad Request", List.of()));
+  }
+
+  private static Stream<Arguments> acceptCases() {
+    return Stream.of(
+        Arguments.of("*/*", MediaType.APPLICATION_JSON),
+        Arguments.of("text/*", MediaType.TEXT_PLAIN),
+        Arguments.of("application/*;q=0.5, text/*;q=0.7", MediaType.TEXT_PLAIN),
+        Arguments.of("application/json;q=0.8, */*;q=0.9", MediaType.TEXT_PLAIN),
+        Arguments.of("application/json;q=0.5, text/plain;q=0.5", MediaType.APPLICATION_JSON),
+        Arguments.of(
+            "text/plain; charset=utf-8", MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8)),
+        Arguments.of(
+            "text/plain; charset=\"UTF-8\"",
+            MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8)),
+        Arguments.of("application/json;q=1., text/plain;q=0.", MediaType.APPLICATION_JSON));
+  }
+
+  private static Stream<Arguments> malformedAcceptFields() {
+    return Stream.of(
+        Arguments.of("text"),
+        Arguments.of("text/plain;q=1.0000"),
+        Arguments.of("text/plain;q=\"0.5\""),
+        Arguments.of("text/plain;q=1;q=0"),
+        Arguments.of("text /plain"),
+        Arguments.of("text/plain;charset =utf-8"),
+        Arguments.of(";text/plain"),
+        Arguments.of(";;text/plain"));
+  }
+
+  private static Stream<Arguments> emptyAcceptFields() {
+    return Stream.of(Arguments.of(""), Arguments.of(","));
+  }
+
   @ParameterizedTest
   @MethodSource("nullAdditionalAcceptCases")
   void treatsNullAdditionalCandidatesAsOnlyTheFirstCandidate(
@@ -81,7 +134,8 @@ class MediaTypeResponseTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Deliberately verifies invalid inputs at the public API boundary.
+  @SuppressWarnings("NullAway")
+  // Deliberately verifies invalid inputs at the public API boundary.
   void rejectsNullNegotiationInputsWithoutChangingStagedResponse() throws Exception {
     {
       var app = new Shoostr();
@@ -149,7 +203,7 @@ class MediaTypeResponseTest {
           var json = submitJsonForKeepsConcurrentRequestNegotiationIndependent(testRequests, test);
           var text = submitTextForKeepsConcurrentRequestNegotiationIndependent(testRequests, test);
           var jsonResult = json.get(5, TimeUnit.SECONDS);
-          var textResult = text.get(5, TimeUnit.SECONDS);
+          final var textResult = text.get(5, TimeUnit.SECONDS);
 
           assertEquals(200, jsonResult.statusCode());
           assertEquals("application/json", jsonResult.body());
@@ -400,7 +454,7 @@ class MediaTypeResponseTest {
   }
 
   @Test
-  void rejectsTheExactRepresentationWhenAWildcardWithParametersHasHigherQuality() throws Exception {
+  void rejectsTheExactRepresentationWhenWildcardWithParametersHasHigherQuality() throws Exception {
     {
       var app = new Shoostr();
 
@@ -410,7 +464,7 @@ class MediaTypeResponseTest {
         try (var test = TestServer.start(app)) {
 
           var result =
-              sendResultForRejectsTheExactRepresentationWhenAWildcardWithParametersHasHigherQuality(
+              sendResultForRejectsTheExactRepresentationWhenWildcardWithParametersHasHigherQuality(
                   test);
 
           assertEquals(406, result.statusCode());
@@ -420,7 +474,7 @@ class MediaTypeResponseTest {
   }
 
   private HttpResponse<String>
-      sendResultForRejectsTheExactRepresentationWhenAWildcardWithParametersHasHigherQuality(
+      sendResultForRejectsTheExactRepresentationWhenWildcardWithParametersHasHigherQuality(
           TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -573,7 +627,7 @@ class MediaTypeResponseTest {
   }
 
   @Test
-  void rejectsARepresentationExcludedByASpecificZeroQualityRange() throws Exception {
+  void rejectsRepresentationExcludedBySpecificZeroQualityRange() throws Exception {
     {
       var app = new Shoostr();
 
@@ -776,58 +830,5 @@ class MediaTypeResponseTest {
         }
       }
     }
-  }
-
-  private static void negotiate(Request request, Response response) {
-    var type =
-        response.negotiate(
-            MediaType.APPLICATION_JSON,
-            MediaType.TEXT_PLAIN,
-            MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
-    response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
-  }
-
-  private static void negotiateUtf8Text(Request request, Response response) {
-    var type = response.negotiate(MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8));
-    response.body(type, type.value().getBytes(StandardCharsets.UTF_8));
-  }
-
-  private static Stream<Arguments> nullAdditionalAcceptCases() {
-    return Stream.of(
-        Arguments.of("", 200, "application/json", List.of("Accept")),
-        Arguments.of("application/json", 200, "application/json", List.of("Accept")),
-        Arguments.of("application/json;q=0", 406, "Not Acceptable", List.of("Accept")),
-        Arguments.of("bad", 400, "Bad Request", List.of()));
-  }
-
-  private static Stream<Arguments> acceptCases() {
-    return Stream.of(
-        Arguments.of("*/*", MediaType.APPLICATION_JSON),
-        Arguments.of("text/*", MediaType.TEXT_PLAIN),
-        Arguments.of("application/*;q=0.5, text/*;q=0.7", MediaType.TEXT_PLAIN),
-        Arguments.of("application/json;q=0.8, */*;q=0.9", MediaType.TEXT_PLAIN),
-        Arguments.of("application/json;q=0.5, text/plain;q=0.5", MediaType.APPLICATION_JSON),
-        Arguments.of(
-            "text/plain; charset=utf-8", MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8)),
-        Arguments.of(
-            "text/plain; charset=\"UTF-8\"",
-            MediaType.TEXT_PLAIN.withCharset(StandardCharsets.UTF_8)),
-        Arguments.of("application/json;q=1., text/plain;q=0.", MediaType.APPLICATION_JSON));
-  }
-
-  private static Stream<Arguments> malformedAcceptFields() {
-    return Stream.of(
-        Arguments.of("text"),
-        Arguments.of("text/plain;q=1.0000"),
-        Arguments.of("text/plain;q=\"0.5\""),
-        Arguments.of("text/plain;q=1;q=0"),
-        Arguments.of("text /plain"),
-        Arguments.of("text/plain;charset =utf-8"),
-        Arguments.of(";text/plain"),
-        Arguments.of(";;text/plain"));
-  }
-
-  private static Stream<Arguments> emptyAcceptFields() {
-    return Stream.of(Arguments.of(""), Arguments.of(","));
   }
 }

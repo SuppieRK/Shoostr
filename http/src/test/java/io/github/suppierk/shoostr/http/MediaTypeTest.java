@@ -19,6 +19,45 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class MediaTypeTest {
+  private static Stream<String> invalidNames() {
+    return Stream.of(
+        "",
+        "text",
+        "/plain",
+        "text/",
+        "text/plain/extra",
+        " text/plain",
+        "text/plain ",
+        "text /plain",
+        "text/ plain",
+        "text/plain; charset=UTF-8",
+        "text/plain,application/json",
+        "text/\"plain\"",
+        "text/(plain)",
+        "text/pl\tain",
+        "text/pl\rain",
+        "text/pl\nain",
+        "text/pl\0ain",
+        "text/pl\u007fain",
+        "text/pläin",
+        "text/١",
+        "text/pl\u00a0ain",
+        "*/*",
+        "text/*",
+        "*/json",
+        "application/*+json",
+        "application/a*b",
+        "text/a%b",
+        "text/a'b",
+        "text/a`b",
+        "text/a|b",
+        "text/a~b",
+        "-text/plain",
+        "text/+json",
+        "a".repeat(128) + "/plain",
+        "text/" + "a".repeat(128));
+  }
+
   @Test
   void satisfiesEqualsAndHashCodeContract() {
     // The canonical value includes the name; the separate name supports charset replacement.
@@ -131,44 +170,5 @@ class MediaTypeTest {
         return StandardCharsets.UTF_8.newEncoder();
       }
     };
-  }
-
-  private static Stream<String> invalidNames() {
-    return Stream.of(
-        "",
-        "text",
-        "/plain",
-        "text/",
-        "text/plain/extra",
-        " text/plain",
-        "text/plain ",
-        "text /plain",
-        "text/ plain",
-        "text/plain; charset=UTF-8",
-        "text/plain,application/json",
-        "text/\"plain\"",
-        "text/(plain)",
-        "text/pl\tain",
-        "text/pl\rain",
-        "text/pl\nain",
-        "text/pl\0ain",
-        "text/pl\u007fain",
-        "text/pläin",
-        "text/١",
-        "text/pl\u00a0ain",
-        "*/*",
-        "text/*",
-        "*/json",
-        "application/*+json",
-        "application/a*b",
-        "text/a%b",
-        "text/a'b",
-        "text/a`b",
-        "text/a|b",
-        "text/a~b",
-        "-text/plain",
-        "text/+json",
-        "a".repeat(128) + "/plain",
-        "text/" + "a".repeat(128));
   }
 }

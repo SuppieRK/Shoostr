@@ -14,6 +14,23 @@ import org.yaml.snakeyaml.nodes.Node;
 import org.yaml.snakeyaml.nodes.ScalarNode;
 
 class McpLimitsYamlTest {
+  private static Yaml yaml() {
+    var constructor = new Constructor(McpSessionLimits.class, new LoaderOptions());
+    constructor.addTypeDescription(
+        new TypeDescription(Duration.class) {
+          @Override
+          public Object newInstance(Node node) {
+            if (!(node instanceof ScalarNode scalar)) {
+              throw new IllegalArgumentException("Expected an ISO-8601 duration scalar");
+            }
+
+            return Duration.parse(scalar.getValue());
+          }
+        });
+
+    return new Yaml(constructor);
+  }
+
   @Test
   void partialSessionLimitsPreserveTheExistingDefaults() {
     var limits = new Yaml().loadAs("maxSessions: 8", McpSessionLimits.class);
@@ -37,10 +54,10 @@ class McpLimitsYamlTest {
     return yaml()
         .loadAs(
             """
-        maxSessions: 12
-        maxSessionsPerOwner: 3
-        idleTimeout: PT2M
-        """,
+            maxSessions: 12
+            maxSessionsPerOwner: 3
+            idleTimeout: PT2M
+            """,
             McpSessionLimits.class);
   }
 
@@ -78,22 +95,5 @@ class McpLimitsYamlTest {
         YAMLException.class, () -> yaml().loadAs("maxSessions: 0", McpSessionLimits.class));
     assertThrows(
         YAMLException.class, () -> yaml().loadAs("idleTimeout: PT0S", McpSessionLimits.class));
-  }
-
-  private static Yaml yaml() {
-    var constructor = new Constructor(McpSessionLimits.class, new LoaderOptions());
-    constructor.addTypeDescription(
-        new TypeDescription(Duration.class) {
-          @Override
-          public Object newInstance(Node node) {
-            if (!(node instanceof ScalarNode scalar)) {
-              throw new IllegalArgumentException("Expected an ISO-8601 duration scalar");
-            }
-
-            return Duration.parse(scalar.getValue());
-          }
-        });
-
-    return new Yaml(constructor);
   }
 }

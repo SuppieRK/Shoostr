@@ -146,7 +146,7 @@ class FixtureLifecycleTest {
   }
 
   @Test
-  void closesAppAndClientWithoutReplacingACheckedScopeFailure() throws Exception {
+  void closesAppAndClientWithoutReplacingCheckedScopeFailure() throws Exception {
     var client = new AtomicReference<HttpClient>();
     var expected = new IOException("caller fixture failure");
 
@@ -177,7 +177,7 @@ class FixtureLifecycleTest {
 
   @ParameterizedTest
   @NullSource
-  void rejectsANullClientConfiguratorBeforeTakingOwnership(
+  void rejectsNullClientConfiguratorBeforeTakingOwnership(
       Consumer<HttpClient.Builder> configureClient) throws Exception {
     {
       var app = new Shoostr();
@@ -195,7 +195,7 @@ class FixtureLifecycleTest {
   }
 
   @Test
-  void rejectsARunningAppBeforeClientConfigurationWithoutStoppingIt() throws Exception {
+  void rejectsRunningAppBeforeClientConfigurationWithoutStoppingIt() throws Exception {
     {
       var app =
           new Shoostr()

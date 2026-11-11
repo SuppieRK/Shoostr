@@ -24,7 +24,6 @@ import nl.jqno.equalsverifier.Warning;
 import org.junit.jupiter.api.Test;
 import org.pac4j.core.authorization.authorizer.Authorizer;
 import org.pac4j.core.client.DirectClient;
-import org.pac4j.core.context.CallContext;
 import org.pac4j.core.context.WebContext;
 import org.pac4j.core.context.session.SessionStore;
 import org.pac4j.core.credentials.Credentials;
@@ -34,6 +33,35 @@ import org.pac4j.core.profile.UserProfile;
 import org.pac4j.http.client.direct.DirectBasicAuthClient;
 
 class Pac4jEqualityTest {
+  private static DirectBasicAuthClient client(String identity) {
+    var client = createClientForClient(identity);
+    client.setName(identity);
+
+    return client;
+  }
+
+  private static DirectBasicAuthClient createClientForClient(String identity) {
+    return new DirectBasicAuthClient((ignored, supplied) -> authenticate(identity, supplied));
+  }
+
+  private static Optional<Credentials> authenticate(String identity, Credentials supplied) {
+    if (!(supplied instanceof UsernamePasswordCredentials credentials)
+        || !identity.equals(credentials.getUsername())
+        || !"correct".equals(credentials.getPassword())) {
+      return Optional.empty();
+    }
+
+    var profile = new CommonProfile();
+    profile.setId(identity);
+    credentials.setUserProfile(profile);
+
+    return Optional.of(credentials);
+  }
+
+  private static Authorizer authorizer(String identity) {
+    return new MatchingAuthorizer(identity);
+  }
+
   @Test
   void policyComparesClientChallengeAndAuthorizer() {
     var first = authorizer("alice");
@@ -174,37 +202,6 @@ class Pac4jEqualityTest {
   @Test
   void statelessSessionStoreUsesEnumEquality() {
     EqualsVerifier.forClass(StatelessSessionStore.class).verify();
-  }
-
-  private static DirectBasicAuthClient client(String identity) {
-    var client = createClientForClient(identity);
-    client.setName(identity);
-
-    return client;
-  }
-
-  private static DirectBasicAuthClient createClientForClient(String identity) {
-    return new DirectBasicAuthClient(
-        (context, supplied) -> authenticate(identity, context, supplied));
-  }
-
-  private static Optional<Credentials> authenticate(
-      String identity, CallContext context, Credentials supplied) {
-    if (!(supplied instanceof UsernamePasswordCredentials credentials)
-        || !identity.equals(credentials.getUsername())
-        || !"correct".equals(credentials.getPassword())) {
-      return Optional.empty();
-    }
-
-    var profile = new CommonProfile();
-    profile.setId(identity);
-    credentials.setUserProfile(profile);
-
-    return Optional.of(credentials);
-  }
-
-  private static Authorizer authorizer(String identity) {
-    return new MatchingAuthorizer(identity);
   }
 
   private record MatchingAuthorizer(String identity) implements Authorizer {

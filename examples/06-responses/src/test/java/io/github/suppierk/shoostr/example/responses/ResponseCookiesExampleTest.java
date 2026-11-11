@@ -51,7 +51,8 @@ class ResponseCookiesExampleTest {
           assertEquals(
               List.of(
                   "theme=root; Path=/",
-                  "theme=; Path=/preferences; Domain=example.test; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"),
+                  "theme=; Path=/preferences; Domain=example.test; "
+                      + "Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"),
               response.headers().allValues("Set-Cookie"));
         }
       }
@@ -102,13 +103,15 @@ class ResponseCookiesExampleTest {
       assertEquals(204, deleted.statusCode());
       assertEquals(
           List.of(
-              "__Host-theme=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=None"),
+              "__Host-theme=; Path=/; Max-Age=0; Expires=Thu, 01 "
+                  + "Jan 1970 00:00:00 GMT; Secure; HttpOnly; "
+                  + "SameSite=None"),
           deleted.headers().allValues("Set-Cookie"));
     }
   }
 
   @Test
-  void storesAndDeletesAPathScopedPreference() throws Exception {
+  void storesAndDeletesPathScopedPreference() throws Exception {
 
     try (var test = TestServer.start(ResponseCookiesExample.application())) {
       assertEquals(
@@ -141,7 +144,8 @@ class ResponseCookiesExampleTest {
       assertEquals(204, deleted.statusCode());
       assertEquals(
           List.of(
-              "theme=; Path=/preferences; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Lax"),
+              "theme=; Path=/preferences; Max-Age=0; Expires=Thu,"
+                  + " 01 Jan 1970 00:00:00 GMT; SameSite=Lax"),
           deleted.headers().allValues("Set-Cookie"));
       assertEquals(
           "light",

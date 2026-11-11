@@ -40,6 +40,23 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class HttpExceptionHandlingTest {
+  private static Stream<HttpException> httpErrors() {
+    var cause = new IllegalArgumentException("internal cause");
+
+    return Stream.of(
+        new BadRequestException("secret", cause),
+        new NotFoundException(),
+        new ServiceUnavailableException("secret", cause),
+        new HttpClientException(HttpStatusCodes.TOO_MANY_REQUESTS, "secret", cause) {},
+        new HttpServerException(HttpStatusCodes.BAD_GATEWAY, "secret", cause) {},
+        new HttpException(HttpStatusCodes.NETWORK_AUTHENTICATION_REQUIRED, "secret", cause) {});
+  }
+
+  private static HttpRequest.Builder request(Shoostr app) {
+    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
+        .timeout(Duration.ofSeconds(5));
+  }
+
   @ParameterizedTest
   @MethodSource("httpErrors")
   void replacesStagedOutputWithStatusAndSafeReasonPhrase(HttpException failure) throws Exception {
@@ -353,22 +370,5 @@ class HttpExceptionHandlingTest {
         }
       }
     }
-  }
-
-  private static Stream<HttpException> httpErrors() {
-    var cause = new IllegalArgumentException("internal cause");
-
-    return Stream.of(
-        new BadRequestException("secret", cause),
-        new NotFoundException(),
-        new ServiceUnavailableException("secret", cause),
-        new HttpClientException(HttpStatusCodes.TOO_MANY_REQUESTS, "secret", cause) {},
-        new HttpServerException(HttpStatusCodes.BAD_GATEWAY, "secret", cause) {},
-        new HttpException(HttpStatusCodes.NETWORK_AUTHENTICATION_REQUIRED, "secret", cause) {});
-  }
-
-  private static HttpRequest.Builder request(Shoostr app) {
-    return HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + app.port() + "/body"))
-        .timeout(Duration.ofSeconds(5));
   }
 }

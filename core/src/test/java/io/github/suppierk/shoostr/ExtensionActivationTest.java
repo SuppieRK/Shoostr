@@ -141,10 +141,9 @@ class ExtensionActivationTest {
   }
 
   @Test
-  void applicationAuthenticationPrecedesAdmissionAndCanBeExcludedFromAPublicEndpoint()
+  void applicationAuthenticationPrecedesAdmissionAndCanBeExcludedFromPublicEndpoint()
       throws Exception {
-    var authentication =
-        createAuthenticationForApplicationAuthenticationPrecedesAdmissionAndCanBeExcludedFromAPublicEndpoint();
+    var authentication = createAuthenticationForApplicationAuth();
     var app = new Shoostr();
 
     try {
@@ -180,8 +179,7 @@ class ExtensionActivationTest {
     }
   }
 
-  private AuthenticationExtension
-      createAuthenticationForApplicationAuthenticationPrecedesAdmissionAndCanBeExcludedFromAPublicEndpoint() {
+  private AuthenticationExtension createAuthenticationForApplicationAuth() {
     return new AuthenticationExtension() {
       @Override
       public void handle(Request request, Response response) {

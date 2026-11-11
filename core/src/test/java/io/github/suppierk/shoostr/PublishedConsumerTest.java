@@ -26,67 +26,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 class PublishedConsumerTest {
   @TempDir static Path workspace;
 
-  @ParameterizedTest
-  @ValueSource(strings = {"pom", "module"})
-  void linksAndServesFromFreshPublishedCoreWithoutWorkspaceClasses(String metadata)
-      throws Exception {
-    assertTrue(runConsumer(metadata, "positive", "", 0).contains("PUBLISHED_HTTP_OK"));
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {"pom", "module"})
-  void rejectsUnexpectedTestLibrariesInThePublishedRuntimeGraph(String metadata) throws Exception {
-    var output = createOutputForRejectsUnexpectedTestLibrariesInThePublishedRuntimeGraph(metadata);
-
-    assertTrue(output.contains("Unexpected runtime dependency"), output);
-  }
-
-  private String createOutputForRejectsUnexpectedTestLibrariesInThePublishedRuntimeGraph(
-      String metadata) throws Exception {
-    return runConsumer(
-        metadata,
-        "unexpected-runtime",
-        "\ndependencies { runtimeOnly 'org.junit.jupiter:junit-jupiter-api:6.1.3' }\n",
-        1);
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {"pom", "module"})
-  void cannotResolveTheConsumerWhenThePublishedHttpModuleIsMissing(String metadata)
-      throws Exception {
-    var output = runConsumer(metadata, "missing-http", "", 1);
-
-    assertTrue(output.contains("Could not find io.github.suppierk:shoostr-http:"), output);
-  }
-
-  @ParameterizedTest
-  @ValueSource(strings = {"pom", "module"})
-  void rejectsResolvedBinariesThatDoNotMatchTheCurrentProducer(String metadata) throws Exception {
-    var output = runConsumer(metadata, "stale-core", "", 1);
-
-    assertTrue(output.contains("Artifact hash mismatch: shoostr-core"), output);
-  }
-
-  @Test
-  void terminatesOwnedWrapperDaemonAndApplicationBeforeReportingAConsumerTimeout()
-      throws Exception {
-    var failure = assertThrows(AssertionError.class, () -> runConsumer("pom", "timeout", "", 0));
-    assertTrue(
-        String.valueOf(failure.getMessage()).contains("Consumer timed out"), failure.getMessage());
-    assertOwnedProcessesStopped("timeout");
-  }
-
-  @Test
-  void terminatesOwnedProcessesAndPreservesInterruption() throws Exception {
-    try {
-      assertThrows(InterruptedException.class, () -> runConsumer("pom", "interrupted", "", 0));
-      assertTrue(Thread.interrupted(), "Consumer cleanup must restore interruption");
-      assertOwnedProcessesStopped("interrupted");
-    } finally {
-      Thread.interrupted();
-    }
-  }
-
   private static String runConsumer(String metadata, String scenario, String extraBuild, int exit)
       throws Exception {
     var directory = Files.createTempDirectory(workspace, metadata + " consumer ");
@@ -116,7 +55,7 @@ class PublishedConsumerTest {
     Files.writeString(project.resolve("settings.gradle"), "rootProject.name = 'binary-consumer'\n");
     var source = project.resolve("src/main/java/io/github/suppierk/consumer/Main.java");
     Files.createDirectories(source.getParent());
-    copyResource("Main.java", source);
+    copyResource("io/github/suppierk/consumer/Main.java", source);
     var waitForReady = "timeout".equals(scenario) || "interrupted".equals(scenario);
     if (waitForReady) {
       Files.writeString(
@@ -210,8 +149,8 @@ class PublishedConsumerTest {
     }
   }
 
-  private static Process createProcessForRunConsumer(
-      ArrayList<String> command, Path root, Path output) throws IOException {
+  private static Process createProcessForRunConsumer(List<String> command, Path root, Path output)
+      throws IOException {
     return new ProcessBuilder(command)
         .directory(root.toFile())
         .redirectErrorStream(true)
@@ -292,6 +231,66 @@ class PublishedConsumerTest {
       return Files.readString(output);
     } catch (IOException failure) {
       return failure.toString();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"pom", "module"})
+  void linksAndServesFromFreshPublishedCoreWithoutWorkspaceClasses(String metadata)
+      throws Exception {
+    assertTrue(runConsumer(metadata, "positive", "", 0).contains("PUBLISHED_HTTP_OK"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"pom", "module"})
+  void rejectsUnexpectedTestLibrariesInThePublishedRuntimeGraph(String metadata) throws Exception {
+    var output = createOutputForRejectsUnexpectedTestLibrariesInThePublishedRuntimeGraph(metadata);
+
+    assertTrue(output.contains("Unexpected runtime dependency"), output);
+  }
+
+  private String createOutputForRejectsUnexpectedTestLibrariesInThePublishedRuntimeGraph(
+      String metadata) throws Exception {
+    return runConsumer(
+        metadata,
+        "unexpected-runtime",
+        "\ndependencies { runtimeOnly 'org.junit.jupiter:junit-jupiter-api:6.1.3' }\n",
+        1);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"pom", "module"})
+  void cannotResolveTheConsumerWhenThePublishedHttpModuleIsMissing(String metadata)
+      throws Exception {
+    var output = runConsumer(metadata, "missing-http", "", 1);
+
+    assertTrue(output.contains("Could not find io.github.suppierk:shoostr-http:"), output);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"pom", "module"})
+  void rejectsResolvedBinariesThatDoNotMatchTheCurrentProducer(String metadata) throws Exception {
+    var output = runConsumer(metadata, "stale-core", "", 1);
+
+    assertTrue(output.contains("Artifact hash mismatch: shoostr-core"), output);
+  }
+
+  @Test
+  void terminatesOwnedWrapperDaemonAndApplicationBeforeReportingConsumerTimeout() throws Exception {
+    var failure = assertThrows(AssertionError.class, () -> runConsumer("pom", "timeout", "", 0));
+    assertTrue(
+        String.valueOf(failure.getMessage()).contains("Consumer timed out"), failure.getMessage());
+    assertOwnedProcessesStopped("timeout");
+  }
+
+  @Test
+  void terminatesOwnedProcessesAndPreservesInterruption() throws Exception {
+    try {
+      assertThrows(InterruptedException.class, () -> runConsumer("pom", "interrupted", "", 0));
+      assertTrue(Thread.interrupted(), "Consumer cleanup must restore interruption");
+      assertOwnedProcessesStopped("interrupted");
+    } finally {
+      Thread.interrupted();
     }
   }
 }

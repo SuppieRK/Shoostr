@@ -17,50 +17,6 @@ import org.pac4j.http.client.direct.DirectBasicAuthClient;
 import org.pac4j.http.client.direct.DirectBearerAuthClient;
 
 class AuthenticationGroupsTest {
-  @ParameterizedTest
-  @CsvSource({"/rest, Basic YWxpY2U6Y29ycmVjdA==, alice", "/mcp, Bearer correct, bob"})
-  void establishesTheIdentityFromTheSelectedAuthenticationScheme(
-      String path, String credentials, String identity) throws Exception {
-    {
-      var app = new Shoostr();
-
-      try (Closeable appCleanup = app::close) {
-        registerAuthenticationGroups(app);
-
-        try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request -> request.path(path).header("Authorization", credentials),
-                  HttpResponse.BodyHandlers.ofString());
-
-          assertEquals(200, result.statusCode());
-          assertEquals(identity, result.body());
-        }
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @CsvSource({"/rest, Bearer correct, Basic", "/mcp, Basic YWxpY2U6Y29ycmVjdA==, Bearer"})
-  void rejectsTheOtherGroupsCredentialSchemeWithTheSelectedChallenge(
-      String path, String credentials, String challenge) throws Exception {
-    {
-      var app = new Shoostr();
-
-      try (Closeable appCleanup1 = app::close) {
-        registerAuthenticationGroups(app);
-
-        try (var test = TestServer.start(app)) {
-          var result =
-              test.send(request -> request.path(path).header("Authorization", credentials));
-
-          assertEquals(401, result.statusCode());
-          assertEquals(challenge, result.headers().firstValue("WWW-Authenticate").orElseThrow());
-        }
-      }
-    }
-  }
-
   private static void registerAuthenticationGroups(Shoostr app) {
     var basic = createBasicForRegisterAuthenticationGroups();
     Authenticator bearerAuthenticator = createBearerAuthenticatorForRegisterAuthenticationGroups();
@@ -117,5 +73,49 @@ class AuthenticationGroupsTest {
 
       return Optional.of(supplied);
     };
+  }
+
+  @ParameterizedTest
+  @CsvSource({"/rest, Basic YWxpY2U6Y29ycmVjdA==, alice", "/mcp, Bearer correct, bob"})
+  void establishesTheIdentityFromTheSelectedAuthenticationScheme(
+      String path, String credentials, String identity) throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        registerAuthenticationGroups(app);
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path(path).header("Authorization", credentials),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals(identity, result.body());
+        }
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"/rest, Bearer correct, Basic", "/mcp, Basic YWxpY2U6Y29ycmVjdA==, Bearer"})
+  void rejectsTheOtherGroupsCredentialSchemeWithTheSelectedChallenge(
+      String path, String credentials, String challenge) throws Exception {
+    {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup1 = app::close) {
+        registerAuthenticationGroups(app);
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(request -> request.path(path).header("Authorization", credentials));
+
+          assertEquals(401, result.statusCode());
+          assertEquals(challenge, result.headers().firstValue("WWW-Authenticate").orElseThrow());
+        }
+      }
+    }
   }
 }

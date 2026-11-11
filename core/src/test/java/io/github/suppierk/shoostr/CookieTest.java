@@ -128,7 +128,7 @@ class CookieTest {
   @Test
   void rejectsStrictlyInvalidCookiesBeforeHooksAndReportsCompletionOnce() throws Exception {
     var admissions = new AtomicInteger();
-    var handlers = new AtomicInteger();
+    final var handlers = new AtomicInteger();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
     app.modifyHttpConfiguration(
         configuration -> configuration.setRequestCookieCompliance(CookieCompliance.RFC6265_STRICT));
@@ -297,7 +297,7 @@ class CookieTest {
   @Test
   void writesExplicitCookieAttributes() throws Exception {
     var base = new Cookie("session", "value");
-    var configured = createConfiguredForWritesExplicitCookieAttributes(base);
+    final var configured = createConfiguredForWritesExplicitCookieAttributes(base);
 
     assertEquals("/", base.path());
     assertNull(base.domain());
@@ -325,7 +325,9 @@ class CookieTest {
       assertEquals(200, result.statusCode());
       assertEquals(
           List.of(
-              "session=value; Path=/app; Domain=example.test; Max-Age=60; Expires=Tue, 01 Jan 2030 00:00:00 GMT; Secure; HttpOnly; SameSite=Lax"),
+              "session=value; Path=/app; Domain=example.test; "
+                  + "Max-Age=60; Expires=Tue, 01 Jan 2030 00:00:00 GMT;"
+                  + " Secure; HttpOnly; SameSite=Lax"),
           result.headers().allValues("Set-Cookie"));
       assertEquals(
           "Thu, 01 Jan 1970 00:00:00 GMT", result.headers().firstValue("Expires").orElseThrow());
@@ -415,8 +417,10 @@ class CookieTest {
           List.of(
               "id=keep; Path=/app",
               "id=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-              "id=; Path=/app; Domain=example.test; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
-              "secure=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly; SameSite=None",
+              "id=; Path=/app; Domain=example.test; Max-Age=0; "
+                  + "Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+              "secure=; Path=/; Max-Age=0; Expires=Thu, 01 Jan "
+                  + "1970 00:00:00 GMT; Secure; HttpOnly; SameSite=None",
               "zero=value; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT"),
           result.headers().allValues("Set-Cookie"));
       assertEquals("value", secured.value());
@@ -470,13 +474,15 @@ class CookieTest {
           List.of(
               "cross=value; Path=/; Secure; SameSite=None",
               "__Secure-id=value; Path=/app; Secure",
-              "__Host-id=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Secure; HttpOnly"),
+              "__Host-id=; Path=/; Max-Age=0; Expires=Thu, 01 "
+                  + "Jan 1970 00:00:00 GMT; Secure; HttpOnly"),
           result.headers().allValues("Set-Cookie"));
     }
   }
 
   @Test
-  @SuppressWarnings("NullAway") // The test verifies that null cookie inputs are rejected.
+  @SuppressWarnings("NullAway")
+  // The test verifies that null cookie inputs are rejected.
   void rejectsInvalidCookiesBeforeChangingHeaders() throws Exception {
     app.routes()
         .get(
@@ -728,7 +734,7 @@ class CookieTest {
   }
 
   @Test
-  void roundTripsAndDeletesThroughAClientCookieStore() throws Exception {
+  void roundTripsAndDeletesThroughClientCookieStore() throws Exception {
 
     app.routes().get("/set", (ignoredRequest, response) -> response.cookie("id", "value"));
     app.routes()

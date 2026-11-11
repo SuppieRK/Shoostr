@@ -29,6 +29,100 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class BufferedRequestBodyTest {
+  private static Content.Chunk[] fragments(byte[] bytes) {
+    int size = 1024;
+    if (bytes.length == 0) {
+      return new Content.Chunk[] {Content.Chunk.from(ByteBuffer.wrap(bytes), true)};
+    }
+
+    var chunks = new ArrayList<Content.Chunk>();
+    for (int offset = 0; offset < bytes.length; offset += size) {
+      int end = Math.min(offset + size, bytes.length);
+      chunks.add(
+          Content.Chunk.from(ByteBuffer.wrap(bytes, offset, end - offset), end == bytes.length));
+    }
+
+    return chunks.toArray(Content.Chunk[]::new);
+  }
+
+  private static Request request(long declaredLength, int limit, Content.Chunk... input) {
+    return request(declaredLength, limit, true, input);
+  }
+
+  private static Request request(
+      long declaredLength, int limit, boolean complete, Content.Chunk... input) {
+    var chunks = new ArrayDeque<>(List.of(input));
+    var failure = new AtomicReference<>(Content.Chunk.EMPTY);
+    final var delegate = nativeRequest(declaredLength, failure, chunks, complete);
+    final var sink = createSinkForRequest();
+
+    var defaults = new Options();
+    var options = new Options();
+    options.setMaxRequestBytes(limit);
+    options.setMaxResponseBytes(defaults.getMaxResponseBytes());
+    options.setStreamBufferBytes(defaults.getStreamBufferBytes());
+    options.setMaxParameters(1000);
+    options.setMultipart(MultipartOptions.defaults());
+
+    return Request.create(delegate, sink, options, Callback.NOOP);
+  }
+
+  private static org.eclipse.jetty.server.Request nativeRequest(
+      long declaredLength,
+      AtomicReference<Chunk> failure,
+      ArrayDeque<Chunk> chunks,
+      boolean complete) {
+    return (org.eclipse.jetty.server.Request)
+        Proxy.newProxyInstance(
+            BufferedRequestBodyTest.class.getClassLoader(),
+            new Class<?>[] {org.eclipse.jetty.server.Request.class},
+            (ignored, method, arguments) ->
+                switch (method.getName()) {
+                  case "getHeaders" -> HttpFields.EMPTY;
+                  case "getMethod" -> "GET";
+                  case "getLength" -> declaredLength;
+                  case "read" -> {
+                    var failed = failure.get();
+                    if (!Content.Chunk.EMPTY.equals(failed)) {
+                      yield failed;
+                    }
+
+                    if (chunks.isEmpty()) {
+                      yield complete ? Content.Chunk.EOF : null;
+                    }
+
+                    yield chunks.removeFirst();
+                  }
+                  case "fail" -> {
+                    failure.compareAndSet(
+                        Content.Chunk.EMPTY, Content.Chunk.from((Throwable) arguments[0]));
+                    chunks.forEach(Content.Chunk::release);
+                    chunks.clear();
+                    yield null;
+                  }
+                  case "demand" -> {
+                    if (!complete && chunks.isEmpty()) {
+                      fail("Input is unavailable after the overflow byte");
+                    }
+
+                    ((Runnable) arguments[0]).run();
+                    yield null;
+                  }
+                  case "addHttpStreamWrapper" -> null;
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
+  }
+
+  private static Response createSinkForRequest() {
+    return (Response)
+        Proxy.newProxyInstance(
+            BufferedRequestBodyTest.class.getClassLoader(),
+            new Class<?>[] {Response.class},
+            (ignoredObject, method, ignoredObjectValues) -> {
+              throw new UnsupportedOperationException(method.getName());
+            });
+  }
+
   @Test
   void rejectsKnownLengthBodyThatEndsBeforeTheDeclaredLength() {
     var request = request(4, 16, Content.Chunk.from(ByteBuffer.wrap(new byte[] {1, 2, 3}), true));
@@ -197,99 +291,5 @@ class BufferedRequestBodyTest {
 
     assertThrows(ContentTooLargeException.class, request::bodyBytes);
     assertThrows(ContentTooLargeException.class, request::bodyBytes);
-  }
-
-  private static Content.Chunk[] fragments(byte[] bytes) {
-    int size = 1024;
-    if (bytes.length == 0) {
-      return new Content.Chunk[] {Content.Chunk.from(ByteBuffer.wrap(bytes), true)};
-    }
-
-    var chunks = new ArrayList<Content.Chunk>();
-    for (int offset = 0; offset < bytes.length; offset += size) {
-      int end = Math.min(offset + size, bytes.length);
-      chunks.add(
-          Content.Chunk.from(ByteBuffer.wrap(bytes, offset, end - offset), end == bytes.length));
-    }
-
-    return chunks.toArray(Content.Chunk[]::new);
-  }
-
-  private static Request request(long declaredLength, int limit, Content.Chunk... input) {
-    return request(declaredLength, limit, true, input);
-  }
-
-  private static Request request(
-      long declaredLength, int limit, boolean complete, Content.Chunk... input) {
-    var chunks = new ArrayDeque<>(List.of(input));
-    var failure = new AtomicReference<>(Content.Chunk.EMPTY);
-    var delegate = nativeRequest(declaredLength, failure, chunks, complete);
-    var sink = createSinkForRequest();
-
-    var defaults = new Options();
-    var options = new Options();
-    options.setMaxRequestBytes(limit);
-    options.setMaxResponseBytes(defaults.getMaxResponseBytes());
-    options.setStreamBufferBytes(defaults.getStreamBufferBytes());
-    options.setMaxParameters(1000);
-    options.setMultipart(MultipartOptions.defaults());
-
-    return Request.create(delegate, sink, options, Callback.NOOP);
-  }
-
-  private static org.eclipse.jetty.server.Request nativeRequest(
-      long declaredLength,
-      AtomicReference<Chunk> failure,
-      ArrayDeque<Chunk> chunks,
-      boolean complete) {
-    return (org.eclipse.jetty.server.Request)
-        Proxy.newProxyInstance(
-            BufferedRequestBodyTest.class.getClassLoader(),
-            new Class<?>[] {org.eclipse.jetty.server.Request.class},
-            (ignored, method, arguments) ->
-                switch (method.getName()) {
-                  case "getHeaders" -> HttpFields.EMPTY;
-                  case "getMethod" -> "GET";
-                  case "getLength" -> declaredLength;
-                  case "read" -> {
-                    var failed = failure.get();
-                    if (!Content.Chunk.EMPTY.equals(failed)) {
-                      yield failed;
-                    }
-
-                    if (chunks.isEmpty()) {
-                      yield complete ? Content.Chunk.EOF : null;
-                    }
-
-                    yield chunks.removeFirst();
-                  }
-                  case "fail" -> {
-                    failure.compareAndSet(
-                        Content.Chunk.EMPTY, Content.Chunk.from((Throwable) arguments[0]));
-                    chunks.forEach(Content.Chunk::release);
-                    chunks.clear();
-                    yield null;
-                  }
-                  case "demand" -> {
-                    if (!complete && chunks.isEmpty()) {
-                      fail("Input is unavailable after the overflow byte");
-                    }
-
-                    ((Runnable) arguments[0]).run();
-                    yield null;
-                  }
-                  case "addHttpStreamWrapper" -> null;
-                  default -> throw new UnsupportedOperationException(method.getName());
-                });
-  }
-
-  private static Response createSinkForRequest() {
-    return (Response)
-        Proxy.newProxyInstance(
-            BufferedRequestBodyTest.class.getClassLoader(),
-            new Class<?>[] {Response.class},
-            (ignoredObject, method, ignoredObjectValues) -> {
-              throw new UnsupportedOperationException(method.getName());
-            });
   }
 }

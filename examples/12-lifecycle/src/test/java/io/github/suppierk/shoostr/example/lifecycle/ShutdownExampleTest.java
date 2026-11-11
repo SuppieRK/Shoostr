@@ -133,7 +133,7 @@ class ShutdownExampleTest {
   }
 
   @Test
-  void disposesApplicationResourcesBeforeRethrowingASignallingError() throws Exception {
+  void disposesApplicationResourcesBeforeRethrowingSignallingError() throws Exception {
     var disposed = new AtomicInteger();
 
     var failure = assertThrows(AssertionError.class, () -> fail("Signalling failed"));

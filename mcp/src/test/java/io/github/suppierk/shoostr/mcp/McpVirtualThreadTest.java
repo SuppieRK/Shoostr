@@ -223,7 +223,7 @@ class McpVirtualThreadTest {
 
             return new McpIdentity("public", McpTransportContext.EMPTY, expiry.get());
           },
-          (ignored, ignoredJSONRPCMessage) -> {});
+          (ignored, ignoredJsonRpcMessage) -> {});
     }
 
     private static HttpResponse<InputStream> sendResponseForMain(TestServer test, String session)
@@ -346,10 +346,10 @@ class McpVirtualThreadTest {
                   .header("Accept", "application/json, text/event-stream")
                   .body(
                       """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"carrier-fixture","version":"1.0"}}}
-              """
+                      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                        "protocolVersion":"2025-11-25","capabilities":{},
+                        "clientInfo":{"name":"carrier-fixture","version":"1.0"}}}
+                      """
                           .getBytes(StandardCharsets.UTF_8)));
     }
   }

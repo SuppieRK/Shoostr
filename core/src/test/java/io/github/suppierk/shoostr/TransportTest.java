@@ -23,7 +23,6 @@ import java.net.SocketAddress;
 import java.net.SocketTimeoutException;
 import java.net.URI;
 import java.net.http.HttpClient;
-import java.net.http.HttpClient.Builder;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
@@ -84,6 +83,65 @@ class TransportTest {
   private static final char[] PASSWORD = "changeit".toCharArray();
   @TempDir private Path temporary;
 
+  private static HttpClient secureClient(HttpClient.Version version) throws Exception {
+    var store = testKeyStore();
+    var context = trustedClientContext(store);
+
+    return secureClientProperties(version, context).build();
+  }
+
+  private static SSLContext trustedClientContext(KeyStore store) throws Exception {
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(store);
+
+    var context = SSLContext.getInstance("TLS");
+    context.init(null, trust.getTrustManagers(), null);
+
+    return context;
+  }
+
+  private static HttpClient.Builder secureClientProperties(
+      HttpClient.Version version, SSLContext context) {
+    return HttpClient.newBuilder()
+        .sslContext(context)
+        .version(version)
+        .connectTimeout(Duration.ofSeconds(3));
+  }
+
+  private static void enableMutualTls(Shoostr app) throws Exception {
+    var store = testKeyStore();
+    app.tls(
+        tls -> {
+          tls.setKeyStore(store);
+          tls.setKeyStorePassword(String.valueOf(PASSWORD));
+          tls.setTrustStore(store);
+          tls.setNeedClientAuth(true);
+          tls.setIncludeProtocols("TLSv1.2");
+        });
+  }
+
+  private static SSLContext mutualTlsContext(KeyStore identity) throws Exception {
+    var keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+    keys.init(identity, PASSWORD);
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(testKeyStore());
+    var context = SSLContext.getInstance("TLS");
+    context.init(keys.getKeyManagers(), trust.getTrustManagers(), null);
+
+    return context;
+  }
+
+  private static KeyStore testKeyStore() throws Exception {
+    var store = KeyStore.getInstance("PKCS12");
+
+    try (var input =
+        Objects.requireNonNull(TransportTest.class.getResourceAsStream(KEYSTORE_RESOURCE))) {
+      store.load(input, PASSWORD);
+    }
+
+    return store;
+  }
+
   @Test
   void tlsServesAnHttpsClientAndReportsDirectSecureMetadata() throws Exception {
     {
@@ -121,7 +179,7 @@ class TransportTest {
   }
 
   @Test
-  void admitsATrustedClientCertificateWhenMutualTlsIsRequired() throws Exception {
+  void admitsTrustedClientCertificateWhenMutualTlsIsRequired() throws Exception {
     var identity = testKeyStore();
     var context = mutualTlsContext(identity);
 
@@ -134,13 +192,13 @@ class TransportTest {
 
       try (Closeable appCleanup1 = app::close;
           var client =
-              openClientForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(context)) {
+              openClientForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(context)) {
         enableMutualTls(app);
         app.routes().get("/secure", (ignored, response) -> response.text("trusted client"));
         app.start();
 
         var result =
-            sendResultForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(client, app);
+            sendResultForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(client, app);
 
         assertEquals(200, result.statusCode());
         assertEquals("trusted client", result.body());
@@ -153,21 +211,21 @@ class TransportTest {
     }
   }
 
-  private HttpClient openClientForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(
+  private HttpClient openClientForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(
       SSLContext context) {
-    return clientPropertiesForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(context)
+    return clientPropertiesForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(context)
         .build();
   }
 
-  private Builder clientPropertiesForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(
-      SSLContext context) {
+  private HttpClient.Builder
+      clientPropertiesForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(SSLContext context) {
     return HttpClient.newBuilder()
         .sslContext(context)
         .version(HttpClient.Version.HTTP_1_1)
         .connectTimeout(Duration.ofSeconds(3));
   }
 
-  private HttpResponse<String> sendResultForAdmitsATrustedClientCertificateWhenMutualTlsIsRequired(
+  private HttpResponse<String> sendResultForAdmitsTrustedClientCertificateWhenMutualTlsIsRequired(
       HttpClient client, Shoostr app) throws IOException, InterruptedException {
     return client.send(
         HttpRequest.newBuilder(URI.create("https://localhost:" + app.port() + "/secure"))
@@ -225,7 +283,7 @@ class TransportTest {
         .build();
   }
 
-  private Builder
+  private HttpClient.Builder
       trustedClientPropertiesForRejectsAnAbsentClientCertificateDuringMutualTlsHandshake()
           throws Exception {
     return HttpClient.newBuilder()
@@ -308,7 +366,7 @@ class TransportTest {
         .build();
   }
 
-  private Builder
+  private HttpClient.Builder
       trustedClientPropertiesForRejectsAnUntrustedClientCertificateDuringMutualTlsHandshake()
           throws Exception {
     return HttpClient.newBuilder()
@@ -502,7 +560,7 @@ class TransportTest {
   }
 
   @Test
-  void roundTripsANamedBinaryMultipartUploadOverTlsHttp2() throws Exception {
+  void roundTripsNamedBinaryMultipartUploadOverTlsHttp2() throws Exception {
     var content = new byte[19_456];
     Arrays.fill(content, (byte) 0xA5);
     content[0] = 0;
@@ -552,7 +610,7 @@ class TransportTest {
         app.start();
 
         var result =
-            sendResultForRoundTripsANamedBinaryMultipartUploadOverTlsHttp2(client, app, body);
+            sendResultForRoundTripsNamedBinaryMultipartUploadOverTlsHttp2(client, app, body);
 
         assertEquals(200, result.statusCode());
         assertEquals(HttpClient.Version.HTTP_2, result.version());
@@ -565,7 +623,7 @@ class TransportTest {
     }
   }
 
-  private HttpResponse<byte[]> sendResultForRoundTripsANamedBinaryMultipartUploadOverTlsHttp2(
+  private HttpResponse<byte[]> sendResultForRoundTripsNamedBinaryMultipartUploadOverTlsHttp2(
       HttpClient client, Shoostr app, ByteArrayOutputStream body)
       throws IOException, InterruptedException {
     return client.send(
@@ -615,7 +673,8 @@ class TransportTest {
   }
 
   private byte[] createContentForRoundTripsRawJsonBytesOverTlsHttp2WithoutObjectConversion() {
-    return """
+    return
+        """
         {
           "name": "café",
           "literal": "\\u20ac",
@@ -2501,64 +2560,6 @@ class TransportTest {
     }
 
     return path;
-  }
-
-  private static HttpClient secureClient(HttpClient.Version version) throws Exception {
-    var store = testKeyStore();
-    var context = trustedClientContext(store);
-
-    return secureClientProperties(version, context).build();
-  }
-
-  private static SSLContext trustedClientContext(KeyStore store) throws Exception {
-    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-    trust.init(store);
-
-    var context = SSLContext.getInstance("TLS");
-    context.init(null, trust.getTrustManagers(), null);
-
-    return context;
-  }
-
-  private static Builder secureClientProperties(HttpClient.Version version, SSLContext context) {
-    return HttpClient.newBuilder()
-        .sslContext(context)
-        .version(version)
-        .connectTimeout(Duration.ofSeconds(3));
-  }
-
-  private static void enableMutualTls(Shoostr app) throws Exception {
-    var store = testKeyStore();
-    app.tls(
-        tls -> {
-          tls.setKeyStore(store);
-          tls.setKeyStorePassword(String.valueOf(PASSWORD));
-          tls.setTrustStore(store);
-          tls.setNeedClientAuth(true);
-          tls.setIncludeProtocols("TLSv1.2");
-        });
-  }
-
-  private static SSLContext mutualTlsContext(KeyStore identity) throws Exception {
-    var keys = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-    keys.init(identity, PASSWORD);
-    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-    trust.init(testKeyStore());
-    var context = SSLContext.getInstance("TLS");
-    context.init(keys.getKeyManagers(), trust.getTrustManagers(), null);
-
-    return context;
-  }
-
-  private static KeyStore testKeyStore() throws Exception {
-    var store = KeyStore.getInstance("PKCS12");
-
-    try (var input =
-        Objects.requireNonNull(TransportTest.class.getResourceAsStream(KEYSTORE_RESOURCE))) {
-      store.load(input, PASSWORD);
-    }
-
-    return store;
   }
 
   private KeyStore untrustedClientKeyStore() throws Exception {

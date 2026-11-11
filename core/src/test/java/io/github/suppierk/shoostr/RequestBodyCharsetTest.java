@@ -35,6 +35,39 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class RequestBodyCharsetTest {
+  private static Charset mutatingCharset(String name, AtomicReference<ByteBuffer> exposed) {
+    // A custom decoder can use a standard name; the name must not grant cache access.
+    return new Charset(name, new String[0]) {
+      @Override
+      public boolean contains(Charset charset) {
+        return false;
+      }
+
+      @Override
+      public CharsetDecoder newDecoder() {
+        return new CharsetDecoder(this, 1, 1) {
+          @Override
+          protected CoderResult decodeLoop(ByteBuffer input, CharBuffer output) {
+            while (input.hasRemaining() && output.hasRemaining()) {
+              output.put(Character.toUpperCase((char) Byte.toUnsignedInt(input.get())));
+            }
+            exposed.set(input);
+            if (!input.isReadOnly() && input.limit() > 0) {
+              input.put(0, (byte) 'X');
+            }
+
+            return input.hasRemaining() ? CoderResult.OVERFLOW : CoderResult.UNDERFLOW;
+          }
+        };
+      }
+
+      @Override
+      public CharsetEncoder newEncoder() {
+        throw new UnsupportedOperationException("Decoding fixture only");
+      }
+    };
+  }
+
   @Test
   void decodesUsingTheSuppliedCharsetInsteadOfDeclaredMetadata() throws Exception {
     {
@@ -168,7 +201,7 @@ class RequestBodyCharsetTest {
 
   @ParameterizedTest
   @ValueSource(strings = {"UTF-8", "x-mutating"})
-  void isolatesCachedBytesFromACustomDecoderThatMutatesAndRetainsItsInput(String name)
+  void isolatesCachedBytesFromCustomDecoderThatMutatesAndRetainsItsInput(String name)
       throws Exception {
     var exposed = new AtomicReference<ByteBuffer>();
     var charset = mutatingCharset(name, exposed);
@@ -185,8 +218,9 @@ class RequestBodyCharsetTest {
 
                   var retained = exposed.get();
                   if (retained != null && !retained.isReadOnly()) {
-                    for (int index = 0; index < retained.limit(); index++)
+                    for (int index = 0; index < retained.limit(); index++) {
                       retained.put(index, (byte) 'Y');
+                    }
                   }
 
                   assertArrayEquals(new byte[] {'s', 'a', 'f', 'e'}, request.bodyBytes());
@@ -267,7 +301,7 @@ class RequestBodyCharsetTest {
                   HttpResponse.BodyHandlers.ofString());
 
           assertEquals(200, malformed.statusCode());
-          assertEquals("\uFFFD", malformed.body());
+          assertEquals("�", malformed.body());
 
           var empty =
               test.send(
@@ -554,38 +588,5 @@ class RequestBodyCharsetTest {
         }
       }
     }
-  }
-
-  private static Charset mutatingCharset(String name, AtomicReference<ByteBuffer> exposed) {
-    // A custom decoder can use a standard name; the name must not grant cache access.
-    return new Charset(name, new String[0]) {
-      @Override
-      public boolean contains(Charset charset) {
-        return false;
-      }
-
-      @Override
-      public CharsetDecoder newDecoder() {
-        return new CharsetDecoder(this, 1, 1) {
-          @Override
-          protected CoderResult decodeLoop(ByteBuffer input, CharBuffer output) {
-            while (input.hasRemaining() && output.hasRemaining()) {
-              output.put(Character.toUpperCase((char) Byte.toUnsignedInt(input.get())));
-            }
-            exposed.set(input);
-            if (!input.isReadOnly() && input.limit() > 0) {
-              input.put(0, (byte) 'X');
-            }
-
-            return input.hasRemaining() ? CoderResult.OVERFLOW : CoderResult.UNDERFLOW;
-          }
-        };
-      }
-
-      @Override
-      public CharsetEncoder newEncoder() {
-        throw new UnsupportedOperationException("Decoding fixture only");
-      }
-    };
   }
 }

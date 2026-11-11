@@ -70,6 +70,119 @@ import org.junit.jupiter.params.provider.ValueSource;
 class StaticResourcesTest {
   @TempDir Path temporaryDirectory;
 
+  private static void registerComposedStaticSources(
+      Routes routes, Path filesystem, boolean filesystemFirst) {
+    if (filesystemFirst) {
+      routes.staticFiles("/assets", filesystem).classpathResources("/assets", "/issue76-composed");
+    } else {
+      routes.classpathResources("/assets", "/issue76-composed").staticFiles("/assets", filesystem);
+    }
+  }
+
+  private static void fileLink(Path link, Path target) throws IOException {
+    try {
+      Files.createSymbolicLink(link, target);
+    } catch (FileSystemException failure) {
+      var reason = Objects.requireNonNullElse(failure.getReason(), "");
+      if (!reason.contains("privilege")
+          && !reason.contains("not permitted")
+          && !reason.contains("not supported")) {
+        throw failure;
+      }
+
+      assumeTrue(false, "File symbolic links unavailable: " + reason);
+    }
+  }
+
+  private static void directoryLink(Path link, Path target) throws Exception {
+    if (System.getProperty("os.name").startsWith("Windows")) {
+      var process =
+          new ProcessBuilder(
+                  "cmd.exe", "/d", "/c", "mklink", "/J", link.toString(), target.toString())
+              .redirectErrorStream(true)
+              .start();
+      var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+
+      assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction creation timed out");
+      assertEquals(0, process.exitValue(), output);
+    } else {
+      Files.createSymbolicLink(link, target);
+    }
+  }
+
+  private static HttpClient staticTransportClient(Shoostr app, boolean tls, boolean http2)
+      throws Exception {
+    return staticTransportProperties(app, tls, http2).build();
+  }
+
+  private static HttpClient.Builder staticTransportProperties(
+      Shoostr app, boolean tls, boolean http2) throws Exception {
+    var client =
+        HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(3))
+            .version(http2 ? HttpClient.Version.HTTP_2 : HttpClient.Version.HTTP_1_1);
+    if (tls) {
+      var store = staticTransportIdentity();
+
+      configureStaticTransportTls(app, store);
+
+      var context = staticTransportTrust(store);
+      client.sslContext(context);
+    }
+
+    return client;
+  }
+
+  private static KeyStore staticTransportIdentity() throws Exception {
+    var store = KeyStore.getInstance("PKCS12");
+
+    try (var input =
+        Objects.requireNonNull(
+            StaticResourcesTest.class.getResourceAsStream("/localhost-test.p12"))) {
+      store.load(input, "changeit".toCharArray());
+    }
+
+    return store;
+  }
+
+  private static void configureStaticTransportTls(Shoostr app, KeyStore store) {
+    app.tls(
+        context -> {
+          context.setKeyStore(store);
+          context.setKeyStorePassword("changeit");
+        });
+  }
+
+  private static SSLContext staticTransportTrust(KeyStore store) throws Exception {
+    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
+    trust.init(store);
+
+    var context = SSLContext.getInstance("TLS");
+    context.init(null, trust.getTrustManagers(), null);
+
+    return context;
+  }
+
+  private static FileSystem registeredArchiveFilesystem(Routes routes)
+      throws ReflectiveOperationException {
+    Field field = Routes.class.getDeclaredField("staticFiles");
+    field.setAccessible(true);
+    var staticFiles = (List<?>) field.get(routes);
+    var files = (StaticFiles) staticFiles.getFirst();
+
+    return Objects.requireNonNull(files.archiveFileSystem());
+  }
+
+  private static void writeArchive(Path archive) throws Exception {
+    try (var output = new JarOutputStream(Files.newOutputStream(archive))) {
+      output.putNextEntry(new JarEntry("archive/"));
+      output.closeEntry();
+      output.putNextEntry(new JarEntry("archive/resource.txt"));
+      output.write("archived resource".getBytes(StandardCharsets.UTF_8));
+      output.closeEntry();
+    }
+  }
+
   @ParameterizedTest
   @CsvSource({
     "data.json,application/json,false",
@@ -132,7 +245,7 @@ class StaticResourcesTest {
   }
 
   @Test
-  void rejectsFilesystemsWithoutANativeJettyResource() throws Exception {
+  void rejectsFilesystemsWithoutNativeJettyResource() throws Exception {
     var archive = temporaryDirectory.resolve("resources.zip");
 
     try (var filesystem =
@@ -189,7 +302,7 @@ class StaticResourcesTest {
 
   @ParameterizedTest
   @CsvSource({"percent%.txt,percent%25.txt", "literal%20.txt,literal%2520.txt"})
-  void resolvesLiteralPercentFilenamesWithoutASecondDecode(String filename, String encoded)
+  void resolvesLiteralPercentFilenamesWithoutSecondDecode(String filename, String encoded)
       throws Exception {
     Files.writeString(temporaryDirectory.resolve(filename), filename);
 
@@ -623,11 +736,9 @@ class StaticResourcesTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup15 = app::close) {
-        var cors = createCorsForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt();
+        var cors = createCorsForSpaPreflight();
 
-        var admission =
-            createAdmissionForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
-                admissions);
+        var admission = createAdmissionForSpaPreflight(admissions);
         app.routes()
             .path(
                 "/",
@@ -643,9 +754,7 @@ class StaticResourcesTest {
 
         try (var test = TestServer.start(app)) {
 
-          var preflight =
-              sendPreflightRequestForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
-                  test);
+          var preflight = sendPreflightRequestForSpaPreflight(test);
 
           assertEquals(204, preflight.statusCode());
           assertEquals(0, admissions.get());
@@ -665,9 +774,7 @@ class StaticResourcesTest {
               "https://client.example",
               denied.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
 
-          var allowed =
-              sendAllowedRequestForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
-                  test);
+          var allowed = sendAllowedRequestForSpaPreflight(test);
 
           assertEquals(200, allowed.statusCode());
           assertEquals("<h1>app</h1>", allowed.body());
@@ -680,7 +787,7 @@ class StaticResourcesTest {
     }
   }
 
-  private Cors createCorsForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt() {
+  private Cors createCorsForSpaPreflight() {
     return new Cors(
         new CorsPolicy(
             Set.of("https://client.example"),
@@ -691,9 +798,7 @@ class StaticResourcesTest {
             5));
   }
 
-  private AdmissionExtension
-      createAdmissionForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
-          AtomicInteger admissions) {
+  private AdmissionExtension createAdmissionForSpaPreflight(AtomicInteger admissions) {
     return new AdmissionExtension(
         (request, ignoredResponse) -> {
           admissions.incrementAndGet();
@@ -703,9 +808,8 @@ class StaticResourcesTest {
         });
   }
 
-  private HttpResponse<String>
-      sendPreflightRequestForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendPreflightRequestForSpaPreflight(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -717,9 +821,8 @@ class StaticResourcesTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<String>
-      sendAllowedRequestForCorsPreflightSkipsScopedAdmissionButActualSpaFallbackRequiresIt(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendAllowedRequestForSpaPreflight(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1216,7 +1319,7 @@ class StaticResourcesTest {
                   HttpResponse.BodyHandlers.ofString());
           var conditional =
               sendConditionalRequestForSupportsHeadRangesAndValidatorsForMountedFiles(test, full);
-          var head =
+          final var head =
               test.send(
                   request -> request.path("/assets/site.txt").method("HEAD"),
                   HttpResponse.BodyHandlers.ofString());
@@ -1516,9 +1619,7 @@ class StaticResourcesTest {
 
         try (var test = TestServer.start(app)) {
 
-          var full =
-              sendFullRequestForReturnsNotModifiedForMountedFileValidatorsWithCompressionEnabled(
-                  test, acceptEncoding);
+          var full = sendFullRequestForCompressedFileValidator(test, acceptEncoding);
 
           assertEquals(200, full.statusCode());
           assertEquals(
@@ -1527,7 +1628,7 @@ class StaticResourcesTest {
           var validator = full.headers().firstValue(responseHeader).orElseThrow();
 
           var conditional =
-              sendConditionalRequestForReturnsNotModifiedForMountedFileValidatorsWithCompressionEnabled(
+              sendConditionalRequestForCompressedFileValidator(
                   test, acceptEncoding, requestHeader, validator);
 
           assertEquals(304, conditional.statusCode());
@@ -1539,9 +1640,8 @@ class StaticResourcesTest {
     }
   }
 
-  private HttpResponse<byte[]>
-      sendFullRequestForReturnsNotModifiedForMountedFileValidatorsWithCompressionEnabled(
-          TestServer test, String acceptEncoding) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendFullRequestForCompressedFileValidator(
+      TestServer test, String acceptEncoding) throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1550,10 +1650,9 @@ class StaticResourcesTest {
                 .header("Accept-Encoding", acceptEncoding));
   }
 
-  private HttpResponse<byte[]>
-      sendConditionalRequestForReturnsNotModifiedForMountedFileValidatorsWithCompressionEnabled(
-          TestServer test, String acceptEncoding, String requestHeader, String validator)
-          throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendConditionalRequestForCompressedFileValidator(
+      TestServer test, String acceptEncoding, String requestHeader, String validator)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1957,7 +2056,7 @@ class StaticResourcesTest {
 
   @Test
   @Timeout(20)
-  void servesConcurrentRequestsFromATrustedReplacementDirectory() throws Exception {
+  void servesConcurrentRequestsFromTrustedReplacementDirectory() throws Exception {
     var mounted = Files.createDirectories(temporaryDirectory.resolve("mounted"));
     var outside = Files.createDirectories(temporaryDirectory.resolve("outside"));
     for (var base : List.of(mounted, outside)) {
@@ -1997,7 +2096,7 @@ class StaticResourcesTest {
                         var prefix = (turn & 1) == 0 ? "" : "nested/deeper/";
                         int index = (id + turn) % 4;
                         var response =
-                            sendResponseForServesConcurrentRequestsFromATrustedReplacementDirectory(
+                            sendResponseForServesConcurrentRequestsFromTrustedReplacementDirectory(
                                 test, prefix, index);
 
                         assertEquals(200, response.statusCode());
@@ -2013,14 +2112,16 @@ class StaticResourcesTest {
             start.countDown();
           }
 
-          for (var task : tasks) task.get(10, TimeUnit.SECONDS);
+          for (var task : tasks) {
+            task.get(10, TimeUnit.SECONDS);
+          }
         }
       }
     }
   }
 
   private HttpResponse<String>
-      sendResponseForServesConcurrentRequestsFromATrustedReplacementDirectory(
+      sendResponseForServesConcurrentRequestsFromTrustedReplacementDirectory(
           TestServer test, String prefix, int index) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -2233,123 +2334,11 @@ class StaticResourcesTest {
           assertEquals(200, result.statusCode());
           assertEquals("download", result.body());
           assertEquals(
-              "attachment; filename=\"r_sum_ 2026.txt\"; filename*=UTF-8''r%C3%A9sum%C3%A9%202026.txt",
+              "attachment; filename=\"r_sum_ 2026.txt\"; "
+                  + "filename*=UTF-8''r%C3%A9sum%C3%A9%202026.txt",
               result.headers().firstValue("Content-Disposition").orElseThrow());
         }
       }
-    }
-  }
-
-  private static void registerComposedStaticSources(
-      Routes routes, Path filesystem, boolean filesystemFirst) {
-    if (filesystemFirst) {
-      routes.staticFiles("/assets", filesystem).classpathResources("/assets", "/issue76-composed");
-    } else {
-      routes.classpathResources("/assets", "/issue76-composed").staticFiles("/assets", filesystem);
-    }
-  }
-
-  private static void fileLink(Path link, Path target) throws IOException {
-    try {
-      Files.createSymbolicLink(link, target);
-    } catch (FileSystemException failure) {
-      var reason = Objects.requireNonNullElse(failure.getReason(), "");
-      if (!reason.contains("privilege")
-          && !reason.contains("not permitted")
-          && !reason.contains("not supported")) {
-        throw failure;
-      }
-
-      assumeTrue(false, "File symbolic links unavailable: " + reason);
-    }
-  }
-
-  private static void directoryLink(Path link, Path target) throws Exception {
-    if (System.getProperty("os.name").startsWith("Windows")) {
-      var process =
-          new ProcessBuilder(
-                  "cmd.exe", "/d", "/c", "mklink", "/J", link.toString(), target.toString())
-              .redirectErrorStream(true)
-              .start();
-      var output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-
-      assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction creation timed out");
-      assertEquals(0, process.exitValue(), output);
-    } else {
-      Files.createSymbolicLink(link, target);
-    }
-  }
-
-  private static HttpClient staticTransportClient(Shoostr app, boolean tls, boolean http2)
-      throws Exception {
-    return staticTransportProperties(app, tls, http2).build();
-  }
-
-  private static HttpClient.Builder staticTransportProperties(
-      Shoostr app, boolean tls, boolean http2) throws Exception {
-    var client =
-        HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(3))
-            .version(http2 ? HttpClient.Version.HTTP_2 : HttpClient.Version.HTTP_1_1);
-    if (tls) {
-      var store = staticTransportIdentity();
-
-      configureStaticTransportTls(app, store);
-
-      var context = staticTransportTrust(store);
-      client.sslContext(context);
-    }
-
-    return client;
-  }
-
-  private static KeyStore staticTransportIdentity() throws Exception {
-    var store = KeyStore.getInstance("PKCS12");
-
-    try (var input =
-        Objects.requireNonNull(
-            StaticResourcesTest.class.getResourceAsStream("/localhost-test.p12"))) {
-      store.load(input, "changeit".toCharArray());
-    }
-
-    return store;
-  }
-
-  private static void configureStaticTransportTls(Shoostr app, KeyStore store) {
-    app.tls(
-        context -> {
-          context.setKeyStore(store);
-          context.setKeyStorePassword("changeit");
-        });
-  }
-
-  private static SSLContext staticTransportTrust(KeyStore store) throws Exception {
-    var trust = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
-    trust.init(store);
-
-    var context = SSLContext.getInstance("TLS");
-    context.init(null, trust.getTrustManagers(), null);
-
-    return context;
-  }
-
-  private static FileSystem registeredArchiveFilesystem(Routes routes)
-      throws ReflectiveOperationException {
-    Field field = Routes.class.getDeclaredField("staticFiles");
-    field.setAccessible(true);
-    var staticFiles = (List<?>) field.get(routes);
-    var files = (StaticFiles) staticFiles.getFirst();
-
-    return Objects.requireNonNull(files.archiveFileSystem());
-  }
-
-  private static void writeArchive(Path archive) throws Exception {
-    try (var output = new JarOutputStream(Files.newOutputStream(archive))) {
-      output.putNextEntry(new JarEntry("archive/"));
-      output.closeEntry();
-      output.putNextEntry(new JarEntry("archive/resource.txt"));
-      output.write("archived resource".getBytes(StandardCharsets.UTF_8));
-      output.closeEntry();
     }
   }
 }

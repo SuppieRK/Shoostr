@@ -52,6 +52,11 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class NativeSessionLifecycleTest {
+  private static Stream<Arguments> proxyCookieConfigurations() {
+    return Arrays.stream(ForwardedHeaders.values())
+        .flatMap(family -> Stream.of(false, true).map(secure -> Arguments.of(family, secure)));
+  }
+
   @Test
   void readsExistingSessionsAfterCommitButRejectsRenewalAndSameExchangeRecreation()
       throws Exception {
@@ -70,7 +75,7 @@ class NativeSessionLifecycleTest {
             .get(
                 "/stream",
                 (request, response) -> {
-                  var identifier = request.getSession().orElseThrow().getId();
+                  final var identifier = request.getSession().orElseThrow().getId();
                   var output = response.startStream("text/plain");
                   output.write("prefix:");
                   output.flush();
@@ -144,7 +149,7 @@ class NativeSessionLifecycleTest {
   }
 
   @Test
-  void rejectsAHandlerSpecificIdManagerBeforeConnectorStartupAndStopsTheOwnedHandler()
+  void rejectsHandlerSpecificIdManagerBeforeConnectorStartupAndStopsTheOwnedHandler()
       throws Exception {
     var starts = new AtomicInteger();
     var handler = new AtomicReference<SessionHandler>();
@@ -343,11 +348,8 @@ class NativeSessionLifecycleTest {
     var writes = new AtomicInteger();
     var cache = new AtomicReference<DefaultSessionCache>();
     var csrf = Csrf.builder().trustedOrigins("https://client.example").build();
-    var cors =
-        createCorsForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie();
-    var authentication =
-        createAuthenticationForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie(
-            authenticated);
+    var cors = createCorsForSessionBypass();
+    var authentication = createAuthenticationForSessionBypass(authenticated);
 
     {
       var app = new Shoostr();
@@ -355,9 +357,7 @@ class NativeSessionLifecycleTest {
       try (Closeable appCleanup5 = app::close) {
         app.sessions(
                 handler -> {
-                  var store =
-                      createStoreForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie(
-                          loads);
+                  var store = createStoreForSessionBypass(loads);
                   store.setStoreDir(directory.toFile());
                   var nativeCache = new DefaultSessionCache(handler);
                   nativeCache.setSessionDataStore(store);
@@ -407,9 +407,7 @@ class NativeSessionLifecycleTest {
           await().atMost(Duration.ofSeconds(5)).until(() -> cache.get().getSessionsCurrent() == 0);
           loads.set(0);
           for (var origin : List.of("https://client.example", "https://denied.example")) {
-            var preflight =
-                sendPreflightRequestForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie(
-                    test, origin, cookie);
+            var preflight = sendPreflightRequestForSessionBypass(test, origin, cookie);
 
             assertEquals(
                 "https://client.example".equals(origin) ? 204 : 403, preflight.statusCode());
@@ -420,18 +418,14 @@ class NativeSessionLifecycleTest {
           assertEquals(0, authenticated.get());
           assertEquals(0, writes.get());
 
-          var denied =
-              sendDeniedRequestForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie(
-                  test, cookie);
+          var denied = sendDeniedRequestForSessionBypass(test, cookie);
 
           assertEquals(403, denied.statusCode());
           assertTrue(loads.get() > 0);
           assertEquals(1, authenticated.get());
           assertEquals(0, writes.get());
 
-          var accepted =
-              sendAcceptedRequestForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie(
-                  test, cookie, created);
+          var accepted = sendAcceptedRequestForSessionBypass(test, cookie, created);
 
           assertEquals(200, accepted.statusCode());
           assertEquals("alice:dark", accepted.body());
@@ -442,8 +436,7 @@ class NativeSessionLifecycleTest {
     }
   }
 
-  private Cors
-      createCorsForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie() {
+  private Cors createCorsForSessionBypass() {
     return new Cors(
         CorsPolicy.builder()
             .origins("https://client.example")
@@ -453,9 +446,8 @@ class NativeSessionLifecycleTest {
             .build());
   }
 
-  private AuthenticationExtension
-      createAuthenticationForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie(
-          AtomicInteger authenticated) {
+  private AuthenticationExtension createAuthenticationForSessionBypass(
+      AtomicInteger authenticated) {
     return new AuthenticationExtension() {
       @Override
       public void handle(Request request, Response response) {
@@ -471,9 +463,7 @@ class NativeSessionLifecycleTest {
     };
   }
 
-  private FileSessionDataStore
-      createStoreForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie(
-          AtomicInteger loads) {
+  private FileSessionDataStore createStoreForSessionBypass(AtomicInteger loads) {
     return new FileSessionDataStore() {
       @Override
       public SessionData doLoad(String id) throws Exception {
@@ -484,9 +474,8 @@ class NativeSessionLifecycleTest {
     };
   }
 
-  private HttpResponse<byte[]>
-      sendPreflightRequestForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie(
-          TestServer test, String origin, String cookie) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendPreflightRequestForSessionBypass(
+      TestServer test, String origin, String cookie) throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -498,9 +487,8 @@ class NativeSessionLifecycleTest {
                 .header("Access-Control-Request-Headers", "Authorization, X-CSRF-Token"));
   }
 
-  private HttpResponse<byte[]>
-      sendDeniedRequestForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie(
-          TestServer test, String cookie) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendDeniedRequestForSessionBypass(TestServer test, String cookie)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -511,10 +499,9 @@ class NativeSessionLifecycleTest {
                 .header("Authorization", "Bearer secret"));
   }
 
-  private HttpResponse<String>
-      sendAcceptedRequestForBypassesPersistedSessionAccessAndAdmissionForPreflightWithAnExistingCookie(
-          TestServer test, String cookie, HttpResponse<String> created)
-          throws IOException, InterruptedException {
+  private HttpResponse<String> sendAcceptedRequestForSessionBypass(
+      TestServer test, String cookie, HttpResponse<String> created)
+      throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -667,10 +654,5 @@ class NativeSessionLifecycleTest {
     }
 
     assertTrue(nativeHandler.get().isStopped());
-  }
-
-  private static Stream<Arguments> proxyCookieConfigurations() {
-    return Arrays.stream(ForwardedHeaders.values())
-        .flatMap(family -> Stream.of(false, true).map(secure -> Arguments.of(family, secure)));
   }
 }

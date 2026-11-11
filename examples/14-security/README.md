@@ -11,7 +11,8 @@ docker compose -f examples/14-security/compose.yaml up --build -d
 
 Startup is asynchronous. Check diagnostics with `docker compose -f examples/14-security/compose.yaml logs -f app`.
 Open `http://127.0.0.1:8080/public`. Expect public.
-Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and
+use that port in requests.
 Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
 are for trusted local development. Direct Java runs use the default wildcard listener.
 
@@ -43,13 +44,20 @@ Consumer recipes cover [authentication](../../site/src/content/docs/security/aut
 
 The consumer recipes use seven self-contained factories with matching tests:
 
-- [RouteAuthenticationExample](src/main/java/io/github/suppierk/shoostr/example/authentication/RouteAuthenticationExample.java) — route-selected principals and permission checks.
-- [Pac4jAuthenticationExample](src/main/java/io/github/suppierk/shoostr/example/authentication/Pac4jAuthenticationExample.java) — direct credential validation and role authorization.
-- [SessionExample](src/main/java/io/github/suppierk/shoostr/example/authentication/SessionExample.java) — cookie policy, identifier renewal, invalidation, and an explicit file store.
-- [CsrfProtectionExample](src/main/java/io/github/suppierk/shoostr/example/authentication/CsrfProtectionExample.java) — session-bound tokens, strict source checks and selected write protection.
-- [LoginLogoutExample](src/main/java/io/github/suppierk/shoostr/example/authentication/LoginLogoutExample.java) — application login/logout with native session transitions and fresh CSRF token delivery.
-- [CorsExample](src/main/java/io/github/suppierk/shoostr/example/authentication/CorsExample.java) — exact-origin response sharing and preflight.
-- [TrustedProxyExample](src/main/java/io/github/suppierk/shoostr/example/authentication/TrustedProxyExample.java) — physical-peer trust and effective metadata.
+- [RouteAuthenticationExample](src/main/java/io/github/suppierk/shoostr/example/authentication/RouteAuthenticationExample.java) —
+  route-selected principals and permission checks.
+- [Pac4jAuthenticationExample](src/main/java/io/github/suppierk/shoostr/example/authentication/Pac4jAuthenticationExample.java) —
+  direct credential validation and role authorization.
+- [SessionExample](src/main/java/io/github/suppierk/shoostr/example/authentication/SessionExample.java) — cookie policy,
+  identifier renewal, invalidation, and an explicit file store.
+- [CsrfProtectionExample](src/main/java/io/github/suppierk/shoostr/example/authentication/CsrfProtectionExample.java) —
+  session-bound tokens, strict source checks and selected write protection.
+- [LoginLogoutExample](src/main/java/io/github/suppierk/shoostr/example/authentication/LoginLogoutExample.java) —
+  application login/logout with native session transitions and fresh CSRF token delivery.
+- [CorsExample](src/main/java/io/github/suppierk/shoostr/example/authentication/CorsExample.java) — exact-origin
+  response sharing and preflight.
+- [TrustedProxyExample](src/main/java/io/github/suppierk/shoostr/example/authentication/TrustedProxyExample.java) —
+  physical-peer trust and effective metadata.
 
 Their complete tests live beside the original launcher tests in `src/test/java`.
 The original launcher and container instructions below remain available for repository maintenance.
@@ -76,7 +84,8 @@ Do not expose this demo to an untrusted network.
 
 [AuthenticationExample](src/main/java/io/github/suppierk/shoostr/example/authentication/AuthenticationExample.java)
 wires the app and defines routes inline, selecting authentication for the whole
-`/private` group. [DemoAuthentication](src/main/java/io/github/suppierk/shoostr/example/authentication/DemoAuthentication.java)
+`/private`
+group. [DemoAuthentication](src/main/java/io/github/suppierk/shoostr/example/authentication/DemoAuthentication.java)
 owns credential verification and its native Pac4j role policy. Authentication
 establishes identity; authorization separately decides whether an operation is allowed.
 Installation alone does not protect any endpoint. No wrapper around each handler,

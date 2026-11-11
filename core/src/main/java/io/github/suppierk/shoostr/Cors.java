@@ -24,9 +24,9 @@ import org.jspecify.annotations.Nullable;
  */
 public record Cors(CorsPolicy policy)
     implements ApplicationExtension<Cors.Configuration>, RouteExtension<Cors.Configuration> {
+  static final Map<String, String> OPTIONS_VARIATION = optionsVariation();
   private static final Map<String, String> VARIATION =
       Map.of(HttpHeaders.VARY.value(), HttpHeaders.ORIGIN.value());
-  static final Map<String, String> OPTIONS_VARIATION = optionsVariation();
 
   /**
    * Creates immutable sharing behavior from validated permissions.
@@ -35,22 +35,6 @@ public record Cors(CorsPolicy policy)
    */
   public Cors {
     policy = new CorsPolicy(Objects.requireNonNull(policy));
-  }
-
-  /**
-   * Returns a defensive configuration copy, including typed allowed/exposed headers.
-   *
-   * @return independent policy copy
-   */
-  @Override
-  public CorsPolicy policy() {
-    return new CorsPolicy(policy);
-  }
-
-  /** {@inheritDoc} */
-  @Override
-  public Configuration configure(Lifecycle endpoint, @Nullable Configuration inherited) {
-    return new Configuration(endpoint, this, inherited);
   }
 
   /**
@@ -260,6 +244,22 @@ public record Cors(CorsPolicy policy)
       throw new BadRequestException(
           new IllegalArgumentException("HTTP field name must be an RFC 9110 token"));
     }
+  }
+
+  /**
+   * Returns a defensive configuration copy, including typed allowed/exposed headers.
+   *
+   * @return independent policy copy
+   */
+  @Override
+  public CorsPolicy policy() {
+    return new CorsPolicy(policy);
+  }
+
+  /** {@inheritDoc} */
+  @Override
+  public Configuration configure(Lifecycle endpoint, @Nullable Configuration inherited) {
+    return new Configuration(endpoint, this, inherited);
   }
 
   /** Scope-local complete policy replacement for one installed owner. */

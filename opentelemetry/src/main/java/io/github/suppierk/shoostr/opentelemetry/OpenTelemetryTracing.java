@@ -45,6 +45,71 @@ public final class OpenTelemetryTracing
   }
 
   /**
+   * Adapts immutable request headers to OpenTelemetry context propagation.
+   *
+   * @return request-header propagation reader
+   */
+  private static TextMapGetter<Request> headerGetter() {
+    return new TextMapGetter<>() {
+      /**
+       * Retains header enumeration for propagators that use the deprecated upstream method.
+       *
+       * <p>Deprecation is suppressed because this upstream callback still serves propagators that
+       * enumerate request headers.
+       *
+       * @param carrier request providing the header names
+       * @return incoming header names
+       */
+      @Override
+      @SuppressWarnings("deprecation")
+      public Iterable<String> keys(Request carrier) {
+        return carrier.headerMap().keySet();
+      }
+
+      /** {@inheritDoc} */
+      @Override
+      public @Nullable String get(@Nullable Request carrier, String key) {
+        return carrier == null ? null : carrier.header(key).orElse(null);
+      }
+    };
+  }
+
+  /**
+   * Captures admission context without changing it or creating a span.
+   *
+   * @return observation restoring the worker's exact previous context after attachment
+   */
+  private static RequestObservation admissionContext() {
+    var captured = Context.current();
+
+    return new RequestObservation() {
+      /**
+       * Replaces unrelated worker context for this invocation only.
+       *
+       * <p>The returned SDK scope is owned and closed by Shoostr on the attaching thread;
+       * MustBeClosedChecker cannot follow that ownership transfer.
+       *
+       * @return scope restoring the worker's previous context on close
+       */
+      @Override
+      @SuppressWarnings("MustBeClosedChecker")
+      public AutoCloseable attach() {
+        return captured.makeCurrent();
+      }
+
+      /**
+       * Carries context only; there is no SERVER span to record or end.
+       *
+       * @param outcome terminal snapshot
+       */
+      @Override
+      public void complete(RequestOutcome outcome) {
+        // This observation carries context only and owns no span to complete.
+      }
+    };
+  }
+
+  /**
    * Compares all stored collaborators.
    *
    * @param other candidate provider
@@ -180,36 +245,6 @@ public final class OpenTelemetryTracing
   }
 
   /**
-   * Adapts immutable request headers to OpenTelemetry context propagation.
-   *
-   * @return request-header propagation reader
-   */
-  private static TextMapGetter<Request> headerGetter() {
-    return new TextMapGetter<>() {
-      /**
-       * Retains header enumeration for propagators that use the deprecated upstream method.
-       *
-       * <p>Deprecation is suppressed because this upstream callback still serves propagators that
-       * enumerate request headers.
-       *
-       * @param carrier request providing the header names
-       * @return incoming header names
-       */
-      @Override
-      @SuppressWarnings("deprecation")
-      public Iterable<String> keys(Request carrier) {
-        return carrier.headerMap().keySet();
-      }
-
-      /** {@inheritDoc} */
-      @Override
-      public @Nullable String get(@Nullable Request carrier, String key) {
-        return carrier == null ? null : carrier.header(key).orElse(null);
-      }
-    };
-  }
-
-  /**
    * Installs configured observation without owning borrowed dependencies. Selective mode carries
    * admission context across every request handoff, including unselected endpoints, without
    * creating SERVER spans there.
@@ -219,40 +254,5 @@ public final class OpenTelemetryTracing
   @Override
   public synchronized void install(ApplicationCallbacks callbacks) {
     callbacks.observe(ignored -> admissionContext());
-  }
-
-  /**
-   * Captures admission context without changing it or creating a span.
-   *
-   * @return observation restoring the worker's exact previous context after attachment
-   */
-  private static RequestObservation admissionContext() {
-    var captured = Context.current();
-
-    return new RequestObservation() {
-      /**
-       * Replaces unrelated worker context for this invocation only.
-       *
-       * <p>The returned SDK scope is owned and closed by Shoostr on the attaching thread;
-       * MustBeClosedChecker cannot follow that ownership transfer.
-       *
-       * @return scope restoring the worker's previous context on close
-       */
-      @Override
-      @SuppressWarnings("MustBeClosedChecker")
-      public AutoCloseable attach() {
-        return captured.makeCurrent();
-      }
-
-      /**
-       * Carries context only; there is no SERVER span to record or end.
-       *
-       * @param outcome terminal snapshot
-       */
-      @Override
-      public void complete(RequestOutcome outcome) {
-        // This observation carries context only and owns no span to complete.
-      }
-    };
   }
 }

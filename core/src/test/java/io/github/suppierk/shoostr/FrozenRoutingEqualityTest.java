@@ -22,6 +22,25 @@ import org.junit.jupiter.api.io.TempDir;
 class FrozenRoutingEqualityTest {
   @TempDir Path directory;
 
+  private static RadixRoutes tree(Handler handler, String... paths) {
+    return RadixRoutes.from(
+        Arrays.stream(paths)
+            .map(path -> RadixRoutes.endpoint(HttpMethods.GET, path, handler))
+            .toList());
+  }
+
+  private static Object constructRecord(Class<?> type, Object... values)
+      throws ReflectiveOperationException {
+    var signature =
+        Arrays.stream(type.getRecordComponents())
+            .map(RecordComponent::getType)
+            .toArray(Class<?>[]::new);
+    var constructor = type.getDeclaredConstructor(signature);
+    constructor.setAccessible(true);
+
+    return constructor.newInstance(values);
+  }
+
   @Test
   void plainNodeSatisfiesEqualsAndHashCodeContract() throws Exception {
     verifyNode(RadixRoutes.class);
@@ -154,24 +173,5 @@ class FrozenRoutingEqualityTest {
         .withPrefabValues(RadixRoutes.Endpoint.class, firstEndpoint, secondEndpoint)
         .withPrefabValues(StaticFiles.class, firstMount, secondMount)
         .withNonnullFields("endpoints", "children", "staticFiles");
-  }
-
-  private static RadixRoutes tree(Handler handler, String... paths) {
-    return RadixRoutes.from(
-        Arrays.stream(paths)
-            .map(path -> RadixRoutes.endpoint(HttpMethods.GET, path, handler))
-            .toList());
-  }
-
-  private static Object constructRecord(Class<?> type, Object... values)
-      throws ReflectiveOperationException {
-    var signature =
-        Arrays.stream(type.getRecordComponents())
-            .map(RecordComponent::getType)
-            .toArray(Class<?>[]::new);
-    var constructor = type.getDeclaredConstructor(signature);
-    constructor.setAccessible(true);
-
-    return constructor.newInstance(values);
   }
 }

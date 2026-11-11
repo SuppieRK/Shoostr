@@ -54,92 +54,6 @@ final class TrustedProxy {
   }
 
   /**
-   * Compares the configured predicate and forwarding header family.
-   *
-   * @param other object to compare
-   * @return whether both configurations have equal predicates and the same header family
-   */
-  @Override
-  public boolean equals(@Nullable Object other) {
-    return other instanceof TrustedProxy proxy
-        && trusted.equals(proxy.trusted)
-        && headers == proxy.headers;
-  }
-
-  /**
-   * Computes a hash from the trust predicate and header family.
-   *
-   * @return hash of both configuration values
-   */
-  @Override
-  public int hashCode() {
-    return Objects.hash(trusted, headers);
-  }
-
-  /**
-   * Validates the physical peer before inspecting forwarding input.
-   *
-   * @param request live request on the handler thread
-   * @throws BadRequestException if trusted forwarding metadata is malformed
-   */
-  void apply(Request request) {
-    if (!(request.remoteAddress().orElse(null) instanceof InetSocketAddress peer)
-        || !trusted.test(peer.getAddress())) {
-      return;
-    }
-
-    if (headers != ForwardedHeaders.RFC7239) {
-      applyLegacy(request);
-      return;
-    }
-
-    applyRfc(request);
-  }
-
-  /**
-   * Applies the RFC 7239 chain from a trusted physical peer.
-   *
-   * @param request live request on the handler thread
-   * @throws BadRequestException if forwarding metadata is malformed
-   */
-  private void applyRfc(Request request) {
-    var forwarding = request.headers(HttpHeaders.FORWARDED.value());
-    if (forwarding.isEmpty()) {
-      return;
-    }
-
-    List<Map<String, String>> chain = new ArrayList<>();
-    List<@Nullable InetSocketAddress> addresses = new ArrayList<>();
-
-    try {
-      parseForwarding(forwarding, chain, addresses);
-    } catch (IllegalArgumentException ignored) {
-      throw new BadRequestException();
-    }
-
-    int selected = boundaryIndex(addresses);
-    var fields = chain.get(selected);
-
-    try {
-      var uri = HttpURI.build(request.fullUrl());
-      var protocol = fields.get(PROTO_FIELD);
-      if (protocol != null) {
-        protocol = protocol.toLowerCase(Locale.ROOT);
-        uri.scheme(protocol);
-      }
-
-      if (fields.containsKey("host")) {
-        var host = host(fields.get("host"));
-        uri.authority(host.getHost(), host.getPort());
-      }
-
-      request.forwarded(addresses.get(selected), uri.asString(), protocol);
-    } catch (IllegalArgumentException ignoredFailure) {
-      throw new BadRequestException();
-    }
-  }
-
-  /**
    * Parses each physical header line into matching field and address entries.
    *
    * @param forwarding raw Forwarded header lines
@@ -322,55 +236,6 @@ final class TrustedProxy {
             && (escaped
                 || (character != HttpCharacters.DOUBLE_QUOTE
                     && character != HttpCharacters.BACKSLASH)));
-  }
-
-  /**
-   * Applies strict same-index legacy forwarding assertions from a trusted peer.
-   *
-   * @param request live request on the handler thread
-   * @throws BadRequestException if trusted forwarding metadata is malformed
-   */
-  private void applyLegacy(Request request) {
-    var forwarded = values(request.headers(X_FORWARDED_FOR));
-    if (forwarded.isEmpty()) {
-      return;
-    }
-
-    var hosts = aligned(request.headers(X_FORWARDED_HOST), forwarded.size());
-    var protocols = aligned(request.headers(X_FORWARDED_PROTO), forwarded.size());
-    var ports = aligned(request.headers(X_FORWARDED_PORT), forwarded.size());
-    var addresses = new ArrayList<@Nullable InetSocketAddress>();
-
-    try {
-      for (var value : forwarded) {
-        addresses.add(legacyNode(value));
-      }
-
-      validateLegacyOrigins(hosts, protocols, ports);
-    } catch (IllegalArgumentException ignoredFailure) {
-      throw new BadRequestException();
-    }
-
-    int selected = boundaryIndex(addresses);
-
-    try {
-      var uri = HttpURI.build(request.fullUrl());
-      String protocol = null;
-      if (!protocols.isEmpty()) {
-        protocol = protocols.get(selected).toLowerCase(Locale.ROOT);
-        uri.scheme(protocol);
-      }
-
-      if (!hosts.isEmpty()) {
-        var parsed =
-            host(authority(hosts.get(selected), ports.isEmpty() ? null : ports.get(selected)));
-        uri.authority(parsed.getHost(), parsed.getPort());
-      }
-
-      request.forwarded(addresses.get(selected), uri.asString(), protocol);
-    } catch (IllegalArgumentException ignoredFailure) {
-      throw new BadRequestException();
-    }
   }
 
   /**
@@ -619,6 +484,141 @@ final class TrustedProxy {
     }
 
     return port;
+  }
+
+  /**
+   * Compares the configured predicate and forwarding header family.
+   *
+   * @param other object to compare
+   * @return whether both configurations have equal predicates and the same header family
+   */
+  @Override
+  public boolean equals(@Nullable Object other) {
+    return other instanceof TrustedProxy proxy
+        && trusted.equals(proxy.trusted)
+        && headers == proxy.headers;
+  }
+
+  /**
+   * Computes a hash from the trust predicate and header family.
+   *
+   * @return hash of both configuration values
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(trusted, headers);
+  }
+
+  /**
+   * Validates the physical peer before inspecting forwarding input.
+   *
+   * @param request live request on the handler thread
+   * @throws BadRequestException if trusted forwarding metadata is malformed
+   */
+  void apply(Request request) {
+    if (!(request.remoteAddress().orElse(null) instanceof InetSocketAddress peer)
+        || !trusted.test(peer.getAddress())) {
+      return;
+    }
+
+    if (headers != ForwardedHeaders.RFC7239) {
+      applyLegacy(request);
+      return;
+    }
+
+    applyRfc(request);
+  }
+
+  /**
+   * Applies the RFC 7239 chain from a trusted physical peer.
+   *
+   * @param request live request on the handler thread
+   * @throws BadRequestException if forwarding metadata is malformed
+   */
+  private void applyRfc(Request request) {
+    var forwarding = request.headers(HttpHeaders.FORWARDED.value());
+    if (forwarding.isEmpty()) {
+      return;
+    }
+
+    List<Map<String, String>> chain = new ArrayList<>();
+    List<@Nullable InetSocketAddress> addresses = new ArrayList<>();
+
+    try {
+      parseForwarding(forwarding, chain, addresses);
+    } catch (IllegalArgumentException ignored) {
+      throw new BadRequestException();
+    }
+
+    int selected = boundaryIndex(addresses);
+    var fields = chain.get(selected);
+
+    try {
+      var uri = HttpURI.build(request.fullUrl());
+      var protocol = fields.get(PROTO_FIELD);
+      if (protocol != null) {
+        protocol = protocol.toLowerCase(Locale.ROOT);
+        uri.scheme(protocol);
+      }
+
+      if (fields.containsKey("host")) {
+        var host = host(fields.get("host"));
+        uri.authority(host.getHost(), host.getPort());
+      }
+
+      request.forwarded(addresses.get(selected), uri.asString(), protocol);
+    } catch (IllegalArgumentException ignoredFailure) {
+      throw new BadRequestException();
+    }
+  }
+
+  /**
+   * Applies strict same-index legacy forwarding assertions from a trusted peer.
+   *
+   * @param request live request on the handler thread
+   * @throws BadRequestException if trusted forwarding metadata is malformed
+   */
+  private void applyLegacy(Request request) {
+    var forwarded = values(request.headers(X_FORWARDED_FOR));
+    if (forwarded.isEmpty()) {
+      return;
+    }
+
+    var hosts = aligned(request.headers(X_FORWARDED_HOST), forwarded.size());
+    var protocols = aligned(request.headers(X_FORWARDED_PROTO), forwarded.size());
+    var ports = aligned(request.headers(X_FORWARDED_PORT), forwarded.size());
+    var addresses = new ArrayList<@Nullable InetSocketAddress>();
+
+    try {
+      for (var value : forwarded) {
+        addresses.add(legacyNode(value));
+      }
+
+      validateLegacyOrigins(hosts, protocols, ports);
+    } catch (IllegalArgumentException ignoredFailure) {
+      throw new BadRequestException();
+    }
+
+    int selected = boundaryIndex(addresses);
+
+    try {
+      var uri = HttpURI.build(request.fullUrl());
+      String protocol = null;
+      if (!protocols.isEmpty()) {
+        protocol = protocols.get(selected).toLowerCase(Locale.ROOT);
+        uri.scheme(protocol);
+      }
+
+      if (!hosts.isEmpty()) {
+        var parsed =
+            host(authority(hosts.get(selected), ports.isEmpty() ? null : ports.get(selected)));
+        uri.authority(parsed.getHost(), parsed.getPort());
+      }
+
+      request.forwarded(addresses.get(selected), uri.asString(), protocol);
+    } catch (IllegalArgumentException ignoredFailure) {
+      throw new BadRequestException();
+    }
   }
 
   /**

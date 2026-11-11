@@ -11,6 +11,7 @@ public interface TypedHandler {
    * @param response typed output sharing the ordinary response lifecycle
    * @throws Exception if application handling or codec conversion fails
    */
-  @SuppressWarnings("java:S112") // Preserve the same checked exception contract as Handler.
+  @SuppressWarnings("java:S112")
+  // Preserve the same checked exception contract as Handler.
   void handle(TypedRequest request, TypedResponse response) throws Exception;
 }

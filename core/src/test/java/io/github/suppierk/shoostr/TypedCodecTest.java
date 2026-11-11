@@ -137,7 +137,8 @@ class TypedCodecTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Deliberate invalid input at the public configuration interface.
+  @SuppressWarnings("NullAway")
+  // Deliberate invalid input at the public configuration interface.
   void rejectsNullCodecWithoutConsumingConfiguration() throws Exception {
     {
       var app = new Shoostr();

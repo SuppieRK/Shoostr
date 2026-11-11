@@ -88,15 +88,11 @@ class CatchAllRoutingTest {
       configuredOptions.setMultipart(MultipartOptions.defaults());
 
       {
-        var app =
-            createAppForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder(
-                configuredOptions);
+        var app = createAppForCatchAllPrecedence(configuredOptions);
 
         try (Closeable appCleanup1 = app::close) {
-          Consumer<Routes> catchAll =
-              createCatchAllForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder();
-          Consumer<Routes> specific =
-              createSpecificForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder();
+          Consumer<Routes> catchAll = this::registerCatchAll;
+          Consumer<Routes> specific = this::registerSpecificRoutes;
           app.routes()
               .path(
                   "/files",
@@ -162,9 +158,7 @@ class CatchAllRoutingTest {
     }
   }
 
-  private Shoostr
-      createAppForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder(
-          Options configuredOptions) {
+  private Shoostr createAppForCatchAllPrecedence(Options configuredOptions) {
     return new Shoostr(configuredOptions)
         .modifyServer(
             nativeServer -> {
@@ -175,25 +169,19 @@ class CatchAllRoutingTest {
             });
   }
 
-  private Consumer<Routes>
-      createCatchAllForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder() {
-    return routes -> {
-      routes.get(
-          "/{*path}",
-          (request, response) -> response.text("tail:" + request.pathParam("path").orElseThrow()));
-      routes.post("/{*path}", (ignored, response) -> response.text("post-tail"));
-    };
+  private void registerCatchAll(Routes routes) {
+    routes.get(
+        "/{*path}",
+        (request, response) -> response.text("tail:" + request.pathParam("path").orElseThrow()));
+    routes.post("/{*path}", (ignored, response) -> response.text("post-tail"));
   }
 
-  private Consumer<Routes>
-      createSpecificForPrefersLiteralAndSingleSegmentsBeforeCatchAllInEitherRegistrationOrder() {
-    return routes -> {
-      routes.get("/fixed", (ignoredRequest, response) -> response.text("literal"));
-      routes.get(
-          "/{id}",
-          (request, response) -> response.text("segment:" + request.pathParam("id").orElseThrow()));
-      routes.get("/fixed/end", (ignoredRequest, response) -> response.text("literal-end"));
-    };
+  private void registerSpecificRoutes(Routes routes) {
+    routes.get("/fixed", (ignoredRequest, response) -> response.text("literal"));
+    routes.get(
+        "/{id}",
+        (request, response) -> response.text("segment:" + request.pathParam("id").orElseThrow()));
+    routes.get("/fixed/end", (ignoredRequest, response) -> response.text("literal-end"));
   }
 
   @Test

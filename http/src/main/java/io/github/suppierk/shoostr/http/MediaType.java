@@ -8,9 +8,6 @@ import org.jspecify.annotations.Nullable;
 
 /** Immutable outbound media-type name; construction does not inspect or encode payloads. */
 public final class MediaType {
-  private static final String NAME_FRAGMENT = "[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}";
-  private static final Pattern BARE_TYPE = Pattern.compile(NAME_FRAGMENT + "/" + NAME_FRAGMENT);
-
   /** JSON media type from RFC 8259; no charset parameter is added. */
   public static final MediaType APPLICATION_JSON = of("application/json");
 
@@ -40,7 +37,7 @@ public final class MediaType {
    */
   private MediaType(String name, @Nullable Charset charset) {
     Objects.requireNonNull(name);
-    if (!BARE_TYPE.matcher(name).matches()) {
+    if (!NameSyntax.BARE_TYPE.matcher(name).matches()) {
       throw new IllegalArgumentException("Expected an RFC 6838 type/subtype name");
     }
 
@@ -112,5 +109,14 @@ public final class MediaType {
   @Override
   public int hashCode() {
     return value.toLowerCase(Locale.ROOT).hashCode();
+  }
+
+  /** Initializes the pattern independently of the predefined media types. */
+  private static final class NameSyntax {
+    private static final String NAME_FRAGMENT = "[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}";
+    private static final Pattern BARE_TYPE = Pattern.compile(NAME_FRAGMENT + "/" + NAME_FRAGMENT);
+
+    /** Prevents construction of the syntax holder. */
+    private NameSyntax() {}
   }
 }

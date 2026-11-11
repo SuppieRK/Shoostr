@@ -128,7 +128,7 @@ public final class McpServerExample {
     return new McpHttpSecurity(
         Set.of("https://client.example"),
         ignoredRequest -> new McpIdentity("public-catalog", McpTransportContext.EMPTY, null),
-        (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+        (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
   }
 
   /**

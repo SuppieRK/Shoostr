@@ -52,6 +52,194 @@ class MultipartRequestTest {
   private static final byte[] BINARY_CONTENT = {0, 1, -1, 127, -128};
   @TempDir Path temporaryDirectory;
 
+  private static void assertNoUploads(Request request) throws IOException {
+    var files = request.files();
+    var namedFiles = request.files("document");
+
+    assertEquals(Map.of(), files);
+    assertEquals(List.of(), namedFiles);
+    assertTrue(request.file("document").isEmpty());
+    assertThrows(UnsupportedOperationException.class, () -> files.put("document", namedFiles));
+    assertThrows(UnsupportedOperationException.class, namedFiles::clear);
+  }
+
+  private static byte[] body() {
+    return ("--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nreport\r\n--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"report.txt\"\r\n"
+            + "Content-Type: text/plain\r\n\r\ncontents\r\n--"
+            + BOUNDARY
+            + "--\r\n")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] repeatedFilesBody() {
+    return ("--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"document\";"
+            + " filename=\"first.txt\"\r\n\r\n"
+            + "first\r\n--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"document\";"
+            + " filename=\"second.txt\"\r\n\r\n"
+            + "second\r\n--"
+            + BOUNDARY
+            + "--\r\n")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] repeatedTextBody() {
+    return ("--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"tag\"\r\n\r\nfirst\r\n--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"tag\"\r\n\r\nsecond\r\n--"
+            + BOUNDARY
+            + "--\r\n")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] fileBody(String content) {
+    return fileBody("report.txt", content);
+  }
+
+  private static byte[] fileBody(String fileName, String content) {
+    return ("--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\""
+            + fileName
+            + "\"\r\n\r\n"
+            + content
+            + "\r\n--"
+            + BOUNDARY
+            + "--\r\n")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] binaryBody() throws IOException {
+    var output = new ByteArrayOutputStream();
+    output.write(
+        ("--"
+                + BOUNDARY
+                + "\r\nContent-Disposition: form-data; name=\"document\";"
+                + " filename=\"binary.bin\"\r\n\r\n")
+            .getBytes(StandardCharsets.UTF_8));
+    output.write(BINARY_CONTENT);
+    output.write(("\r\n--" + BOUNDARY + "--\r\n").getBytes(StandardCharsets.UTF_8));
+
+    return output.toByteArray();
+  }
+
+  private static byte[] malformedBody() {
+    return ("--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"document\";"
+            + " filename=\"report.txt\"\r\n\r\n"
+            + "contents")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] emptyFilenameBody() {
+    return ("--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"\"\r\n\r\n"
+            + "contents\r\n--"
+            + BOUNDARY
+            + "--\r\n")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] nonUtf8TextFieldBody() {
+    return ("--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"title\"\r\n"
+            + "Content-Type: text/plain; charset=ISO-8859-1\r\n\r\n"
+            + "report\r\n--"
+            + BOUNDARY
+            + "--\r\n")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] invalidMetadataBody() {
+    return ("--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: attachment; filename=\"report.txt\"\r\n\r\ncontents\r\n--"
+            + BOUNDARY
+            + "--\r\n")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static byte[] wrongDispositionBody() {
+    return partBody("Content-Disposition: attachment; name=\"document\"");
+  }
+
+  private static byte[] missingDispositionBody() {
+    return partBody("Content-Type: text/plain");
+  }
+
+  private static byte[] missingNameBody() {
+    return partBody("Content-Disposition: form-data");
+  }
+
+  private static byte[] partBody(String header) {
+    return ("--" + BOUNDARY + "\r\n" + header + "\r\n\r\ncontents\r\n--" + BOUNDARY + "--\r\n")
+        .getBytes(StandardCharsets.UTF_8);
+  }
+
+  private static void awaitFile(Path directory, boolean expected) {
+    await()
+        .pollInterval(Duration.ofMillis(20))
+        .atMost(Duration.ofSeconds(1))
+        .untilAsserted(
+            () -> {
+              try (var files = Files.list(directory)) {
+                assertEquals(expected, files.findAny().isPresent());
+              }
+            });
+  }
+
+  private static List<Path> awaitSpoolFiles(Path directory, int expected) {
+    return await()
+        .pollInterval(Duration.ofMillis(20))
+        .atMost(Duration.ofSeconds(3))
+        .until(
+            () -> {
+              try (var files = Files.list(directory)) {
+                return files.toList();
+              }
+            },
+            files -> files.size() == expected);
+  }
+
+  private static void sendMultipartPrefix(
+      Socket socket, int port, String path, byte[] body, int withheld) throws IOException {
+    socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 1000);
+    socket.setSoTimeout(3000);
+    socket
+        .getOutputStream()
+        .write(
+            ("POST "
+                    + path
+                    + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n"
+                    + "Content-Type: multipart/form-data; boundary="
+                    + BOUNDARY
+                    + "\r\nContent-Length: "
+                    + body.length
+                    + "\r\n\r\n")
+                .getBytes(StandardCharsets.US_ASCII));
+    socket.getOutputStream().write(body, 0, body.length - withheld);
+    socket.getOutputStream().flush();
+  }
+
+  private static void writeChunk(OutputStream output, byte[] chunk) throws IOException {
+    output.write(Integer.toHexString(chunk.length).getBytes(StandardCharsets.UTF_8));
+    output.write("\r\n".getBytes(StandardCharsets.UTF_8));
+    output.write(chunk);
+    output.write("\r\n".getBytes(StandardCharsets.UTF_8));
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {"", "text/plain", "application/json", "application/x-www-form-urlencoded"})
@@ -190,7 +378,7 @@ class MultipartRequestTest {
   }
 
   @Test
-  void returnsNoUploadsForABodylessRequestWithoutAContentType() throws Exception {
+  void returnsNoUploadsForBodylessRequestWithoutContentType() throws Exception {
     {
       var app = new Shoostr();
 
@@ -338,7 +526,7 @@ class MultipartRequestTest {
   }
 
   @Test
-  void sendsContinueBeforeReceivingAndPreservingABinaryMultipartUpload() throws Exception {
+  void sendsContinueBeforeReceivingAndPreservingBinaryMultipartUpload() throws Exception {
     var body = binaryBody();
 
     {
@@ -400,13 +588,13 @@ class MultipartRequestTest {
   }
 
   @Test
-  void preservesALargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage() throws Exception {
+  void preservesLargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage() throws Exception {
     var content = "é".repeat(95 * 1024);
     var directory = Files.createDirectory(temporaryDirectory.resolve("large-text"));
     var multipart = new MultipartOptions(300_000, 250_000, 2, 8192, 1024, directory);
     var completed = new CompletableFuture<Void>();
     var body =
-        createBodyForPreservesALargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(content);
+        createBodyForPreservesLargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(content);
 
     var configuredOptions = new Options();
     configuredOptions.setMultipart(multipart);
@@ -435,7 +623,7 @@ class MultipartRequestTest {
         try (var test = TestServer.start(app)) {
 
           var result =
-              sendResultForPreservesALargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(
+              sendResultForPreservesLargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(
                   test, body);
 
           assertEquals(200, result.statusCode());
@@ -448,7 +636,7 @@ class MultipartRequestTest {
     }
   }
 
-  private byte[] createBodyForPreservesALargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(
+  private byte[] createBodyForPreservesLargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(
       String content) {
     return ("--"
             + BOUNDARY
@@ -461,7 +649,7 @@ class MultipartRequestTest {
   }
 
   private HttpResponse<byte[]>
-      sendResultForPreservesALargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(
+      sendResultForPreservesLargeUtf8MultipartFieldAsTextAndCleansItsTemporaryStorage(
           TestServer test, byte[] body) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -474,7 +662,7 @@ class MultipartRequestTest {
   }
 
   @Test
-  void preservesASameSizedNamedMultipartPartAsAFileAndCleansItsTemporaryStorage() throws Exception {
+  void preservesSameSizedNamedMultipartPartAsFileAndCleansItsTemporaryStorage() throws Exception {
     var content = "é".repeat(95 * 1024);
     var directory = Files.createDirectory(temporaryDirectory.resolve("large-file"));
     var multipart = new MultipartOptions(300_000, 250_000, 2, 8192, 1024, directory);
@@ -514,7 +702,7 @@ class MultipartRequestTest {
         try (var test = TestServer.start(app)) {
 
           var result =
-              sendResultForPreservesASameSizedNamedMultipartPartAsAFileAndCleansItsTemporaryStorage(
+              sendResultForPreservesSameSizedNamedMultipartPartAsFileAndCleansItsTemporaryStorage(
                   test, content);
 
           assertEquals(200, result.statusCode());
@@ -528,7 +716,7 @@ class MultipartRequestTest {
   }
 
   private HttpResponse<byte[]>
-      sendResultForPreservesASameSizedNamedMultipartPartAsAFileAndCleansItsTemporaryStorage(
+      sendResultForPreservesSameSizedNamedMultipartPartAsFileAndCleansItsTemporaryStorage(
           TestServer test, String content) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -653,17 +841,13 @@ class MultipartRequestTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var inMemory =
-              sendInMemoryRequestForSpillsOnlyUploadsAboveTheMemoryThresholdToTheConfiguredDirectory(
-                  test);
+          var inMemory = sendInMemoryRequestForUploadSpill(test);
 
           assertEquals(200, inMemory.statusCode());
           assertEquals("0", inMemory.body());
 
           awaitFile(directory, false);
-          var onDisk =
-              sendOnDiskRequestForSpillsOnlyUploadsAboveTheMemoryThresholdToTheConfiguredDirectory(
-                  test);
+          var onDisk = sendOnDiskRequestForUploadSpill(test);
 
           assertEquals(200, onDisk.statusCode());
           assertEquals("1", onDisk.body());
@@ -676,9 +860,8 @@ class MultipartRequestTest {
     }
   }
 
-  private HttpResponse<String>
-      sendInMemoryRequestForSpillsOnlyUploadsAboveTheMemoryThresholdToTheConfiguredDirectory(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendInMemoryRequestForUploadSpill(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -690,9 +873,8 @@ class MultipartRequestTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<String>
-      sendOnDiskRequestForSpillsOnlyUploadsAboveTheMemoryThresholdToTheConfiguredDirectory(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendOnDiskRequestForUploadSpill(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1199,7 +1381,7 @@ class MultipartRequestTest {
   }
 
   @Test
-  void cleansUpTemporaryPartsCreatedBeforeAChunkedLimitRejection() throws Exception {
+  void cleansUpTemporaryPartsCreatedBeforeChunkedLimitRejection() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-chunked-limit-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
@@ -1228,7 +1410,9 @@ class MultipartRequestTest {
           socket.setSoTimeout(3000);
           var output = socket.getOutputStream();
           output.write(
-              ("POST /upload HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\nTransfer-Encoding: chunked\r\nContent-Type: multipart/form-data; boundary="
+              ("POST /upload HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                      + "Connection: close\r\nTransfer-Encoding: chunked\r\n"
+                      + "Content-Type: multipart/form-data; boundary="
                       + BOUNDARY
                       + "\r\n\r\n")
                   .getBytes(StandardCharsets.UTF_8));
@@ -1236,7 +1420,8 @@ class MultipartRequestTest {
               output,
               ("--"
                       + BOUNDARY
-                      + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"report.txt\"\r\n\r\n"
+                      + "\r\nContent-Disposition: form-data; name=\"document\";"
+                      + " filename=\"report.txt\"\r\n\r\n"
                       + "x".repeat(100))
                   .getBytes(StandardCharsets.UTF_8));
           output.flush();
@@ -1377,7 +1562,7 @@ class MultipartRequestTest {
   }
 
   @Test
-  void rejectsMultipartRequestsWithoutABoundary() throws Exception {
+  void rejectsMultipartRequestsWithoutBoundary() throws Exception {
     {
       var app = new Shoostr();
 
@@ -1388,7 +1573,7 @@ class MultipartRequestTest {
                 (request, response) -> response.text(request.formParam("title").orElseThrow()));
 
         try (var test = TestServer.start(app)) {
-          var result = sendResultForRejectsMultipartRequestsWithoutABoundary(test);
+          var result = sendResultForRejectsMultipartRequestsWithoutBoundary(test);
 
           assertEquals(400, result.statusCode());
           assertEquals("Bad Request", result.body());
@@ -1397,8 +1582,8 @@ class MultipartRequestTest {
     }
   }
 
-  private HttpResponse<String> sendResultForRejectsMultipartRequestsWithoutABoundary(
-      TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendResultForRejectsMultipartRequestsWithoutBoundary(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1411,7 +1596,7 @@ class MultipartRequestTest {
   }
 
   @Test
-  void rejectsMultipartTextFieldsWithANonUtf8Charset() throws Exception {
+  void rejectsMultipartTextFieldsWithNonUtf8Charset() throws Exception {
     {
       var app = new Shoostr();
 
@@ -1422,7 +1607,7 @@ class MultipartRequestTest {
                 (request, response) -> response.text(request.formParam("title").orElseThrow()));
 
         try (var test = TestServer.start(app)) {
-          var result = sendResultForRejectsMultipartTextFieldsWithANonUtf8Charset(test);
+          var result = sendResultForRejectsMultipartTextFieldsWithNonUtf8Charset(test);
 
           assertEquals(415, result.statusCode());
           assertEquals("Unsupported Media Type", result.body());
@@ -1431,7 +1616,7 @@ class MultipartRequestTest {
     }
   }
 
-  private HttpResponse<String> sendResultForRejectsMultipartTextFieldsWithANonUtf8Charset(
+  private HttpResponse<String> sendResultForRejectsMultipartTextFieldsWithNonUtf8Charset(
       TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -1577,7 +1762,7 @@ class MultipartRequestTest {
   }
 
   @Test
-  void deletesTemporaryUploadsAfterAHandlerFailure() throws Exception {
+  void deletesTemporaryUploadsAfterHandlerFailure() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
     var firstByte = new AtomicInteger(-1);
@@ -1599,7 +1784,7 @@ class MultipartRequestTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var result = sendResultForDeletesTemporaryUploadsAfterAHandlerFailure(test);
+          var result = sendResultForDeletesTemporaryUploadsAfterHandlerFailure(test);
 
           assertEquals(500, result.statusCode());
           assertEquals("Internal Server Error", result.body());
@@ -1617,7 +1802,7 @@ class MultipartRequestTest {
     }
   }
 
-  private HttpResponse<String> sendResultForDeletesTemporaryUploadsAfterAHandlerFailure(
+  private HttpResponse<String> sendResultForDeletesTemporaryUploadsAfterHandlerFailure(
       TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -1631,7 +1816,7 @@ class MultipartRequestTest {
   }
 
   @Test
-  void deletesTemporaryUploadsAfterASuccessfulResponse() throws Exception {
+  void deletesTemporaryUploadsAfterSuccessfulResponse() throws Exception {
     var directory = Files.createTempDirectory(temporaryDirectory, "multipart-cleanup-test");
     var multipart = new MultipartOptions(1000, 1000, 100, 8192, 0, directory);
 
@@ -1649,7 +1834,7 @@ class MultipartRequestTest {
                     response.text(request.file("document").orElseThrow().fileName()));
 
         try (var test = TestServer.start(app)) {
-          var result = sendResultForDeletesTemporaryUploadsAfterASuccessfulResponse(test);
+          var result = sendResultForDeletesTemporaryUploadsAfterSuccessfulResponse(test);
 
           assertEquals(200, result.statusCode());
           assertEquals("report.txt", result.body());
@@ -1666,7 +1851,7 @@ class MultipartRequestTest {
     }
   }
 
-  private HttpResponse<String> sendResultForDeletesTemporaryUploadsAfterASuccessfulResponse(
+  private HttpResponse<String> sendResultForDeletesTemporaryUploadsAfterSuccessfulResponse(
       TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -1750,9 +1935,11 @@ class MultipartRequestTest {
           var prefix =
               "--"
                   + BOUNDARY
-                  + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"report.txt\"\r\n\r\ncontents";
+                  + "\r\nContent-Disposition: form-data; name=\"document\";"
+                  + " filename=\"report.txt\"\r\n\r\ncontents";
           var request =
-              "POST /upload HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: multipart/form-data; boundary="
+              "POST /upload HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                  + "Content-Type: multipart/form-data; boundary="
                   + BOUNDARY
                   + "\r\nContent-Length: 1000\r\n\r\n"
                   + prefix;
@@ -1832,7 +2019,7 @@ class MultipartRequestTest {
                 var abandonedSpool = awaitSpoolFiles(directory, 1).getFirst();
                 sendMultipartPrefix(
                     survivor, app.port(), "/survive", survivorBody, closingBoundary.length);
-                var survivorSpool =
+                final var survivorSpool =
                     awaitSpoolFiles(directory, 2).stream()
                         .filter(path -> !path.equals(abandonedSpool))
                         .findFirst()
@@ -1952,186 +2139,5 @@ class MultipartRequestTest {
                 .method("POST")
                 .body(emptyFilenameBody()),
         HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static void assertNoUploads(Request request) throws IOException {
-    var files = request.files();
-    var namedFiles = request.files("document");
-
-    assertEquals(Map.of(), files);
-    assertEquals(List.of(), namedFiles);
-    assertTrue(request.file("document").isEmpty());
-    assertThrows(UnsupportedOperationException.class, () -> files.put("document", namedFiles));
-    assertThrows(UnsupportedOperationException.class, namedFiles::clear);
-  }
-
-  private static byte[] body() {
-    return ("--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: form-data; name=\"title\"\r\n\r\nreport\r\n--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"report.txt\"\r\n"
-            + "Content-Type: text/plain\r\n\r\ncontents\r\n--"
-            + BOUNDARY
-            + "--\r\n")
-        .getBytes(StandardCharsets.UTF_8);
-  }
-
-  private static byte[] repeatedFilesBody() {
-    return ("--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"first.txt\"\r\n\r\n"
-            + "first\r\n--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"second.txt\"\r\n\r\n"
-            + "second\r\n--"
-            + BOUNDARY
-            + "--\r\n")
-        .getBytes(StandardCharsets.UTF_8);
-  }
-
-  private static byte[] repeatedTextBody() {
-    return ("--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: form-data; name=\"tag\"\r\n\r\nfirst\r\n--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: form-data; name=\"tag\"\r\n\r\nsecond\r\n--"
-            + BOUNDARY
-            + "--\r\n")
-        .getBytes(StandardCharsets.UTF_8);
-  }
-
-  private static byte[] fileBody(String content) {
-    return fileBody("report.txt", content);
-  }
-
-  private static byte[] fileBody(String fileName, String content) {
-    return ("--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\""
-            + fileName
-            + "\"\r\n\r\n"
-            + content
-            + "\r\n--"
-            + BOUNDARY
-            + "--\r\n")
-        .getBytes(StandardCharsets.UTF_8);
-  }
-
-  private static byte[] binaryBody() throws IOException {
-    var output = new ByteArrayOutputStream();
-    output.write(
-        ("--"
-                + BOUNDARY
-                + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"binary.bin\"\r\n\r\n")
-            .getBytes(StandardCharsets.UTF_8));
-    output.write(BINARY_CONTENT);
-    output.write(("\r\n--" + BOUNDARY + "--\r\n").getBytes(StandardCharsets.UTF_8));
-
-    return output.toByteArray();
-  }
-
-  private static byte[] malformedBody() {
-    return ("--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"report.txt\"\r\n\r\n"
-            + "contents")
-        .getBytes(StandardCharsets.UTF_8);
-  }
-
-  private static byte[] emptyFilenameBody() {
-    return ("--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"\"\r\n\r\n"
-            + "contents\r\n--"
-            + BOUNDARY
-            + "--\r\n")
-        .getBytes(StandardCharsets.UTF_8);
-  }
-
-  private static byte[] nonUtf8TextFieldBody() {
-    return ("--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: form-data; name=\"title\"\r\nContent-Type: text/plain; charset=ISO-8859-1\r\n\r\nreport\r\n--"
-            + BOUNDARY
-            + "--\r\n")
-        .getBytes(StandardCharsets.UTF_8);
-  }
-
-  private static byte[] invalidMetadataBody() {
-    return ("--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: attachment; filename=\"report.txt\"\r\n\r\ncontents\r\n--"
-            + BOUNDARY
-            + "--\r\n")
-        .getBytes(StandardCharsets.UTF_8);
-  }
-
-  private static byte[] wrongDispositionBody() {
-    return partBody("Content-Disposition: attachment; name=\"document\"");
-  }
-
-  private static byte[] missingDispositionBody() {
-    return partBody("Content-Type: text/plain");
-  }
-
-  private static byte[] missingNameBody() {
-    return partBody("Content-Disposition: form-data");
-  }
-
-  private static byte[] partBody(String header) {
-    return ("--" + BOUNDARY + "\r\n" + header + "\r\n\r\ncontents\r\n--" + BOUNDARY + "--\r\n")
-        .getBytes(StandardCharsets.UTF_8);
-  }
-
-  private static void awaitFile(Path directory, boolean expected) {
-    await()
-        .pollInterval(Duration.ofMillis(20))
-        .atMost(Duration.ofSeconds(1))
-        .untilAsserted(
-            () -> {
-              try (var files = Files.list(directory)) {
-                assertEquals(expected, files.findAny().isPresent());
-              }
-            });
-  }
-
-  private static List<Path> awaitSpoolFiles(Path directory, int expected) {
-    return await()
-        .pollInterval(Duration.ofMillis(20))
-        .atMost(Duration.ofSeconds(3))
-        .until(
-            () -> {
-              try (var files = Files.list(directory)) {
-                return files.toList();
-              }
-            },
-            files -> files.size() == expected);
-  }
-
-  private static void sendMultipartPrefix(
-      Socket socket, int port, String path, byte[] body, int withheld) throws IOException {
-    socket.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), port), 1000);
-    socket.setSoTimeout(3000);
-    socket
-        .getOutputStream()
-        .write(
-            ("POST "
-                    + path
-                    + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: multipart/form-data; boundary="
-                    + BOUNDARY
-                    + "\r\nContent-Length: "
-                    + body.length
-                    + "\r\n\r\n")
-                .getBytes(StandardCharsets.US_ASCII));
-    socket.getOutputStream().write(body, 0, body.length - withheld);
-    socket.getOutputStream().flush();
-  }
-
-  private static void writeChunk(OutputStream output, byte[] chunk) throws IOException {
-    output.write(Integer.toHexString(chunk.length).getBytes(StandardCharsets.UTF_8));
-    output.write("\r\n".getBytes(StandardCharsets.UTF_8));
-    output.write(chunk);
-    output.write("\r\n".getBytes(StandardCharsets.UTF_8));
   }
 }

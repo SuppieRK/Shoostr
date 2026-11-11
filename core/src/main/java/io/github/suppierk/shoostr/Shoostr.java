@@ -66,11 +66,8 @@ public final class Shoostr {
 
   private final Options options;
   private final Set<ApplicationHandler.MatchedTask> pendingMatches;
-  private boolean stoppingMatches;
   private final Routes routes;
   private final List<Extension> extensions;
-  private @Nullable Codec codec;
-  private boolean installing;
   private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> exceptionHandlers;
   private final Map<Integer, Handler> statusHandlers;
   private final List<Handler> requestHeaderHandlers;
@@ -85,6 +82,9 @@ public final class Shoostr {
   private final List<Consumer<HttpConfiguration>> httpConfigurations;
   private final List<Runnable> beforeCloseCallbacks;
   private final List<Runnable> afterCloseCallbacks;
+  private boolean stoppingMatches;
+  private @Nullable Codec codec;
+  private boolean installing;
   private @Nullable TrustedProxy trustedProxy;
   private @Nullable Consumer<SslContextFactory.Server> tlsConfiguration;
   private @Nullable Consumer<SessionHandler> sessionConfiguration;
@@ -136,6 +136,434 @@ public final class Shoostr {
     this.afterCloseCallbacks = new ArrayList<>();
     this.shutdownHook = new Thread(this::shutdown, "web-shutdown");
     Runtime.getRuntime().addShutdownHook(shutdownHook);
+  }
+
+  /**
+   * Runs and releases ordered application callbacks, collecting ordinary failures independently.
+   *
+   * @param callbacks callbacks in invocation order, owned by this shutdown operation
+   * @param failure previously collected shutdown failure, or null
+   * @param message context for a callback failure
+   * @return aggregated failure, or null if shutdown has not failed
+   */
+  @SuppressWarnings("java:S1181") // An Error stops this phase while its caller performs cleanup.
+  private static @Nullable Throwable runCloseCallbacks(
+      List<Runnable> callbacks, @Nullable Throwable failure, String message) {
+    try {
+      for (var callback : callbacks) {
+        try {
+          callback.run();
+        } catch (RuntimeException callbackFailure) {
+          failure =
+              failure instanceof Error
+                  ? mergeCloseFailure(failure, callbackFailure)
+                  : appendCloseFailure((IOException) failure, message, callbackFailure);
+        } catch (Error callbackFailure) {
+          failure = mergeCloseFailure(failure, callbackFailure);
+          break;
+        }
+      }
+      return failure;
+    } finally {
+      callbacks.clear();
+    }
+  }
+
+  /**
+   * Signals one extension while retaining an ordinary failure for the enclosing phase.
+   *
+   * @param extension owned extension being signalled
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private static @Nullable IOException signalExtensionBeforeStop(
+      Extension extension, @Nullable IOException failure) {
+    try {
+      extension.beforeStop();
+
+      return failure;
+    } catch (RuntimeException stopFailure) {
+      return appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
+    }
+  }
+
+  /**
+   * Cancels one queued exchange while retaining an ordinary failure for the enclosing phase.
+   *
+   * @param task pending matched request
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private static @Nullable IOException cancelPendingMatch(
+      ApplicationHandler.MatchedTask task, @Nullable IOException failure) {
+    try {
+      task.cancel();
+
+      return failure;
+    } catch (RuntimeException cancellationFailure) {
+      return appendCloseFailure(failure, "Could not cancel queued request", cancellationFailure);
+    }
+  }
+
+  /**
+   * Closes one extension while retaining an ordinary failure for the enclosing phase.
+   *
+   * @param extension owned extension being closed
+   * @param failure earlier shutdown failure, or null
+   * @return accumulated shutdown failure, or null
+   */
+  private static @Nullable IOException closeExtension(
+      Extension extension, @Nullable IOException failure) {
+    try {
+      extension.close();
+
+      return failure;
+    } catch (IOException | RuntimeException closeFailure) {
+      return appendCloseFailure(failure, "Could not close extension", closeFailure);
+    }
+  }
+
+  /**
+   * Keeps the first Error primary, or preserves the first ordinary failure.
+   *
+   * @param current earlier failure, or null
+   * @param additional next observed failure
+   * @return primary failure retaining the other distinct failure as suppressed
+   */
+  @SuppressWarnings("ReferenceEquality") // One Throwable instance cannot suppress itself.
+  private static Throwable mergeCloseFailure(@Nullable Throwable current, Throwable additional) {
+    if (current == null || current == additional) {
+      return additional;
+    }
+
+    if (additional instanceof Error && !(current instanceof Error)) {
+      var earlier = current;
+      current = additional;
+      additional = earlier;
+    }
+
+    for (var retained : current.getSuppressed()) {
+      if (retained == additional) {
+        return current;
+      }
+    }
+    current.addSuppressed(additional);
+
+    return current;
+  }
+
+  /**
+   * Adds one independent shutdown failure without skipping later cleanup.
+   *
+   * @param current previously observed cleanup failure, or null
+   * @param message context for the first failure
+   * @param additional subsequent cleanup failure
+   * @return aggregated failure
+   */
+  private static IOException appendCloseFailure(
+      @Nullable IOException current, String message, Exception additional) {
+    if (current == null) {
+      return new IOException(message, additional);
+    }
+
+    current.addSuppressed(additional);
+
+    return current;
+  }
+
+  /**
+   * Hands a matched upgrade to Jetty while keeping factory rejection inside its creator callback.
+   * Jetty owns the response callback whenever this method returns true.
+   *
+   * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+   *
+   * @param container context's WebSocket container
+   * @param endpoint matched WebSocket route
+   * @param request live framework request for handshake decisions
+   * @param response framework response for mapped handshake errors
+   * @param errors registered application exception handlers
+   * @param observation optional terminal request observation
+   * @param rawRequest Jetty request
+   * @param rawResponse Jetty response
+   * @param callback HTTP response callback
+   * @param runtime app-owned WebSocket message dispatch
+   * @return whether Jetty handled the exchange
+   */
+  @SuppressWarnings({
+    "java:S107",
+    "ReferenceEquality"
+  }) // Keep the hot handshake path free of a per-request argument holder.
+  private static boolean upgradeWebSocket(
+      ServerWebSocketContainer container,
+      RadixRoutes.Endpoint endpoint,
+      Request request,
+      Response response,
+      Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors,
+      @Nullable Completion observation,
+      org.eclipse.jetty.server.Request rawRequest,
+      org.eclipse.jetty.server.Response rawResponse,
+      Callback callback,
+      WebSocketRuntime runtime) {
+    var factory = Objects.requireNonNull(endpoint.websocketFactory());
+
+    return container.upgrade(
+        (upgradeRequest, upgradeResponse, upgradeCallback) -> {
+          try {
+            request.webSocketProtocols(upgradeRequest.getSubProtocols());
+            var listener =
+                Objects.requireNonNull(factory.create(request, upgradeResponse, runtime));
+            response.protectRequiredHeaders();
+
+            return listener;
+          } catch (Exception failure) {
+            if (observation != null) {
+              observation.recordApplicationFailure(failure);
+            }
+
+            try {
+              renderFailure(errors, failure, request, response, observation);
+            } catch (Throwable writeFailure) {
+              if (observation != null && writeFailure != failure) {
+                failure.addSuppressed(writeFailure);
+              }
+
+              response.fail();
+
+              upgradeCallback.failed(new AbortException(writeFailure));
+            }
+
+            return null;
+          }
+        },
+        rawRequest,
+        rawResponse,
+        callback);
+  }
+
+  /**
+   * Applies the same application-wide exception policy to ordinary HTTP handlers and failed
+   * WebSocket listener factories, preserving session cookies through response reset. Schedules
+   * non-blocking input disposal before the first error flush so Jetty can advertise a
+   * non-persistent HTTP/1 connection while custom renderers and pre-flush callbacks retain body
+   * access.
+   *
+   * @param errors registered exception handlers
+   * @param failure initiating application failure
+   * @param request live request for custom handlers
+   * @param response uncommitted response to complete
+   * @param observation optional terminal observation for mapper failures
+   * @throws Throwable if error response submission fails after commitment
+   */
+  @SuppressWarnings("java:S112") // Transport aborts preserve the original failure, including Error.
+  private static void renderFailure(
+      Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors,
+      Throwable failure,
+      Request request,
+      Response response,
+      @Nullable Completion observation)
+      throws Throwable {
+    final var status =
+        failure instanceof HttpException httpFailure
+            ? httpFailure.statusCode()
+            : HttpStatusCodes.INTERNAL_SERVER_ERROR;
+    var local = request.behavior();
+    var errorHandler = local == null ? null : exceptionHandler(local.errors(), failure);
+    if (errorHandler == null) {
+      errorHandler = exceptionHandler(errors, failure);
+    }
+
+    response.discardInputBeforeFlush();
+
+    response.requiredChallenge(failure);
+
+    if (response.encodingRejected()) {
+      response.emptyEncodingError();
+      return;
+    }
+
+    if (errorHandler == null) {
+      response.error(status);
+      return;
+    }
+
+    response.reset(status);
+    renderCustomFailure(errorHandler, failure, request, response, observation);
+  }
+
+  /**
+   * Runs an application error handler with the framework's safe fallback on handler failure.
+   *
+   * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+   *
+   * @param errorHandler selected application handler
+   * @param failure initiating application failure
+   * @param request live request
+   * @param response uncommitted response
+   * @param observation optional terminal observation
+   * @throws Throwable if error response submission fails after commitment
+   */
+  @SuppressWarnings({
+    "java:S112",
+    "ReferenceEquality"
+  }) // A committed response propagates its original transport failure.
+  private static void renderCustomFailure(
+      ExceptionHandler<Exception> errorHandler,
+      Throwable failure,
+      Request request,
+      Response response,
+      @Nullable Completion observation)
+      throws Throwable {
+    try {
+      errorHandler.handle((Exception) failure, request, response);
+      response.complete();
+    } catch (Exception handlerFailure) {
+      var originalHandlerFailure = flushFailure(handlerFailure);
+      response.disableFlushHooksAfterBeforeFailure();
+      if (response.committed()) {
+        throw originalHandlerFailure;
+      }
+
+      if (observation != null && originalHandlerFailure != failure) {
+        failure.addSuppressed(originalHandlerFailure);
+      }
+
+      if (response.encodingRejected()) {
+        response.emptyEncodingError();
+      } else {
+        response.error(HttpStatusCodes.INTERNAL_SERVER_ERROR);
+      }
+    }
+  }
+
+  /**
+   * Finds the closest registered class without unwrapping causes or depending on map order.
+   *
+   * @param errors immutable application-wide callbacks
+   * @param failure directly thrown failure
+   * @return closest matching callback, or null for built-in handling
+   */
+  private static @Nullable ExceptionHandler<Exception> exceptionHandler(
+      Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors, Throwable failure) {
+    for (Class<?> type = failure.getClass(); type != null; type = type.getSuperclass()) {
+      var handler = errors.get(type);
+      if (handler != null) {
+        return handler;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Resolves gzip and identity availability using explicit quality values before Jetty's wildcard
+   * negotiation. A response with another explicitly chosen content coding remains
+   * application-owned.
+   *
+   * @param response framework response to configure
+   * @param request incoming transport request
+   */
+  private static void configureEncoding(
+      Response response, org.eclipse.jetty.server.Request request) {
+    var values = request.getHeaders().getValuesList(HttpHeader.ACCEPT_ENCODING);
+    if (values.isEmpty()) {
+      return;
+    }
+
+    var parser = new QuotedQualityCSV();
+    for (var value : values) {
+      parser.addValue(value);
+    }
+
+    boolean gzipSpecified = false;
+    boolean gzipAccepted = false;
+    boolean identitySpecified = false;
+    boolean identityAccepted = false;
+    boolean wildcardSpecified = false;
+    boolean wildcardAccepted = false;
+    for (var value : parser.getQualityValues()) {
+      if ("gzip".equalsIgnoreCase(value.getValue())) {
+        gzipSpecified = true;
+        gzipAccepted |= value.isAcceptable();
+      } else if ("identity".equalsIgnoreCase(value.getValue())) {
+        identitySpecified = true;
+        identityAccepted |= value.isAcceptable();
+      } else if (HttpCharacters.ASTERISK_STRING.equals(value.getValue())) {
+        wildcardSpecified = true;
+        wildcardAccepted |= value.isAcceptable();
+      }
+    }
+
+    response.gzipExcludedByAccept(gzipSpecified && !gzipAccepted && wildcardAccepted);
+    response.identityUnacceptable(
+        !(identitySpecified ? identityAccepted : !wildcardSpecified || wildcardAccepted));
+    response.encodingUnacceptable(
+        !(gzipSpecified ? gzipAccepted : wildcardAccepted)
+            && !(identitySpecified ? identityAccepted : !wildcardSpecified || wildcardAccepted));
+  }
+
+  /**
+   * Renders a router-generated status through its optional application-wide customization.
+   *
+   * @param handlers immutable status callbacks
+   * @param status generated status code
+   * @param fallback built-in response text
+   * @param request live request
+   * @param response live uncommitted response
+   * @throws Exception if the configured callback fails
+   */
+  private static void generated(
+      Map<Integer, Handler> handlers,
+      int status,
+      String fallback,
+      Request request,
+      Response response)
+      throws Exception {
+    response.discardInputBeforeFlush();
+    var local = request.behavior();
+    var handler = local == null ? null : local.statuses().get(status);
+    if (handler == null) {
+      handler = handlers.get(status);
+    }
+
+    if (handler == null) {
+      response.status(status).text(fallback);
+      return;
+    }
+
+    response.status(status);
+    handler.handle(request, response);
+  }
+
+  /**
+   * Runs one ordered flush stage and converts checked callback failures into request failures.
+   *
+   * @param handlers immutable callbacks for one boundary
+   * @param request live request
+   * @param response live response
+   * @throws FlushFailure if a callback throws a checked exception
+   */
+  private static void flush(List<Handler> handlers, Request request, Response response) {
+    try {
+      for (var handler : handlers) {
+        handler.handle(request, response);
+      }
+    } catch (RuntimeException failure) {
+      throw failure;
+    } catch (Exception failure) {
+      throw new FlushFailure(failure);
+    }
+  }
+
+  /**
+   * Recovers the checked callback exception used for existing global error-handler selection.
+   *
+   * @param failure callback or framework failure
+   * @return original checked callback failure when wrapped for a Runnable boundary
+   */
+  private static Throwable flushFailure(Throwable failure) {
+    return failure instanceof FlushFailure wrapped
+        ? Objects.requireNonNull(wrapped.getCause())
+        : failure;
   }
 
   /**
@@ -725,7 +1153,7 @@ public final class Shoostr {
    * @throws IllegalStateException if configuration closes Shoostr or changes its owned wiring
    */
   private void startServer() throws Exception {
-    var dispatch = DispatchConfiguration.capture(this);
+    final var dispatch = DispatchConfiguration.capture(this);
     var pool = new QueuedThreadPool();
     if (options.getVirtualThreads()) {
       ownedVirtualThreads = Executors.newVirtualThreadPerTaskExecutor();
@@ -734,7 +1162,7 @@ public final class Shoostr {
 
     server = new Server(pool);
     server.setStopTimeout(options.getShutdownTimeout().toMillis());
-    var proxy = trustedProxy;
+    final var proxy = trustedProxy;
     var websocketRoutes = websocketRouter;
     managedWebSockets =
         websocketRoutes == null
@@ -893,7 +1321,7 @@ public final class Shoostr {
       GracefulHandler graceful,
       org.eclipse.jetty.server.Handler applicationHandler,
       ServerConnector connector) {
-    var installedHandler = Objects.requireNonNull(graceful.getHandler());
+    final var installedHandler = Objects.requireNonNull(graceful.getHandler());
     for (var configuration : List.copyOf(serverConfigurations)) {
       configuration.accept(server);
       if (closed) {
@@ -1006,37 +1434,6 @@ public final class Shoostr {
 
     if (failure instanceof IOException ordinary) {
       throw ordinary;
-    }
-  }
-
-  /**
-   * Runs and releases ordered application callbacks, collecting ordinary failures independently.
-   *
-   * @param callbacks callbacks in invocation order, owned by this shutdown operation
-   * @param failure previously collected shutdown failure, or null
-   * @param message context for a callback failure
-   * @return aggregated failure, or null if shutdown has not failed
-   */
-  @SuppressWarnings("java:S1181") // An Error stops this phase while its caller performs cleanup.
-  private static @Nullable Throwable runCloseCallbacks(
-      List<Runnable> callbacks, @Nullable Throwable failure, String message) {
-    try {
-      for (var callback : callbacks) {
-        try {
-          callback.run();
-        } catch (RuntimeException callbackFailure) {
-          failure =
-              failure instanceof Error
-                  ? mergeCloseFailure(failure, callbackFailure)
-                  : appendCloseFailure((IOException) failure, message, callbackFailure);
-        } catch (Error callbackFailure) {
-          failure = mergeCloseFailure(failure, callbackFailure);
-          break;
-        }
-      }
-      return failure;
-    } finally {
-      callbacks.clear();
     }
   }
 
@@ -1184,24 +1581,6 @@ public final class Shoostr {
   }
 
   /**
-   * Signals one extension while retaining an ordinary failure for the enclosing phase.
-   *
-   * @param extension owned extension being signalled
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  private static @Nullable IOException signalExtensionBeforeStop(
-      Extension extension, @Nullable IOException failure) {
-    try {
-      extension.beforeStop();
-
-      return failure;
-    } catch (RuntimeException stopFailure) {
-      return appendCloseFailure(failure, "Could not signal extension shutdown", stopFailure);
-    }
-  }
-
-  /**
    * Stops the native server when startup acquired one.
    *
    * @throws Exception if native shutdown fails
@@ -1303,24 +1682,6 @@ public final class Shoostr {
   }
 
   /**
-   * Cancels one queued exchange while retaining an ordinary failure for the enclosing phase.
-   *
-   * @param task pending matched request
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  private static @Nullable IOException cancelPendingMatch(
-      ApplicationHandler.MatchedTask task, @Nullable IOException failure) {
-    try {
-      task.cancel();
-
-      return failure;
-    } catch (RuntimeException cancellationFailure) {
-      return appendCloseFailure(failure, "Could not cancel queued request", cancellationFailure);
-    }
-  }
-
-  /**
    * Releases the runtime's reference to this app after explicit cleanup. During JVM shutdown the
    * runtime rejects hook removal; the already-running hook will observe the closed app instead.
    */
@@ -1362,72 +1723,6 @@ public final class Shoostr {
     }
   }
 
-  /**
-   * Closes one extension while retaining an ordinary failure for the enclosing phase.
-   *
-   * @param extension owned extension being closed
-   * @param failure earlier shutdown failure, or null
-   * @return accumulated shutdown failure, or null
-   */
-  private static @Nullable IOException closeExtension(
-      Extension extension, @Nullable IOException failure) {
-    try {
-      extension.close();
-
-      return failure;
-    } catch (IOException | RuntimeException closeFailure) {
-      return appendCloseFailure(failure, "Could not close extension", closeFailure);
-    }
-  }
-
-  /**
-   * Keeps the first Error primary, or preserves the first ordinary failure.
-   *
-   * @param current earlier failure, or null
-   * @param additional next observed failure
-   * @return primary failure retaining the other distinct failure as suppressed
-   */
-  @SuppressWarnings("ReferenceEquality") // One Throwable instance cannot suppress itself.
-  private static Throwable mergeCloseFailure(@Nullable Throwable current, Throwable additional) {
-    if (current == null || current == additional) {
-      return additional;
-    }
-
-    if (additional instanceof Error && !(current instanceof Error)) {
-      var earlier = current;
-      current = additional;
-      additional = earlier;
-    }
-
-    for (var retained : current.getSuppressed()) {
-      if (retained == additional) {
-        return current;
-      }
-    }
-    current.addSuppressed(additional);
-
-    return current;
-  }
-
-  /**
-   * Adds one independent shutdown failure without skipping later cleanup.
-   *
-   * @param current previously observed cleanup failure, or null
-   * @param message context for the first failure
-   * @param additional subsequent cleanup failure
-   * @return aggregated failure
-   */
-  private static IOException appendCloseFailure(
-      @Nullable IOException current, String message, Exception additional) {
-    if (current == null) {
-      return new IOException(message, additional);
-    }
-
-    current.addSuppressed(additional);
-
-    return current;
-  }
-
   /** Runs idempotent cleanup from the JVM hook and logs failures that cannot reach a caller. */
   private void shutdown() {
     try {
@@ -1436,301 +1731,6 @@ public final class Shoostr {
       System.getLogger(Shoostr.class.getName())
           .log(System.Logger.Level.ERROR, "Shoostr shutdown failed", failure);
     }
-  }
-
-  /**
-   * Hands a matched upgrade to Jetty while keeping factory rejection inside its creator callback.
-   * Jetty owns the response callback whenever this method returns true.
-   *
-   * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
-   *
-   * @param container context's WebSocket container
-   * @param endpoint matched WebSocket route
-   * @param request live framework request for handshake decisions
-   * @param response framework response for mapped handshake errors
-   * @param errors registered application exception handlers
-   * @param observation optional terminal request observation
-   * @param rawRequest Jetty request
-   * @param rawResponse Jetty response
-   * @param callback HTTP response callback
-   * @param runtime app-owned WebSocket message dispatch
-   * @return whether Jetty handled the exchange
-   */
-  @SuppressWarnings({
-    "java:S107",
-    "ReferenceEquality"
-  }) // Keep the hot handshake path free of a per-request argument holder.
-  private static boolean upgradeWebSocket(
-      ServerWebSocketContainer container,
-      RadixRoutes.Endpoint endpoint,
-      Request request,
-      Response response,
-      Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors,
-      @Nullable Completion observation,
-      org.eclipse.jetty.server.Request rawRequest,
-      org.eclipse.jetty.server.Response rawResponse,
-      Callback callback,
-      WebSocketRuntime runtime) {
-    var factory = Objects.requireNonNull(endpoint.websocketFactory());
-
-    return container.upgrade(
-        (upgradeRequest, upgradeResponse, upgradeCallback) -> {
-          try {
-            request.webSocketProtocols(upgradeRequest.getSubProtocols());
-            var listener =
-                Objects.requireNonNull(factory.create(request, upgradeResponse, runtime));
-            response.protectRequiredHeaders();
-
-            return listener;
-          } catch (Exception failure) {
-            if (observation != null) {
-              observation.recordApplicationFailure(failure);
-            }
-
-            try {
-              renderFailure(errors, failure, request, response, observation);
-            } catch (Throwable writeFailure) {
-              if (observation != null && writeFailure != failure) {
-                failure.addSuppressed(writeFailure);
-              }
-
-              response.fail();
-
-              upgradeCallback.failed(new AbortException(writeFailure));
-            }
-
-            return null;
-          }
-        },
-        rawRequest,
-        rawResponse,
-        callback);
-  }
-
-  /**
-   * Applies the same application-wide exception policy to ordinary HTTP handlers and failed
-   * WebSocket listener factories, preserving session cookies through response reset. Schedules
-   * non-blocking input disposal before the first error flush so Jetty can advertise a
-   * non-persistent HTTP/1 connection while custom renderers and pre-flush callbacks retain body
-   * access.
-   *
-   * @param errors registered exception handlers
-   * @param failure initiating application failure
-   * @param request live request for custom handlers
-   * @param response uncommitted response to complete
-   * @param observation optional terminal observation for mapper failures
-   * @throws Throwable if error response submission fails after commitment
-   */
-  @SuppressWarnings("java:S112") // Transport aborts preserve the original failure, including Error.
-  private static void renderFailure(
-      Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors,
-      Throwable failure,
-      Request request,
-      Response response,
-      @Nullable Completion observation)
-      throws Throwable {
-    var status =
-        failure instanceof HttpException httpFailure
-            ? httpFailure.statusCode()
-            : HttpStatusCodes.INTERNAL_SERVER_ERROR;
-    var local = request.behavior();
-    var errorHandler = local == null ? null : exceptionHandler(local.errors(), failure);
-    if (errorHandler == null) {
-      errorHandler = exceptionHandler(errors, failure);
-    }
-
-    response.discardInputBeforeFlush();
-
-    response.requiredChallenge(failure);
-
-    if (response.encodingRejected()) {
-      response.emptyEncodingError();
-      return;
-    }
-
-    if (errorHandler == null) {
-      response.error(status);
-      return;
-    }
-
-    response.reset(status);
-    renderCustomFailure(errorHandler, failure, request, response, observation);
-  }
-
-  /**
-   * Runs an application error handler with the framework's safe fallback on handler failure.
-   *
-   * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
-   *
-   * @param errorHandler selected application handler
-   * @param failure initiating application failure
-   * @param request live request
-   * @param response uncommitted response
-   * @param observation optional terminal observation
-   * @throws Throwable if error response submission fails after commitment
-   */
-  @SuppressWarnings({
-    "java:S112",
-    "ReferenceEquality"
-  }) // A committed response propagates its original transport failure.
-  private static void renderCustomFailure(
-      ExceptionHandler<Exception> errorHandler,
-      Throwable failure,
-      Request request,
-      Response response,
-      @Nullable Completion observation)
-      throws Throwable {
-    try {
-      errorHandler.handle((Exception) failure, request, response);
-      response.complete();
-    } catch (Exception handlerFailure) {
-      var originalHandlerFailure = flushFailure(handlerFailure);
-      response.disableFlushHooksAfterBeforeFailure();
-      if (response.committed()) {
-        throw originalHandlerFailure;
-      }
-
-      if (observation != null && originalHandlerFailure != failure) {
-        failure.addSuppressed(originalHandlerFailure);
-      }
-
-      if (response.encodingRejected()) {
-        response.emptyEncodingError();
-      } else {
-        response.error(HttpStatusCodes.INTERNAL_SERVER_ERROR);
-      }
-    }
-  }
-
-  /**
-   * Finds the closest registered class without unwrapping causes or depending on map order.
-   *
-   * @param errors immutable application-wide callbacks
-   * @param failure directly thrown failure
-   * @return closest matching callback, or null for built-in handling
-   */
-  private static @Nullable ExceptionHandler<Exception> exceptionHandler(
-      Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors, Throwable failure) {
-    for (Class<?> type = failure.getClass(); type != null; type = type.getSuperclass()) {
-      var handler = errors.get(type);
-      if (handler != null) {
-        return handler;
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Resolves gzip and identity availability using explicit quality values before Jetty's wildcard
-   * negotiation. A response with another explicitly chosen content coding remains
-   * application-owned.
-   *
-   * @param response framework response to configure
-   * @param request incoming transport request
-   */
-  private static void configureEncoding(
-      Response response, org.eclipse.jetty.server.Request request) {
-    var values = request.getHeaders().getValuesList(HttpHeader.ACCEPT_ENCODING);
-    if (values.isEmpty()) {
-      return;
-    }
-
-    var parser = new QuotedQualityCSV();
-    for (var value : values) {
-      parser.addValue(value);
-    }
-
-    boolean gzipSpecified = false;
-    boolean gzipAccepted = false;
-    boolean identitySpecified = false;
-    boolean identityAccepted = false;
-    boolean wildcardSpecified = false;
-    boolean wildcardAccepted = false;
-    for (var value : parser.getQualityValues()) {
-      if ("gzip".equalsIgnoreCase(value.getValue())) {
-        gzipSpecified = true;
-        gzipAccepted |= value.isAcceptable();
-      } else if ("identity".equalsIgnoreCase(value.getValue())) {
-        identitySpecified = true;
-        identityAccepted |= value.isAcceptable();
-      } else if (HttpCharacters.ASTERISK_STRING.equals(value.getValue())) {
-        wildcardSpecified = true;
-        wildcardAccepted |= value.isAcceptable();
-      }
-    }
-
-    response.gzipExcludedByAccept(gzipSpecified && !gzipAccepted && wildcardAccepted);
-    response.identityUnacceptable(
-        !(identitySpecified ? identityAccepted : !wildcardSpecified || wildcardAccepted));
-    response.encodingUnacceptable(
-        !(gzipSpecified ? gzipAccepted : wildcardAccepted)
-            && !(identitySpecified ? identityAccepted : !wildcardSpecified || wildcardAccepted));
-  }
-
-  /**
-   * Renders a router-generated status through its optional application-wide customization.
-   *
-   * @param handlers immutable status callbacks
-   * @param status generated status code
-   * @param fallback built-in response text
-   * @param request live request
-   * @param response live uncommitted response
-   * @throws Exception if the configured callback fails
-   */
-  private static void generated(
-      Map<Integer, Handler> handlers,
-      int status,
-      String fallback,
-      Request request,
-      Response response)
-      throws Exception {
-    response.discardInputBeforeFlush();
-    var local = request.behavior();
-    var handler = local == null ? null : local.statuses().get(status);
-    if (handler == null) {
-      handler = handlers.get(status);
-    }
-
-    if (handler == null) {
-      response.status(status).text(fallback);
-      return;
-    }
-
-    response.status(status);
-    handler.handle(request, response);
-  }
-
-  /**
-   * Runs one ordered flush stage and converts checked callback failures into request failures.
-   *
-   * @param handlers immutable callbacks for one boundary
-   * @param request live request
-   * @param response live response
-   * @throws FlushFailure if a callback throws a checked exception
-   */
-  private static void flush(List<Handler> handlers, Request request, Response response) {
-    try {
-      for (var handler : handlers) {
-        handler.handle(request, response);
-      }
-    } catch (RuntimeException failure) {
-      throw failure;
-    } catch (Exception failure) {
-      throw new FlushFailure(failure);
-    }
-  }
-
-  /**
-   * Recovers the checked callback exception used for existing global error-handler selection.
-   *
-   * @param failure callback or framework failure
-   * @return original checked callback failure when wrapped for a Runnable boundary
-   */
-  private static Throwable flushFailure(Throwable failure) {
-    return failure instanceof FlushFailure wrapped
-        ? Objects.requireNonNull(wrapped.getCause())
-        : failure;
   }
 
   /** Carries a checked lifecycle callback failure through a Runnable flush boundary. */
@@ -1745,8 +1745,334 @@ public final class Shoostr {
     }
   }
 
+  /** Immutable registration snapshot published before the listener accepts requests. */
+  private record DispatchConfiguration(
+      RadixRoutes router,
+      Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors,
+      Map<Integer, Handler> statuses,
+      List<Handler> gates,
+      List<Handler> headerHooks,
+      List<Handler> matchedHooks,
+      List<Handler> postRouteHooks,
+      List<Handler> beforeFlushHooks,
+      List<Handler> afterFlushHooks,
+      List<Consumer<RequestOutcome>> observers,
+      List<Function<Request, RequestObservation>> instrumentation,
+      boolean localObservers) {
+    /**
+     * Copies registrations so clearing the mutable builders cannot affect live requests.
+     *
+     * @param router compiled route lookup
+     * @param errors application exception handlers
+     * @param statuses generated-status handlers
+     * @param gates route admission gates
+     * @param headerHooks request-header callbacks
+     * @param matchedHooks route-match callbacks
+     * @param postRouteHooks callbacks after a successful route
+     * @param beforeFlushHooks callbacks before response submission
+     * @param afterFlushHooks callbacks after response submission
+     * @param observers terminal completion observers
+     * @param instrumentation per-request observation factories
+     * @param localObservers whether any route requires terminal completion
+     */
+    private DispatchConfiguration {
+      Objects.requireNonNull(router);
+      errors = Map.copyOf(errors);
+      statuses = Map.copyOf(statuses);
+      gates = List.copyOf(gates);
+      headerHooks = List.copyOf(headerHooks);
+      matchedHooks = List.copyOf(matchedHooks);
+      postRouteHooks = List.copyOf(postRouteHooks);
+      beforeFlushHooks = List.copyOf(beforeFlushHooks);
+      afterFlushHooks = List.copyOf(afterFlushHooks);
+      observers = List.copyOf(observers);
+      instrumentation = List.copyOf(instrumentation);
+    }
+
+    /**
+     * Freezes registrations before native startup and releases their mutable construction state.
+     *
+     * @param app application whose registrations have finished
+     * @return immutable request-dispatch configuration
+     */
+    private static DispatchConfiguration capture(Shoostr app) {
+      final var dispatch = captureExtendedDispatch(app);
+      app.observationFactories.clear();
+      app.afterHandlers.clear();
+      app.beforeHandlers.clear();
+      app.requestHeaderHandlers.clear();
+      app.routeMatchedHandlers.clear();
+      app.afterRouteHandlers.clear();
+      app.beforeFlushHandlers.clear();
+      app.afterFlushHandlers.clear();
+      app.exceptionHandlers.clear();
+      app.statusHandlers.clear();
+
+      return dispatch;
+    }
+
+    /**
+     * Snapshots the completed route registrations and their lifecycle callbacks.
+     *
+     * @param app application whose completed registrations are captured
+     * @return immutable dispatch configuration
+     */
+    private static DispatchConfiguration captureExtendedDispatch(Shoostr app) {
+      return new DispatchConfiguration(
+          Objects.requireNonNull(app.router),
+          app.exceptionHandlers,
+          app.statusHandlers,
+          app.beforeHandlers,
+          app.requestHeaderHandlers,
+          app.routeMatchedHandlers,
+          app.afterRouteHandlers,
+          app.beforeFlushHandlers,
+          app.afterFlushHandlers,
+          app.afterHandlers,
+          app.observationFactories,
+          app.routes.localObservers());
+    }
+  }
+
+  /**
+   * Coordinates application finalization with transport termination without retaining live input.
+   */
+  private static final class Completion {
+    private final String method;
+    private final long started;
+    private final List<Consumer<RequestOutcome>> observers;
+    private final List<RequestObservation> scopes;
+    private List<Consumer<RequestOutcome>> localObservers;
+    private @Nullable List<AutoCloseable> attachedScopes;
+    private boolean scopesClosed;
+    private @Nullable String routePattern;
+    private int status;
+    private @Nullable Throwable transportFailure;
+    private @Nullable Throwable applicationFailure;
+    private boolean applicationFinished;
+    private boolean transportFinished;
+    private boolean notified;
+
+    /**
+     * Starts timing only when completion observers are configured.
+     *
+     * @param method wire method
+     * @param observers immutable registration snapshot
+     */
+    private Completion(String method, List<Consumer<RequestOutcome>> observers) {
+      this.method = method;
+      this.observers = observers;
+      this.localObservers = List.of();
+      this.scopes = new ArrayList<>();
+      this.started = System.nanoTime();
+    }
+
+    /**
+     * Creates scopes before their app-wide or matched phase; a faulty observer cannot reject
+     * traffic.
+     *
+     * @param request invocation input, not retained
+     * @param factories instrumentation snapshot
+     */
+    private void begin(Request request, List<Function<Request, RequestObservation>> factories) {
+      for (var factory : factories) {
+        try {
+          scopes.add(Objects.requireNonNull(factory.apply(request)));
+        } catch (RuntimeException failure) {
+          System.getLogger(Shoostr.class.getName())
+              .log(System.Logger.Level.ERROR, "Request instrumentation failed", failure);
+        }
+      }
+    }
+
+    /** Closes context scopes on the invocation thread in reverse nesting order. */
+    private void closeScopes() {
+      if (attachedScopes != null) {
+        closeActiveScopes(attachedScopes);
+        attachedScopes = null;
+      }
+
+      if (!scopesClosed) {
+        scopesClosed = true;
+        closeActiveScopes(scopes);
+      }
+    }
+
+    /** Attaches explicitly retained context only after admission scope restoration. */
+    private void attachScopes() {
+      if (scopes.isEmpty()) {
+        return;
+      }
+
+      var attached = new ArrayList<AutoCloseable>(scopes.size());
+      attachedScopes = attached;
+      for (var scope : scopes) {
+        try {
+          attached.add(Objects.requireNonNull(scope.attach()));
+        } catch (RuntimeException failure) {
+          System.getLogger(Shoostr.class.getName())
+              .log(System.Logger.Level.ERROR, "Request instrumentation attachment failed", failure);
+        }
+      }
+    }
+
+    /**
+     * Restores context in reverse nesting order without suppressing later normal cleanup.
+     *
+     * @param activeScopes scopes belonging to the calling thread
+     */
+    private void closeActiveScopes(List<? extends AutoCloseable> activeScopes) {
+      for (int index = activeScopes.size() - 1; index >= 0; index--) {
+        try {
+          activeScopes.get(index).close();
+        } catch (Exception failure) {
+          if (failure instanceof InterruptedException) {
+            Thread.currentThread().interrupt();
+          }
+
+          System.getLogger(Shoostr.class.getName())
+              .log(
+                  System.Logger.Level.ERROR,
+                  "Request instrumentation scope cleanup failed",
+                  failure);
+        }
+      }
+    }
+
+    /**
+     * Records application cleanup before allowing a terminal notification.
+     *
+     * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
+     *
+     * @param routePattern selected named template, or null for unmatched requests
+     * @param failure initiating processing failure, or null
+     */
+    @SuppressWarnings("ReferenceEquality")
+    private void finish(@Nullable String routePattern, @Nullable Throwable failure) {
+      RequestOutcome outcome;
+      synchronized (this) {
+        this.routePattern = routePattern;
+        if (applicationFailure == null) {
+          applicationFailure = failure;
+        } else if (failure != null && failure != applicationFailure) {
+          applicationFailure.addSuppressed(failure);
+        }
+
+        applicationFinished = true;
+        outcome = outcome();
+      }
+      notifyObservers(outcome);
+    }
+
+    /**
+     * Records a listener-factory failure handled inside Jetty's synchronous creator callback.
+     *
+     * @param failure initiating factory exception
+     */
+    private void recordApplicationFailure(Throwable failure) {
+      synchronized (this) {
+        applicationFailure = failure;
+      }
+    }
+
+    /**
+     * Captures transport values while the server's response remains valid.
+     *
+     * @param status committed final status, or zero
+     * @param failure terminal transport outcome, including application-triggered aborts
+     */
+    private void complete(int status, @Nullable Throwable failure) {
+      RequestOutcome outcome;
+      synchronized (this) {
+        this.status = status;
+        if (failure != null || transportFailure == null) {
+          transportFailure = failure;
+        }
+
+        transportFinished = true;
+        outcome = outcome();
+      }
+      notifyObservers(outcome);
+    }
+
+    /**
+     * Retains an asynchronous response failure until the transport reports terminal completion.
+     *
+     * @param failure response callback failure
+     */
+    private void recordTransportFailure(Throwable failure) {
+      synchronized (this) {
+        if (transportFailure == null) {
+          transportFailure = failure;
+        }
+      }
+    }
+
+    /**
+     * Freezes one summary after both parties finish; caller holds this coordinator's monitor.
+     *
+     * @return summary to publish, or null while pending or already notified
+     */
+    private @Nullable RequestOutcome outcome() {
+      if (!applicationFinished || !transportFinished || notified) {
+        return null;
+      }
+
+      notified = true;
+
+      return new RequestOutcome(
+          method,
+          routePattern,
+          status,
+          System.nanoTime() - started,
+          applicationFailure,
+          transportFailure);
+    }
+
+    /**
+     * Dispatches outside the coordinator's monitor in registration order.
+     *
+     * @param outcome terminal snapshot, or null when no notification is due
+     */
+    private void notifyObservers(@Nullable RequestOutcome outcome) {
+      if (outcome == null) {
+        return;
+      }
+
+      for (var scope : scopes) {
+        try {
+          scope.complete(outcome);
+        } catch (RuntimeException failure) {
+          System.getLogger(Shoostr.class.getName())
+              .log(System.Logger.Level.ERROR, "Request instrumentation completion failed", failure);
+        }
+      }
+
+      notifyTerminal(localObservers, outcome);
+      notifyTerminal(observers, outcome);
+    }
+
+    /**
+     * Isolates terminal observer failures and preserves local-before-app order.
+     *
+     * @param callbacks terminal callbacks
+     * @param outcome immutable final outcome
+     */
+    private void notifyTerminal(List<Consumer<RequestOutcome>> callbacks, RequestOutcome outcome) {
+      for (var observer : callbacks) {
+        try {
+          observer.accept(outcome);
+        } catch (RuntimeException failure) {
+          System.getLogger(Shoostr.class.getName())
+              .log(System.Logger.Level.ERROR, "Request completion observer failed", failure);
+        }
+      }
+    }
+  }
+
   /** Request dispatcher with one immutable startup snapshot and no registration locks. */
   private final class ApplicationHandler extends Wrapper {
+    private static final String SELECTION = ApplicationHandler.class.getName() + ".selection";
     private final RadixRoutes compiledRoutes;
     private final Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors;
     private final Map<Integer, Handler> statuses;
@@ -1763,21 +2089,9 @@ public final class Shoostr {
     private final @Nullable RadixRoutes websocketRoutes;
     private final @Nullable CompressionHandler compressionHandler;
     private final @Nullable WebSocketRuntime websocketRuntime;
-
     private final boolean interceptPreflights;
     private final org.eclipse.jetty.server.Handler sessionContinuation;
     private final @Nullable SessionHandler applicationSessions;
-    private static final String SELECTION = ApplicationHandler.class.getName() + ".selection";
-
-    /**
-     * A cached pure lookup, kept separate from publicly matched route metadata.
-     *
-     * @param endpoint selected target, or null
-     * @param preflight whether lookup used the CORS target method
-     * @param cors selected endpoint permissions, or null
-     */
-    private record Selection(
-        RadixRoutes.@Nullable Endpoint endpoint, boolean preflight, @Nullable CorsPolicy cors) {}
 
     /**
      * Retains the immutable registration snapshot and startup policies for all requests.
@@ -2560,6 +2874,16 @@ public final class Shoostr {
       }
     }
 
+    /**
+     * A cached pure lookup, kept separate from publicly matched route metadata.
+     *
+     * @param endpoint selected target, or null
+     * @param preflight whether lookup used the CORS target method
+     * @param cors selected endpoint permissions, or null
+     */
+    private record Selection(
+        RadixRoutes.@Nullable Endpoint endpoint, boolean preflight, @Nullable CorsPolicy cors) {}
+
     /** One selected exchange; canceled queue tombstones retain no app or request references. */
     private static final class MatchedTask implements Runnable {
       private @Nullable ApplicationHandler owner;
@@ -2719,331 +3043,6 @@ public final class Shoostr {
         callback = null;
         observation = null;
         admission = null;
-      }
-    }
-  }
-
-  /** Immutable registration snapshot published before the listener accepts requests. */
-  private record DispatchConfiguration(
-      RadixRoutes router,
-      Map<Class<? extends Exception>, ExceptionHandler<Exception>> errors,
-      Map<Integer, Handler> statuses,
-      List<Handler> gates,
-      List<Handler> headerHooks,
-      List<Handler> matchedHooks,
-      List<Handler> postRouteHooks,
-      List<Handler> beforeFlushHooks,
-      List<Handler> afterFlushHooks,
-      List<Consumer<RequestOutcome>> observers,
-      List<Function<Request, RequestObservation>> instrumentation,
-      boolean localObservers) {
-    /**
-     * Copies registrations so clearing the mutable builders cannot affect live requests.
-     *
-     * @param router compiled route lookup
-     * @param errors application exception handlers
-     * @param statuses generated-status handlers
-     * @param gates route admission gates
-     * @param headerHooks request-header callbacks
-     * @param matchedHooks route-match callbacks
-     * @param postRouteHooks callbacks after a successful route
-     * @param beforeFlushHooks callbacks before response submission
-     * @param afterFlushHooks callbacks after response submission
-     * @param observers terminal completion observers
-     * @param instrumentation per-request observation factories
-     * @param localObservers whether any route requires terminal completion
-     */
-    private DispatchConfiguration {
-      Objects.requireNonNull(router);
-      errors = Map.copyOf(errors);
-      statuses = Map.copyOf(statuses);
-      gates = List.copyOf(gates);
-      headerHooks = List.copyOf(headerHooks);
-      matchedHooks = List.copyOf(matchedHooks);
-      postRouteHooks = List.copyOf(postRouteHooks);
-      beforeFlushHooks = List.copyOf(beforeFlushHooks);
-      afterFlushHooks = List.copyOf(afterFlushHooks);
-      observers = List.copyOf(observers);
-      instrumentation = List.copyOf(instrumentation);
-    }
-
-    /**
-     * Freezes registrations before native startup and releases their mutable construction state.
-     *
-     * @param app application whose registrations have finished
-     * @return immutable request-dispatch configuration
-     */
-    private static DispatchConfiguration capture(Shoostr app) {
-      var dispatch = captureExtendedDispatch(app);
-      app.observationFactories.clear();
-      app.afterHandlers.clear();
-      app.beforeHandlers.clear();
-      app.requestHeaderHandlers.clear();
-      app.routeMatchedHandlers.clear();
-      app.afterRouteHandlers.clear();
-      app.beforeFlushHandlers.clear();
-      app.afterFlushHandlers.clear();
-      app.exceptionHandlers.clear();
-      app.statusHandlers.clear();
-
-      return dispatch;
-    }
-
-    /**
-     * Snapshots the completed route registrations and their lifecycle callbacks.
-     *
-     * @param app application whose completed registrations are captured
-     * @return immutable dispatch configuration
-     */
-    private static DispatchConfiguration captureExtendedDispatch(Shoostr app) {
-      return new DispatchConfiguration(
-          Objects.requireNonNull(app.router),
-          app.exceptionHandlers,
-          app.statusHandlers,
-          app.beforeHandlers,
-          app.requestHeaderHandlers,
-          app.routeMatchedHandlers,
-          app.afterRouteHandlers,
-          app.beforeFlushHandlers,
-          app.afterFlushHandlers,
-          app.afterHandlers,
-          app.observationFactories,
-          app.routes.localObservers());
-    }
-  }
-
-  /**
-   * Coordinates application finalization with transport termination without retaining live input.
-   */
-  private static final class Completion {
-    private final String method;
-    private final long started;
-    private final List<Consumer<RequestOutcome>> observers;
-    private List<Consumer<RequestOutcome>> localObservers;
-    private final List<RequestObservation> scopes;
-    private @Nullable List<AutoCloseable> attachedScopes;
-    private boolean scopesClosed;
-    private @Nullable String routePattern;
-    private int status;
-    private @Nullable Throwable transportFailure;
-    private @Nullable Throwable applicationFailure;
-    private boolean applicationFinished;
-    private boolean transportFinished;
-    private boolean notified;
-
-    /**
-     * Starts timing only when completion observers are configured.
-     *
-     * @param method wire method
-     * @param observers immutable registration snapshot
-     */
-    private Completion(String method, List<Consumer<RequestOutcome>> observers) {
-      this.method = method;
-      this.observers = observers;
-      this.localObservers = List.of();
-      this.scopes = new ArrayList<>();
-      this.started = System.nanoTime();
-    }
-
-    /**
-     * Creates scopes before their app-wide or matched phase; a faulty observer cannot reject
-     * traffic.
-     *
-     * @param request invocation input, not retained
-     * @param factories instrumentation snapshot
-     */
-    private void begin(Request request, List<Function<Request, RequestObservation>> factories) {
-      for (var factory : factories) {
-        try {
-          scopes.add(Objects.requireNonNull(factory.apply(request)));
-        } catch (RuntimeException failure) {
-          System.getLogger(Shoostr.class.getName())
-              .log(System.Logger.Level.ERROR, "Request instrumentation failed", failure);
-        }
-      }
-    }
-
-    /** Closes context scopes on the invocation thread in reverse nesting order. */
-    private void closeScopes() {
-      if (attachedScopes != null) {
-        closeScopes(attachedScopes);
-        attachedScopes = null;
-      }
-
-      if (!scopesClosed) {
-        scopesClosed = true;
-        closeScopes(scopes);
-      }
-    }
-
-    /** Attaches explicitly retained context only after admission scope restoration. */
-    private void attachScopes() {
-      if (scopes.isEmpty()) {
-        return;
-      }
-
-      var attached = new ArrayList<AutoCloseable>(scopes.size());
-      attachedScopes = attached;
-      for (var scope : scopes) {
-        try {
-          attached.add(Objects.requireNonNull(scope.attach()));
-        } catch (RuntimeException failure) {
-          System.getLogger(Shoostr.class.getName())
-              .log(System.Logger.Level.ERROR, "Request instrumentation attachment failed", failure);
-        }
-      }
-    }
-
-    /**
-     * Restores context in reverse nesting order without suppressing later normal cleanup.
-     *
-     * @param activeScopes scopes belonging to the calling thread
-     */
-    private void closeScopes(List<? extends AutoCloseable> activeScopes) {
-      for (int index = activeScopes.size() - 1; index >= 0; index--) {
-        try {
-          activeScopes.get(index).close();
-        } catch (Exception failure) {
-          if (failure instanceof InterruptedException) {
-            Thread.currentThread().interrupt();
-          }
-
-          System.getLogger(Shoostr.class.getName())
-              .log(
-                  System.Logger.Level.ERROR,
-                  "Request instrumentation scope cleanup failed",
-                  failure);
-        }
-      }
-    }
-
-    /**
-     * Records application cleanup before allowing a terminal notification.
-     *
-     * <p>ReferenceEquality is suppressed because an exception cannot suppress itself.
-     *
-     * @param routePattern selected named template, or null for unmatched requests
-     * @param failure initiating processing failure, or null
-     */
-    @SuppressWarnings("ReferenceEquality")
-    private void finish(@Nullable String routePattern, @Nullable Throwable failure) {
-      RequestOutcome outcome;
-      synchronized (this) {
-        this.routePattern = routePattern;
-        if (applicationFailure == null) {
-          applicationFailure = failure;
-        } else if (failure != null && failure != applicationFailure) {
-          applicationFailure.addSuppressed(failure);
-        }
-
-        applicationFinished = true;
-        outcome = outcome();
-      }
-      notifyObservers(outcome);
-    }
-
-    /**
-     * Records a listener-factory failure handled inside Jetty's synchronous creator callback.
-     *
-     * @param failure initiating factory exception
-     */
-    private void recordApplicationFailure(Throwable failure) {
-      synchronized (this) {
-        applicationFailure = failure;
-      }
-    }
-
-    /**
-     * Captures transport values while the server's response remains valid.
-     *
-     * @param status committed final status, or zero
-     * @param failure terminal transport outcome, including application-triggered aborts
-     */
-    private void complete(int status, @Nullable Throwable failure) {
-      RequestOutcome outcome;
-      synchronized (this) {
-        this.status = status;
-        if (failure != null || transportFailure == null) {
-          transportFailure = failure;
-        }
-
-        transportFinished = true;
-        outcome = outcome();
-      }
-      notifyObservers(outcome);
-    }
-
-    /**
-     * Retains an asynchronous response failure until the transport reports terminal completion.
-     *
-     * @param failure response callback failure
-     */
-    private void recordTransportFailure(Throwable failure) {
-      synchronized (this) {
-        if (transportFailure == null) {
-          transportFailure = failure;
-        }
-      }
-    }
-
-    /**
-     * Freezes one summary after both parties finish; caller holds this coordinator's monitor.
-     *
-     * @return summary to publish, or null while pending or already notified
-     */
-    private @Nullable RequestOutcome outcome() {
-      if (!applicationFinished || !transportFinished || notified) {
-        return null;
-      }
-
-      notified = true;
-
-      return new RequestOutcome(
-          method,
-          routePattern,
-          status,
-          System.nanoTime() - started,
-          applicationFailure,
-          transportFailure);
-    }
-
-    /**
-     * Dispatches outside the coordinator's monitor in registration order.
-     *
-     * @param outcome terminal snapshot, or null when no notification is due
-     */
-    private void notifyObservers(@Nullable RequestOutcome outcome) {
-      if (outcome == null) {
-        return;
-      }
-
-      for (var scope : scopes) {
-        try {
-          scope.complete(outcome);
-        } catch (RuntimeException failure) {
-          System.getLogger(Shoostr.class.getName())
-              .log(System.Logger.Level.ERROR, "Request instrumentation completion failed", failure);
-        }
-      }
-
-      notifyTerminal(localObservers, outcome);
-      notifyTerminal(observers, outcome);
-    }
-
-    /**
-     * Isolates terminal observer failures and preserves local-before-app order.
-     *
-     * @param callbacks terminal callbacks
-     * @param outcome immutable final outcome
-     */
-    private void notifyTerminal(List<Consumer<RequestOutcome>> callbacks, RequestOutcome outcome) {
-      for (var observer : callbacks) {
-        try {
-          observer.accept(outcome);
-        } catch (RuntimeException failure) {
-          System.getLogger(Shoostr.class.getName())
-              .log(System.Logger.Level.ERROR, "Request completion observer failed", failure);
-        }
       }
     }
   }

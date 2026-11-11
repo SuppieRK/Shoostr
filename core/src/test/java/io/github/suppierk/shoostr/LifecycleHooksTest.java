@@ -55,6 +55,22 @@ import org.junit.jupiter.params.provider.ValueSource;
 class LifecycleHooksTest {
   private Shoostr app;
 
+  private static void readHeaders(Socket socket) throws IOException {
+    int suffix = 0;
+    for (int count = 0; count < 8192; count++) {
+      int value = socket.getInputStream().read();
+      if (value < 0) {
+        throw new IOException("Response ended before headers");
+      }
+
+      suffix = (suffix << 8) | value;
+      if (suffix == 0x0D0A0D0A) {
+        return;
+      }
+    }
+    throw new IOException("Header limit exceeded");
+  }
+
   @BeforeEach
   void prepare() {
     app =
@@ -571,7 +587,8 @@ class LifecycleHooksTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // The test checks null hook registration failures.
+  @SuppressWarnings("NullAway")
+  // The test checks null hook registration failures.
   void validatesRegistrationLifetime() throws Exception {
     assertThrows(NullPointerException.class, () -> app.beforeRouteHandler(null));
     assertThrows(NullPointerException.class, () -> app.afterRequest(null));
@@ -1060,7 +1077,7 @@ class LifecycleHooksTest {
   @Test
   void preservesPostFlushFailureAsSecondaryDiagnosticWhileRenderingException() throws Exception {
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
-    var original = new NotFoundException("missing");
+    final var original = new NotFoundException("missing");
     var postFlush = new IOException("after flush");
     app.afterRequest(outcomes::add);
     app.afterResponseFlush(
@@ -1329,22 +1346,6 @@ class LifecycleHooksTest {
         new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
 
     return socket;
-  }
-
-  private static void readHeaders(Socket socket) throws IOException {
-    int suffix = 0;
-    for (int count = 0; count < 8192; count++) {
-      int value = socket.getInputStream().read();
-      if (value < 0) {
-        throw new IOException("Response ended before headers");
-      }
-
-      suffix = (suffix << 8) | value;
-      if (suffix == 0x0D0A0D0A) {
-        return;
-      }
-    }
-    throw new IOException("Header limit exceeded");
   }
 
   private HttpRequest.Builder request() {

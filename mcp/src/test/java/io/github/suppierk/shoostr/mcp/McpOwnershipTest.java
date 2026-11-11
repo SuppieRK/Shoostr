@@ -23,12 +23,12 @@ import org.junit.jupiter.api.Test;
 
 class McpOwnershipTest {
   @Test
-  void rejectsANullNativeServerBeforeReturningAnAdapter() {
+  void rejectsNullNativeServerBeforeReturningAnAdapter() {
     var security =
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
 
     try (var attempt =
         new ConstructionAttempt(
@@ -38,21 +38,21 @@ class McpOwnershipTest {
   }
 
   @Test
-  void rejectsADuplicateNativeTransportBindingDuringConstruction() {
+  void rejectsDuplicateNativeTransportBindingDuringConstruction() {
     var security =
         new McpHttpSecurity(
             Set.of(),
             ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
 
     try (var attempt =
-        openAttemptForRejectsADuplicateNativeTransportBindingDuringConstruction(security)) {
+        openAttemptForRejectsDuplicateNativeTransportBindingDuringConstruction(security)) {
       assertThrows(IllegalStateException.class, attempt::construct);
     }
   }
 
   private ConstructionAttempt
-      openAttemptForRejectsADuplicateNativeTransportBindingDuringConstruction(
+      openAttemptForRejectsDuplicateNativeTransportBindingDuringConstruction(
           McpHttpSecurity security) {
     return new ConstructionAttempt(
         () ->
@@ -71,7 +71,7 @@ class McpOwnershipTest {
         new McpHttpSecurity(
             Set.of(),
             ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var mcp =
         Mcp.sync(
             security, transport -> McpServer.sync(transport).serverInfo("owner", "1.0").build());
@@ -129,7 +129,7 @@ class McpOwnershipTest {
         new McpHttpSecurity(
             Set.of(),
             ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
         transport -> McpServer.sync(transport).serverInfo("ownership", "1.0").build());
   }
 

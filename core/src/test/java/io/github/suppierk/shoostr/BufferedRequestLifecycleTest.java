@@ -68,6 +68,109 @@ class BufferedRequestLifecycleTest {
   private static final String PAYLOAD = "01234567890123456789012345678901";
   @TempDir Path temporaryDirectory;
 
+  private static Http2Response http2Request(
+      Session connection, Shoostr app, String method, String path, byte[] body) throws Exception {
+    var response = new Http2Response();
+    var request = createRequestForHttp2Request(method, app, path);
+    var stream =
+        connection
+            .newStream(new HeadersFrame(request, null, body.length == 0), response)
+            .get(3, TimeUnit.SECONDS);
+    if (body.length > 0) {
+      stream
+          .data(new DataFrame(stream.getId(), ByteBuffer.wrap(body), true))
+          .get(3, TimeUnit.SECONDS);
+    }
+
+    return response;
+  }
+
+  private static org.eclipse.jetty.http.MetaData.Request createRequestForHttp2Request(
+      String method, Shoostr app, String path) {
+    return new MetaData.Request(
+        method,
+        HttpURI.from("http://127.0.0.1:" + app.port() + path),
+        HttpVersion.HTTP_2,
+        HttpFields.EMPTY);
+  }
+
+  private static Shoostr app() {
+    return app(false);
+  }
+
+  private static Shoostr app(boolean http2) {
+    var configuredOptions = new Options();
+    configuredOptions.setMaxRequestBytes(16);
+    configuredOptions.setMaxResponseBytes(1024);
+    configuredOptions.setStreamBufferBytes(64);
+    configuredOptions.setMaxParameters(1000);
+    configuredOptions.setMultipart(MultipartOptions.defaults());
+    configuredOptions.setHttp2(http2);
+
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            nativeServer -> {
+              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
+              nativeConnector.setHost("127.0.0.1");
+              nativeConnector.setPort(0);
+              nativeConnector.setIdleTimeout(30_000);
+            });
+  }
+
+  private static void routes(
+      Shoostr app,
+      LinkedBlockingQueue<RequestOutcome> outcomes,
+      LinkedBlockingQueue<ContentTooLargeException> rejections) {
+    app.afterRequest(outcomes::add);
+    app.exception(
+        ContentTooLargeException.class,
+        (failure, request, response) -> {
+          rejections.add(failure);
+
+          assertThrows(ContentTooLargeException.class, request::bodyBytes);
+
+          response.setHeader("X-Peer-Port", peerPort(request));
+          response.text("too large");
+        });
+    app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
+    app.routes().get("/ok", (request, response) -> response.text(peerPort(request)));
+  }
+
+  private static String peerPort(Request request) {
+    return Integer.toString(((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort());
+  }
+
+  private static void connect(Socket socket, int port) throws IOException {
+    socket.setSoTimeout(3000);
+    socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], port), 3000);
+  }
+
+  private static HttpTester.Response receive(HttpTester.Input input) throws IOException {
+    var response = HttpTester.parseResponse(input);
+
+    assertNotNull(response);
+
+    return response;
+  }
+
+  private static RequestOutcome completed(LinkedBlockingQueue<RequestOutcome> outcomes)
+      throws InterruptedException {
+    var outcome = outcomes.poll(3, TimeUnit.SECONDS);
+
+    assertNotNull(outcome);
+
+    return outcome;
+  }
+
+  private static void assertSuccessfulCompletion(LinkedBlockingQueue<RequestOutcome> outcomes)
+      throws InterruptedException {
+    var outcome = completed(outcomes);
+
+    assertEquals(200, outcome.statusCode());
+    assertNull(outcome.applicationFailure());
+    assertNull(outcome.transportFailure());
+  }
+
   @ParameterizedTest
   @CsvSource({
     "200, false, HTTP/1.1",
@@ -105,7 +208,8 @@ class BufferedRequestLifecycleTest {
               .write(
                   ("POST /finite "
                           + protocol
-                          + "\r\nHost: localhost\r\nContent-Length: 32\r\nConnection: keep-alive\r\n\r\n")
+                          + "\r\nHost: localhost\r\nContent-Length: 32\r\n"
+                          + "Connection: keep-alive\r\n\r\n")
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           var result = receive(HttpTester.from(socket.getInputStream()));
@@ -120,7 +224,7 @@ class BufferedRequestLifecycleTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void advertisesConnectionClosureBeforeSendingAFileWithUnavailableRequestBytes(boolean afterFlush)
+  void advertisesConnectionClosureBeforeSendingFileWithUnavailableRequestBytes(boolean afterFlush)
       throws Exception {
     var file = temporaryDirectory.resolve("finite.txt");
     Files.writeString(file, "file content");
@@ -336,7 +440,14 @@ class BufferedRequestLifecycleTest {
           socket
               .getOutputStream()
               .write(
-                  "POST /stream HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n1\r\nx\r\n"
+                  """
+                  POST /stream HTTP/1.1\r
+                  Host: localhost\r
+                  Transfer-Encoding: chunked\r
+                  \r
+                  1\r
+                  x\r
+                  """
                       .getBytes(StandardCharsets.US_ASCII));
           socket.getOutputStream().flush();
           flushed.get(3, TimeUnit.SECONDS);
@@ -504,9 +615,9 @@ class BufferedRequestLifecycleTest {
   }
 
   @Test
-  void leavesRejectedBodyReadableByACustomAuthenticationErrorRenderer() throws Exception {
+  void leavesRejectedBodyReadableByCustomAuthenticationErrorRenderer() throws Exception {
     var authentication =
-        createAuthenticationForLeavesRejectedBodyReadableByACustomAuthenticationErrorRenderer();
+        createAuthenticationForLeavesRejectedBodyReadableByCustomAuthenticationErrorRenderer();
 
     {
       var app = new Shoostr();
@@ -523,7 +634,7 @@ class BufferedRequestLifecycleTest {
 
         try (var test = TestServer.start(app)) {
           var result =
-              sendResultForLeavesRejectedBodyReadableByACustomAuthenticationErrorRenderer(test);
+              sendResultForLeavesRejectedBodyReadableByCustomAuthenticationErrorRenderer(test);
 
           assertEquals(401, result.statusCode());
           assertEquals(PAYLOAD, result.body());
@@ -533,7 +644,7 @@ class BufferedRequestLifecycleTest {
   }
 
   private AuthenticationExtension
-      createAuthenticationForLeavesRejectedBodyReadableByACustomAuthenticationErrorRenderer() {
+      createAuthenticationForLeavesRejectedBodyReadableByCustomAuthenticationErrorRenderer() {
     return new AuthenticationExtension() {
       @Override
       public void handle(Request request, Response response) {
@@ -543,7 +654,7 @@ class BufferedRequestLifecycleTest {
   }
 
   private HttpResponse<String>
-      sendResultForLeavesRejectedBodyReadableByACustomAuthenticationErrorRenderer(TestServer test)
+      sendResultForLeavesRejectedBodyReadableByCustomAuthenticationErrorRenderer(TestServer test)
           throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -617,8 +728,7 @@ class BufferedRequestLifecycleTest {
   @ValueSource(booleans = {false, true})
   void advertisesConnectionClosureWhenAuthenticationRejectsAnUnavailableBody(
       boolean streamingRenderer) throws Exception {
-    var authentication =
-        createAuthenticationForAdvertisesConnectionClosureWhenAuthenticationRejectsAnUnavailableBody();
+    var authentication = createAuthenticationForRejectedUnavailableBody();
 
     {
       var app =
@@ -662,8 +772,7 @@ class BufferedRequestLifecycleTest {
     }
   }
 
-  private AuthenticationExtension
-      createAuthenticationForAdvertisesConnectionClosureWhenAuthenticationRejectsAnUnavailableBody() {
+  private AuthenticationExtension createAuthenticationForRejectedUnavailableBody() {
     return new AuthenticationExtension() {
       @Override
       public void handle(Request request, Response response) {
@@ -979,7 +1088,7 @@ class BufferedRequestLifecycleTest {
                 client, app);
         var warmup = http2Request(connection, app, "GET", "/ok", new byte[0]);
         var warmupHeaders = warmup.headers.get(3, TimeUnit.SECONDS);
-        var peer = warmup.body.get(3, TimeUnit.SECONDS);
+        final var peer = warmup.body.get(3, TimeUnit.SECONDS);
 
         assertEquals(200, warmupHeaders.getStatus());
         assertEquals(HttpVersion.HTTP_2, warmupHeaders.getHttpVersion());
@@ -1034,109 +1143,6 @@ class BufferedRequestLifecycleTest {
             new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()),
             new Session.Listener() {})
         .get(3, TimeUnit.SECONDS);
-  }
-
-  private static Http2Response http2Request(
-      Session connection, Shoostr app, String method, String path, byte[] body) throws Exception {
-    var response = new Http2Response();
-    var request = createRequestForHttp2Request(method, app, path);
-    var stream =
-        connection
-            .newStream(new HeadersFrame(request, null, body.length == 0), response)
-            .get(3, TimeUnit.SECONDS);
-    if (body.length > 0) {
-      stream
-          .data(new DataFrame(stream.getId(), ByteBuffer.wrap(body), true))
-          .get(3, TimeUnit.SECONDS);
-    }
-
-    return response;
-  }
-
-  private static org.eclipse.jetty.http.MetaData.Request createRequestForHttp2Request(
-      String method, Shoostr app, String path) {
-    return new MetaData.Request(
-        method,
-        HttpURI.from("http://127.0.0.1:" + app.port() + path),
-        HttpVersion.HTTP_2,
-        HttpFields.EMPTY);
-  }
-
-  private static Shoostr app() {
-    return app(false);
-  }
-
-  private static Shoostr app(boolean http2) {
-    var configuredOptions = new Options();
-    configuredOptions.setMaxRequestBytes(16);
-    configuredOptions.setMaxResponseBytes(1024);
-    configuredOptions.setStreamBufferBytes(64);
-    configuredOptions.setMaxParameters(1000);
-    configuredOptions.setMultipart(MultipartOptions.defaults());
-    configuredOptions.setHttp2(http2);
-
-    return new Shoostr(configuredOptions)
-        .modifyServer(
-            nativeServer -> {
-              var nativeConnector = (ServerConnector) nativeServer.getConnectors()[0];
-              nativeConnector.setHost("127.0.0.1");
-              nativeConnector.setPort(0);
-              nativeConnector.setIdleTimeout(30_000);
-            });
-  }
-
-  private static void routes(
-      Shoostr app,
-      LinkedBlockingQueue<RequestOutcome> outcomes,
-      LinkedBlockingQueue<ContentTooLargeException> rejections) {
-    app.afterRequest(outcomes::add);
-    app.exception(
-        ContentTooLargeException.class,
-        (failure, request, response) -> {
-          rejections.add(failure);
-
-          assertThrows(ContentTooLargeException.class, request::bodyBytes);
-
-          response.setHeader("X-Peer-Port", peerPort(request));
-          response.text("too large");
-        });
-    app.routes().post("/body", (request, response) -> response.text(request.bodyText()));
-    app.routes().get("/ok", (request, response) -> response.text(peerPort(request)));
-  }
-
-  private static String peerPort(Request request) {
-    return Integer.toString(((InetSocketAddress) request.remoteAddress().orElseThrow()).getPort());
-  }
-
-  private static void connect(Socket socket, int port) throws IOException {
-    socket.setSoTimeout(3000);
-    socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], port), 3000);
-  }
-
-  private static HttpTester.Response receive(HttpTester.Input input) throws IOException {
-    var response = HttpTester.parseResponse(input);
-
-    assertNotNull(response);
-
-    return response;
-  }
-
-  private static RequestOutcome completed(LinkedBlockingQueue<RequestOutcome> outcomes)
-      throws InterruptedException {
-    var outcome = outcomes.poll(3, TimeUnit.SECONDS);
-
-    assertNotNull(outcome);
-
-    return outcome;
-  }
-
-  private static void assertSuccessfulCompletion(LinkedBlockingQueue<RequestOutcome> outcomes)
-      throws InterruptedException {
-    var outcome = completed(outcomes);
-
-    assertEquals(200, outcome.statusCode());
-    assertNull(outcome.applicationFailure());
-    assertNull(outcome.transportFailure());
   }
 
   private static final class Http2Response implements Stream.Listener {

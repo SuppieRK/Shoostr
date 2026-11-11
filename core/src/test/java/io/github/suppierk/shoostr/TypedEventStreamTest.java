@@ -22,6 +22,17 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class TypedEventStreamTest {
+  private static Codec countingCodec(AtomicInteger writes) {
+    return new TextCodec() {
+      @Override
+      public byte[] write(Object value) throws Exception {
+        writes.incrementAndGet();
+
+        return super.write(value);
+      }
+    };
+  }
+
   @Test
   void encodesObjectEventsAlongsideRawMetadataCommentsAndHeartbeats() throws Exception {
     var app = createAppForEncodesObjectEventsAlongsideRawMetadataCommentsAndHeartbeats();
@@ -35,7 +46,21 @@ class TypedEventStreamTest {
           "text/event-stream; charset=utf-8",
           result.headers().firstValue("content-type").orElseThrow());
       assertEquals(
-          ": ready\n\ndata: héllo\ndata: world\n\nevent: notice\nid: 1\ndata: raw\n\n:\n\ndata: done\n\n",
+          """
+          : ready
+
+          data: héllo
+          data: world
+
+          event: notice
+          id: 1
+          data: raw
+
+          :
+
+          data: done
+
+          """,
           result.body());
     }
   }
@@ -253,17 +278,6 @@ class TypedEventStreamTest {
 
                       events.send("valid");
                     }));
-  }
-
-  private static Codec countingCodec(AtomicInteger writes) {
-    return new TextCodec() {
-      @Override
-      public byte[] write(Object value) throws Exception {
-        writes.incrementAndGet();
-
-        return super.write(value);
-      }
-    };
   }
 
   private static class TextCodec implements Codec {

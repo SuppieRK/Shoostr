@@ -48,6 +48,35 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 class MicrometerMetricsTest {
+  private static void assertCompletedTimerTags(
+      SimpleMeterRegistry registry, String route, int status, String error) {
+    var timer = createTimerForAssertCompletedTimerTags(registry, route, status);
+
+    assertEquals(
+        expectedTimerTags(route, status, error),
+        timer.getId().getTags().stream().collect(Collectors.toMap(Tag::getKey, Tag::getValue)));
+    assertEquals(1L, timer.count());
+  }
+
+  private static Timer createTimerForAssertCompletedTimerTags(
+      SimpleMeterRegistry registry, String route, int status) {
+    return registry
+        .get("http.server.requests")
+        .tag("route", route)
+        .tag("status", Integer.toString(status))
+        .timer();
+  }
+
+  private static Map<String, String> expectedTimerTags(String route, int status, String error) {
+    var entries = new LinkedHashMap<String, String>();
+    entries.put("method", "GET");
+    entries.put("route", route);
+    entries.put("status", Integer.toString(status));
+    entries.put("error", error);
+
+    return Map.copyOf(entries);
+  }
+
   @Test
   void applicationDefaultsMeasureSelectedEndpointsAndRespectExclusionsAndRoutingMisses()
       throws Exception {
@@ -297,7 +326,7 @@ class MicrometerMetricsTest {
 
   @Test
   @Timeout(15)
-  void recordsExact304TagsForAConditionalFileRequest(@TempDir Path directory) throws Exception {
+  void recordsExact304TagsForConditionalFileRequest(@TempDir Path directory) throws Exception {
     var file = directory.resolve("asset.txt");
     Files.writeString(file, "metered file: €\n");
     Files.setLastModifiedTime(file, FileTime.from(Instant.parse("2020-01-01T00:00:00Z")));
@@ -328,7 +357,7 @@ class MicrometerMetricsTest {
           var etag = full.headers().firstValue("ETag").orElseThrow();
 
           var conditional =
-              sendConditionalRequestForRecordsExact304TagsForAConditionalFileRequest(test, etag);
+              sendConditionalRequestForRecordsExact304TagsForConditionalFileRequest(test, etag);
 
           assertEquals(304, conditional.statusCode());
           assertEquals(0, conditional.body().length);
@@ -344,7 +373,7 @@ class MicrometerMetricsTest {
   }
 
   private HttpResponse<byte[]>
-      sendConditionalRequestForRecordsExact304TagsForAConditionalFileRequest(
+      sendConditionalRequestForRecordsExact304TagsForConditionalFileRequest(
           TestServer test, String etag) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -634,9 +663,7 @@ class MicrometerMetricsTest {
                 clients.submit(
                     () -> {
                       int kind = id % 3;
-                      var result =
-                          sendResultForSharesOneObserverAcrossConcurrentFilteredMeterIdsWithoutEagerCompletedMeters(
-                              server, kind, id);
+                      var result = sendResultForFilteredMeters(server, kind, id);
 
                       assertEquals(kind == 0 ? 200 : kind == 1 ? 503 : 404, result.statusCode());
 
@@ -650,7 +677,9 @@ class MicrometerMetricsTest {
             release.countDown();
           }
 
-          for (var request : pending) request.get(5, TimeUnit.SECONDS);
+          for (var request : pending) {
+            request.get(5, TimeUnit.SECONDS);
+          }
 
           assertTrue(terminal.await(3, TimeUnit.SECONDS));
           assertEquals(3, registry.find("http.server.requests").timers().size());
@@ -696,9 +725,8 @@ class MicrometerMetricsTest {
     }
   }
 
-  private HttpResponse<Void>
-      sendResultForSharesOneObserverAcrossConcurrentFilteredMeterIdsWithoutEagerCompletedMeters(
-          TestServer server, int kind, int id) throws IOException, InterruptedException {
+  private HttpResponse<Void> sendResultForFilteredMeters(TestServer server, int kind, int id)
+      throws IOException, InterruptedException {
     return server.send(
         request ->
             request
@@ -753,35 +781,6 @@ class MicrometerMetricsTest {
     } finally {
       registry.close();
     }
-  }
-
-  private static void assertCompletedTimerTags(
-      SimpleMeterRegistry registry, String route, int status, String error) {
-    var timer = createTimerForAssertCompletedTimerTags(registry, route, status);
-
-    assertEquals(
-        expectedTimerTags(route, status, error),
-        timer.getId().getTags().stream().collect(Collectors.toMap(Tag::getKey, Tag::getValue)));
-    assertEquals(1L, timer.count());
-  }
-
-  private static Timer createTimerForAssertCompletedTimerTags(
-      SimpleMeterRegistry registry, String route, int status) {
-    return registry
-        .get("http.server.requests")
-        .tag("route", route)
-        .tag("status", Integer.toString(status))
-        .timer();
-  }
-
-  private static Map<String, String> expectedTimerTags(String route, int status, String error) {
-    var entries = new LinkedHashMap<String, String>();
-    entries.put("method", "GET");
-    entries.put("route", route);
-    entries.put("status", Integer.toString(status));
-    entries.put("error", error);
-
-    return Map.copyOf(entries);
   }
 
   private record RegistryConsumer(SimpleMeterRegistry registry, AtomicBoolean consumed)

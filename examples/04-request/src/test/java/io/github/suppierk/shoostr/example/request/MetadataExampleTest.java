@@ -118,7 +118,7 @@ class MetadataExampleTest {
 
       var fields = new Properties();
       fields.load(new StringReader(response.body()));
-      var origin = test.baseUri().resolve("/").toString();
+      final var origin = test.baseUri().resolve("/").toString();
 
       assertEquals("GET", fields.getProperty("method"));
       assertEquals("HTTP/1.1", fields.getProperty("protocol"));

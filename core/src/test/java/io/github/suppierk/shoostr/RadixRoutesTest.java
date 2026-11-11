@@ -24,6 +24,23 @@ class RadixRoutesTest {
   private static final Handler GET = (ignored, ignoredResponse) -> {};
   private static final Handler POST = (ignoredRequest, ignoredResponse) -> {};
 
+  private static RadixRoutes compile(Map<String, Map<HttpMethods, Handler>> routes) {
+    var endpoints = new ArrayList<RadixRoutes.Endpoint>();
+    routes.forEach(
+        (path, methods) ->
+            methods.forEach(
+                (method, handler) -> endpoints.add(RadixRoutes.endpoint(method, path, handler))));
+
+    return RadixRoutes.from(endpoints);
+  }
+
+  @SuppressWarnings("NullAway") // A missing route intentionally yields null for assertions.
+  private static Handler handler(RadixRoutes tree, String path, HttpMethods method) {
+    var endpoint = tree.match(path, method);
+
+    return endpoint == null ? null : endpoint.handler();
+  }
+
   @Test
   void distinguishesTerminalPathsFromPrefixesAndMissingMethods() {
     var tree = createTreeForDistinguishesTerminalPathsFromPrefixesAndMissingMethods();
@@ -157,22 +174,5 @@ class RadixRoutesTest {
             handler(tree, prefix, HttpMethods.GET));
       }
     }
-  }
-
-  private static RadixRoutes compile(Map<String, Map<HttpMethods, Handler>> routes) {
-    var endpoints = new ArrayList<RadixRoutes.Endpoint>();
-    routes.forEach(
-        (path, methods) ->
-            methods.forEach(
-                (method, handler) -> endpoints.add(RadixRoutes.endpoint(method, path, handler))));
-
-    return RadixRoutes.from(endpoints);
-  }
-
-  @SuppressWarnings("NullAway") // A missing route intentionally yields null for assertions.
-  private static Handler handler(RadixRoutes tree, String path, HttpMethods method) {
-    var endpoint = tree.match(path, method);
-
-    return endpoint == null ? null : endpoint.handler();
   }
 }

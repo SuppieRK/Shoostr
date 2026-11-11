@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Timeout;
 @Timeout(15)
 class SlowClientServerTest {
   @Test
-  void servesHealthyRequestsWhileABodyIsIncompleteAndRecoversAfterItsClientDisconnects()
+  void servesHealthyRequestsWhileBodyIsIncompleteAndRecoversAfterItsClientDisconnects()
       throws Exception {
     try (var server = new SlowClientServer(0);
         var client = HttpClient.newHttpClient()) {
@@ -177,7 +177,7 @@ class SlowClientServerTest {
   }
 
   @Test
-  void reportsEffectiveDefaultProtectionsWithoutInstallingARatePolicy() throws Exception {
+  void reportsEffectiveDefaultProtectionsWithoutInstallingRatePolicy() throws Exception {
     try (var client = HttpClient.newHttpClient();
         var server = new SlowClientServer(0)) {
       server.start();

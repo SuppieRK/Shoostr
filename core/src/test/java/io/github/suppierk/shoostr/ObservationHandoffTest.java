@@ -21,6 +21,15 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class ObservationHandoffTest {
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void restoresNestedObservationScopesToPreviousWorkerContext(boolean virtualApplication)
@@ -234,14 +243,5 @@ class ObservationHandoffTest {
         }
       }
     }
-  }
-
-  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
-    options.setVirtualThreads(virtualApplication);
-
-    return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

@@ -104,7 +104,7 @@ class ServerSentEventsTest {
   }
 
   @Test
-  void rejectsNullDataWithoutWritingAFrame() throws Exception {
+  void rejectsNullDataWithoutWritingFrame() throws Exception {
     {
       var app = new Shoostr();
 
@@ -131,7 +131,7 @@ class ServerSentEventsTest {
   }
 
   @Test
-  void preservesInitialAutomaticExplicitAndTerminalFlushesForASingleLineEvent() throws Exception {
+  void preservesInitialAutomaticExplicitAndTerminalFlushesForSingleLineEvent() throws Exception {
     var defaults = new Options();
     var options = new Options();
     options.setMaxRequestBytes(defaults.getMaxRequestBytes());
@@ -311,28 +311,28 @@ class ServerSentEventsTest {
           assertEquals(200, result.statusCode());
           assertEquals(
               """
-          data: café
-          data: next
+              data: café
+              data: next
 
-          event: update
-          id: cursor-7
-          retry: 2000
-          data: ready
+              event: update
+              id: cursor-7
+              retry: 2000
+              data: ready
 
-          : connected
-          : next
+              : connected
+              : next
 
-          :
+              :
 
-          data: tail
+              data: tail
 
-          data: last
+              data: last
 
-          : done
+              : done
 
-          :
+              :
 
-          """,
+              """,
               result.body());
         }
       }
@@ -448,7 +448,7 @@ class ServerSentEventsTest {
   }
 
   @Test
-  void globalExceptionHandlerCanStreamAReplacementErrorForAnSseRoute() throws Exception {
+  void globalExceptionHandlerCanStreamReplacementErrorForAnSseRoute() throws Exception {
     {
       var app = new Shoostr();
 
@@ -649,8 +649,8 @@ class ServerSentEventsTest {
   @Test
   void rejectsFieldsThatCouldInjectLinesOrInvalidRetryValues() {
     var event = SseEvent.of("x");
-    var negativeRetry = Duration.ofMillis(-1);
-    var overflowingRetry = Duration.ofSeconds(Long.MAX_VALUE);
+    final var negativeRetry = Duration.ofMillis(-1);
+    final var overflowingRetry = Duration.ofSeconds(Long.MAX_VALUE);
 
     assertThrows(IllegalArgumentException.class, () -> event.withEvent("a\nb"));
     assertThrows(IllegalArgumentException.class, () -> event.withEvent("a\rb"));
@@ -730,8 +730,8 @@ class ServerSentEventsTest {
 
   @Test
   @Timeout(10)
-  @SuppressWarnings(
-      "java:S2925") // Heartbeats must be paced while waiting for the peer to disconnect.
+  @SuppressWarnings("java:S2925")
+  // Heartbeats must be paced while waiting for the peer to disconnect.
   void idleClientDisconnectReleasesHandlerSubscriptionOnHeartbeat() throws Exception {
     var active = new CountDownLatch(1);
     var cleaned = new CountDownLatch(1);

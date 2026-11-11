@@ -17,6 +17,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class McpActivationTest {
+  private static Mcp<?> transport() {
+    return Mcp.sync(
+        new McpHttpSecurity(
+            Set.of(),
+            request -> new McpIdentity("public", McpTransportContext.EMPTY, null),
+            (request, identity) -> {}),
+        provider -> McpServer.sync(provider).serverInfo("activation-fixture", "1").build());
+  }
+
   @Test
   void inheritedSelectionAndHelperReselectionBindTheMountOnce() throws Exception {
     var mcp = transport();
@@ -122,14 +131,5 @@ class McpActivationTest {
     }
 
     assertEquals(1, closed.get());
-  }
-
-  private static Mcp<?> transport() {
-    return Mcp.sync(
-        new McpHttpSecurity(
-            Set.of(),
-            request -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (request, identity) -> {}),
-        provider -> McpServer.sync(provider).serverInfo("activation-fixture", "1").build());
   }
 }

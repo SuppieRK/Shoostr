@@ -22,6 +22,26 @@ import org.junit.jupiter.api.Timeout;
 
 @Timeout(20)
 class ServingOptionsTest {
+  private static Shoostr application(Options options) {
+    return new Shoostr(options)
+        .routes(
+            routes ->
+                routes
+                    .get("/health", (request, response) -> response.text("ready"))
+                    .post("/echo", (request, response) -> response.text(request.bodyText())));
+  }
+
+  private static HttpResponse<String> get(HttpClient client, int port, String header)
+      throws Exception {
+    return client.send(
+        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health"))
+            .timeout(Duration.ofSeconds(3))
+            .header("X-Test", header)
+            .GET()
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @Test
   void bindsTheConfiguredHostAndFixedPortWithoutNativeConfiguration() throws Exception {
     int port;
@@ -98,16 +118,12 @@ class ServingOptionsTest {
             options.setPort(65535);
             first.start();
             second.start();
-            var firstResponse =
-                sendFirstResponseRequestForSnapshotsSettingsAtConstructionAndLetsSubsequentApplicationsCaptureChanges(
-                    client, first);
+            var firstResponse = sendFirstResponseRequestForSettingsSnapshots(client, first);
 
             assertEquals(200, firstResponse.statusCode());
             assertEquals("four", firstResponse.body());
 
-            var secondResponse =
-                sendSecondResponseRequestForSnapshotsSettingsAtConstructionAndLetsSubsequentApplicationsCaptureChanges(
-                    client, second);
+            var secondResponse = sendSecondResponseRequestForSettingsSnapshots(client, second);
 
             assertEquals(413, secondResponse.statusCode());
           }
@@ -116,9 +132,8 @@ class ServingOptionsTest {
     }
   }
 
-  private HttpResponse<String>
-      sendFirstResponseRequestForSnapshotsSettingsAtConstructionAndLetsSubsequentApplicationsCaptureChanges(
-          HttpClient client, Shoostr first) throws IOException, InterruptedException {
+  private HttpResponse<String> sendFirstResponseRequestForSettingsSnapshots(
+      HttpClient client, Shoostr first) throws IOException, InterruptedException {
     return client.send(
         HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + first.port() + "/echo"))
             .timeout(Duration.ofSeconds(3))
@@ -127,9 +142,8 @@ class ServingOptionsTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<Void>
-      sendSecondResponseRequestForSnapshotsSettingsAtConstructionAndLetsSubsequentApplicationsCaptureChanges(
-          HttpClient client, Shoostr second) throws IOException, InterruptedException {
+  private HttpResponse<Void> sendSecondResponseRequestForSettingsSnapshots(
+      HttpClient client, Shoostr second) throws IOException, InterruptedException {
     return client.send(
         HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + second.port() + "/echo"))
             .timeout(Duration.ofSeconds(3))
@@ -223,25 +237,5 @@ class ServingOptionsTest {
       assertEquals("unresolved.invalid", options.getHost());
       assertEquals(65535, options.getPort());
     }
-  }
-
-  private static Shoostr application(Options options) {
-    return new Shoostr(options)
-        .routes(
-            routes ->
-                routes
-                    .get("/health", (request, response) -> response.text("ready"))
-                    .post("/echo", (request, response) -> response.text(request.bodyText())));
-  }
-
-  private static HttpResponse<String> get(HttpClient client, int port, String header)
-      throws Exception {
-    return client.send(
-        HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/health"))
-            .timeout(Duration.ofSeconds(3))
-            .header("X-Test", header)
-            .GET()
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
   }
 }

@@ -103,6 +103,27 @@ public final class CorsPolicy {
   }
 
   /**
+   * Creates a builder with standalone defaults.
+   *
+   * @return independent builder
+   */
+  public static Builder builder() {
+    return new Builder();
+  }
+
+  /**
+   * Collapses a wildcard to one immutable value.
+   *
+   * @param values configured immutable values
+   * @param wildcard wildcard value
+   * @param <T> value type
+   * @return normalized immutable values
+   */
+  private static <T> Set<T> wildcard(Set<T> values, T wildcard) {
+    return values.contains(wildcard) ? Set.of(wildcard) : values;
+  }
+
+  /**
    * Returns the configured browser origins.
    *
    * @return immutable origins, defaulting to none
@@ -306,15 +327,6 @@ public final class CorsPolicy {
     return maxAgeSeconds;
   }
 
-  /**
-   * Creates a builder with standalone defaults.
-   *
-   * @return independent builder
-   */
-  public static Builder builder() {
-    return new Builder();
-  }
-
   /** {@inheritDoc} */
   @Override
   public boolean equals(@Nullable Object value) {
@@ -380,18 +392,6 @@ public final class CorsPolicy {
     }
   }
 
-  /**
-   * Collapses a wildcard to one immutable value.
-   *
-   * @param values configured immutable values
-   * @param wildcard wildcard value
-   * @param <T> value type
-   * @return normalized immutable values
-   */
-  private static <T> Set<T> wildcard(Set<T> values, T wildcard) {
-    return values.contains(wildcard) ? Set.of(wildcard) : values;
-  }
-
   /** Builds complete independent permissions. */
   public static final class Builder {
     private Set<String> origins;
@@ -411,6 +411,24 @@ public final class CorsPolicy {
       this.credentials = false;
       this.exposedHeaders = Set.of();
       this.maxAgeSeconds = 5;
+    }
+
+    /**
+     * Copies nonnull values without retaining a caller's array.
+     *
+     * @param first required first value
+     * @param additional optional remaining values
+     * @param <T> value type
+     * @return immutable values
+     */
+    private static <T> Set<T> values(T first, T @Nullable [] additional) {
+      var values = new HashSet<T>();
+      values.add(Objects.requireNonNull(first));
+      if (additional != null) {
+        values.addAll(Arrays.asList(additional));
+      }
+
+      return Set.copyOf(values);
     }
 
     /**
@@ -547,24 +565,6 @@ public final class CorsPolicy {
      */
     public CorsPolicy build() {
       return new CorsPolicy(this);
-    }
-
-    /**
-     * Copies nonnull values without retaining a caller's array.
-     *
-     * @param first required first value
-     * @param additional optional remaining values
-     * @param <T> value type
-     * @return immutable values
-     */
-    private static <T> Set<T> values(T first, T @Nullable [] additional) {
-      var values = new HashSet<T>();
-      values.add(Objects.requireNonNull(first));
-      if (additional != null) {
-        values.addAll(Arrays.asList(additional));
-      }
-
-      return Set.copyOf(values);
     }
   }
 }

@@ -90,7 +90,14 @@ class StreamingInputOutputTest {
         socket.connect(new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()));
         var output = socket.getOutputStream();
         output.write(
-            "POST /chunks HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n1\r\na\r\n"
+            """
+            POST /chunks HTTP/1.1\r
+            Host: localhost\r
+            Transfer-Encoding: chunked\r
+            \r
+            1\r
+            a\r
+            """
                 .getBytes(StandardCharsets.US_ASCII));
         output.flush();
 
@@ -387,7 +394,7 @@ class StreamingInputOutputTest {
   }
 
   @Test
-  void writesAFileWithoutStagingItsWholeContent() throws Exception {
+  void writesFileWithoutStagingItsWholeContent() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "response-file-test", ".txt");
     Files.writeString(file, "file output");
 

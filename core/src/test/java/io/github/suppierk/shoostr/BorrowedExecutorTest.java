@@ -46,408 +46,6 @@ class BorrowedExecutorTest {
         response.startEventStream().send("ok");
       };
 
-  @Test
-  void runsSelectedHandlerOnTheSuppliedExecutorWithoutClosingIt() throws Exception {
-    try (var workers =
-        Executors.newSingleThreadExecutor(Thread.ofPlatform().name("selected").factory())) {
-      {
-        var app = new Shoostr();
-
-        try (Closeable appCleanup = app::close) {
-          app.routes()
-              .get(
-                  "/selected",
-                  workers,
-                  (ignoredRequest, response) -> response.text(Thread.currentThread().getName()));
-
-          try (var test = TestServer.start(app)) {
-            var response =
-                test.send(
-                    request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString());
-
-            assertEquals("selected", response.body());
-          }
-        }
-      }
-
-      assertFalse(workers.isShutdown());
-      assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
-    }
-  }
-
-  @ParameterizedTest(name = "{0}")
-  @MethodSource("registrations")
-  void runsEachEndpointOverloadOnItsSelectedExecutor(
-      String name, String method, boolean configured, BiConsumer<Routes, ExecutorService> register)
-      throws Exception {
-    try (var workers =
-        Executors.newSingleThreadExecutor(Thread.ofPlatform().name("selected").factory())) {
-      var app = new Shoostr();
-
-      try (Closeable appCleanup1 = app::close) {
-        register.accept(app.routes(), workers);
-
-        try (var test = TestServer.start(app)) {
-          var response = test.send(request -> request.path("/selected").method(method));
-
-          assertEquals(200, response.statusCode(), name);
-          assertEquals("selected", response.headers().firstValue("X-Worker").orElseThrow(), name);
-          assertEquals(configured, response.headers().firstValue("X-Configured").isPresent(), name);
-        }
-      }
-    }
-  }
-
-  @Test
-  void selectsDifferentExecutorsForDifferentMethodsAtTheSamePath() throws Exception {
-    try (var reads =
-            Executors.newSingleThreadExecutor(Thread.ofPlatform().name("reads").factory());
-        var writes =
-            Executors.newSingleThreadExecutor(Thread.ofPlatform().name("writes").factory())) {
-      var app = new Shoostr();
-
-      try (Closeable appCleanup2 = app::close) {
-        app.routes().get("/same", reads, ENDPOINT).post("/same", writes, ENDPOINT);
-
-        try (var test = TestServer.start(app)) {
-          assertEquals(
-              "reads",
-              test.send(request -> request.path("/same"))
-                  .headers()
-                  .firstValue("X-Worker")
-                  .orElseThrow());
-          assertEquals(
-              "writes",
-              test.send(request -> request.path("/same").method("POST"))
-                  .headers()
-                  .firstValue("X-Worker")
-                  .orElseThrow());
-        }
-      }
-    }
-  }
-
-  @Test
-  void readsAndStreamsHttp2RequestBodiesOnSelectedWorkers() throws Exception {
-    var configuredOptions = new Options();
-    configuredOptions.setHttp2(true);
-
-    try (var workers = Executors.newSingleThreadExecutor()) {
-      var app = new Shoostr(configuredOptions);
-
-      try (Closeable appCleanup3 = app::close) {
-
-        app.routes().get("/ready", workers, (ignoredRequest, response) -> response.text("ready"));
-        app.routes()
-            .post(
-                "/echo",
-                workers,
-                (request, response) -> {
-                  try (var input = request.input()) {
-                    response.startStream("application/octet-stream").write(input.readAllBytes());
-                  }
-                });
-
-        try (var test =
-            TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_2))) {
-          assertEquals(
-              HttpClient.Version.HTTP_2, test.send(request -> request.path("/ready")).version());
-
-          var first = sendFirstEchoBody(test);
-          var second = sendSecondEchoBody(test);
-
-          assertEquals(HttpClient.Version.HTTP_2, first.version());
-          assertEquals(HttpClient.Version.HTTP_2, second.version());
-          assertEquals("first", first.body());
-          assertEquals("second", second.body());
-        }
-      }
-    }
-  }
-
-  private HttpResponse<String> sendFirstEchoBody(TestServer test)
-      throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request.path("/echo").method("POST").body("first".getBytes(StandardCharsets.UTF_8)),
-        HttpResponse.BodyHandlers.ofString());
-  }
-
-  private HttpResponse<String> sendSecondEchoBody(TestServer test)
-      throws IOException, InterruptedException {
-    return test.send(
-        request ->
-            request.path("/echo").method("POST").body("second".getBytes(StandardCharsets.UTF_8)),
-        HttpResponse.BodyHandlers.ofString());
-  }
-
-  @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void keepsEndpointExecutorsIndependentOfApplicationExecutionMode(boolean virtual)
-      throws Exception {
-    var configuredOptions = new Options();
-    configuredOptions.setVirtualThreads(virtual);
-
-    try (var workers = Executors.newSingleThreadExecutor()) {
-      var app = new Shoostr(configuredOptions);
-
-      try (Closeable appCleanup4 = app::close) {
-
-        Handler endpoint =
-            (ignoredRequest, response) ->
-                response.text(Boolean.toString(Thread.currentThread().isVirtual()));
-        app.routes().get("/default", endpoint).get("/selected", workers, endpoint);
-
-        try (var test = TestServer.start(app)) {
-          assertEquals(
-              Boolean.toString(virtual),
-              test.send(request -> request.path("/default"), HttpResponse.BodyHandlers.ofString())
-                  .body());
-          assertEquals(
-              "false",
-              test.send(request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString())
-                  .body());
-        }
-      }
-    }
-  }
-
-  @Test
-  void acceptsVirtualThreadExecutors() throws Exception {
-    var owned = ConcurrentHashMap.<Thread>newKeySet();
-
-    try (var workers = openWorkersForAcceptsVirtualThreadExecutors(owned)) {
-      var app = new Shoostr();
-
-      try (Closeable appCleanup5 = app::close) {
-        app.routes()
-            .get(
-                "/selected",
-                workers,
-                (ignoredRequest, response) ->
-                    response.text(Boolean.toString(owned.contains(Thread.currentThread()))));
-
-        try (var test = TestServer.start(app)) {
-          assertEquals(
-              "true",
-              test.send(request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString())
-                  .body());
-        }
-      }
-    }
-  }
-
-  private ExecutorService openWorkersForAcceptsVirtualThreadExecutors(
-      KeySetView<Thread, Boolean> owned) {
-    return Executors.newThreadPerTaskExecutor(
-        task -> {
-          var thread = Thread.ofVirtual().unstarted(task);
-          owned.add(thread);
-
-          return thread;
-        });
-  }
-
-  @Test
-  void rejectsNullExecutorBeforeConfiguringOrReservingTheEndpoint() throws Exception {
-    var configured = new AtomicInteger();
-
-    try (var workers = Executors.newSingleThreadExecutor()) {
-      var app = new Shoostr();
-
-      try (Closeable appCleanup6 = app::close) {
-        var routes = app.routes();
-
-        assertThrows(
-            NullPointerException.class,
-            () ->
-                routes.get(
-                    "/selected", null, ENDPOINT, ignoredLifecycle -> configured.incrementAndGet()));
-        assertEquals(0, configured.get());
-        assertSame(app.routes(), app.routes().get("/selected", workers, ENDPOINT));
-      }
-    }
-  }
-
-  @Test
-  void rejectsShutdownExecutorBeforeConfiguringOrReservingTheEndpoint() throws Exception {
-    var configured = new AtomicInteger();
-
-    try (var workers = Executors.newSingleThreadExecutor()) {
-      var app = new Shoostr();
-
-      try (Closeable appCleanup7 = app::close) {
-        workers.shutdown();
-        var routes = app.routes();
-
-        assertThrows(
-            IllegalArgumentException.class,
-            () ->
-                routes.get(
-                    "/selected",
-                    workers,
-                    ENDPOINT,
-                    ignoredLifecycle -> configured.incrementAndGet()));
-        assertEquals(0, configured.get());
-
-        app.routes().get("/selected", ENDPOINT);
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @MethodSource("unsupportedPolicies")
-  void rejectsInspectableFallbackAndDiscardPolicies(RejectedExecutionHandler policy)
-      throws Exception {
-    try (var workers =
-        new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), policy)) {
-      var app = new Shoostr();
-
-      try (Closeable appCleanup8 = app::close) {
-        var routes = app.routes();
-
-        assertThrows(
-            IllegalArgumentException.class, () -> routes.get("/selected", workers, ENDPOINT));
-        assertFalse(workers.isShutdown());
-
-        app.routes().get("/selected", ENDPOINT);
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void acceptsCustomThrowingRejectionPolicy(boolean overridesBuiltin) throws Exception {
-    var policy = throwingPolicy(overridesBuiltin);
-
-    try (var workers =
-        new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), policy)) {
-      var app = new Shoostr();
-
-      try (Closeable appCleanup9 = app::close) {
-        app.routes().get("/selected", workers, ENDPOINT);
-
-        try (var test = TestServer.start(app)) {
-          assertEquals(200, test.send(request -> request.path("/selected")).statusCode());
-        }
-
-        assertFalse(workers.isShutdown());
-      }
-    }
-  }
-
-  @ParameterizedTest
-  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
-  void rendersCustomPolicyRejectionWithoutFallback(boolean wrapped, boolean overridesBuiltin)
-      throws Exception {
-    var entered = new CountDownLatch(1);
-    var release = new CountDownLatch(1);
-    var invoked = new AtomicInteger();
-    var policy = throwingPolicy(overridesBuiltin);
-    var pool = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new SynchronousQueue<>(), policy);
-    pool.execute(
-        () -> {
-          entered.countDown();
-
-          try {
-            release.await();
-          } catch (InterruptedException ignoredFailure) {
-            Thread.currentThread().interrupt();
-          }
-        });
-
-    try {
-      var app = new Shoostr();
-
-      try (Closeable appCleanup10 = app::close) {
-        assertTrue(entered.await(5, TimeUnit.SECONDS));
-
-        var workers = wrapped ? Executors.unconfigurableExecutorService(pool) : pool;
-        app.exception(
-            RejectedExecutionException.class,
-            (failure, ignoredRequest, response) ->
-                response.status(503).text(Objects.requireNonNull(failure.getMessage())));
-        app.routes()
-            .get(
-                "/selected",
-                workers,
-                (ignoredRequest, ignoredResponse) -> invoked.incrementAndGet());
-
-        try (var test = TestServer.start(app)) {
-          var response =
-              test.send(request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString());
-
-          assertEquals(503, response.statusCode());
-          assertEquals("custom rejection", response.body());
-          assertEquals(0, invoked.get());
-        }
-
-        assertFalse(pool.isShutdown());
-      }
-    } finally {
-      release.countDown();
-      pool.close();
-    }
-  }
-
-  @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void preservesBorrowedPoolWhenClosedBeforeStartOrAfterFailedStart(boolean failStart)
-      throws Exception {
-    try (var workers = Executors.newSingleThreadExecutor()) {
-      var app =
-          new Shoostr()
-              .modifyServer(
-                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-
-      try (Closeable appCleanup11 = app::close) {
-        app.routes().get("/selected", workers, ENDPOINT);
-        if (failStart) {
-          app.modifyServer(
-              ignoredServer -> {
-                throw new IllegalStateException("startup failed");
-              });
-
-          assertThrows(IllegalStateException.class, app::start);
-        }
-
-        app.close();
-        app.close();
-
-        assertFalse(workers.isShutdown());
-        assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
-      }
-    }
-  }
-
-  @Test
-  void sharesOneExecutorAcrossAppsWithoutClosingTheOtherApp() throws Exception {
-    try (var workers =
-        Executors.newSingleThreadExecutor(Thread.ofPlatform().name("shared").factory())) {
-      var first = new Shoostr();
-
-      try (Closeable firstCleanup = first::close) {
-        var second = new Shoostr();
-
-        try (Closeable secondCleanup = second::close) {
-          first.routes().get("/selected", workers, ENDPOINT);
-          second.routes().get("/selected", workers, ENDPOINT);
-
-          try (var firstTest = TestServer.start(first);
-              var secondTest = TestServer.start(second)) {
-            assertEquals(200, firstTest.send(request -> request.path("/selected")).statusCode());
-
-            first.close();
-
-            assertEquals(200, secondTest.send(request -> request.path("/selected")).statusCode());
-            assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
-            assertFalse(workers.isShutdown());
-          }
-        }
-      }
-    }
-  }
-
   private static RejectedExecutionHandler throwingPolicy(boolean overridesBuiltin) {
     if (overridesBuiltin) {
       return new ThreadPoolExecutor.CallerRunsPolicy() {
@@ -906,5 +504,407 @@ class BorrowedExecutorTest {
                                     extensions.beforeRouteHandler(
                                         (ignoredRequest, response) ->
                                             response.setHeader("X-Configured", "yes"))))));
+  }
+
+  @Test
+  void runsSelectedHandlerOnTheSuppliedExecutorWithoutClosingIt() throws Exception {
+    try (var workers =
+        Executors.newSingleThreadExecutor(Thread.ofPlatform().name("selected").factory())) {
+      {
+        var app = new Shoostr();
+
+        try (Closeable appCleanup = app::close) {
+          app.routes()
+              .get(
+                  "/selected",
+                  workers,
+                  (ignoredRequest, response) -> response.text(Thread.currentThread().getName()));
+
+          try (var test = TestServer.start(app)) {
+            var response =
+                test.send(
+                    request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString());
+
+            assertEquals("selected", response.body());
+          }
+        }
+      }
+
+      assertFalse(workers.isShutdown());
+      assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
+    }
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("registrations")
+  void runsEachEndpointOverloadOnItsSelectedExecutor(
+      String name, String method, boolean configured, BiConsumer<Routes, ExecutorService> register)
+      throws Exception {
+    try (var workers =
+        Executors.newSingleThreadExecutor(Thread.ofPlatform().name("selected").factory())) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup1 = app::close) {
+        register.accept(app.routes(), workers);
+
+        try (var test = TestServer.start(app)) {
+          var response = test.send(request -> request.path("/selected").method(method));
+
+          assertEquals(200, response.statusCode(), name);
+          assertEquals("selected", response.headers().firstValue("X-Worker").orElseThrow(), name);
+          assertEquals(configured, response.headers().firstValue("X-Configured").isPresent(), name);
+        }
+      }
+    }
+  }
+
+  @Test
+  void selectsDifferentExecutorsForDifferentMethodsAtTheSamePath() throws Exception {
+    try (var reads =
+            Executors.newSingleThreadExecutor(Thread.ofPlatform().name("reads").factory());
+        var writes =
+            Executors.newSingleThreadExecutor(Thread.ofPlatform().name("writes").factory())) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup2 = app::close) {
+        app.routes().get("/same", reads, ENDPOINT).post("/same", writes, ENDPOINT);
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "reads",
+              test.send(request -> request.path("/same"))
+                  .headers()
+                  .firstValue("X-Worker")
+                  .orElseThrow());
+          assertEquals(
+              "writes",
+              test.send(request -> request.path("/same").method("POST"))
+                  .headers()
+                  .firstValue("X-Worker")
+                  .orElseThrow());
+        }
+      }
+    }
+  }
+
+  @Test
+  void readsAndStreamsHttp2RequestBodiesOnSelectedWorkers() throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setHttp2(true);
+
+    try (var workers = Executors.newSingleThreadExecutor()) {
+      var app = new Shoostr(configuredOptions);
+
+      try (Closeable appCleanup3 = app::close) {
+
+        app.routes().get("/ready", workers, (ignoredRequest, response) -> response.text("ready"));
+        app.routes()
+            .post(
+                "/echo",
+                workers,
+                (request, response) -> {
+                  try (var input = request.input()) {
+                    response.startStream("application/octet-stream").write(input.readAllBytes());
+                  }
+                });
+
+        try (var test =
+            TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_2))) {
+          assertEquals(
+              HttpClient.Version.HTTP_2, test.send(request -> request.path("/ready")).version());
+
+          var first = sendFirstEchoBody(test);
+          var second = sendSecondEchoBody(test);
+
+          assertEquals(HttpClient.Version.HTTP_2, first.version());
+          assertEquals(HttpClient.Version.HTTP_2, second.version());
+          assertEquals("first", first.body());
+          assertEquals("second", second.body());
+        }
+      }
+    }
+  }
+
+  private HttpResponse<String> sendFirstEchoBody(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/echo").method("POST").body("first".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private HttpResponse<String> sendSecondEchoBody(TestServer test)
+      throws IOException, InterruptedException {
+    return test.send(
+        request ->
+            request.path("/echo").method("POST").body("second".getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void keepsEndpointExecutorsIndependentOfApplicationExecutionMode(boolean virtual)
+      throws Exception {
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(virtual);
+
+    try (var workers = Executors.newSingleThreadExecutor()) {
+      var app = new Shoostr(configuredOptions);
+
+      try (Closeable appCleanup4 = app::close) {
+
+        Handler endpoint =
+            (ignoredRequest, response) ->
+                response.text(Boolean.toString(Thread.currentThread().isVirtual()));
+        app.routes().get("/default", endpoint).get("/selected", workers, endpoint);
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              Boolean.toString(virtual),
+              test.send(request -> request.path("/default"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+          assertEquals(
+              "false",
+              test.send(request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
+      }
+    }
+  }
+
+  @Test
+  void acceptsVirtualThreadExecutors() throws Exception {
+    var owned = ConcurrentHashMap.<Thread>newKeySet();
+
+    try (var workers = openWorkersForAcceptsVirtualThreadExecutors(owned)) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup5 = app::close) {
+        app.routes()
+            .get(
+                "/selected",
+                workers,
+                (ignoredRequest, response) ->
+                    response.text(Boolean.toString(owned.contains(Thread.currentThread()))));
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(
+              "true",
+              test.send(request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString())
+                  .body());
+        }
+      }
+    }
+  }
+
+  private ExecutorService openWorkersForAcceptsVirtualThreadExecutors(
+      KeySetView<Thread, Boolean> owned) {
+    return Executors.newThreadPerTaskExecutor(
+        task -> {
+          var thread = Thread.ofVirtual().unstarted(task);
+          owned.add(thread);
+
+          return thread;
+        });
+  }
+
+  @Test
+  void rejectsNullExecutorBeforeConfiguringOrReservingTheEndpoint() throws Exception {
+    var configured = new AtomicInteger();
+
+    try (var workers = Executors.newSingleThreadExecutor()) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup6 = app::close) {
+        var routes = app.routes();
+
+        assertThrows(
+            NullPointerException.class,
+            () ->
+                routes.get(
+                    "/selected", null, ENDPOINT, ignoredLifecycle -> configured.incrementAndGet()));
+        assertEquals(0, configured.get());
+        assertSame(app.routes(), app.routes().get("/selected", workers, ENDPOINT));
+      }
+    }
+  }
+
+  @Test
+  void rejectsShutdownExecutorBeforeConfiguringOrReservingTheEndpoint() throws Exception {
+    var configured = new AtomicInteger();
+
+    try (var workers = Executors.newSingleThreadExecutor()) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup7 = app::close) {
+        workers.shutdown();
+        var routes = app.routes();
+
+        assertThrows(
+            IllegalArgumentException.class,
+            () ->
+                routes.get(
+                    "/selected",
+                    workers,
+                    ENDPOINT,
+                    ignoredLifecycle -> configured.incrementAndGet()));
+        assertEquals(0, configured.get());
+
+        app.routes().get("/selected", ENDPOINT);
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @MethodSource("unsupportedPolicies")
+  void rejectsInspectableFallbackAndDiscardPolicies(RejectedExecutionHandler policy)
+      throws Exception {
+    try (var workers =
+        new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), policy)) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup8 = app::close) {
+        var routes = app.routes();
+
+        assertThrows(
+            IllegalArgumentException.class, () -> routes.get("/selected", workers, ENDPOINT));
+        assertFalse(workers.isShutdown());
+
+        app.routes().get("/selected", ENDPOINT);
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void acceptsCustomThrowingRejectionPolicy(boolean overridesBuiltin) throws Exception {
+    var policy = throwingPolicy(overridesBuiltin);
+
+    try (var workers =
+        new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new LinkedBlockingQueue<>(), policy)) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup9 = app::close) {
+        app.routes().get("/selected", workers, ENDPOINT);
+
+        try (var test = TestServer.start(app)) {
+          assertEquals(200, test.send(request -> request.path("/selected")).statusCode());
+        }
+
+        assertFalse(workers.isShutdown());
+      }
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false,false", "false,true", "true,false", "true,true"})
+  void rendersCustomPolicyRejectionWithoutFallback(boolean wrapped, boolean overridesBuiltin)
+      throws Exception {
+    var entered = new CountDownLatch(1);
+    var release = new CountDownLatch(1);
+    var invoked = new AtomicInteger();
+    var policy = throwingPolicy(overridesBuiltin);
+    var pool = new ThreadPoolExecutor(1, 1, 0, TimeUnit.SECONDS, new SynchronousQueue<>(), policy);
+    pool.execute(
+        () -> {
+          entered.countDown();
+
+          try {
+            release.await();
+          } catch (InterruptedException ignoredFailure) {
+            Thread.currentThread().interrupt();
+          }
+        });
+
+    try {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup10 = app::close) {
+        assertTrue(entered.await(5, TimeUnit.SECONDS));
+
+        var workers = wrapped ? Executors.unconfigurableExecutorService(pool) : pool;
+        app.exception(
+            RejectedExecutionException.class,
+            (failure, ignoredRequest, response) ->
+                response.status(503).text(Objects.requireNonNull(failure.getMessage())));
+        app.routes()
+            .get(
+                "/selected",
+                workers,
+                (ignoredRequest, ignoredResponse) -> invoked.incrementAndGet());
+
+        try (var test = TestServer.start(app)) {
+          var response =
+              test.send(request -> request.path("/selected"), HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(503, response.statusCode());
+          assertEquals("custom rejection", response.body());
+          assertEquals(0, invoked.get());
+        }
+
+        assertFalse(pool.isShutdown());
+      }
+    } finally {
+      release.countDown();
+      pool.close();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void preservesBorrowedPoolWhenClosedBeforeStartOrAfterFailedStart(boolean failStart)
+      throws Exception {
+    try (var workers = Executors.newSingleThreadExecutor()) {
+      var app =
+          new Shoostr()
+              .modifyServer(
+                  nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+
+      try (Closeable appCleanup11 = app::close) {
+        app.routes().get("/selected", workers, ENDPOINT);
+        if (failStart) {
+          app.modifyServer(
+              ignoredServer -> {
+                throw new IllegalStateException("startup failed");
+              });
+
+          assertThrows(IllegalStateException.class, app::start);
+        }
+
+        app.close();
+        app.close();
+
+        assertFalse(workers.isShutdown());
+        assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
+      }
+    }
+  }
+
+  @Test
+  void sharesOneExecutorAcrossAppsWithoutClosingTheOtherApp() throws Exception {
+    try (var workers =
+        Executors.newSingleThreadExecutor(Thread.ofPlatform().name("shared").factory())) {
+      var first = new Shoostr();
+
+      try (Closeable firstCleanup = first::close) {
+        var second = new Shoostr();
+
+        try (Closeable secondCleanup = second::close) {
+          first.routes().get("/selected", workers, ENDPOINT);
+          second.routes().get("/selected", workers, ENDPOINT);
+
+          try (var firstTest = TestServer.start(first);
+              var secondTest = TestServer.start(second)) {
+            assertEquals(200, firstTest.send(request -> request.path("/selected")).statusCode());
+
+            first.close();
+
+            assertEquals(200, secondTest.send(request -> request.path("/selected")).statusCode());
+            assertEquals("usable", workers.submit(() -> "usable").get(5, TimeUnit.SECONDS));
+            assertFalse(workers.isShutdown());
+          }
+        }
+      }
+    }
   }
 }

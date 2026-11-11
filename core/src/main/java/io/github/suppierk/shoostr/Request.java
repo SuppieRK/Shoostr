@@ -64,12 +64,11 @@ public sealed class Request permits TypedRequest {
   private final int maxParameters;
   private final MultipartOptions multipartOptions;
   private final List<Upload> uploads;
+  private final HttpFields nativeHeaders;
+  private final Map<String, List<String>> cookies;
 
   @SuppressWarnings("java:S3077") // Identity token only; the referenced Thread state is never used.
   private volatile @Nullable Thread owner;
-
-  private final HttpFields nativeHeaders;
-  private final Map<String, List<String>> cookies;
 
   @SuppressWarnings("java:S3077") // Publishes a deeply immutable map; its values are immutable too.
   private volatile @Nullable Map<String, List<String>> headers;
@@ -185,6 +184,124 @@ public sealed class Request permits TypedRequest {
     return codec == null
         ? new Request(delegate, nativeResponse, options, completion, null)
         : new TypedRequest(delegate, nativeResponse, options, completion, codec);
+  }
+
+  /**
+   * Groups effective header fields once while retaining case-insensitive lookup and arrival order.
+   *
+   * @param nativeHeaders immutable transport fields captured after native customization
+   * @return deeply immutable header snapshot
+   */
+  private static Map<String, List<String>> parseHeaders(HttpFields nativeHeaders) {
+    if (nativeHeaders.size() == 0) {
+      return Map.of();
+    }
+
+    Map<String, List<String>> fields = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+    for (var field : nativeHeaders) {
+      fields.computeIfAbsent(field.getName(), ignored -> new ArrayList<>()).add(field.getValue());
+    }
+    fields.replaceAll((ignoredString, values) -> List.copyOf(values));
+
+    return Collections.unmodifiableMap(fields);
+  }
+
+  /**
+   * Captures native cookie parsing results without exposing transport-owned cached objects.
+   *
+   * @param delegate transport request after native customization
+   * @return repeated values separated by case-sensitive name
+   * @throws org.eclipse.jetty.http.HttpException.RuntimeException if native cookie policy rejects
+   *     malformed input
+   */
+  private static Map<String, List<String>> parseCookies(org.eclipse.jetty.server.Request delegate) {
+    var nativeCookies = org.eclipse.jetty.server.Request.getCookies(delegate);
+    if (nativeCookies.isEmpty()) {
+      return Map.of();
+    }
+
+    var parsed = new LinkedHashMap<String, List<String>>();
+    for (var cookie : nativeCookies) {
+      parsed.computeIfAbsent(cookie.getName(), ignored -> new ArrayList<>()).add(cookie.getValue());
+    }
+    parsed.replaceAll((ignoredString, values) -> List.copyOf(values));
+
+    return Collections.unmodifiableMap(parsed);
+  }
+
+  /**
+   * Identifies JDK decoders that can safely read the private body cache.
+   *
+   * @param charset selected decoder
+   * @return whether the decoder is an exact trusted JDK instance
+   */
+  @SuppressWarnings("ReferenceEquality") // Charset names do not identify trusted JDK instances.
+  private static boolean isStandardCharset(Charset charset) {
+    return charset == StandardCharsets.UTF_8
+        || charset == StandardCharsets.ISO_8859_1
+        || charset == StandardCharsets.US_ASCII
+        || charset == StandardCharsets.UTF_16
+        || charset == StandardCharsets.UTF_16BE
+        || charset == StandardCharsets.UTF_16LE;
+  }
+
+  /**
+   * Preserves transport and parser failure types when an asynchronous multipart parse completes.
+   *
+   * @param failure parser completion failure
+   * @return checked I/O failure to propagate
+   * @throws HttpException if parsing failed due to invalid or excessive input
+   * @throws ContentTooLargeException if the configured multipart limit was exceeded
+   * @throws BadRequestException if multipart syntax or metadata is invalid
+   */
+  private static IOException multipartFailure(ExecutionException failure) {
+    if (failure.getCause() instanceof CompletionException completion
+        && completion.getCause() instanceof HttpException httpFailure) {
+      throw httpFailure;
+    }
+
+    if (failure.getCause() instanceof HttpException httpFailure) {
+      throw httpFailure;
+    }
+
+    if (exceededMultipartLimit(failure)) {
+      throw new ContentTooLargeException();
+    }
+
+    if (failure.getCause() instanceof EOFException) {
+      throw new BadRequestException("Malformed multipart body", failure);
+    }
+
+    if (failure.getCause() instanceof IOException ioFailure) {
+      return ioFailure;
+    }
+
+    throw new BadRequestException("Malformed multipart body", failure);
+  }
+
+  /**
+   * Identifies Jetty's documented multipart size-limit failures through asynchronous wrappers.
+   *
+   * @param failure parser completion failure
+   * @return whether a configured size limit was exceeded
+   */
+  private static boolean exceededMultipartLimit(Throwable failure) {
+    for (var current = failure; current != null; current = current.getCause()) {
+      if (current instanceof IllegalStateException && current.getMessage() != null) {
+        var message = current.getMessage();
+        if (message.startsWith("max length exceeded:")
+            || message.startsWith("max file size exceeded:")
+            || message.startsWith("max memory file size exceeded:")
+            || message.startsWith("headers max length exceeded:")
+            || message.startsWith("Form with too many keys")
+            || message.toLowerCase(Locale.ROOT).contains("too many parts")
+            || message.toLowerCase(Locale.ROOT).contains("headers size")) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -753,26 +870,6 @@ public sealed class Request permits TypedRequest {
   }
 
   /**
-   * Groups effective header fields once while retaining case-insensitive lookup and arrival order.
-   *
-   * @param nativeHeaders immutable transport fields captured after native customization
-   * @return deeply immutable header snapshot
-   */
-  private static Map<String, List<String>> parseHeaders(HttpFields nativeHeaders) {
-    if (nativeHeaders.size() == 0) {
-      return Map.of();
-    }
-
-    Map<String, List<String>> fields = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
-    for (var field : nativeHeaders) {
-      fields.computeIfAbsent(field.getName(), ignored -> new ArrayList<>()).add(field.getValue());
-    }
-    fields.replaceAll((ignoredString, values) -> List.copyOf(values));
-
-    return Collections.unmodifiableMap(fields);
-  }
-
-  /**
    * Reads the first cookie with the exact case-sensitive name, without URL decoding.
    *
    * @param name cookie name
@@ -807,29 +904,6 @@ public sealed class Request permits TypedRequest {
     check();
 
     return cookies;
-  }
-
-  /**
-   * Captures native cookie parsing results without exposing transport-owned cached objects.
-   *
-   * @param delegate transport request after native customization
-   * @return repeated values separated by case-sensitive name
-   * @throws org.eclipse.jetty.http.HttpException.RuntimeException if native cookie policy rejects
-   *     malformed input
-   */
-  private static Map<String, List<String>> parseCookies(org.eclipse.jetty.server.Request delegate) {
-    var nativeCookies = org.eclipse.jetty.server.Request.getCookies(delegate);
-    if (nativeCookies.isEmpty()) {
-      return Map.of();
-    }
-
-    var parsed = new LinkedHashMap<String, List<String>>();
-    for (var cookie : nativeCookies) {
-      parsed.computeIfAbsent(cookie.getName(), ignored -> new ArrayList<>()).add(cookie.getValue());
-    }
-    parsed.replaceAll((ignoredString, values) -> List.copyOf(values));
-
-    return Collections.unmodifiableMap(parsed);
   }
 
   /**
@@ -936,22 +1010,6 @@ public sealed class Request permits TypedRequest {
     boolean standard = isStandardCharset(charset);
 
     return new String(standard ? bufferedBody() : bodyBytes(), charset);
-  }
-
-  /**
-   * Identifies JDK decoders that can safely read the private body cache.
-   *
-   * @param charset selected decoder
-   * @return whether the decoder is an exact trusted JDK instance
-   */
-  @SuppressWarnings("ReferenceEquality") // Charset names do not identify trusted JDK instances.
-  private static boolean isStandardCharset(Charset charset) {
-    return charset == StandardCharsets.UTF_8
-        || charset == StandardCharsets.ISO_8859_1
-        || charset == StandardCharsets.US_ASCII
-        || charset == StandardCharsets.UTF_16
-        || charset == StandardCharsets.UTF_16BE
-        || charset == StandardCharsets.UTF_16LE;
   }
 
   /**
@@ -1395,65 +1453,6 @@ public sealed class Request permits TypedRequest {
         .maxMemoryPartSize(multipartOptions.maxMemoryPartBytes());
   }
 
-  /**
-   * Preserves transport and parser failure types when an asynchronous multipart parse completes.
-   *
-   * @param failure parser completion failure
-   * @return checked I/O failure to propagate
-   * @throws HttpException if parsing failed due to invalid or excessive input
-   * @throws ContentTooLargeException if the configured multipart limit was exceeded
-   * @throws BadRequestException if multipart syntax or metadata is invalid
-   */
-  private static IOException multipartFailure(ExecutionException failure) {
-    if (failure.getCause() instanceof CompletionException completion
-        && completion.getCause() instanceof HttpException httpFailure) {
-      throw httpFailure;
-    }
-
-    if (failure.getCause() instanceof HttpException httpFailure) {
-      throw httpFailure;
-    }
-
-    if (exceededMultipartLimit(failure)) {
-      throw new ContentTooLargeException();
-    }
-
-    if (failure.getCause() instanceof EOFException) {
-      throw new BadRequestException("Malformed multipart body", failure);
-    }
-
-    if (failure.getCause() instanceof IOException ioFailure) {
-      return ioFailure;
-    }
-
-    throw new BadRequestException("Malformed multipart body", failure);
-  }
-
-  /**
-   * Identifies Jetty's documented multipart size-limit failures through asynchronous wrappers.
-   *
-   * @param failure parser completion failure
-   * @return whether a configured size limit was exceeded
-   */
-  private static boolean exceededMultipartLimit(Throwable failure) {
-    for (var current = failure; current != null; current = current.getCause()) {
-      if (current instanceof IllegalStateException && current.getMessage() != null) {
-        var message = current.getMessage();
-        if (message.startsWith("max length exceeded:")
-            || message.startsWith("max file size exceeded:")
-            || message.startsWith("max memory file size exceeded:")
-            || message.startsWith("headers max length exceeded:")
-            || message.startsWith("Form with too many keys")
-            || message.toLowerCase(Locale.ROOT).contains("too many parts")
-            || message.toLowerCase(Locale.ROOT).contains("headers size")) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
   /** Closes multipart temporary resources after Jetty completes the request exchange. */
   private void closeMultipart() {
     synchronized (this) {
@@ -1508,14 +1507,6 @@ public sealed class Request permits TypedRequest {
     }
 
     representation = requested;
-  }
-
-  /** Tracks which public request representation consumed transport input. */
-  private enum BodyRepresentation {
-    UNREAD,
-    BUFFERED,
-    STREAMING,
-    MULTIPART
   }
 
   /**
@@ -1580,5 +1571,13 @@ public sealed class Request permits TypedRequest {
     if (Thread.currentThread() != owner || finished) {
       throw new IllegalStateException("Request is only available inside its handler");
     }
+  }
+
+  /** Tracks which public request representation consumed transport input. */
+  private enum BodyRepresentation {
+    UNREAD,
+    BUFFERED,
+    STREAMING,
+    MULTIPART
   }
 }

@@ -14,6 +14,14 @@ import nl.jqno.equalsverifier.EqualsVerifier;
 import org.junit.jupiter.api.Test;
 
 class OpenApiUiEqualityTest {
+  private static Object resource(String type, byte[] bytes) throws ReflectiveOperationException {
+    var resource = Class.forName(OpenApiUi.class.getName() + "$Resource");
+    var constructor = resource.getDeclaredConstructor(String.class, byte[].class);
+    constructor.setAccessible(true);
+
+    return constructor.newInstance(type, bytes);
+  }
+
   @Test
   void comparesOnlyConfiguredPaths() {
     EqualsVerifier.forClass(OpenApiUi.class)
@@ -85,13 +93,5 @@ class OpenApiUiEqualityTest {
     assertEquals(initialHash, ui.hashCode());
     assertTrue(handlers.remove(ui));
     assertTrue(handlers.isEmpty());
-  }
-
-  private static Object resource(String type, byte[] bytes) throws ReflectiveOperationException {
-    var resource = Class.forName(OpenApiUi.class.getName() + "$Resource");
-    var constructor = resource.getDeclaredConstructor(String.class, byte[].class);
-    constructor.setAccessible(true);
-
-    return constructor.newInstance(type, bytes);
   }
 }

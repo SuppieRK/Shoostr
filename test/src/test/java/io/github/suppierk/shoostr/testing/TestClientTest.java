@@ -108,7 +108,7 @@ class TestClientTest {
   }
 
   @Test
-  void acceptsACustomMethodToken() throws Exception {
+  void acceptsCustomMethodToken() throws Exception {
     var app = new Shoostr();
     app.routes().get("/method", (ignoredRequest, response) -> response.text("registered GET"));
 
@@ -162,7 +162,7 @@ class TestClientTest {
   }
 
   @Test
-  void defaultsToGetWithNoBodyAndATenSecondRequestTimeout() throws Exception {
+  void defaultsToGetWithNoBodyAndTenSecondRequestTimeout() throws Exception {
     var app = new Shoostr();
     app.routes()
         .get(

@@ -40,6 +40,9 @@ import org.openjdk.jmh.annotations.Warmup;
     jvmArgsAppend = {"-Xms512m", "-Xmx512m", "-XX:+UseG1GC"})
 @Threads(1)
 public class ExtensionRequestBenchmark {
+  private final List<AutoCloseable> resources;
+
+  /** Extension configuration selected for the application. */
   @Param({
     "plain",
     "inactive",
@@ -56,16 +59,18 @@ public class ExtensionRequestBenchmark {
   })
   public String configuration;
 
+  /** Number of route groups registered by the fixture. */
   @Param({"1", "1000"})
   public int groups;
 
+  /** Request outcome measured by the benchmark. */
   @Param({"matched", "missed", "wrongMethod"})
   public String outcome;
 
+  /** Execution policy selected for the measured route. */
   @Param({"default", "platform", "forkJoin"})
   public String execution;
 
-  private final List<AutoCloseable> resources;
   private Shoostr app;
   private LocalConnector connector;
   private String request;

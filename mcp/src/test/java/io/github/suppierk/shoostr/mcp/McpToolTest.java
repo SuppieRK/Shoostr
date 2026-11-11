@@ -28,16 +28,16 @@ import reactor.core.publisher.Mono;
 class McpToolTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void completesANativePingWithEitherSynchronousExecutionSetting(boolean immediate)
+  void completesNativePingWithEitherSynchronousExecutionSetting(boolean immediate)
       throws Exception {
     var security =
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
     var mcp =
-        createMcpForCompletesANativePingWithEitherSynchronousExecutionSetting(
+        createMcpForCompletesNativePingWithEitherSynchronousExecutionSetting(
             security, immediate, tool);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
@@ -60,7 +60,7 @@ class McpToolTest {
     }
   }
 
-  private Mcp<McpSyncServer> createMcpForCompletesANativePingWithEitherSynchronousExecutionSetting(
+  private Mcp<McpSyncServer> createMcpForCompletesNativePingWithEitherSynchronousExecutionSetting(
       McpHttpSecurity security, boolean immediate, Tool tool) {
     return Mcp.sync(
         security,
@@ -85,17 +85,17 @@ class McpToolTest {
   }
 
   @Test
-  void invokesANativeToolThroughTheOfficialStreamableHttpClient() throws Exception {
+  void invokesNativeToolThroughTheOfficialStreamableHttpClient() throws Exception {
     var security =
         new McpHttpSecurity(
             Set.of(),
             ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var tool =
         McpSchema.Tool.builder("greet", Map.of("type", "object", "properties", Map.of()))
             .description("Returns a greeting")
             .build();
-    var mcp = createMcpForInvokesANativeToolThroughTheOfficialStreamableHttpClient(security, tool);
+    var mcp = createMcpForInvokesNativeToolThroughTheOfficialStreamableHttpClient(security, tool);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
@@ -112,7 +112,7 @@ class McpToolTest {
     }
   }
 
-  private Mcp<McpSyncServer> createMcpForInvokesANativeToolThroughTheOfficialStreamableHttpClient(
+  private Mcp<McpSyncServer> createMcpForInvokesNativeToolThroughTheOfficialStreamableHttpClient(
       McpHttpSecurity security, Tool tool) {
     return Mcp.sync(
         security,
@@ -137,7 +137,7 @@ class McpToolTest {
         new McpHttpSecurity(
             Set.of(),
             ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var tool =
         McpSchema.Tool.builder("greet", Map.of("type", "object", "properties", Map.of()))
             .description("Returns a greeting")

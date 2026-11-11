@@ -30,9 +30,30 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class RequestTracingExampleTest {
+  private static OpenTelemetrySdk telemetry(InMemorySpanExporter exporter) {
+    return OpenTelemetrySdk.builder()
+        .setTracerProvider(
+            SdkTracerProvider.builder()
+                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
+                .build())
+        .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
+        .build();
+  }
+
+  private static Shoostr withExecutionMode(
+      OpenTelemetrySdk telemetry, ExecutorService workers, boolean virtualApplication) {
+    var options = new Options();
+    options.setVirtualThreads(virtualApplication);
+
+    return RequestTracingExample.application(telemetry, workers, options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void continuesARemoteParentAndCreatesAChildOnTheSelectedWorker(boolean virtualApplication)
+  void continuesRemoteParentAndCreatesChildOnTheSelectedWorker(boolean virtualApplication)
       throws Exception {
     var exporter = InMemorySpanExporter.create();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
@@ -44,8 +65,7 @@ class RequestTracingExampleTest {
           TestServer.start(
               withExecutionMode(telemetry, workers, virtualApplication)
                   .afterRequest(outcomes::offer))) {
-        var response =
-            sendResponseForContinuesARemoteParentAndCreatesAChildOnTheSelectedWorker(test);
+        var response = sendResponseForContinuesRemoteParentAndCreatesChildOnTheSelectedWorker(test);
 
         assertEquals(200, response.statusCode());
         assertEquals("item 42", response.body());
@@ -60,7 +80,7 @@ class RequestTracingExampleTest {
                 .filter(span -> span.getKind() == SpanKind.SERVER)
                 .findFirst()
                 .orElseThrow();
-        var child =
+        final var child =
             spans.stream()
                 .filter(span -> "load-item".equals(span.getName()))
                 .findFirst()
@@ -84,7 +104,7 @@ class RequestTracingExampleTest {
   }
 
   private HttpResponse<String>
-      sendResponseForContinuesARemoteParentAndCreatesAChildOnTheSelectedWorker(TestServer test)
+      sendResponseForContinuesRemoteParentAndCreatesChildOnTheSelectedWorker(TestServer test)
           throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -166,7 +186,7 @@ class RequestTracingExampleTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void recordsAServerFailureWithoutLeakingTheExceptionMessage(boolean virtualApplication)
+  void recordsServerFailureWithoutLeakingTheExceptionMessage(boolean virtualApplication)
       throws Exception {
     var exporter = InMemorySpanExporter.create();
     var outcomes = new LinkedBlockingQueue<RequestOutcome>();
@@ -174,7 +194,7 @@ class RequestTracingExampleTest {
     try (var telemetry = telemetry(exporter);
         var workers = Executors.newSingleThreadExecutor()) {
       var app =
-          createAppForRecordsAServerFailureWithoutLeakingTheExceptionMessage(
+          createAppForRecordsServerFailureWithoutLeakingTheExceptionMessage(
               telemetry, workers, virtualApplication, outcomes);
 
       try (Closeable appCleanup = app::close;
@@ -208,7 +228,7 @@ class RequestTracingExampleTest {
     }
   }
 
-  private Shoostr createAppForRecordsAServerFailureWithoutLeakingTheExceptionMessage(
+  private Shoostr createAppForRecordsServerFailureWithoutLeakingTheExceptionMessage(
       OpenTelemetrySdk telemetry,
       ExecutorService workers,
       boolean virtualApplication,
@@ -219,26 +239,5 @@ class RequestTracingExampleTest {
               throw new IllegalStateException("private failure");
             })
         .afterRequest(outcomes::offer);
-  }
-
-  private static OpenTelemetrySdk telemetry(InMemorySpanExporter exporter) {
-    return OpenTelemetrySdk.builder()
-        .setTracerProvider(
-            SdkTracerProvider.builder()
-                .addSpanProcessor(SimpleSpanProcessor.create(exporter))
-                .build())
-        .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()))
-        .build();
-  }
-
-  private static Shoostr withExecutionMode(
-      OpenTelemetrySdk telemetry, ExecutorService workers, boolean virtualApplication) {
-    var options = new Options();
-    options.setVirtualThreads(virtualApplication);
-
-    return RequestTracingExample.application(telemetry, workers, options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

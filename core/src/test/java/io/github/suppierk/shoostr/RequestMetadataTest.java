@@ -625,7 +625,8 @@ class RequestMetadataTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Null keys are deliberately rejected by the request API.
+  @SuppressWarnings("NullAway")
+  // Null keys are deliberately rejected by the request API.
   void managesRequestLocalAttributesWithExplicitNullRemoval() throws Exception {
     var retained = new AtomicReference<Map<String, Object>>();
     var value = new Object();
@@ -1019,7 +1020,7 @@ class RequestMetadataTest {
                     .get(3, TimeUnit.SECONDS);
               }
 
-              var stream = response.startStream("text/plain");
+              final var stream = response.startStream("text/plain");
 
               assertEquals("value", request.attribute("state").orElseThrow());
               assertEquals("user", request.principal().orElseThrow().getName());

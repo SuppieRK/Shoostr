@@ -34,9 +34,11 @@ public class RoutePatternBenchmark {
   private static final int QUERY_COUNT = 16384;
   private static final Handler HANDLER = (ignored, ignoredResponse) -> {};
 
+  /** Number of route groups registered by the fixture. */
   @Param({"1", "100", "1000"})
   public int groups;
 
+  /** Route pattern and match outcome used for the lookups. */
   @Param({
     "literal",
     "oneParameter",
@@ -59,6 +61,7 @@ public class RoutePatternBenchmark {
   })
   public String workload;
 
+  /** Controls reuse of the path string across lookups. */
   @Param({"reused"})
   public String input;
 
@@ -69,6 +72,55 @@ public class RoutePatternBenchmark {
   private char[][] characters;
   private boolean fresh;
   private int cursor;
+
+  /** Creates a benchmark state for JMH. */
+  public RoutePatternBenchmark() {}
+
+  /**
+   * Builds the shared route table plus branches required by the selected workload.
+   *
+   * @param groups number of resource groups
+   * @param catchAll whether to register catch-all routes
+   * @param regex whether to register constrained routes
+   * @return ordered endpoint registrations
+   */
+  private static List<RadixRoutes.Endpoint> registrations(
+      int groups, boolean catchAll, boolean regex) {
+    var endpoints = new ArrayList<RadixRoutes.Endpoint>();
+    for (int group = 0; group < groups; group++) {
+      String prefix = "/api/resources/" + group + "/orders";
+      add(endpoints, HttpMethods.GET, prefix + "/latest");
+      add(endpoints, HttpMethods.GET, prefix + "/{id}");
+      add(endpoints, HttpMethods.POST, prefix + "/{orderId}");
+      add(endpoints, HttpMethods.GET, prefix + "/fixed/details");
+      add(endpoints, HttpMethods.GET, prefix + "/{id}/events");
+      add(endpoints, HttpMethods.GET, prefix + "/{id}/items/{itemId}");
+      add(endpoints, HttpMethods.GET, prefix + "/shadowed");
+      add(endpoints, HttpMethods.POST, prefix + "/latest");
+      if (catchAll) {
+        add(endpoints, HttpMethods.GET, prefix + "/{*tail}");
+        add(endpoints, HttpMethods.POST, prefix + "/{*tail}");
+      }
+
+      if (regex) {
+        add(endpoints, HttpMethods.GET, prefix + "/{numericId:[0-9]+}");
+        add(endpoints, HttpMethods.POST, prefix + "/{numericId:[0-9]+}");
+      }
+    }
+    return endpoints;
+  }
+
+  /**
+   * Appends one endpoint to the fixture's registration list.
+   *
+   * @param endpoints ordered fixture registrations
+   * @param method registered HTTP method
+   * @param pattern absolute route pattern
+   */
+  private static void add(
+      List<RadixRoutes.Endpoint> endpoints, HttpMethods method, String pattern) {
+    endpoints.add(RadixRoutes.endpoint(method, pattern, HANDLER));
+  }
 
   /**
    * Matches one path and reads the parameters a handler would consume, or collects allowed methods.
@@ -182,51 +234,5 @@ public class RoutePatternBenchmark {
       case "regexNoRead", "regexRead", "regexWrongMethod" -> "/" + query;
       default -> throw new IllegalArgumentException("Unknown workload: " + workload);
     };
-  }
-
-  /**
-   * Builds the shared route table plus branches required by the selected workload.
-   *
-   * @param groups number of resource groups
-   * @param catchAll whether to register catch-all routes
-   * @param regex whether to register constrained routes
-   * @return ordered endpoint registrations
-   */
-  private static List<RadixRoutes.Endpoint> registrations(
-      int groups, boolean catchAll, boolean regex) {
-    var endpoints = new ArrayList<RadixRoutes.Endpoint>();
-    for (int group = 0; group < groups; group++) {
-      String prefix = "/api/resources/" + group + "/orders";
-      add(endpoints, HttpMethods.GET, prefix + "/latest");
-      add(endpoints, HttpMethods.GET, prefix + "/{id}");
-      add(endpoints, HttpMethods.POST, prefix + "/{orderId}");
-      add(endpoints, HttpMethods.GET, prefix + "/fixed/details");
-      add(endpoints, HttpMethods.GET, prefix + "/{id}/events");
-      add(endpoints, HttpMethods.GET, prefix + "/{id}/items/{itemId}");
-      add(endpoints, HttpMethods.GET, prefix + "/shadowed");
-      add(endpoints, HttpMethods.POST, prefix + "/latest");
-      if (catchAll) {
-        add(endpoints, HttpMethods.GET, prefix + "/{*tail}");
-        add(endpoints, HttpMethods.POST, prefix + "/{*tail}");
-      }
-
-      if (regex) {
-        add(endpoints, HttpMethods.GET, prefix + "/{numericId:[0-9]+}");
-        add(endpoints, HttpMethods.POST, prefix + "/{numericId:[0-9]+}");
-      }
-    }
-    return endpoints;
-  }
-
-  /**
-   * Appends one endpoint to the fixture's registration list.
-   *
-   * @param endpoints ordered fixture registrations
-   * @param method registered HTTP method
-   * @param pattern absolute route pattern
-   */
-  private static void add(
-      List<RadixRoutes.Endpoint> endpoints, HttpMethods method, String pattern) {
-    endpoints.add(RadixRoutes.endpoint(method, pattern, HANDLER));
   }
 }

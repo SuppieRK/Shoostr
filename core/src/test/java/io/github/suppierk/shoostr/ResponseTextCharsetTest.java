@@ -26,6 +26,25 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class ResponseTextCharsetTest {
+  private static Charset rejectedEncoder(String name) {
+    return new Charset(name, new String[0]) {
+      @Override
+      public boolean contains(Charset other) {
+        return equals(other);
+      }
+
+      @Override
+      public CharsetDecoder newDecoder() {
+        throw new UnsupportedOperationException("Decoder must not be called");
+      }
+
+      @Override
+      public CharsetEncoder newEncoder() {
+        throw new UnsupportedOperationException("Encoder was called");
+      }
+    };
+  }
+
   @Test
   void encodesTextWithTheSuppliedCharsetAndMatchingMetadata() throws Exception {
     {
@@ -424,24 +443,5 @@ class ResponseTextCharsetTest {
         }
       }
     }
-  }
-
-  private static Charset rejectedEncoder(String name) {
-    return new Charset(name, new String[0]) {
-      @Override
-      public boolean contains(Charset other) {
-        return equals(other);
-      }
-
-      @Override
-      public CharsetDecoder newDecoder() {
-        throw new UnsupportedOperationException("Decoder must not be called");
-      }
-
-      @Override
-      public CharsetEncoder newEncoder() {
-        throw new UnsupportedOperationException("Encoder was called");
-      }
-    };
   }
 }

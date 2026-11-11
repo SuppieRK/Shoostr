@@ -16,10 +16,13 @@ import org.junit.jupiter.params.provider.ValueSource;
 class TestSourcePolicyTest {
   private static final Pattern NON_CODE =
       Pattern.compile(
-          "\"\"\"[\\s\\S]*?\"\"\"|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|[^'\\\\])*'|//[^\\r\\n]*|/\\*[\\s\\S]*?\\*/");
+          "\"\"\"[\\s\\S]*?\"\"\"|\"(?:\\\\.|[^\"\\\\])*\"|'(?:\\\\.|"
+              + "[^'\\\\])*'|//[^\\r\\n]*|/\\*[\\s\\S]*?\\*/");
   private static final Pattern LEGACY_JUNIT_IMPORT =
       Pattern.compile(
-          "(?m)^\\s*import\\s+(?:static\\s+)?(?:junit\\.framework\\.|org\\.junit\\.(?!(?:jupiter|platform)\\.))[A-Za-z0-9_.*]+\\s*;");
+          "(?m)^\\s*import\\s+(?:static\\s+)?(?:junit\\.framework"
+              + "\\.|org\\.junit\\.(?!(?:jupiter|platform)\\.))[A-Za-z0"
+              + "-9_.*]+\\s*;");
   private static final Pattern TEST_MAIN =
       Pattern.compile("^\\s*(?:(?:public|protected|private)\\s+)?static\\s+void\\s+main\\s*\\(");
   private static final Pattern DIRECT_ASSERTION_ERROR =
@@ -28,7 +31,9 @@ class TestSourcePolicyTest {
       Pattern.compile("\\b(?:Files\\.createTemp(?:File|Directory)|File\\.createTempFile)\\s*\\(");
   private static final Pattern FILE_WRITE =
       Pattern.compile(
-          "\\bFiles\\.(?:write|writeString|newOutputStream|newBufferedWriter|createFile|createDirectory|createDirectories|delete|deleteIfExists)\\s*\\(");
+          "\\bFiles\\.(?:write|writeString|newOutputStream|"
+              + "newBufferedWriter|createFile|createDirectory|"
+              + "createDirectories|delete|deleteIfExists)\\s*\\(");
 
   @ParameterizedTest
   @ValueSource(
@@ -94,19 +99,19 @@ class TestSourcePolicyTest {
         "Files.createTempFile(\n    \"unmanaged\", \".txt\");",
         "File.createTempFile(\"unmanaged\", \".txt\");"
       })
-  void rejectsTransientFilesWithoutAManagedParent(String source) {
+  void rejectsTransientFilesWithoutManagedParent(String source) {
     assertEquals(1, violations(source));
   }
 
   @Test
-  void permitsTransientFilesUnderAManagedParent() {
+  void permitsTransientFilesUnderManagedParent() {
     assertEquals(0, violations("Files.createTempFile(temporaryDirectory, \"managed\", \".txt\");"));
     assertEquals(
         0, violations("File.createTempFile(\"managed\", \".txt\", temporaryDirectory.toFile());"));
   }
 
   @Test
-  void rejectsFileTempCreationWithANullParent() {
+  void rejectsFileTempCreationWithNullParent() {
     assertEquals(1, violations("File.createTempFile(\"unmanaged\", \".txt\", null);"));
   }
 

@@ -24,32 +24,30 @@ import reactor.core.publisher.Mono;
 
 class McpNativeErrorTest {
   @Test
-  void preservesANativeToolFailureAsAProtocolErrorWithoutAnOAuthChallenge() throws Exception {
+  void preservesNativeToolFailureAsProtocolErrorWithoutOauthChallenge() throws Exception {
     var security =
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
-    var mcp =
-        createMcpForPreservesANativeToolFailureAsAProtocolErrorWithoutAnOAuthChallenge(security);
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
+    var mcp = createMcpForPreservesNativeToolFailureAsProtocolErrorWithoutOauthChallenge(security);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var initialized =
-          sendInitializedRequestForPreservesANativeToolFailureAsAProtocolErrorWithoutAnOAuthChallenge(
+          sendInitializedRequestForPreservesNativeToolFailureAsProtocolErrorWithoutOauthChallenge(
               test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var result =
-          sendResultForPreservesANativeToolFailureAsAProtocolErrorWithoutAnOAuthChallenge(
+          sendResultForPreservesNativeToolFailureAsProtocolErrorWithoutOauthChallenge(
               test, sessionId);
 
       assertEquals(200, result.statusCode());
       assertTrue(result.headers().firstValue("WWW-Authenticate").isEmpty());
 
       var payload =
-          createPayloadForPreservesANativeToolFailureAsAProtocolErrorWithoutAnOAuthChallenge(
-              result);
+          createPayloadForPreservesNativeToolFailureAsProtocolErrorWithoutOauthChallenge(result);
 
       var reply =
           assertInstanceOf(
@@ -61,7 +59,7 @@ class McpNativeErrorTest {
   }
 
   private Mcp<McpAsyncServer>
-      createMcpForPreservesANativeToolFailureAsAProtocolErrorWithoutAnOAuthChallenge(
+      createMcpForPreservesNativeToolFailureAsProtocolErrorWithoutOauthChallenge(
           McpHttpSecurity security) {
     return Mcp.async(
         security,
@@ -79,7 +77,7 @@ class McpNativeErrorTest {
   }
 
   private HttpResponse<byte[]>
-      sendInitializedRequestForPreservesANativeToolFailureAsAProtocolErrorWithoutAnOAuthChallenge(
+      sendInitializedRequestForPreservesNativeToolFailureAsProtocolErrorWithoutOauthChallenge(
           TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -90,15 +88,15 @@ class McpNativeErrorTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-                          {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                            "protocolVersion":"2025-11-25","capabilities":{},
-                            "clientInfo":{"name":"native-error-fixture","version":"1.0"}}}
-                          """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"native-error-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<String>
-      sendResultForPreservesANativeToolFailureAsAProtocolErrorWithoutAnOAuthChallenge(
+      sendResultForPreservesNativeToolFailureAsProtocolErrorWithoutOauthChallenge(
           TestServer test, String sessionId) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -111,13 +109,13 @@ class McpNativeErrorTest {
                 .header("MCP-Protocol-Version", "2025-11-25")
                 .body(
                     """
-                          {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"refuse","arguments":{}}}
-                          """
+                    {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"refuse","arguments":{}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)),
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private String createPayloadForPreservesANativeToolFailureAsAProtocolErrorWithoutAnOAuthChallenge(
+  private String createPayloadForPreservesNativeToolFailureAsProtocolErrorWithoutOauthChallenge(
       HttpResponse<String> result) {
     return result
         .body()

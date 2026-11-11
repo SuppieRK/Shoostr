@@ -147,13 +147,13 @@ class StreamBulkheadExampleTest {
   }
 
   @Test
-  void releasesAdmissionAfterAProducerFailureAbortsCommittedOutput() throws Exception {
+  void releasesAdmissionAfterProducerFailureAbortsCommittedOutput() throws Exception {
     var completed = new CountDownLatch(1);
     var calls = new AtomicInteger();
     var bulkhead = Bulkhead.of("failure", bulkheadProperties(1));
     bulkhead.getEventPublisher().onCallFinished(event -> completed.countDown());
     var app =
-        createAppForReleasesAdmissionAfterAProducerFailureAbortsCommittedOutput(bulkhead, calls);
+        createAppForReleasesAdmissionAfterProducerFailureAbortsCommittedOutput(bulkhead, calls);
 
     try (var test = TestServer.start(app)) {
       var failed =
@@ -179,7 +179,7 @@ class StreamBulkheadExampleTest {
     }
   }
 
-  private Shoostr createAppForReleasesAdmissionAfterAProducerFailureAbortsCommittedOutput(
+  private Shoostr createAppForReleasesAdmissionAfterProducerFailureAbortsCommittedOutput(
       Bulkhead bulkhead, AtomicInteger calls) {
     return StreamBulkheadExample.application(
         bulkhead,

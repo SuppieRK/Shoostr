@@ -39,7 +39,7 @@ public final class McpInteractionsExample {
         new McpHttpSecurity(
             Set.of("https://client.example"),
             ignored -> new McpIdentity("public-status", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var mcp = mcpServer(security, status);
 
     return new Shoostr()

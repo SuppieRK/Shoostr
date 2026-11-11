@@ -18,6 +18,12 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class ExecutorExampleTest {
+  private static Shoostr verifyExecutionMode(Shoostr app, boolean virtualApplication) {
+    return app.onRequestHeaders(
+        (request, response) ->
+            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void usesTheSelectedModeWhenNoEndpointExecutorIsSelected(boolean virtual) throws Exception {
@@ -103,11 +109,5 @@ class ExecutorExampleTest {
         verifyExecutionMode(
             ExecutorExample.application(virtualApplication, workers, context, outcomes::offer),
             virtualApplication));
-  }
-
-  private static Shoostr verifyExecutionMode(Shoostr app, boolean virtualApplication) {
-    return app.onRequestHeaders(
-        (request, response) ->
-            assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

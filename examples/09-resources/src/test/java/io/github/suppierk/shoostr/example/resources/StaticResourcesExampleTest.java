@@ -22,6 +22,38 @@ import org.junit.jupiter.params.provider.CsvSource;
 class StaticResourcesExampleTest {
   @TempDir Path directory;
 
+  private static void directoryAlias(Path alias, Path target) throws Exception {
+    if (!System.getProperty("os.name").startsWith("Windows")) {
+      Files.createSymbolicLink(alias, target);
+      return;
+    }
+
+    // Windows directory junctions exercise alias rejection without symlink privileges.
+    var log = Files.createTempFile(alias.getParent(), "junction-", ".log");
+    var process = createProcessForDirectoryAlias(alias, target, log);
+
+    try {
+      assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction creation timed out");
+      assertEquals(
+          0, process.exitValue(), new String(Files.readAllBytes(log), StandardCharsets.UTF_8));
+    } finally {
+      process.destroyForcibly();
+
+      assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction command did not exit");
+
+      Files.deleteIfExists(log);
+    }
+  }
+
+  private static Process createProcessForDirectoryAlias(Path alias, Path target, Path log)
+      throws IOException {
+    return new ProcessBuilder(
+            "cmd.exe", "/d", "/c", "mklink", "/J", alias.toString(), target.toString())
+        .redirectErrorStream(true)
+        .redirectOutput(log.toFile())
+        .start();
+  }
+
   @Test
   void rejectsAnUnavailableClasspathDirectoryBeforeReturningTheApplication() {
     assertThrows(
@@ -183,37 +215,5 @@ class StaticResourcesExampleTest {
     } finally {
       Thread.currentThread().setContextClassLoader(previous);
     }
-  }
-
-  private static void directoryAlias(Path alias, Path target) throws Exception {
-    if (!System.getProperty("os.name").startsWith("Windows")) {
-      Files.createSymbolicLink(alias, target);
-      return;
-    }
-
-    // Windows directory junctions exercise alias rejection without symlink privileges.
-    var log = Files.createTempFile(alias.getParent(), "junction-", ".log");
-    var process = createProcessForDirectoryAlias(alias, target, log);
-
-    try {
-      assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction creation timed out");
-      assertEquals(
-          0, process.exitValue(), new String(Files.readAllBytes(log), StandardCharsets.UTF_8));
-    } finally {
-      process.destroyForcibly();
-
-      assertTrue(process.waitFor(10, TimeUnit.SECONDS), "Junction command did not exit");
-
-      Files.deleteIfExists(log);
-    }
-  }
-
-  private static Process createProcessForDirectoryAlias(Path alias, Path target, Path log)
-      throws IOException {
-    return new ProcessBuilder(
-            "cmd.exe", "/d", "/c", "mklink", "/J", alias.toString(), target.toString())
-        .redirectErrorStream(true)
-        .redirectOutput(log.toFile())
-        .start();
   }
 }

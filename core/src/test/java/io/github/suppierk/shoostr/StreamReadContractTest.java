@@ -36,6 +36,83 @@ class StreamReadContractTest {
   private static final String CHUNKED_HEADERS = chunkedHeaders();
   @TempDir Path temporaryDirectory;
 
+  private static String chunkedHeaders() {
+    return
+        """
+        POST /input HTTP/1.1\r
+        Host: localhost\r
+        Transfer-Encoding: chunked\r
+        Connection: close\r
+        \r
+        """;
+  }
+
+  private static void connect(Socket socket, TestServer test) throws IOException {
+    socket.connect(
+        new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], test.baseUri().getPort()),
+        3000);
+    socket.setSoTimeout(3000);
+  }
+
+  private static void write(Socket socket, String content) throws IOException {
+    var output = socket.getOutputStream();
+    output.write(content.getBytes(StandardCharsets.US_ASCII));
+    output.flush();
+  }
+
+  private static void assertResponse(Socket socket, String expected) throws IOException {
+    var result = HttpTester.parseResponse(HttpTester.from(socket.getInputStream()));
+
+    assertNotNull(result);
+    assertEquals(200, result.getStatus());
+    assertEquals(expected, result.getContent());
+  }
+
+  private static InputStream content(Request request, boolean multipart) throws IOException {
+    return multipart ? request.file("document").orElseThrow().content() : request.input();
+  }
+
+  private static void assertInvalidRanges(InputStream input) {
+    var buffer = new byte[] {'x', 'y'};
+
+    assertThrows(NullPointerException.class, () -> input.read(null, 0, 0));
+    assertThrows(NullPointerException.class, () -> input.read(null, 0, 1));
+    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, -1, 0));
+    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, 3, 0));
+    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, 2, 1));
+    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, 0, -1));
+    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, 1, Integer.MAX_VALUE));
+    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, Integer.MAX_VALUE, 1));
+    assertArrayEquals(new byte[] {'x', 'y'}, buffer);
+  }
+
+  private static HttpResponse<String> post(TestServer test, boolean multipart) throws Exception {
+    var body = createBodyForPost();
+
+    return test.send(
+        request -> {
+          request
+              .path("/input")
+              .method("POST")
+              .timeout(Duration.ofSeconds(3))
+              .body(multipart ? body : new byte[] {'A', 'B'});
+          if (multipart) {
+            request.header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY);
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static byte[] createBodyForPost() {
+    return ("--"
+            + BOUNDARY
+            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"bytes.bin\""
+            + "\r\nContent-Type: application/octet-stream\r\n\r\nAB\r\n--"
+            + BOUNDARY
+            + "--\r\n")
+        .getBytes(StandardCharsets.US_ASCII);
+  }
+
   @Test
   void returnsAnExactRequestPrefixBeforeAnotherChunkArrives() throws Exception {
     var prefix = new CompletableFuture<byte[]>();
@@ -101,16 +178,6 @@ class StreamReadContractTest {
         }
       }
     }
-  }
-
-  private static String chunkedHeaders() {
-    return """
-      POST /input HTTP/1.1\r
-      Host: localhost\r
-      Transfer-Encoding: chunked\r
-      Connection: close\r
-      \r
-      """;
   }
 
   @ParameterizedTest
@@ -269,45 +336,6 @@ class StreamReadContractTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private static void connect(Socket socket, TestServer test) throws IOException {
-    socket.connect(
-        new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], test.baseUri().getPort()),
-        3000);
-    socket.setSoTimeout(3000);
-  }
-
-  private static void write(Socket socket, String content) throws IOException {
-    var output = socket.getOutputStream();
-    output.write(content.getBytes(StandardCharsets.US_ASCII));
-    output.flush();
-  }
-
-  private static void assertResponse(Socket socket, String expected) throws IOException {
-    var result = HttpTester.parseResponse(HttpTester.from(socket.getInputStream()));
-
-    assertNotNull(result);
-    assertEquals(200, result.getStatus());
-    assertEquals(expected, result.getContent());
-  }
-
-  private static InputStream content(Request request, boolean multipart) throws IOException {
-    return multipart ? request.file("document").orElseThrow().content() : request.input();
-  }
-
-  private static void assertInvalidRanges(InputStream input) {
-    var buffer = new byte[] {'x', 'y'};
-
-    assertThrows(NullPointerException.class, () -> input.read(null, 0, 0));
-    assertThrows(NullPointerException.class, () -> input.read(null, 0, 1));
-    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, -1, 0));
-    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, 3, 0));
-    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, 2, 1));
-    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, 0, -1));
-    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, 1, Integer.MAX_VALUE));
-    assertThrows(IndexOutOfBoundsException.class, () -> input.read(buffer, Integer.MAX_VALUE, 1));
-    assertArrayEquals(new byte[] {'x', 'y'}, buffer);
-  }
-
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void returnsZeroForAnEmptyUploadReadAfterEof(boolean diskBacked) throws Exception {
@@ -343,32 +371,5 @@ class StreamReadContractTest {
     configuredOptions.setMultipart(multipart);
 
     return new Shoostr(configuredOptions);
-  }
-
-  private static HttpResponse<String> post(TestServer test, boolean multipart) throws Exception {
-    var body = createBodyForPost();
-
-    return test.send(
-        request -> {
-          request
-              .path("/input")
-              .method("POST")
-              .timeout(Duration.ofSeconds(3))
-              .body(multipart ? body : new byte[] {'A', 'B'});
-          if (multipart) {
-            request.header("Content-Type", "multipart/form-data; boundary=" + BOUNDARY);
-          }
-        },
-        HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static byte[] createBodyForPost() {
-    return ("--"
-            + BOUNDARY
-            + "\r\nContent-Disposition: form-data; name=\"document\"; filename=\"bytes.bin\""
-            + "\r\nContent-Type: application/octet-stream\r\n\r\nAB\r\n--"
-            + BOUNDARY
-            + "--\r\n")
-        .getBytes(StandardCharsets.US_ASCII);
   }
 }

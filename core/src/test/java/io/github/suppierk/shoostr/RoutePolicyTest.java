@@ -140,7 +140,7 @@ class RoutePolicyTest {
   }
 
   @Test
-  void preventsExtensionAdmissionFromStartingAStream() throws Exception {
+  void preventsExtensionAdmissionFromStartingStream() throws Exception {
     var admission =
         new AdmissionExtension(
             (ignoredRequest, response) ->

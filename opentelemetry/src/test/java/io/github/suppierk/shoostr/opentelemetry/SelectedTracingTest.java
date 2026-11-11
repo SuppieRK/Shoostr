@@ -39,8 +39,8 @@ class SelectedTracingTest {
   private final InMemorySpanExporter exporter;
   private final OpenTelemetrySdk telemetry;
   private final OpenTelemetryTracing tracing;
-  private Shoostr app;
   private final LinkedBlockingQueue<RequestOutcome> outcomes;
+  private Shoostr app;
 
   SelectedTracingTest() {
     this.exporter = InMemorySpanExporter.create();
@@ -336,7 +336,7 @@ class SelectedTracingTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void doesNotObserveARequestRejectedBeforeMatching(boolean virtualApplication) throws Exception {
+  void doesNotObserveRequestRejectedBeforeMatching(boolean virtualApplication) throws Exception {
     withExecutionMode(virtualApplication);
 
     app.onRequestHeaders(
@@ -385,7 +385,7 @@ class SelectedTracingTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void recordsTheGenerated404WhenAvailabilityRejectsAMatchedEndpoint(boolean virtualApplication)
+  void recordsTheGenerated404WhenAvailabilityRejectsMatchedEndpoint(boolean virtualApplication)
       throws Exception {
     withExecutionMode(virtualApplication);
 

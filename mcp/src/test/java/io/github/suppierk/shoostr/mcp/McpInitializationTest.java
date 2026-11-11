@@ -23,7 +23,7 @@ class McpInitializationTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var mcp =
         Mcp.sync(
             security,
@@ -62,10 +62,10 @@ class McpInitializationTest {
                 .method("POST")
                 .body(
                     """
-                              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                                "protocolVersion":"2025-11-25","capabilities":{},
-                                "clientInfo":{"name":"fixture-client","version":"1.0"}}}
-                              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"fixture-client","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)),
         HttpResponse.BodyHandlers.ofString());
   }

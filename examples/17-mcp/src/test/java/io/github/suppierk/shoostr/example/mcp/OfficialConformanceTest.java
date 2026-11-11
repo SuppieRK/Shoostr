@@ -63,7 +63,7 @@ class OfficialConformanceTest {
     }
   }
 
-  private ArrayList<String> createCommandForSatisfiesTheOfficialServerContract(
+  private List<String> createCommandForSatisfiesTheOfficialServerContract(
       Path cli, TestServer test, Path output) {
     return new ArrayList<>(
         List.of(
@@ -79,7 +79,7 @@ class OfficialConformanceTest {
   }
 
   private Process createProcessForSatisfiesTheOfficialServerContract(
-      ArrayList<String> command, Path directory, Path log) throws IOException {
+      List<String> command, Path directory, Path log) throws IOException {
     return new ProcessBuilder(command)
         .directory(directory.toFile())
         .redirectErrorStream(true)

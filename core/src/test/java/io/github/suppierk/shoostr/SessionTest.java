@@ -29,6 +29,29 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 class SessionTest {
+  private static void fileStore(SessionHandler handler, Path directory) {
+    var store = sessionStore(directory);
+
+    var cache = sessionCache(handler, store);
+
+    handler.setSessionCache(cache);
+  }
+
+  private static FileSessionDataStore sessionStore(Path directory) {
+    var store = new FileSessionDataStore();
+    store.setStoreDir(directory.toFile());
+
+    return store;
+  }
+
+  private static DefaultSessionCache sessionCache(
+      SessionHandler handler, FileSessionDataStore store) {
+    var cache = new DefaultSessionCache(handler);
+    cache.setSessionDataStore(store);
+
+    return cache;
+  }
+
   @Test
   void leavesSessionsDisabledUntilConfigured() throws Exception {
     {
@@ -366,7 +389,7 @@ class SessionTest {
   }
 
   @Test
-  void closesLiveInMemorySessionCacheBeforeARecreatedApplicationCanAcceptItsCookie()
+  void closesLiveInMemorySessionCacheBeforeRecreatedApplicationCanAcceptItsCookie()
       throws Exception {
     var sessionHandler = new AtomicReference<SessionHandler>();
     String cookie;
@@ -774,28 +797,5 @@ class SessionTest {
         }
       }
     }
-  }
-
-  private static void fileStore(SessionHandler handler, Path directory) {
-    var store = sessionStore(directory);
-
-    var cache = sessionCache(handler, store);
-
-    handler.setSessionCache(cache);
-  }
-
-  private static FileSessionDataStore sessionStore(Path directory) {
-    var store = new FileSessionDataStore();
-    store.setStoreDir(directory.toFile());
-
-    return store;
-  }
-
-  private static DefaultSessionCache sessionCache(
-      SessionHandler handler, FileSessionDataStore store) {
-    var cache = new DefaultSessionCache(handler);
-    cache.setSessionDataStore(store);
-
-    return cache;
   }
 }

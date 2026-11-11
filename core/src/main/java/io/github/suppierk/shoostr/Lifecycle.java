@@ -21,10 +21,6 @@ import org.jspecify.annotations.Nullable;
  * callbacks. Exceptions stop ordinary phases; terminal observers remain failure-isolated.
  */
 public final class Lifecycle {
-  private final Set<Extension> installed;
-  private final IdentityHashMap<Extension, Selection<?>> selections;
-  private final Consumer<Extension> initialize;
-  private final List<Extension> order;
   final List<Handler> matched;
   final List<Handler> before;
   final List<Handler> after;
@@ -33,7 +29,10 @@ public final class Lifecycle {
   final List<Consumer<RequestOutcome>> observers;
   final List<Function<Request, RequestObservation>> instrumentation;
   final Map<Integer, Handler> statuses;
-
+  private final Set<Extension> installed;
+  private final IdentityHashMap<Extension, Selection<?>> selections;
+  private final Consumer<Extension> initialize;
+  private final List<Extension> order;
   private final List<Consumer<RouteInfo>> routeConsumers;
   private @Nullable Handler authentication;
   private @Nullable Csrf csrf;
@@ -70,6 +69,26 @@ public final class Lifecycle {
         inherit(extension, Objects.requireNonNull(inherited.selections.get(extension)));
       }
     }
+  }
+
+  /**
+   * Evaluates provider configuration inside its contribution's failure boundary.
+   *
+   * @param contribution isolated callback collector
+   * @param configure provider configuration operation
+   * @param inherited parent configuration, or null
+   * @param <C> provider configuration type
+   * @return configured provider selection
+   */
+  private static <C> Selection<C> createSelection(
+      Lifecycle contribution,
+      BiFunction<Lifecycle, @Nullable C, C> configure,
+      @Nullable C inherited) {
+    return new Selection<>(
+        Objects.requireNonNull(configure.apply(contribution, inherited)),
+        contribution,
+        true,
+        configure);
   }
 
   /**
@@ -151,7 +170,7 @@ public final class Lifecycle {
     contribution.provider = true;
 
     try {
-      var selection = createSelection(contribution, configure, inherited);
+      final var selection = createSelection(contribution, configure, inherited);
 
       var owners = new Lifecycle(installed, initialize, null);
       owners.reserve(this);
@@ -167,26 +186,6 @@ public final class Lifecycle {
       contribution.freeze();
       throw failure;
     }
-  }
-
-  /**
-   * Evaluates provider configuration inside its contribution's failure boundary.
-   *
-   * @param contribution isolated callback collector
-   * @param configure provider configuration operation
-   * @param inherited parent configuration, or null
-   * @param <C> provider configuration type
-   * @return configured provider selection
-   */
-  private static <C> Selection<C> createSelection(
-      Lifecycle contribution,
-      BiFunction<Lifecycle, @Nullable C, C> configure,
-      @Nullable C inherited) {
-    return new Selection<>(
-        Objects.requireNonNull(configure.apply(contribution, inherited)),
-        contribution,
-        true,
-        configure);
   }
 
   /**

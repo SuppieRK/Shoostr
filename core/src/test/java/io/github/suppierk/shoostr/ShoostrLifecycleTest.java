@@ -58,6 +58,17 @@ import org.junit.jupiter.params.provider.ValueSource;
 class ShoostrLifecycleTest {
   @TempDir private Path temporary;
 
+  private static Stream<Named<Consumer<Server>>> invalidOwnershipChanges() {
+    return Stream.of(
+        Named.of("root handler", server -> server.setHandler((Handler) null)),
+        Named.of(
+            "graceful child handler",
+            server -> server.getDescendant(GracefulHandler.class).setHandler((Handler) null)),
+        Named.of("connectors", server -> server.setConnectors(new Connector[0])),
+        Named.of("shutdown ownership", server -> server.setStopAtShutdown(true)),
+        Named.of("start ownership", server -> assertDoesNotThrow(server::start)));
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void bindsWildcardByDefaultAndPreservesExplicitLoopback(boolean loopback) throws Exception {
@@ -111,7 +122,7 @@ class ShoostrLifecycleTest {
   }
 
   @Test
-  void servesAnotherConnectionWhileAVirtualHandlerIsBlocked() throws Exception {
+  void servesAnotherConnectionWhileVirtualHandlerIsBlocked() throws Exception {
     var entered = new CountDownLatch(1);
     var release = new CountDownLatch(1);
 
@@ -145,7 +156,7 @@ class ShoostrLifecycleTest {
 
         try (var test =
             TestServer.start(app, client -> client.version(HttpClient.Version.HTTP_1_1))) {
-          var blocked = createBlockedForServesAnotherConnectionWhileAVirtualHandlerIsBlocked(test);
+          var blocked = createBlockedForServesAnotherConnectionWhileVirtualHandlerIsBlocked(test);
 
           try {
             assertTrue(entered.await(2, TimeUnit.SECONDS));
@@ -168,7 +179,7 @@ class ShoostrLifecycleTest {
   }
 
   private CompletableFuture<HttpResponse<String>>
-      createBlockedForServesAnotherConnectionWhileAVirtualHandlerIsBlocked(TestServer test) {
+      createBlockedForServesAnotherConnectionWhileVirtualHandlerIsBlocked(TestServer test) {
     return CompletableFuture.supplyAsync(
         () -> {
           try {
@@ -208,7 +219,7 @@ class ShoostrLifecycleTest {
   }
 
   @Test
-  void acceptsALargerThanDefaultHeaderAfterRaisingTheNativeLimit() throws Exception {
+  void acceptsLargerThanDefaultHeaderAfterRaisingTheNativeLimit() throws Exception {
     var value = "x".repeat(12_288);
 
     {
@@ -668,17 +679,6 @@ class ShoostrLifecycleTest {
     }
   }
 
-  private static Stream<Named<Consumer<Server>>> invalidOwnershipChanges() {
-    return Stream.of(
-        Named.of("root handler", server -> server.setHandler((Handler) null)),
-        Named.of(
-            "graceful child handler",
-            server -> server.getDescendant(GracefulHandler.class).setHandler((Handler) null)),
-        Named.of("connectors", server -> server.setConnectors(new Connector[0])),
-        Named.of("shutdown ownership", server -> server.setStopAtShutdown(true)),
-        Named.of("start ownership", server -> assertDoesNotThrow(server::start)));
-  }
-
   @Test
   void rejectsHandlerReplacementEvenWhenItsEqualsClaimsTheOwnedHandler() throws Exception {
     {
@@ -720,7 +720,8 @@ class ShoostrLifecycleTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // These calls verify rejection of null callbacks.
+  @SuppressWarnings("NullAway")
+  // These calls verify rejection of null callbacks.
   void additionalNativeConnectorsAndHandlerWrappersShareAppRoutesAndLifecycle() throws Exception {
     var additional = new AtomicReference<ServerConnector>();
 
@@ -968,7 +969,7 @@ class ShoostrLifecycleTest {
   }
 
   @Test
-  void rejectionInsideAPathCallbackDoesNotPreventLaterStartup() throws Exception {
+  void rejectionInsidePathCallbackDoesNotPreventLaterStartup() throws Exception {
     {
       var app =
           new Shoostr()

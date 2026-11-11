@@ -39,6 +39,87 @@ import reactor.core.publisher.Sinks.Empty;
 class McpSessionLimitsTest {
   private static final String INITIALIZE = initializationRequest();
 
+  private static McpStreamableServerTransportProvider delayedInitialization(
+      McpStreamableServerTransportProvider transport,
+      CountDownLatch started,
+      Sinks.Empty<Void> release,
+      AtomicInteger allocations) {
+    var first = new AtomicBoolean(true);
+
+    return new McpStreamableServerTransportProvider() {
+      @Override
+      public void setSessionFactory(McpStreamableServerSession.Factory factory) {
+        transport.setSessionFactory(
+            parameters -> {
+              allocations.incrementAndGet();
+              var initialized = factory.startSession(parameters);
+              if (!first.getAndSet(false)) {
+                return initialized;
+              }
+
+              return new McpStreamableServerSession.McpStreamableServerSessionInit(
+                  initialized.session(),
+                  initialized
+                      .initResult()
+                      .delayUntil(
+                          ignoredInitializeResult -> {
+                            started.countDown();
+
+                            return release.asMono();
+                          }));
+            });
+      }
+
+      @Override
+      public Mono<Void> notifyClients(String method, Object parameters) {
+        return transport.notifyClients(method, parameters);
+      }
+
+      @Override
+      public Mono<Void> closeGracefully() {
+        return transport.closeGracefully();
+      }
+
+      @Override
+      public List<String> protocolVersions() {
+        return transport.protocolVersions();
+      }
+    };
+  }
+
+  private static McpHttpSecurity security() {
+    return new McpHttpSecurity(
+        Set.of(),
+        request ->
+            new McpIdentity(
+                request.header("X-Verified-Owner").orElse("alice:client"),
+                McpTransportContext.EMPTY,
+                null),
+        (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
+  }
+
+  private static HttpResponse<String> initialize(TestServer test, String owner) throws Exception {
+    return test.send(
+        request ->
+            request
+                .path("/mcp")
+                .method("POST")
+                .header("Content-Type", "application/json")
+                .header("Accept", "application/json, text/event-stream")
+                .header("X-Verified-Owner", owner)
+                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static String initializationRequest() {
+    return
+        """
+        {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+          "protocolVersion":"2025-11-25","capabilities":{},
+          "clientInfo":{"name":"session-limits","version":"1.0"}}}
+        """;
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   @Timeout(15)
@@ -97,7 +178,7 @@ class McpSessionLimitsTest {
 
   @Test
   @Timeout(20)
-  void boundsSessionsSharingAVerifiedOwnerWithTheDefaultPolicy() throws Exception {
+  void boundsSessionsSharingVerifiedOwnerWithTheDefaultPolicy() throws Exception {
     var mcp = Mcp.sync(security(), transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
@@ -153,7 +234,7 @@ class McpSessionLimitsTest {
 
   @Test
   @Timeout(15)
-  void expiresAQuiescentSessionEvenWhenItsListeningConnectionRemainsOpen() throws Exception {
+  void expiresQuiescentSessionEvenWhenItsListeningConnectionRemainsOpen() throws Exception {
     var mcp =
         Mcp.sync(
             security(),
@@ -170,7 +251,7 @@ class McpSessionLimitsTest {
 
       var session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var listening =
-          sendListeningRequestForExpiresAQuiescentSessionEvenWhenItsListeningConnectionRemainsOpen(
+          sendListeningRequestForExpiresQuiescentSessionEvenWhenItsListeningConnectionRemainsOpen(
               test, session);
 
       try (var input = listening.body()) {
@@ -190,7 +271,7 @@ class McpSessionLimitsTest {
   }
 
   private HttpResponse<InputStream>
-      sendListeningRequestForExpiresAQuiescentSessionEvenWhenItsListeningConnectionRemainsOpen(
+      sendListeningRequestForExpiresQuiescentSessionEvenWhenItsListeningConnectionRemainsOpen(
           TestServer test, String session) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -284,7 +365,8 @@ class McpSessionLimitsTest {
                 .header("Accept", "application/json, text/event-stream")
                 .header("Mcp-Session-Id", session)
                 .body(
-                    "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\",\"params\":{\"name\":\"wait\",\"arguments\":{}}}"
+                    ("{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"tools/call\","
+                            + "\"params\":{\"name\":\"wait\",\"arguments\":{}}}")
                         .getBytes(StandardCharsets.UTF_8)),
         HttpResponse.BodyHandlers.ofInputStream());
   }
@@ -320,7 +402,7 @@ class McpSessionLimitsTest {
     try (var test = TestServer.start(app);
         var callers = Executors.newVirtualThreadPerTaskExecutor()) {
       try {
-        var first = callers.submit(() -> initialize(test, "alice:client"));
+        final var first = callers.submit(() -> initialize(test, "alice:client"));
 
         assertTrue(started.await(3, TimeUnit.SECONDS));
         assertEquals(
@@ -355,92 +437,12 @@ class McpSessionLimitsTest {
   @Test
   void rejectsNonPositiveSessionPolicyInputs() {
     var idle = Duration.ofMinutes(1);
-    var negativeIdle = Duration.ofSeconds(-1);
+    final var negativeIdle = Duration.ofSeconds(-1);
 
     assertThrows(IllegalArgumentException.class, () -> new McpSessionLimits(0, 1, idle));
     assertThrows(IllegalArgumentException.class, () -> new McpSessionLimits(1, 0, idle));
     assertThrows(IllegalArgumentException.class, () -> new McpSessionLimits(1, 1, Duration.ZERO));
     assertThrows(IllegalArgumentException.class, () -> new McpSessionLimits(1, 1, negativeIdle));
     assertThrows(NullPointerException.class, () -> new McpSessionLimits(1, 1, null));
-  }
-
-  private static McpStreamableServerTransportProvider delayedInitialization(
-      McpStreamableServerTransportProvider transport,
-      CountDownLatch started,
-      Sinks.Empty<Void> release,
-      AtomicInteger allocations) {
-    var first = new AtomicBoolean(true);
-
-    return new McpStreamableServerTransportProvider() {
-      @Override
-      public void setSessionFactory(McpStreamableServerSession.Factory factory) {
-        transport.setSessionFactory(
-            parameters -> {
-              allocations.incrementAndGet();
-              var initialized = factory.startSession(parameters);
-              if (!first.getAndSet(false)) {
-                return initialized;
-              }
-
-              return new McpStreamableServerSession.McpStreamableServerSessionInit(
-                  initialized.session(),
-                  initialized
-                      .initResult()
-                      .delayUntil(
-                          ignoredInitializeResult -> {
-                            started.countDown();
-
-                            return release.asMono();
-                          }));
-            });
-      }
-
-      @Override
-      public Mono<Void> notifyClients(String method, Object parameters) {
-        return transport.notifyClients(method, parameters);
-      }
-
-      @Override
-      public Mono<Void> closeGracefully() {
-        return transport.closeGracefully();
-      }
-
-      @Override
-      public List<String> protocolVersions() {
-        return transport.protocolVersions();
-      }
-    };
-  }
-
-  private static McpHttpSecurity security() {
-    return new McpHttpSecurity(
-        Set.of(),
-        request ->
-            new McpIdentity(
-                request.header("X-Verified-Owner").orElse("alice:client"),
-                McpTransportContext.EMPTY,
-                null),
-        (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
-  }
-
-  private static HttpResponse<String> initialize(TestServer test, String owner) throws Exception {
-    return test.send(
-        request ->
-            request
-                .path("/mcp")
-                .method("POST")
-                .header("Content-Type", "application/json")
-                .header("Accept", "application/json, text/event-stream")
-                .header("X-Verified-Owner", owner)
-                .body(INITIALIZE.getBytes(StandardCharsets.UTF_8)),
-        HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static String initializationRequest() {
-    return """
-      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-11-25","capabilities":{},
-        "clientInfo":{"name":"session-limits","version":"1.0"}}}
-      """;
   }
 }

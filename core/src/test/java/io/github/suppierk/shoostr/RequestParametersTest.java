@@ -777,7 +777,7 @@ class RequestParametersTest {
   }
 
   @Test
-  void rejectsARawQueryFragmentBeforeInvokingTheEndpoint() throws Exception {
+  void rejectsRawQueryFragmentBeforeInvokingTheEndpoint() throws Exception {
     var calls = new AtomicInteger();
     app.routes()
         .get(
@@ -815,7 +815,7 @@ class RequestParametersTest {
       socket.connect(
           new InetSocketAddress(InetAddress.getAllByName("127.0.0.1")[0], app.port()), 3000);
       socket.setSoTimeout(3000);
-      var outgoing = createOutgoingForRejectsARawQueryFragmentBeforeInvokingTheEndpoint();
+      var outgoing = createOutgoingForRejectsRawQueryFragmentBeforeInvokingTheEndpoint();
       socket.getOutputStream().write(outgoing.getBytes(StandardCharsets.US_ASCII));
       rejected =
           HttpTester.parseResponse(
@@ -838,7 +838,7 @@ class RequestParametersTest {
         "");
   }
 
-  private String createOutgoingForRejectsARawQueryFragmentBeforeInvokingTheEndpoint() {
+  private String createOutgoingForRejectsRawQueryFragmentBeforeInvokingTheEndpoint() {
     return String.join(
         "\r\n",
         "GET " + "/query?value=one#fragment" + " HTTP/1.1",

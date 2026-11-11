@@ -266,15 +266,6 @@ public enum HttpMethods {
   }
 
   /**
-   * Returns this method's exact wire token.
-   *
-   * @return the case-sensitive HTTP method token
-   */
-  public String value() {
-    return value;
-  }
-
-  /**
    * Looks up a wire token without throwing for an unknown method.
    *
    * @param value case-sensitive token; no trimming or normalization is performed
@@ -297,5 +288,14 @@ public enum HttpMethods {
     }
 
     return Map.copyOf(methods);
+  }
+
+  /**
+   * Returns this method's exact wire token.
+   *
+   * @return the case-sensitive HTTP method token
+   */
+  public String value() {
+    return value;
   }
 }

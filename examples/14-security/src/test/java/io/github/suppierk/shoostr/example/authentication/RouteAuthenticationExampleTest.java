@@ -17,8 +17,18 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(10)
 class RouteAuthenticationExampleTest {
+  private static Stream<List<String>> rejectedCredentials() {
+    return Stream.of(
+        List.of(),
+        List.of("Bearer unknown"),
+        List.of("Bearer"),
+        List.of("Basic reader-demo-token"),
+        List.of("Bearer reader-demo-token trailing"),
+        List.of("Bearer reader-demo-token", "Bearer admin-demo-token"));
+  }
+
   @Test
-  void challengesAMissingIdentityBeforeTheProtectedHandlerRuns() throws Exception {
+  void challengesMissingIdentityBeforeTheProtectedHandlerRuns() throws Exception {
 
     try (var test = TestServer.start(RouteAuthenticationExample.application())) {
       var response = test.send(request -> request.path("/private/me"));
@@ -126,15 +136,5 @@ class RouteAuthenticationExampleTest {
       assertEquals(200, response.statusCode());
       assertEquals("reader", response.body());
     }
-  }
-
-  private static Stream<List<String>> rejectedCredentials() {
-    return Stream.of(
-        List.of(),
-        List.of("Bearer unknown"),
-        List.of("Bearer"),
-        List.of("Basic reader-demo-token"),
-        List.of("Bearer reader-demo-token trailing"),
-        List.of("Bearer reader-demo-token", "Bearer admin-demo-token"));
   }
 }

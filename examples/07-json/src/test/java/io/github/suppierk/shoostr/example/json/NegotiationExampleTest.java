@@ -18,6 +18,21 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class NegotiationExampleTest {
+  private static Stream<Arguments> acceptedRepresentations() {
+    return Stream.of(
+        Arguments.of("application/json", "application/json", "{\"message\":\"café\"}"),
+        Arguments.of("text/plain", "text/plain; charset=UTF-8", "café"),
+        Arguments.of(
+            "application/json;q=0.2, text/plain;q=0.9", "text/plain; charset=UTF-8", "café"),
+        Arguments.of("*/*", "application/json", "{\"message\":\"café\"}"),
+        Arguments.of("text/*", "text/plain; charset=UTF-8", "café"),
+        Arguments.of(
+            "text/plain;q=0.5, application/json;q=0.5",
+            "application/json",
+            "{\"message\":\"café\"}"),
+        Arguments.of("application/json;q=0, */*;q=1", "text/plain; charset=UTF-8", "café"));
+  }
+
   @ParameterizedTest
   @MethodSource("acceptedRepresentations")
   void sendsBytesMatchingTheSelectedRepresentation(String accept, String mediaType, String body)
@@ -90,20 +105,5 @@ class NegotiationExampleTest {
       assertArrayEquals("{\"message\":\"café\"}".getBytes(StandardCharsets.UTF_8), response.body());
       assertEquals(List.of("Accept"), response.headers().allValues("Vary"));
     }
-  }
-
-  private static Stream<Arguments> acceptedRepresentations() {
-    return Stream.of(
-        Arguments.of("application/json", "application/json", "{\"message\":\"café\"}"),
-        Arguments.of("text/plain", "text/plain; charset=UTF-8", "café"),
-        Arguments.of(
-            "application/json;q=0.2, text/plain;q=0.9", "text/plain; charset=UTF-8", "café"),
-        Arguments.of("*/*", "application/json", "{\"message\":\"café\"}"),
-        Arguments.of("text/*", "text/plain; charset=UTF-8", "café"),
-        Arguments.of(
-            "text/plain;q=0.5, application/json;q=0.5",
-            "application/json",
-            "{\"message\":\"café\"}"),
-        Arguments.of("application/json;q=0, */*;q=1", "text/plain; charset=UTF-8", "café"));
   }
 }

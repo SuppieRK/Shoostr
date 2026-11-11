@@ -3,14 +3,15 @@ title: Choose your libraries
 description: Choose the Shoostr libraries for your HTTP application and tests.
 ---
 
-Shoostr is a Java 21 HTTP framework with explicit route registration and optional integrations; its public interfaces can change.
+Shoostr is a Java 21 HTTP framework with explicit route registration and optional integrations; its public interfaces
+can change.
 
 Start with `shoostr-core` for your application and `shoostr-test` for its HTTP tests.
 
 ## Libraries
 
 | Library                 | Purpose                                                                                                    |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------- |
+|-------------------------|------------------------------------------------------------------------------------------------------------|
 | `shoostr-core`          | HTTP applications, routes, requests, responses, streaming, and browser policies.                           |
 | `shoostr-http`          | HTTP methods, statuses, headers, media types, cookies, and exceptions. Already included by `shoostr-core`. |
 | `shoostr-test`          | `TestServer`, a real HTTP fixture for test code. Keep it in your test dependencies.                        |
@@ -20,7 +21,8 @@ Start with `shoostr-core` for your application and `shoostr-test` for its HTTP t
 | `shoostr-openapi`       | Explicit OpenAPI documents and documentation UI.                                                           |
 | `shoostr-mcp`           | MCP SDK integration with explicitly mounted HTTP transport.                                                |
 
-Adding an optional library does not enable its integration automatically; configure each integration explicitly when you need it.
+Adding an optional library does not enable its integration automatically; configure each integration explicitly when you
+need it.
 
 Although the first-request test uses JUnit Jupiter, `TestServer` does not require a particular assertion framework.
 

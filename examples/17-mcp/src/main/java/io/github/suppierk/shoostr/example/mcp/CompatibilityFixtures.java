@@ -38,7 +38,9 @@ final class CompatibilityFixtures {
   private static final Map<String, Object> NO_ARGUMENTS =
       Map.of("type", OBJECT, PROPERTIES, Map.of());
   private static final String PNG =
-      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAIklEQVR4XmOQ9bsBRP9PhAMRMpsBpwSmEISNWwJTiOp2AAA9XmwheCyshQAAAABJRU5ErkJggg==";
+      "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAIk"
+          + "lEQVR4XmOQ9bsBRP9PhAMRMpsBpwSmEISNWwJTiOp2AAA9Xmwh"
+          + "eCyshQAAAABJRU5ErkJggg==";
   private static final String WAV =
       "UklGRqQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YYAAAAAAAPAH8A4sFAUXJheJFH8PoAi8AML4"
           + "o/E37CHpwOge6/XvsvaI/okGxg1iE7MWVRc0FZIQ+gk0Aiz61PIK7X/pnOh+6uvuXfUR/RwFjgyEEkoWbRf"
@@ -87,7 +89,8 @@ final class CompatibilityFixtures {
                             McpSchema.EmbeddedResource.builder(
                                     McpSchema.TextResourceContents.builder(
                                             "shoostr://guide",
-                                            "This resource travels inside the tool result; it is not an HTTP download.")
+                                            "This resource travels inside the tool result; it "
+                                                + "is not an HTTP download.")
                                         .mimeType(MediaType.TEXT_PLAIN.value())
                                         .build())
                                 .build()))
@@ -323,7 +326,8 @@ final class CompatibilityFixtures {
                         List.of(
                             McpSchema.TextResourceContents.builder(
                                     request.uri(),
-                                    "Call tools to run operations, read resources for data, and request prompts for messages.")
+                                    "Call tools to run operations, read resources for "
+                                        + "data, and request prompts for messages.")
                                 .mimeType(MediaType.TEXT_PLAIN.value())
                                 .build()))
                     .build()),
@@ -419,7 +423,8 @@ final class CompatibilityFixtures {
                             McpSchema.PromptMessage.builder(
                                     McpSchema.Role.USER,
                                     McpSchema.TextContent.builder(
-                                            "Explain how Shoostr exposes MCP tools, resources and prompts over HTTP.")
+                                            "Explain how Shoostr exposes MCP tools, resources "
+                                                + "and prompts over HTTP.")
                                         .build())
                                 .build()))
                     .build()),
@@ -456,15 +461,7 @@ final class CompatibilityFixtures {
                 McpSchema.GetPromptResult.builder(
                         List.of(
                             McpSchema.PromptMessage.builder(
-                                    McpSchema.Role.USER,
-                                    McpSchema.EmbeddedResource.builder(
-                                            McpSchema.TextResourceContents.builder(
-                                                    stringArgument(
-                                                        request.arguments(), "resourceUri"),
-                                                    "Review the delivery guidance attached to this message.")
-                                                .mimeType(MediaType.TEXT_PLAIN.value())
-                                                .build())
-                                        .build())
+                                    McpSchema.Role.USER, deliveryGuidance(request.arguments()))
                                 .build()))
                     .build()),
         new McpServerFeatures.SyncPromptSpecification(
@@ -500,6 +497,22 @@ final class CompatibilityFixtures {
                 .description("Shoostr MCP example: " + name)
                 .build())
         .callHandler(handler)
+        .build();
+  }
+
+  /**
+   * Attaches plain-text delivery guidance at the resource URI supplied by the client.
+   *
+   * @param arguments native request arguments
+   * @return resource embedded in the prompt
+   */
+  private static McpSchema.EmbeddedResource deliveryGuidance(Map<String, Object> arguments) {
+    return McpSchema.EmbeddedResource.builder(
+            McpSchema.TextResourceContents.builder(
+                    stringArgument(arguments, "resourceUri"),
+                    "Review the delivery guidance attached to this message.")
+                .mimeType(MediaType.TEXT_PLAIN.value())
+                .build())
         .build();
   }
 

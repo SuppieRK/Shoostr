@@ -135,7 +135,7 @@ class RequestExampleTest {
   }
 
   @Test
-  void doesNotUseAQueryNameAsAMissingFormName() throws Exception {
+  void doesNotUseQueryNameAsMissingFormName() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       assertEquals(
@@ -214,7 +214,7 @@ class RequestExampleTest {
   }
 
   @Test
-  void capturesTheRemainingPathInANamedCatchAll() throws Exception {
+  void capturesTheRemainingPathInNamedCatchAll() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
@@ -229,7 +229,7 @@ class RequestExampleTest {
   }
 
   @Test
-  void capturesADigitOnlyNamedPathParameter() throws Exception {
+  void capturesDigitOnlyNamedPathParameter() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response =
@@ -299,10 +299,10 @@ class RequestExampleTest {
   }
 
   @Test
-  void acceptsAQueryBodyThroughGenericEnumMethodRegistration() throws Exception {
+  void acceptsQueryBodyThroughGenericEnumMethodRegistration() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
-      var response = sendResponseForAcceptsAQueryBodyThroughGenericEnumMethodRegistration(test);
+      var response = sendResponseForAcceptsQueryBodyThroughGenericEnumMethodRegistration(test);
 
       assertAll(
           () -> assertEquals(200, response.statusCode()),
@@ -310,7 +310,7 @@ class RequestExampleTest {
     }
   }
 
-  private HttpResponse<String> sendResponseForAcceptsAQueryBodyThroughGenericEnumMethodRegistration(
+  private HttpResponse<String> sendResponseForAcceptsQueryBodyThroughGenericEnumMethodRegistration(
       TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -338,7 +338,7 @@ class RequestExampleTest {
   }
 
   @Test
-  void returnsExplicitHeadMetadataWithoutAResponseBody() throws Exception {
+  void returnsExplicitHeadMetadataWithoutResponseBody() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       var response = test.send(request -> request.path("/echo").method(HttpMethods.HEAD));
@@ -477,7 +477,7 @@ class RequestExampleTest {
   }
 
   @Test
-  void rejectsABlankExplicitQueryNameRatherThanApplyingTheDefault() throws Exception {
+  void rejectsBlankExplicitQueryNameRatherThanApplyingTheDefault() throws Exception {
 
     try (var test = TestServer.start(RequestExample.application(name -> name))) {
       assertEquals(400, test.send(request -> request.path("/welcome?name=%20")).statusCode());

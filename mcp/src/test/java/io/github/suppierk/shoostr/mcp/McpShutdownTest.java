@@ -35,7 +35,7 @@ class McpShutdownTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var mcp = Mcp.sync(security, transport -> McpServer.sync(transport).build());
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
@@ -68,10 +68,10 @@ class McpShutdownTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
@@ -89,24 +89,24 @@ class McpShutdownTest {
   }
 
   @Test
-  void closesAPendingPostStreamWhenTheApplicationStops() throws Exception {
+  void closesPendingPostStreamWhenTheApplicationStops() throws Exception {
     var security =
         new McpHttpSecurity(
             Set.of(),
             ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var tool =
         McpSchema.Tool.builder("wait", Map.of("type", "object", "properties", Map.of())).build();
-    var mcp = createMcpForClosesAPendingPostStreamWhenTheApplicationStops(security, tool);
+    var mcp = createMcpForClosesPendingPostStreamWhenTheApplicationStops(security, tool);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var initialized =
-          sendInitializedRequestForClosesAPendingPostStreamWhenTheApplicationStops(test);
+          sendInitializedRequestForClosesPendingPostStreamWhenTheApplicationStops(test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var pending =
-          sendPendingRequestForClosesAPendingPostStreamWhenTheApplicationStops(test, sessionId);
+          sendPendingRequestForClosesPendingPostStreamWhenTheApplicationStops(test, sessionId);
 
       try (var input = pending.body()) {
         assertEquals(200, pending.statusCode());
@@ -116,7 +116,7 @@ class McpShutdownTest {
     }
   }
 
-  private Mcp<McpAsyncServer> createMcpForClosesAPendingPostStreamWhenTheApplicationStops(
+  private Mcp<McpAsyncServer> createMcpForClosesPendingPostStreamWhenTheApplicationStops(
       McpHttpSecurity security, Tool tool) {
     return Mcp.async(
         security,
@@ -133,7 +133,7 @@ class McpShutdownTest {
   }
 
   private HttpResponse<byte[]>
-      sendInitializedRequestForClosesAPendingPostStreamWhenTheApplicationStops(TestServer test)
+      sendInitializedRequestForClosesPendingPostStreamWhenTheApplicationStops(TestServer test)
           throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -144,15 +144,15 @@ class McpShutdownTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
-      sendPendingRequestForClosesAPendingPostStreamWhenTheApplicationStops(
+      sendPendingRequestForClosesPendingPostStreamWhenTheApplicationStops(
           TestServer test, String sessionId) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -165,8 +165,8 @@ class McpShutdownTest {
                 .header("MCP-Protocol-Version", "2025-11-25")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"wait","arguments":{}}}
-              """
+                    {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"wait","arguments":{}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)),
         HttpResponse.BodyHandlers.ofInputStream());
   }
@@ -190,6 +190,7 @@ class McpShutdownTest {
         stopped.countDown();
       }
     }
+
     ApplicationExtension<Object> witness = new ShutdownWitness();
     var app = new Shoostr();
     app.withExtension(witness).routes(routes -> routes.path("/mcp", mcp::routes));
@@ -206,7 +207,7 @@ class McpShutdownTest {
       try {
         assertTrue(entered.await(5, TimeUnit.SECONDS));
 
-        var closing =
+        final var closing =
             submitClosingForRejectsStreamRegistrationThatLosesTheRaceWithShutdown(workers, app);
 
         assertTrue(stopped.await(5, TimeUnit.SECONDS));
@@ -242,7 +243,7 @@ class McpShutdownTest {
 
           return new McpIdentity("public", McpTransportContext.EMPTY, null);
         },
-        (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+        (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
   }
 
   private HttpResponse<byte[]>
@@ -257,10 +258,10 @@ class McpShutdownTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"shutdown-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 

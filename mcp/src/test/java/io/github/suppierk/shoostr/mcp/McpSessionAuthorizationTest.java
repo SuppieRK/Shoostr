@@ -76,10 +76,10 @@ class McpSessionAuthorizationTest {
                 .header("X-Verified-Owner", "alice:client")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"ownership-fixture","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"ownership-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 

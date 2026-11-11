@@ -28,6 +28,28 @@ import org.junit.jupiter.api.Timeout;
 import reactor.core.publisher.Mono;
 
 class McpSubscriptionDeletionRaceTest {
+  private static void awaitProducerRelease(CountDownLatch release) {
+    boolean interrupted = false;
+
+    try {
+      while (true) {
+        try {
+          if (!release.await(5, TimeUnit.SECONDS)) {
+            throw new IllegalStateException("test producer was not released");
+          }
+
+          return;
+        } catch (InterruptedException ignoredFailure) {
+          interrupted = true;
+        }
+      }
+    } finally {
+      if (interrupted) {
+        Thread.currentThread().interrupt();
+      }
+    }
+  }
+
   @Test
   @Timeout(20)
   void deletionCancelsAnInstalledNativeSubscriptionBeforeItsProducerReturns() throws Exception {
@@ -40,30 +62,24 @@ class McpSubscriptionDeletionRaceTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var tool = McpSchema.Tool.builder("wait", Map.of("type", "object")).build();
     var mcp =
-        createMcpForDeletionCancelsAnInstalledNativeSubscriptionBeforeItsProducerReturns(
+        createMcpForPendingNativeSubscription(
             security, tool, cancellations, cancelled, installed, release, returned);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var workers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {
-      var initialized =
-          sendInitializedRequestForDeletionCancelsAnInstalledNativeSubscriptionBeforeItsProducerReturns(
-              test);
+      var initialized = sendInitializedRequestForPendingNativeSubscription(test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
-      var opening =
-          submitOpeningForDeletionCancelsAnInstalledNativeSubscriptionBeforeItsProducerReturns(
-              workers, test, sessionId);
+      var opening = submitOpeningForPendingNativeSubscription(workers, test, sessionId);
 
       try {
         assertTrue(installed.await(5, TimeUnit.SECONDS));
 
-        var deleted =
-            sendDeletedRequestForDeletionCancelsAnInstalledNativeSubscriptionBeforeItsProducerReturns(
-                test, sessionId);
+        var deleted = sendDeletedRequestForPendingNativeSubscription(test, sessionId);
 
         assertEquals(200, deleted.statusCode());
         assertTrue(cancelled.await(3, TimeUnit.SECONDS));
@@ -87,15 +103,14 @@ class McpSubscriptionDeletionRaceTest {
     }
   }
 
-  private Mcp<McpAsyncServer>
-      createMcpForDeletionCancelsAnInstalledNativeSubscriptionBeforeItsProducerReturns(
-          McpHttpSecurity security,
-          Tool tool,
-          AtomicInteger cancellations,
-          CountDownLatch cancelled,
-          CountDownLatch installed,
-          CountDownLatch release,
-          CountDownLatch returned) {
+  private Mcp<McpAsyncServer> createMcpForPendingNativeSubscription(
+      McpHttpSecurity security,
+      Tool tool,
+      AtomicInteger cancellations,
+      CountDownLatch cancelled,
+      CountDownLatch installed,
+      CountDownLatch release,
+      CountDownLatch returned) {
     return Mcp.async(
         security,
         transport ->
@@ -121,9 +136,8 @@ class McpSubscriptionDeletionRaceTest {
                 .build());
   }
 
-  private HttpResponse<byte[]>
-      sendInitializedRequestForDeletionCancelsAnInstalledNativeSubscriptionBeforeItsProducerReturns(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendInitializedRequestForPendingNativeSubscription(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -133,16 +147,15 @@ class McpSubscriptionDeletionRaceTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"subscription-race-fixture","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"subscription-race-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
-  private Future<HttpResponse<InputStream>>
-      submitOpeningForDeletionCancelsAnInstalledNativeSubscriptionBeforeItsProducerReturns(
-          ExecutorService workers, TestServer test, String sessionId) {
+  private Future<HttpResponse<InputStream>> submitOpeningForPendingNativeSubscription(
+      ExecutorService workers, TestServer test, String sessionId) {
     return workers.submit(
         () ->
             test.send(
@@ -156,16 +169,15 @@ class McpSubscriptionDeletionRaceTest {
                         .header("MCP-Protocol-Version", "2025-11-25")
                         .body(
                             """
-              {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-                "name":"wait","arguments":{}}}
-              """
+                            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                              "name":"wait","arguments":{}}}
+                            """
                                 .getBytes(StandardCharsets.UTF_8)),
                 HttpResponse.BodyHandlers.ofInputStream()));
   }
 
-  private HttpResponse<byte[]>
-      sendDeletedRequestForDeletionCancelsAnInstalledNativeSubscriptionBeforeItsProducerReturns(
-          TestServer test, String sessionId) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendDeletedRequestForPendingNativeSubscription(
+      TestServer test, String sessionId) throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -173,27 +185,5 @@ class McpSubscriptionDeletionRaceTest {
                 .method("DELETE")
                 .header("Mcp-Session-Id", sessionId)
                 .header("MCP-Protocol-Version", "2025-11-25"));
-  }
-
-  private static void awaitProducerRelease(CountDownLatch release) {
-    boolean interrupted = false;
-
-    try {
-      while (true) {
-        try {
-          if (!release.await(5, TimeUnit.SECONDS)) {
-            throw new IllegalStateException("test producer was not released");
-          }
-
-          return;
-        } catch (InterruptedException ignoredFailure) {
-          interrupted = true;
-        }
-      }
-    } finally {
-      if (interrupted) {
-        Thread.currentThread().interrupt();
-      }
-    }
   }
 }

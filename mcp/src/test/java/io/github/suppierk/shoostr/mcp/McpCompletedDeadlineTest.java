@@ -28,7 +28,7 @@ class McpCompletedDeadlineTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   @Timeout(20)
-  void aCompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(boolean forkJoin)
+  void completedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(boolean forkJoin)
       throws Exception {
     ExecutorService selected =
         forkJoin
@@ -38,7 +38,7 @@ class McpCompletedDeadlineTest {
     var owner = new AtomicReference<Thread>();
     var expiry = new AtomicReference<Instant>();
     var mcp =
-        createMcpForACompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(owner, expiry);
+        createMcpForCompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(owner, expiry);
     var app = new Shoostr();
     app.routes(
         routes -> {
@@ -75,10 +75,10 @@ class McpCompletedDeadlineTest {
     try (selected;
         var test = TestServer.start(app)) {
       var initialized =
-          sendInitializedRequestForACompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
+          sendInitializedRequestForCompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
               test);
       var completed =
-          sendCompletedRequestForACompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
+          sendCompletedRequestForCompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
               test, initialized);
 
       assertEquals(200, completed.statusCode());
@@ -97,7 +97,7 @@ class McpCompletedDeadlineTest {
   }
 
   private Mcp<McpSyncServer>
-      createMcpForACompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
+      createMcpForCompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
           AtomicReference<Thread> owner, AtomicReference<Instant> expiry) {
     return Mcp.sync(
         new McpHttpSecurity(
@@ -113,12 +113,12 @@ class McpCompletedDeadlineTest {
 
               return new McpIdentity("public", McpTransportContext.EMPTY, null);
             },
-            (ignored, ignoredJSONRPCMessage) -> {}),
+            (ignored, ignoredJsonRpcMessage) -> {}),
         transport -> McpServer.sync(transport).build());
   }
 
   private HttpResponse<byte[]>
-      sendInitializedRequestForACompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
+      sendInitializedRequestForCompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
           TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -129,15 +129,15 @@ class McpCompletedDeadlineTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"completed-deadline","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"completed-deadline","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<byte[]>
-      sendCompletedRequestForACompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
+      sendCompletedRequestForCompletedStreamCannotInterruptItsReusedWorkerAtTheOldDeadline(
           TestServer test, HttpResponse<byte[]> initialized)
           throws IOException, InterruptedException {
     return test.send(

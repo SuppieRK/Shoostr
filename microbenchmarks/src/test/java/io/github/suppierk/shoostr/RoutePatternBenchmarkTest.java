@@ -14,6 +14,35 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class RoutePatternBenchmarkTest {
+  private static Stream<Arguments> cases() {
+    return Stream.of(1, 100, 1000)
+        .flatMap(
+            groups ->
+                Stream.of(
+                        "literal",
+                        "oneParameter",
+                        "twoParameters",
+                        "encodedParameter",
+                        "precedence",
+                        "fallback",
+                        "notFound",
+                        "wrongMethod",
+                        "catchAllNoRead",
+                        "catchAllRead",
+                        "catchAllFallback",
+                        "catchAllWrongMethod",
+                        "catchAllMiss",
+                        "regexNoRead",
+                        "regexRead",
+                        "regexFallback",
+                        "regexWrongMethod",
+                        "regexMiss")
+                    .flatMap(
+                        workload ->
+                            Stream.of("reused", "fresh")
+                                .map(input -> Arguments.of(groups, workload, input))));
+  }
+
   @ParameterizedTest
   @MethodSource("cases")
   void everyQueryHasTheIntendedRouteAndDecodedValues(int groups, String workload, String input) {
@@ -75,34 +104,5 @@ class RoutePatternBenchmarkTest {
       case "regexNoRead", "regexRead" -> "/{numericId:[0-9]+}";
       default -> "/{id}";
     };
-  }
-
-  private static Stream<Arguments> cases() {
-    return Stream.of(1, 100, 1000)
-        .flatMap(
-            groups ->
-                Stream.of(
-                        "literal",
-                        "oneParameter",
-                        "twoParameters",
-                        "encodedParameter",
-                        "precedence",
-                        "fallback",
-                        "notFound",
-                        "wrongMethod",
-                        "catchAllNoRead",
-                        "catchAllRead",
-                        "catchAllFallback",
-                        "catchAllWrongMethod",
-                        "catchAllMiss",
-                        "regexNoRead",
-                        "regexRead",
-                        "regexFallback",
-                        "regexWrongMethod",
-                        "regexMiss")
-                    .flatMap(
-                        workload ->
-                            Stream.of("reused", "fresh")
-                                .map(input -> Arguments.of(groups, workload, input))));
   }
 }

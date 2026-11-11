@@ -416,24 +416,6 @@ public enum HttpStatusCodes {
   }
 
   /**
-   * Returns the numeric HTTP status code.
-   *
-   * @return the three-digit status code
-   */
-  public int value() {
-    return value;
-  }
-
-  /**
-   * Returns the registered description, without registry lifecycle notes.
-   *
-   * @return the standard reason phrase
-   */
-  public String reasonPhrase() {
-    return reasonPhrase;
-  }
-
-  /**
    * Looks up a numeric status without throwing for an unrecognized code.
    *
    * @param value the numeric status code
@@ -455,6 +437,24 @@ public enum HttpStatusCodes {
       lookup.put(value.value(), value);
     }
     return lookup;
+  }
+
+  /**
+   * Returns the numeric HTTP status code.
+   *
+   * @return the three-digit status code
+   */
+  public int value() {
+    return value;
+  }
+
+  /**
+   * Returns the registered description, without registry lifecycle notes.
+   *
+   * @return the standard reason phrase
+   */
+  public String reasonPhrase() {
+    return reasonPhrase;
   }
 
   /**

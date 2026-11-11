@@ -30,6 +30,47 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class PortSelectionTest {
+  private static List<ServerSocket> adjacentPorts() throws Exception {
+    for (int attempt = 0; attempt < 20; attempt++) {
+      var first = bind(0);
+      if (first.getLocalPort() == 65535) {
+        first.close();
+        continue;
+      }
+
+      try {
+        return List.of(first, bind(first.getLocalPort() + 1));
+      } catch (IOException failure) {
+        try (first) {
+          if (!(failure instanceof BindException)) {
+            throw failure;
+          }
+        }
+      }
+    }
+
+    throw new IllegalStateException("Could not reserve two adjacent loopback ports for the test");
+  }
+
+  private static ServerSocket bind(int port) throws IOException {
+    var socket = new ServerSocket();
+
+    try {
+      socket.setReuseAddress(false);
+      socket.bind(new InetSocketAddress(InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), port));
+
+      return socket;
+    } catch (IOException failure) {
+      try {
+        socket.close();
+      } catch (IOException cleanup) {
+        failure.addSuppressed(cleanup);
+      }
+
+      throw failure;
+    }
+  }
+
   @Test
   void servesTheSuppliedApplicationOnTheExactRequestedPort() throws Exception {
     int port;
@@ -325,47 +366,6 @@ class PortSelectionTest {
           assertEquals(port, rebound.getLocalPort());
         }
       }
-    }
-  }
-
-  private static List<ServerSocket> adjacentPorts() throws Exception {
-    for (int attempt = 0; attempt < 20; attempt++) {
-      var first = bind(0);
-      if (first.getLocalPort() == 65535) {
-        first.close();
-        continue;
-      }
-
-      try {
-        return List.of(first, bind(first.getLocalPort() + 1));
-      } catch (IOException failure) {
-        try (first) {
-          if (!(failure instanceof BindException)) {
-            throw failure;
-          }
-        }
-      }
-    }
-
-    throw new IllegalStateException("Could not reserve two adjacent loopback ports for the test");
-  }
-
-  private static ServerSocket bind(int port) throws IOException {
-    var socket = new ServerSocket();
-
-    try {
-      socket.setReuseAddress(false);
-      socket.bind(new InetSocketAddress(InetAddress.getByAddress(new byte[] {127, 0, 0, 1}), port));
-
-      return socket;
-    } catch (IOException failure) {
-      try {
-        socket.close();
-      } catch (IOException cleanup) {
-        failure.addSuppressed(cleanup);
-      }
-
-      throw failure;
     }
   }
 }

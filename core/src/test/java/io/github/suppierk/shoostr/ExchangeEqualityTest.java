@@ -38,6 +38,28 @@ import org.junit.jupiter.params.provider.ValueSource;
 class ExchangeEqualityTest {
   @TempDir Path directory;
 
+  private static Codec codec(String marker) {
+    return new Codec() {
+      @Override
+      public <T> T read(byte[] source, Class<T> type) {
+        return type.cast(new String(source, StandardCharsets.UTF_8));
+      }
+
+      @Override
+      public byte[] write(Object value) {
+        return (marker + value).getBytes(StandardCharsets.UTF_8);
+      }
+    };
+  }
+
+  private static MultiPart.Part part(String marker) {
+    return new MultiPart.ByteBufferPart(
+        marker,
+        marker + ".txt",
+        HttpFields.EMPTY,
+        ByteBuffer.wrap(marker.getBytes(StandardCharsets.UTF_8)));
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void preservesExchangeAndStreamIdentityThroughReadWriteFlushAndCompletion(boolean typed)
@@ -197,27 +219,5 @@ class ExchangeEqualityTest {
             new ByteArrayInputStream(new byte[] {1}),
             new ByteArrayInputStream(new byte[] {2}))
         .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED);
-  }
-
-  private static Codec codec(String marker) {
-    return new Codec() {
-      @Override
-      public <T> T read(byte[] source, Class<T> type) {
-        return type.cast(new String(source, StandardCharsets.UTF_8));
-      }
-
-      @Override
-      public byte[] write(Object value) {
-        return (marker + value).getBytes(StandardCharsets.UTF_8);
-      }
-    };
-  }
-
-  private static MultiPart.Part part(String marker) {
-    return new MultiPart.ByteBufferPart(
-        marker,
-        marker + ".txt",
-        HttpFields.EMPTY,
-        ByteBuffer.wrap(marker.getBytes(StandardCharsets.UTF_8)));
   }
 }

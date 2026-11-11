@@ -21,7 +21,7 @@ import org.junit.jupiter.api.Timeout;
 class TypedWebSocketExampleTest {
   @Test
   @Timeout(15)
-  void incrementsABinaryCounterAndKeepsRawTextIndependent() throws Exception {
+  void incrementsBinaryCounterAndKeepsRawTextIndependent() throws Exception {
 
     try (var server = TestServer.start(TypedWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
@@ -30,7 +30,7 @@ class TypedWebSocketExampleTest {
       var bytes = new ByteArrayOutputStream();
       var characters = new StringBuilder();
       var socket =
-          createSocketForIncrementsABinaryCounterAndKeepsRawTextIndependent(
+          createSocketForIncrementsBinaryCounterAndKeepsRawTextIndependent(
               client, server, bytes, binary, characters, text);
 
       try {
@@ -49,7 +49,7 @@ class TypedWebSocketExampleTest {
     }
   }
 
-  private WebSocket createSocketForIncrementsABinaryCounterAndKeepsRawTextIndependent(
+  private WebSocket createSocketForIncrementsBinaryCounterAndKeepsRawTextIndependent(
       HttpClient client,
       TestServer server,
       ByteArrayOutputStream bytes,

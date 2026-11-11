@@ -39,8 +39,8 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
   private static final String HEADER = "X-CSRF-Token";
 
   private final SecureRandom random;
-  private Set<String> trustedOrigins = Set.of();
   private final @Nullable Lifecycle lifecycle;
+  private Set<String> trustedOrigins = Set.of();
 
   /** Creates a same-origin CSRF policy for a browser's cookie-authenticated routes. */
   public Csrf() {
@@ -70,6 +70,56 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
     this.trustedOrigins = Set.copyOf(source.trustedOrigins);
     this.random = source.random;
     this.lifecycle = Objects.requireNonNull(lifecycle);
+  }
+
+  /**
+   * Creates a builder for independent browser-origin permissions.
+   *
+   * @return independent builder
+   */
+  public static Builder builder() {
+    return new Builder();
+  }
+
+  /**
+   * Recognizes the methods defined as safe by RFC 9110.
+   *
+   * @param method incoming wire method
+   * @return whether the method should have no requested state change
+   */
+  private static boolean safe(String method) {
+    var known = HttpMethods.httpMethod(method).orElse(null);
+
+    return known == HttpMethods.GET
+        || known == HttpMethods.HEAD
+        || known == HttpMethods.OPTIONS
+        || known == HttpMethods.TRACE;
+  }
+
+  /**
+   * Reads exactly one supported token channel, detecting duplicate or conflicting values.
+   *
+   * @param request current request
+   * @return presented values, or empty if none
+   * @throws IOException if form input cannot be read
+   * @throws ForbiddenException if header and form token channels conflict
+   */
+  private static List<String> presented(Request request) throws IOException {
+    var headers = request.headers(HEADER);
+    var type =
+        HttpField.getValueParameters(
+            request.header(HttpHeaders.CONTENT_TYPE.value()).orElse(null), new HashMap<>());
+    if (!MediaType.APPLICATION_FORM_URLENCODED.value().equalsIgnoreCase(type)
+        && !"multipart/form-data".equalsIgnoreCase(type)) {
+      return headers;
+    }
+
+    var fields = request.formParams("_csrf");
+    if (!headers.isEmpty() && !fields.isEmpty()) {
+      throw new ForbiddenException();
+    }
+
+    return headers.isEmpty() ? fields : headers;
   }
 
   /**
@@ -103,15 +153,6 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
       Origins.validateOrigin(origin);
     }
     trustedOrigins = resolved;
-  }
-
-  /**
-   * Creates a builder for independent browser-origin permissions.
-   *
-   * @return independent builder
-   */
-  public static Builder builder() {
-    return new Builder();
   }
 
   /**
@@ -213,21 +254,6 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
   }
 
   /**
-   * Recognizes the methods defined as safe by RFC 9110.
-   *
-   * @param method incoming wire method
-   * @return whether the method should have no requested state change
-   */
-  private static boolean safe(String method) {
-    var known = HttpMethods.httpMethod(method).orElse(null);
-
-    return known == HttpMethods.GET
-        || known == HttpMethods.HEAD
-        || known == HttpMethods.OPTIONS
-        || known == HttpMethods.TRACE;
-  }
-
-  /**
    * Applies strict same-origin policy to one Origin field, or one Referer when Origin is absent.
    *
    * @param request current request
@@ -267,32 +293,6 @@ public final class Csrf implements ApplicationExtension<Csrf>, RouteExtension<Cs
     } catch (IllegalArgumentException ignored) {
       return false;
     }
-  }
-
-  /**
-   * Reads exactly one supported token channel, detecting duplicate or conflicting values.
-   *
-   * @param request current request
-   * @return presented values, or empty if none
-   * @throws IOException if form input cannot be read
-   * @throws ForbiddenException if header and form token channels conflict
-   */
-  private static List<String> presented(Request request) throws IOException {
-    var headers = request.headers(HEADER);
-    var type =
-        HttpField.getValueParameters(
-            request.header(HttpHeaders.CONTENT_TYPE.value()).orElse(null), new HashMap<>());
-    if (!MediaType.APPLICATION_FORM_URLENCODED.value().equalsIgnoreCase(type)
-        && !"multipart/form-data".equalsIgnoreCase(type)) {
-      return headers;
-    }
-
-    var fields = request.formParams("_csrf");
-    if (!headers.isEmpty() && !fields.isEmpty()) {
-      throw new ForbiddenException();
-    }
-
-    return headers.isEmpty() ? fields : headers;
   }
 
   /** A token is valid only while its issuing session keeps the same identifier. */

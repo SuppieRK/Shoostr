@@ -45,7 +45,7 @@ class ExistingApplicationTest {
   }
 
   @Test
-  void rejectsARunningApplicationWithoutStoppingIt() throws Exception {
+  void rejectsRunningApplicationWithoutStoppingIt() throws Exception {
     {
       var app =
           new Shoostr()

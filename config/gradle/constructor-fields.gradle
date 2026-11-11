@@ -1,6 +1,6 @@
-def bootstrap = project.rootDir.name == 'buildSrc'
+def bootstrap = rootProject.name == 'shoostr-build-logic'
 def checkerClasspath = bootstrap ? sourceSets.main.output :
-		files(rootProject.file('buildSrc/build/libs/buildSrc.jar'))
+		configurations.detachedConfiguration(dependencies.create('io.github.suppierk:shoostr-build-logic'))
 
 sourceSets.configureEach { sourceSet ->
 	def verification = registerConstructorVerification(sourceSet, checkerClasspath)

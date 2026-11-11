@@ -20,6 +20,53 @@ import org.junit.jupiter.params.provider.ValueSource;
 class RoutePatternTest {
   private static final Handler HANDLER = (ignored, ignoredResponse) -> {};
 
+  private static RadixRoutes compile(String... specs) {
+    return RadixRoutes.from(registrations(specs));
+  }
+
+  private static List<RadixRoutes.Endpoint> registrations(String... specs) {
+    var endpoints = new ArrayList<RadixRoutes.Endpoint>();
+    for (String spec : specs) {
+      var parts = spec.split(" ", 2);
+      endpoints.add(
+          RadixRoutes.endpoint(HttpMethods.httpMethod(parts[0]).orElseThrow(), parts[1], HANDLER));
+    }
+    return endpoints;
+  }
+
+  private static boolean matches(String pattern, String path) {
+    var patternSegments = pattern.split("/", -1);
+    var pathSegments = path.split("/", -1);
+    if (patternSegments.length != pathSegments.length) {
+      return false;
+    }
+
+    for (int index = 0; index < patternSegments.length; index++) {
+      if ("{}".equals(patternSegments[index])) {
+        if (pathSegments[index].isEmpty()) {
+          return false;
+        }
+      } else if (!patternSegments[index].equals(pathSegments[index])) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private static boolean moreSpecific(String candidate, String current) {
+    var candidateSegments = candidate.split("/", -1);
+    var currentSegments = current.split("/", -1);
+    for (int index = 0; index < candidateSegments.length; index++) {
+      boolean candidateParameter = "{}".equals(candidateSegments[index]);
+      boolean currentParameter = "{}".equals(currentSegments[index]);
+      if (candidateParameter != currentParameter) {
+        return !candidateParameter;
+      }
+    }
+
+    return false;
+  }
+
   @Test
   void prefersLiteralSegmentsRegardlessOfRegistrationOrderForEachMethod() {
     var tree = createTreeForPrefersLiteralSegmentsRegardlessOfRegistrationOrderForEachMethod();
@@ -204,7 +251,7 @@ class RoutePatternTest {
   }
 
   @Test
-  void agreesWithALiteralFirstSegmentMatcherAcrossOverlappingPatterns() {
+  void agreesWithLiteralFirstSegmentMatcherAcrossOverlappingPatterns() {
     var specs = new ArrayList<String>();
     for (int a = 0; a < 5; a++) {
       for (int b = 0; b < 5; b++) {
@@ -241,52 +288,5 @@ class RoutePatternTest {
         }
       }
     }
-  }
-
-  private static RadixRoutes compile(String... specs) {
-    return RadixRoutes.from(registrations(specs));
-  }
-
-  private static List<RadixRoutes.Endpoint> registrations(String... specs) {
-    var endpoints = new ArrayList<RadixRoutes.Endpoint>();
-    for (String spec : specs) {
-      var parts = spec.split(" ", 2);
-      endpoints.add(
-          RadixRoutes.endpoint(HttpMethods.httpMethod(parts[0]).orElseThrow(), parts[1], HANDLER));
-    }
-    return endpoints;
-  }
-
-  private static boolean matches(String pattern, String path) {
-    var patternSegments = pattern.split("/", -1);
-    var pathSegments = path.split("/", -1);
-    if (patternSegments.length != pathSegments.length) {
-      return false;
-    }
-
-    for (int index = 0; index < patternSegments.length; index++) {
-      if ("{}".equals(patternSegments[index])) {
-        if (pathSegments[index].isEmpty()) {
-          return false;
-        }
-      } else if (!patternSegments[index].equals(pathSegments[index])) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private static boolean moreSpecific(String candidate, String current) {
-    var candidateSegments = candidate.split("/", -1);
-    var currentSegments = current.split("/", -1);
-    for (int index = 0; index < candidateSegments.length; index++) {
-      boolean candidateParameter = "{}".equals(candidateSegments[index]);
-      boolean currentParameter = "{}".equals(currentSegments[index]);
-      if (candidateParameter != currentParameter) {
-        return !candidateParameter;
-      }
-    }
-
-    return false;
   }
 }

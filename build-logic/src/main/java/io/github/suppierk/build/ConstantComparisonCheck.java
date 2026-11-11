@@ -11,6 +11,52 @@ public final class ConstantComparisonCheck extends AbstractCheck {
   private static final Pattern CONSTANT_NAME = Pattern.compile("[A-Z][A-Z0-9_]*");
 
   /**
+   * Recognizes literals, uppercase constant names, and supported zero-argument accessors on
+   * constants. This is a syntax convention check; it does not resolve Java types or prove arbitrary
+   * expressions non-null.
+   *
+   * @param expression candidate expression or expression wrapper
+   * @return true if the expression follows the supported constant forms
+   */
+  private static boolean isConstant(DetailAST expression) {
+    if (expression.getType() == TokenTypes.EXPR) {
+      var child = expression.getFirstChild();
+      while (child != null && child.getType() == TokenTypes.LPAREN) {
+        child = child.getNextSibling();
+      }
+      return child != null && isConstant(child);
+    }
+
+    if (expression.getType() == TokenTypes.STRING_LITERAL) {
+      return true;
+    }
+
+    if (expression.getType() == TokenTypes.IDENT) {
+      return CONSTANT_NAME.matcher(expression.getText()).matches();
+    }
+
+    if (expression.getType() == TokenTypes.DOT) {
+      return isConstant(expression.getLastChild());
+    }
+
+    if (expression.getType() == TokenTypes.METHOD_CALL) {
+      var method = expression.getFirstChild();
+      if (method.getType() != TokenTypes.DOT
+          || Objects.requireNonNull(expression.findFirstToken(TokenTypes.ELIST)).getFirstChild()
+              != null) {
+        return false;
+      }
+
+      String name = method.getLastChild().getText();
+
+      return ("value".equals(name) || "name".equals(name) || "toString".equals(name))
+          && isConstant(method.getFirstChild());
+    }
+
+    return false;
+  }
+
+  /**
    * Subscribes to method calls when the rule uses its default configuration.
    *
    * @return default syntax token types
@@ -66,51 +112,5 @@ public final class ConstantComparisonCheck extends AbstractCheck {
         && !isConstant(method.getFirstChild())) {
       log(token, "constant.comparison");
     }
-  }
-
-  /**
-   * Recognizes literals, uppercase constant names, and supported zero-argument accessors on
-   * constants. This is a syntax convention check; it does not resolve Java types or prove arbitrary
-   * expressions non-null.
-   *
-   * @param expression candidate expression or expression wrapper
-   * @return true if the expression follows the supported constant forms
-   */
-  private static boolean isConstant(DetailAST expression) {
-    if (expression.getType() == TokenTypes.EXPR) {
-      var child = expression.getFirstChild();
-      while (child != null && child.getType() == TokenTypes.LPAREN) {
-        child = child.getNextSibling();
-      }
-      return child != null && isConstant(child);
-    }
-
-    if (expression.getType() == TokenTypes.STRING_LITERAL) {
-      return true;
-    }
-
-    if (expression.getType() == TokenTypes.IDENT) {
-      return CONSTANT_NAME.matcher(expression.getText()).matches();
-    }
-
-    if (expression.getType() == TokenTypes.DOT) {
-      return isConstant(expression.getLastChild());
-    }
-
-    if (expression.getType() == TokenTypes.METHOD_CALL) {
-      var method = expression.getFirstChild();
-      if (method.getType() != TokenTypes.DOT
-          || Objects.requireNonNull(expression.findFirstToken(TokenTypes.ELIST)).getFirstChild()
-              != null) {
-        return false;
-      }
-
-      String name = method.getLastChild().getText();
-
-      return ("value".equals(name) || "name".equals(name) || "toString".equals(name))
-          && isConstant(method.getFirstChild());
-    }
-
-    return false;
   }
 }

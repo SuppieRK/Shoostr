@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.github.suppierk.shoostr.http.HttpHeaders;
@@ -109,6 +108,49 @@ class MetricsDockerTest {
         client.close();
       }
     }
+  }
+
+  private static void compose(boolean diagnostics, String... arguments) throws Exception {
+    var command = createCommandForCompose();
+    command.addAll(List.of(arguments));
+    var builder =
+        new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true);
+    builder.environment().putAll(containerEnvironment());
+    if (diagnostics) {
+      var output = directory.resolve("build/docker/compose.log");
+      Files.createDirectories(output.getParent());
+      builder.redirectOutput(output.toFile());
+    } else {
+      builder.inheritIO();
+    }
+
+    var process = builder.start();
+    if (!process.waitFor(180, TimeUnit.SECONDS)) {
+      process.destroyForcibly();
+      throw new IOException("Compose command timed out: " + command);
+    }
+
+    assertEquals(0, process.exitValue(), "Compose command failed: " + command);
+  }
+
+  private static List<String> createCommandForCompose() {
+    return new ArrayList<>(
+        List.of(
+            "docker",
+            "compose",
+            "-p",
+            project,
+            "-f",
+            directory.resolve("compose.yaml").toString()));
+  }
+
+  private static Map<String, String> containerEnvironment() {
+    var entries = new LinkedHashMap<String, String>();
+    entries.put("APP_PORT", "19081");
+    entries.put("PROMETHEUS_PORT", "19090");
+    entries.put("GRAFANA_PORT", "13000");
+
+    return Map.copyOf(entries);
   }
 
   @Test
@@ -312,7 +354,7 @@ class MetricsDockerTest {
   }
 
   private ObjectNode createTargetForQueriesActualRequestSamplesThroughGrafana(
-      HttpResponse<String> definition) throws JsonProcessingException, JsonMappingException {
+      HttpResponse<String> definition) throws JsonProcessingException {
     return JSON.readTree(definition.body())
         .path("dashboard")
         .path("panels")
@@ -341,48 +383,5 @@ class MetricsDockerTest {
             .POST(HttpRequest.BodyPublishers.ofString(body))
             .build(),
         HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static void compose(boolean diagnostics, String... arguments) throws Exception {
-    var command = createCommandForCompose();
-    command.addAll(List.of(arguments));
-    var builder =
-        new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true);
-    builder.environment().putAll(containerEnvironment());
-    if (diagnostics) {
-      var output = directory.resolve("build/docker/compose.log");
-      Files.createDirectories(output.getParent());
-      builder.redirectOutput(output.toFile());
-    } else {
-      builder.inheritIO();
-    }
-
-    var process = builder.start();
-    if (!process.waitFor(180, TimeUnit.SECONDS)) {
-      process.destroyForcibly();
-      throw new IOException("Compose command timed out: " + command);
-    }
-
-    assertEquals(0, process.exitValue(), "Compose command failed: " + command);
-  }
-
-  private static ArrayList<String> createCommandForCompose() {
-    return new ArrayList<>(
-        List.of(
-            "docker",
-            "compose",
-            "-p",
-            project,
-            "-f",
-            directory.resolve("compose.yaml").toString()));
-  }
-
-  private static Map<String, String> containerEnvironment() {
-    var entries = new LinkedHashMap<String, String>();
-    entries.put("APP_PORT", "19081");
-    entries.put("PROMETHEUS_PORT", "19090");
-    entries.put("GRAFANA_PORT", "13000");
-
-    return Map.copyOf(entries);
   }
 }

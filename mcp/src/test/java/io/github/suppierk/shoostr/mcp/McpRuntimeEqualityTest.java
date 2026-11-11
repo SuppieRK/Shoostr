@@ -45,6 +45,91 @@ import reactor.core.publisher.Sinks;
 class McpRuntimeEqualityTest {
   private static final String INITIALIZE = initializationRequest();
 
+  private static String initializationRequest() {
+    return
+        """
+        {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+          "protocolVersion":"2025-11-25","capabilities":{},
+          "clientInfo":{"name":"equality-fixture","version":"1"}}}
+        """;
+  }
+
+  private static void exerciseProtocol(
+      TestServer server, String identifier, LinkedBlockingQueue<RequestOutcome> completed)
+      throws Exception {
+    assertEquals(
+        202,
+        post(
+                server,
+                """
+                {"jsonrpc":"2.0","method":"notifications/initialized"}
+                """,
+                identifier)
+            .statusCode());
+    assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+
+    var ping = createPingForExerciseProtocol(server, identifier);
+
+    assertEquals(200, ping.statusCode());
+    assertTrue(ping.body().contains("\"id\":2"));
+    assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+
+    var output =
+        server.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
+
+    assertEquals(200, output.statusCode());
+    assertTrue(output.body().contains("notice"));
+    assertNotNull(completed.poll(3, TimeUnit.SECONDS));
+  }
+
+  private static HttpResponse<String> createPingForExerciseProtocol(
+      TestServer server, String identifier) throws Exception {
+    return post(
+        server,
+        """
+        {"jsonrpc":"2.0","id":2,"method":"ping"}
+        """,
+        identifier);
+  }
+
+  private static HttpResponse<String> post(TestServer server, String body, String session)
+      throws Exception {
+    return server.send(
+        request -> {
+          request
+              .path("/mcp")
+              .method("POST")
+              .header("Content-Type", "application/json")
+              .header("Accept", "application/json, text/event-stream")
+              .body(body.getBytes(StandardCharsets.UTF_8));
+          if (session != null) {
+            request.header("Mcp-Session-Id", session).header("MCP-Protocol-Version", "2025-11-25");
+          }
+        },
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static Object field(Object owner, String name) throws ReflectiveOperationException {
+    var field = owner.getClass().getDeclaredField(name);
+    field.setAccessible(true);
+
+    return field.get(owner);
+  }
+
+  private static Object frame(SseEvent event, MonoSink<Void> acknowledgment)
+      throws ReflectiveOperationException {
+    var type = Class.forName(McpStream.class.getName() + "$Frame");
+    var constructor = type.getDeclaredConstructor(SseEvent.class, MonoSink.class);
+    constructor.setAccessible(true);
+
+    return constructor.newInstance(event, acknowledgment);
+  }
+
+  private static <T> ConfiguredEqualsVerifier prefab(
+      ConfiguredEqualsVerifier configuration, Class<T> type, Object first, Object second) {
+    return configuration.withPrefabValues(type, type.cast(first), type.cast(second));
+  }
+
   @Test
   void preservesRuntimeIdentityAndSessionHashKeysThroughProtocolAndCleanup() throws Exception {
     var completed = new LinkedBlockingQueue<RequestOutcome>();
@@ -136,9 +221,7 @@ class McpRuntimeEqualityTest {
 
               assertEquals(2, flushed.get());
 
-              var frames =
-                  createFramesForPreservesRuntimeIdentityAndSessionHashKeysThroughProtocolAndCleanup(
-                      acknowledgments);
+              final var frames = createFramesForRuntimeIdentity(acknowledgments);
               var configuration = EqualsVerifier.configure();
 
               configuration =
@@ -206,9 +289,7 @@ class McpRuntimeEqualityTest {
 
               for (int index = 0; index < servers.size(); index++) {
                 var identifier = identifiers.get(index);
-                var deleted =
-                    createDeletedForPreservesRuntimeIdentityAndSessionHashKeysThroughProtocolAndCleanup(
-                        servers, index, identifier);
+                var deleted = createDeletedForRuntimeIdentity(servers, index, identifier);
 
                 assertEquals(200, deleted.statusCode());
                 assertNotNull(completed.poll(3, TimeUnit.SECONDS));
@@ -239,9 +320,8 @@ class McpRuntimeEqualityTest {
     assertTrue(retained.isEmpty());
   }
 
-  private List<Object>
-      createFramesForPreservesRuntimeIdentityAndSessionHashKeysThroughProtocolAndCleanup(
-          ArrayList<MonoSink<Void>> acknowledgments) throws ReflectiveOperationException {
+  private List<Object> createFramesForRuntimeIdentity(List<MonoSink<Void>> acknowledgments)
+      throws ReflectiveOperationException {
     return List.of(
         frame(new SseEvent("first", "message", "first", null), acknowledgments.get(0)),
         frame(new SseEvent("second", "message", "second", null), acknowledgments.get(1)));
@@ -258,8 +338,8 @@ class McpRuntimeEqualityTest {
       ScheduledThreadPoolExecutor firstDeadlines,
       ScheduledThreadPoolExecutor secondDeadlines,
       List<Object> providers,
-      ArrayList<Object> sessions,
-      ArrayList<MonoSink<Void>> acknowledgments)
+      List<Object> sessions,
+      List<MonoSink<Void>> acknowledgments)
       throws ReflectiveOperationException {
     return configuration
         .withPrefabValues(Mcp.class, first, second)
@@ -303,10 +383,9 @@ class McpRuntimeEqualityTest {
         .withGenericPrefabValues(ArrayDeque.class, value -> new ArrayDeque<>(List.of(value)));
   }
 
-  private HttpResponse<byte[]>
-      createDeletedForPreservesRuntimeIdentityAndSessionHashKeysThroughProtocolAndCleanup(
-          List<TestServer> servers, int index, String identifier)
-          throws IOException, InterruptedException {
+  private HttpResponse<byte[]> createDeletedForRuntimeIdentity(
+      List<TestServer> servers, int index, String identifier)
+      throws IOException, InterruptedException {
     return servers
         .get(index)
         .send(
@@ -316,89 +395,5 @@ class McpRuntimeEqualityTest {
                     .method("DELETE")
                     .header("Mcp-Session-Id", identifier)
                     .header("MCP-Protocol-Version", "2025-11-25"));
-  }
-
-  private static String initializationRequest() {
-    return """
-      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-11-25","capabilities":{},
-        "clientInfo":{"name":"equality-fixture","version":"1"}}}
-      """;
-  }
-
-  private static void exerciseProtocol(
-      TestServer server, String identifier, LinkedBlockingQueue<RequestOutcome> completed)
-      throws Exception {
-    assertEquals(
-        202,
-        post(
-                server,
-                """
-        {"jsonrpc":"2.0","method":"notifications/initialized"}
-        """,
-                identifier)
-            .statusCode());
-    assertNotNull(completed.poll(3, TimeUnit.SECONDS));
-
-    var ping = createPingForExerciseProtocol(server, identifier);
-
-    assertEquals(200, ping.statusCode());
-    assertTrue(ping.body().contains("\"id\":2"));
-    assertNotNull(completed.poll(3, TimeUnit.SECONDS));
-
-    var output =
-        server.send(request -> request.path("/stream"), HttpResponse.BodyHandlers.ofString());
-
-    assertEquals(200, output.statusCode());
-    assertTrue(output.body().contains("notice"));
-    assertNotNull(completed.poll(3, TimeUnit.SECONDS));
-  }
-
-  private static HttpResponse<String> createPingForExerciseProtocol(
-      TestServer server, String identifier) throws Exception {
-    return post(
-        server,
-        """
-        {"jsonrpc":"2.0","id":2,"method":"ping"}
-        """,
-        identifier);
-  }
-
-  private static HttpResponse<String> post(TestServer server, String body, String session)
-      throws Exception {
-    return server.send(
-        request -> {
-          request
-              .path("/mcp")
-              .method("POST")
-              .header("Content-Type", "application/json")
-              .header("Accept", "application/json, text/event-stream")
-              .body(body.getBytes(StandardCharsets.UTF_8));
-          if (session != null) {
-            request.header("Mcp-Session-Id", session).header("MCP-Protocol-Version", "2025-11-25");
-          }
-        },
-        HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static Object field(Object owner, String name) throws ReflectiveOperationException {
-    var field = owner.getClass().getDeclaredField(name);
-    field.setAccessible(true);
-
-    return field.get(owner);
-  }
-
-  private static Object frame(SseEvent event, MonoSink<Void> acknowledgment)
-      throws ReflectiveOperationException {
-    var type = Class.forName(McpStream.class.getName() + "$Frame");
-    var constructor = type.getDeclaredConstructor(SseEvent.class, MonoSink.class);
-    constructor.setAccessible(true);
-
-    return constructor.newInstance(event, acknowledgment);
-  }
-
-  private static <T> ConfiguredEqualsVerifier prefab(
-      ConfiguredEqualsVerifier configuration, Class<T> type, Object first, Object second) {
-    return configuration.withPrefabValues(type, type.cast(first), type.cast(second));
   }
 }

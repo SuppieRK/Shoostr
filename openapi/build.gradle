@@ -22,7 +22,7 @@ dependencies {
 	api 'tools.jackson.core:jackson-core:3.2.3'
 	api 'tools.jackson.core:jackson-databind:3.2.3'
 	swaggerUiAssets 'org.webjars:swagger-ui:5.34.0'
-	testImplementation project(':test')
+	testImplementation dependencies.project(':test')
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 }
 
@@ -30,7 +30,7 @@ tasks.named('processResources') {
 	doFirst {
 		def artifact = configurations.swaggerUiAssets.singleFile
 		def digest = MessageDigest.getInstance('SHA-256').digest(artifact.bytes)
-		assert HexFormat.of().formatHex(digest) == 'a439f1bd0d0c69667e97fac5a8cdfb3cc599ed9bdb31fbf40602c648dd2e1a63' : 'Pinned Swagger UI artifact checksum mismatch'
+		assert HexFormat.of().formatHex(digest) == 'a439f1bd0d0c69667e97fac5a8cdfb3cc599ed9bdb31fbf40602c648dd2e1a63': 'Pinned Swagger UI artifact checksum mismatch'
 	}
 
 	from({ zipTree(configurations.swaggerUiAssets.singleFile) }) {

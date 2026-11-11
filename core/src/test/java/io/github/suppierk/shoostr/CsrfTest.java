@@ -148,17 +148,14 @@ class CsrfTest {
           var cookie = token.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
           var origin = "http://127.0.0.1:" + app.port();
 
-          var accepted =
-              sendAcceptedRequestForRejectsMissingOrInvalidTokensForMutatingMethodsWithValidSessionAndOrigin(
-                  test, cookie, origin, token, method);
+          var accepted = sendAcceptedRequestForInvalidProof(test, cookie, origin, token, method);
 
           assertEquals(200, accepted.statusCode());
           assertEquals("accepted", accepted.body());
           assertEquals(1, executions.get());
 
           var rejected =
-              sendRejectedRequestForRejectsMissingOrInvalidTokensForMutatingMethodsWithValidSessionAndOrigin(
-                  test, cookie, origin, method, suppliedToken);
+              sendRejectedRequestForInvalidProof(test, cookie, origin, method, suppliedToken);
 
           assertEquals(403, rejected.statusCode());
           assertEquals(1, executions.get());
@@ -168,14 +165,9 @@ class CsrfTest {
     }
   }
 
-  private HttpResponse<String>
-      sendAcceptedRequestForRejectsMissingOrInvalidTokensForMutatingMethodsWithValidSessionAndOrigin(
-          TestServer test,
-          String cookie,
-          String origin,
-          HttpResponse<String> token,
-          HttpMethods method)
-          throws IOException, InterruptedException {
+  private HttpResponse<String> sendAcceptedRequestForInvalidProof(
+      TestServer test, String cookie, String origin, HttpResponse<String> token, HttpMethods method)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -188,10 +180,9 @@ class CsrfTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<String>
-      sendRejectedRequestForRejectsMissingOrInvalidTokensForMutatingMethodsWithValidSessionAndOrigin(
-          TestServer test, String cookie, String origin, HttpMethods method, String suppliedToken)
-          throws IOException, InterruptedException {
+  private HttpResponse<String> sendRejectedRequestForInvalidProof(
+      TestServer test, String cookie, String origin, HttpMethods method, String suppliedToken)
+      throws IOException, InterruptedException {
     return test.send(
         request -> {
           request
@@ -250,9 +241,7 @@ class CsrfTest {
                   .statusCode());
           assertEquals(0, executions.get());
 
-          var accepted =
-              sendAcceptedRequestForRepeatedSelectionInheritsProtectionWithoutChangingTheRequestProof(
-                  test, origin, token);
+          var accepted = sendAcceptedRequestForInheritedProtection(test, origin, token);
 
           assertEquals(200, accepted.statusCode());
           assertEquals("accepted", accepted.body());
@@ -262,9 +251,8 @@ class CsrfTest {
     }
   }
 
-  private HttpResponse<String>
-      sendAcceptedRequestForRepeatedSelectionInheritsProtectionWithoutChangingTheRequestProof(
-          TestServer test, String origin, String token) throws IOException, InterruptedException {
+  private HttpResponse<String> sendAcceptedRequestForInheritedProtection(
+      TestServer test, String origin, String token) throws IOException, InterruptedException {
     return test.send(
         testRequest ->
             testRequest
@@ -313,7 +301,8 @@ class CsrfTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // A missing token is part of the rejection scenario.
+  @SuppressWarnings("NullAway")
+  // A missing token is part of the rejection scenario.
   void protectsCookieAuthenticatedMutationWithSessionTokenAndOrigin() throws Exception {
     var executions = new AtomicInteger();
     var csrf = new Csrf();
@@ -397,7 +386,7 @@ class CsrfTest {
   }
 
   @Test
-  void acceptsOneTokenInAFormFieldWhenTheOriginHeaderIsUnavailable() throws Exception {
+  void acceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable() throws Exception {
     {
       var app = new Shoostr();
 
@@ -425,7 +414,7 @@ class CsrfTest {
           var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
 
           var result =
-              sendResultForAcceptsOneTokenInAFormFieldWhenTheOriginHeaderIsUnavailable(
+              sendResultForAcceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(
                   test, cookie, app, form);
 
           assertEquals(200, result.statusCode());
@@ -433,7 +422,7 @@ class CsrfTest {
 
           var boundary = "csrf-boundary";
           var multipartBody =
-              createMultipartBodyForAcceptsOneTokenInAFormFieldWhenTheOriginHeaderIsUnavailable(
+              createMultipartBodyForAcceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(
                   boundary, form);
 
           assertEquals(
@@ -455,7 +444,7 @@ class CsrfTest {
   }
 
   private HttpResponse<String>
-      sendResultForAcceptsOneTokenInAFormFieldWhenTheOriginHeaderIsUnavailable(
+      sendResultForAcceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(
           TestServer test, String cookie, Shoostr app, HttpResponse<String> form)
           throws IOException, InterruptedException {
     return test.send(
@@ -470,7 +459,7 @@ class CsrfTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private String createMultipartBodyForAcceptsOneTokenInAFormFieldWhenTheOriginHeaderIsUnavailable(
+  private String createMultipartBodyForAcceptsOneTokenInFormFieldWhenTheOriginHeaderIsUnavailable(
       String boundary, HttpResponse<String> form) {
     return "--"
         + boundary
@@ -540,14 +529,15 @@ class CsrfTest {
   }
 
   private String createBodyForRejectsFileOnlyMultipartWithoutCsrfTokenBeforeInvokingHandler() {
-    return """
-          --file-only\r
-          Content-Disposition: form-data; name="file"; filename="note.txt"\r
-          Content-Type: text/plain\r
-          \r
-          uploaded content\r
-          --file-only--\r
-          """;
+    return
+        """
+        --file-only\r
+        Content-Disposition: form-data; name="file"; filename="note.txt"\r
+        Content-Type: text/plain\r
+        \r
+        uploaded content\r
+        --file-only--\r
+        """;
   }
 
   private HttpResponse<String>
@@ -601,8 +591,7 @@ class CsrfTest {
           var token = form.body();
           var base = "http://127.0.0.1:" + app.port();
           List<Consumer<TestRequest>> rejected =
-              createRejectedForRejectsUntrustedOriginsMissingSessionsAndAmbiguousTokensBeforeBusinessCode(
-                  cookie, token, base);
+              createRejectedForRejectedWrites(cookie, token, base);
           for (var candidate : rejected) {
             var result = test.send(candidate, HttpResponse.BodyHandlers.ofString());
 
@@ -631,9 +620,8 @@ class CsrfTest {
     }
   }
 
-  private List<Consumer<TestRequest>>
-      createRejectedForRejectsUntrustedOriginsMissingSessionsAndAmbiguousTokensBeforeBusinessCode(
-          String cookie, String token, String base) {
+  private List<Consumer<TestRequest>> createRejectedForRejectedWrites(
+      String cookie, String token, String base) {
     return List.of(
         request ->
             request
@@ -702,7 +690,7 @@ class CsrfTest {
   }
 
   @Test
-  void rejectsMalformedRefererWithoutCreatingASessionOrRunningBusinessCode() throws Exception {
+  void rejectsMalformedRefererWithoutCreatingSessionOrRunningBusinessCode() throws Exception {
     var executions = new AtomicInteger();
 
     {
@@ -939,8 +927,7 @@ class CsrfTest {
 
       try (Closeable appCleanup11 = app::close) {
         app.sessions();
-        var cors =
-            createCorsForAllowsExplicitTrustedBrowserOriginOnlyAfterCorsPreflightAndActualCsrfCheck();
+        var cors = createCorsForTrustedBrowserOrigin();
         app.withExtension(cors);
 
         app.routes()
@@ -965,26 +952,20 @@ class CsrfTest {
 
           var form =
               test.send(request -> request.path("/form"), HttpResponse.BodyHandlers.ofString());
-          var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-          var preflight =
-              sendPreflightRequestForAllowsExplicitTrustedBrowserOriginOnlyAfterCorsPreflightAndActualCsrfCheck(
-                  test);
+          final var cookie = form.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+          var preflight = sendPreflightRequestForTrustedBrowserOrigin(test);
 
           assertEquals(204, preflight.statusCode());
           assertTrue(preflight.body().isEmpty());
           assertFalse(preflight.headers().firstValue("Set-Cookie").isPresent());
           assertEquals(0, executions.get());
 
-          var denied =
-              sendDeniedRequestForAllowsExplicitTrustedBrowserOriginOnlyAfterCorsPreflightAndActualCsrfCheck(
-                  test, cookie);
+          var denied = sendDeniedRequestForTrustedBrowserOrigin(test, cookie);
 
           assertEquals(403, denied.statusCode());
           assertEquals(0, executions.get());
 
-          var accepted =
-              sendAcceptedRequestForAllowsExplicitTrustedBrowserOriginOnlyAfterCorsPreflightAndActualCsrfCheck(
-                  test, cookie, form);
+          var accepted = sendAcceptedRequestForTrustedBrowserOrigin(test, cookie, form);
 
           assertEquals(200, accepted.statusCode());
           assertEquals(
@@ -995,9 +976,7 @@ class CsrfTest {
               "ETag, X-Request-Id",
               accepted.headers().firstValue("Access-Control-Expose-Headers").orElseThrow());
 
-          var second =
-              sendSecondRequestForAllowsExplicitTrustedBrowserOriginOnlyAfterCorsPreflightAndActualCsrfCheck(
-                  test, cookie, form);
+          var second = sendSecondRequestForTrustedBrowserOrigin(test, cookie, form);
 
           assertEquals(200, second.statusCode());
           assertEquals(
@@ -1009,8 +988,7 @@ class CsrfTest {
     }
   }
 
-  private Cors
-      createCorsForAllowsExplicitTrustedBrowserOriginOnlyAfterCorsPreflightAndActualCsrfCheck() {
+  private Cors createCorsForTrustedBrowserOrigin() {
     return new Cors(
         CorsPolicy.builder()
             .origins("https://client.example", "https://second.example")
@@ -1021,9 +999,8 @@ class CsrfTest {
             .build());
   }
 
-  private HttpResponse<String>
-      sendPreflightRequestForAllowsExplicitTrustedBrowserOriginOnlyAfterCorsPreflightAndActualCsrfCheck(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendPreflightRequestForTrustedBrowserOrigin(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1035,9 +1012,8 @@ class CsrfTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<String>
-      sendDeniedRequestForAllowsExplicitTrustedBrowserOriginOnlyAfterCorsPreflightAndActualCsrfCheck(
-          TestServer test, String cookie) throws IOException, InterruptedException {
+  private HttpResponse<String> sendDeniedRequestForTrustedBrowserOrigin(
+      TestServer test, String cookie) throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1048,10 +1024,9 @@ class CsrfTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<String>
-      sendAcceptedRequestForAllowsExplicitTrustedBrowserOriginOnlyAfterCorsPreflightAndActualCsrfCheck(
-          TestServer test, String cookie, HttpResponse<String> form)
-          throws IOException, InterruptedException {
+  private HttpResponse<String> sendAcceptedRequestForTrustedBrowserOrigin(
+      TestServer test, String cookie, HttpResponse<String> form)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1063,10 +1038,9 @@ class CsrfTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<String>
-      sendSecondRequestForAllowsExplicitTrustedBrowserOriginOnlyAfterCorsPreflightAndActualCsrfCheck(
-          TestServer test, String cookie, HttpResponse<String> form)
-          throws IOException, InterruptedException {
+  private HttpResponse<String> sendSecondRequestForTrustedBrowserOrigin(
+      TestServer test, String cookie, HttpResponse<String> form)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request

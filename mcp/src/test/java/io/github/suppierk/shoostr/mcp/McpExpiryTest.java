@@ -25,21 +25,17 @@ import org.junit.jupiter.api.Timeout;
 class McpExpiryTest {
   @Test
   @Timeout(15)
-  void opensAStreamWithAFarFutureVerifiedExpiryWithoutOverflowingItsDeadline() throws Exception {
-    var mcp = createMcpForOpensAStreamWithAFarFutureVerifiedExpiryWithoutOverflowingItsDeadline();
+  void opensStreamWithFarFutureVerifiedExpiryWithoutOverflowingItsDeadline() throws Exception {
+    var mcp = createMcpForFarFutureExpiry();
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
-      var initialized =
-          sendInitializedRequestForOpensAStreamWithAFarFutureVerifiedExpiryWithoutOverflowingItsDeadline(
-              test);
+      var initialized = sendInitializedRequestForFarFutureExpiry(test);
 
       assertEquals(200, initialized.statusCode());
 
-      var response =
-          sendResponseForOpensAStreamWithAFarFutureVerifiedExpiryWithoutOverflowingItsDeadline(
-              test, initialized);
+      var response = sendResponseForFarFutureExpiry(test, initialized);
 
       try {
         assertEquals(200, response.statusCode());
@@ -49,19 +45,17 @@ class McpExpiryTest {
     }
   }
 
-  private Mcp<McpSyncServer>
-      createMcpForOpensAStreamWithAFarFutureVerifiedExpiryWithoutOverflowingItsDeadline() {
+  private Mcp<McpSyncServer> createMcpForFarFutureExpiry() {
     return Mcp.sync(
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("alice:client", McpTransportContext.EMPTY, Instant.MAX),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
         transport -> McpServer.sync(transport).build());
   }
 
-  private HttpResponse<byte[]>
-      sendInitializedRequestForOpensAStreamWithAFarFutureVerifiedExpiryWithoutOverflowingItsDeadline(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendInitializedRequestForFarFutureExpiry(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -71,17 +65,15 @@ class McpExpiryTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"expiry-fixture","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"expiry-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
-  private HttpResponse<InputStream>
-      sendResponseForOpensAStreamWithAFarFutureVerifiedExpiryWithoutOverflowingItsDeadline(
-          TestServer test, HttpResponse<byte[]> initialized)
-          throws IOException, InterruptedException {
+  private HttpResponse<InputStream> sendResponseForFarFutureExpiry(
+      TestServer test, HttpResponse<byte[]> initialized) throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -138,7 +130,7 @@ class McpExpiryTest {
 
           return new McpIdentity("alice:client", McpTransportContext.EMPTY, verifiedExpiry);
         },
-        (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+        (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
   }
 
   private HttpResponse<byte[]>
@@ -153,10 +145,10 @@ class McpExpiryTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"expiry-fixture","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"expiry-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 

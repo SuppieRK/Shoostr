@@ -29,7 +29,7 @@ import org.junit.jupiter.api.Timeout;
 class McpDeferredNotificationTest {
   @Test
   @Timeout(20)
-  void discardsADeferredNotificationForADeletedSessionWithoutAffectingAnotherClient()
+  void discardsDeferredNotificationForDeletedSessionWithoutAffectingAnotherClient()
       throws Exception {
     var alphaNotifications = new LinkedBlockingQueue<McpSchema.ElicitationCompleteNotification>();
     var betaNotifications = new LinkedBlockingQueue<McpSchema.ElicitationCompleteNotification>();
@@ -39,7 +39,7 @@ class McpDeferredNotificationTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var mcp = Mcp.async(security, transport -> McpServer.async(transport).build());
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
@@ -71,9 +71,7 @@ class McpDeferredNotificationTest {
               .sendElicitationComplete(
                   alphaSession,
                   new McpSchema.ElicitationCompleteNotification("deleted-notification", Map.of()));
-      var deleted =
-          sendDeletedRequestForDiscardsADeferredNotificationForADeletedSessionWithoutAffectingAnotherClient(
-              test, alphaSession);
+      var deleted = sendDeletedRequestForDeletedSession(test, alphaSession);
 
       assertEquals(200, deleted.statusCode());
       assertDoesNotThrow(() -> deferred.block(Duration.ofSeconds(3)));
@@ -124,9 +122,8 @@ class McpDeferredNotificationTest {
         .elicitationCompleteConsumer(notifications::add);
   }
 
-  private HttpResponse<byte[]>
-      sendDeletedRequestForDiscardsADeferredNotificationForADeletedSessionWithoutAffectingAnotherClient(
-          TestServer test, String alphaSession) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendDeletedRequestForDeletedSession(
+      TestServer test, String alphaSession) throws IOException, InterruptedException {
     return test.send(
         request ->
             request

@@ -39,7 +39,8 @@ class StreamBufferTest {
     var after = new AtomicInteger();
     response.flushHooks(before::incrementAndGet, after::incrementAndGet);
     var events = response.startEventStream();
-    var payload = "😀\r\n\uD800\n𐐀\r\uDC00\n";
+    var payload =
+        "😀\r\n" + Character.MIN_HIGH_SURROGATE + "\n𐐀\r" + Character.MIN_LOW_SURROGATE + "\n";
 
     events.send(payload).comment(payload);
     response.complete();
@@ -61,7 +62,8 @@ class StreamBufferTest {
   }
 
   private String createExpectedForMultilineEventsAndCommentsPreserveUtf8AndFlushBoundaries() {
-    return """
+    return
+        """
         data: 😀
         data: ?
         data: 𐐀
@@ -300,7 +302,7 @@ class StreamBufferTest {
   }
 
   private Response sendResponseForSynchronousTransportFailureMakesExplicitFlushTerminal(
-      ArrayList<Write> writes) {
+      List<Write> writes) {
     return response(
         128,
         writes,
@@ -350,7 +352,7 @@ class StreamBufferTest {
   }
 
   private Response sendResponseForDelayedAsynchronousTransportFailureMakesStreamTerminal(
-      ArrayList<Write> writes, ArrayBlockingQueue<Callback> pending) {
+      List<Write> writes, ArrayBlockingQueue<Callback> pending) {
     return response(
         128,
         writes,
@@ -370,7 +372,7 @@ class StreamBufferTest {
     var pending = new ArrayBlockingQueue<Callback>(1);
     var submitted = new ArrayBlockingQueue<ByteBuffer>(1);
     var outcome = new CompletableFuture<Throwable>();
-    var writer = startInterruptedWriter(writes, submitted, pending, outcome);
+    final var writer = startInterruptedWriter(writes, submitted, pending, outcome);
 
     var source = submitted.poll(3, TimeUnit.SECONDS);
     var callback = pending.poll(3, TimeUnit.SECONDS);
@@ -379,8 +381,8 @@ class StreamBufferTest {
     assertNotNull(callback);
     assertFalse(outcome.isDone());
 
-    int position = source.position();
-    int limit = source.limit();
+    final int position = source.position();
+    final int limit = source.limit();
     var expected = new byte[] {1, 2, 3};
     var before = new byte[source.remaining()];
     source.duplicate().get(before);
@@ -407,7 +409,7 @@ class StreamBufferTest {
   }
 
   private Thread startInterruptedWriter(
-      ArrayList<Write> writes,
+      List<Write> writes,
       ArrayBlockingQueue<ByteBuffer> submitted,
       ArrayBlockingQueue<Callback> pending,
       CompletableFuture<Throwable> outcome) {
@@ -415,9 +417,7 @@ class StreamBufferTest {
         .start(
             () -> {
               try {
-                var response =
-                    sendResponseForInterruptedTransportWaitMakesStreamTerminalEvenIfCallbackLaterSucceeds(
-                        writes, submitted, pending);
+                var response = sendResponseForInterruptedTransport(writes, submitted, pending);
                 var stream = response.startStream("application/octet-stream");
                 stream.write(new byte[] {1, 2, 3});
 
@@ -431,11 +431,10 @@ class StreamBufferTest {
             });
   }
 
-  private Response
-      sendResponseForInterruptedTransportWaitMakesStreamTerminalEvenIfCallbackLaterSucceeds(
-          ArrayList<Write> writes,
-          ArrayBlockingQueue<ByteBuffer> submitted,
-          ArrayBlockingQueue<Callback> pending) {
+  private Response sendResponseForInterruptedTransport(
+      List<Write> writes,
+      ArrayBlockingQueue<ByteBuffer> submitted,
+      ArrayBlockingQueue<Callback> pending) {
     return response(
         128,
         writes,
@@ -458,9 +457,7 @@ class StreamBufferTest {
         .start(
             () -> {
               try {
-                var response =
-                    sendResponseForExplicitFlushWaitsForDelayedTransportCompletionBeforeReusingStorage(
-                        writes, pending);
+                var response = sendResponseForDelayedFlush(writes, pending);
                 response.flushHooks(() -> calls.add("before"), () -> calls.add("after"));
                 var stream = response.startStream("application/octet-stream");
                 stream.write(new byte[] {1, 2, 3});
@@ -494,9 +491,8 @@ class StreamBufferTest {
     assertEquals(List.of("before", "after", "before", "after", "before", "after"), calls);
   }
 
-  private Response
-      sendResponseForExplicitFlushWaitsForDelayedTransportCompletionBeforeReusingStorage(
-          ArrayList<Write> writes, ArrayBlockingQueue<Callback> pending) {
+  private Response sendResponseForDelayedFlush(
+      List<Write> writes, ArrayBlockingQueue<Callback> pending) {
     return response(
         128,
         writes,
@@ -537,7 +533,7 @@ class StreamBufferTest {
       int deferredWrite,
       BiConsumer<ByteBuffer, Callback> deferWrite) {
     var headers = HttpFields.build();
-    var delegate =
+    final var delegate =
         createDelegateForResponse(
             headers, writes, deferredWrite, deferWrite, failureWrite, completeWrite);
     var defaults = new Options();

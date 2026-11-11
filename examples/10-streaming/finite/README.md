@@ -9,9 +9,11 @@ Java and Gradle are provided by the build image. Start one example at a time:
 docker compose -f examples/10-streaming/finite/compose.yaml up --build -d
 ```
 
-Startup is asynchronous. Check diagnostics with `docker compose -f examples/10-streaming/finite/compose.yaml logs -f app`.
+Startup is asynchronous. Check diagnostics with
+`docker compose -f examples/10-streaming/finite/compose.yaml logs -f app`.
 Open `http://127.0.0.1:8080/download`. Expect the CSV containing Ada and Grace.
-Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and
+use that port in requests.
 Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
 are for trusted local development. Direct Java runs use the default wildcard listener.
 
@@ -33,9 +35,11 @@ container validation is described in [CONTRIBUTING](../../../CONTRIBUTING.md#exa
 
 ## Recipe and direct-run notes
 
-Maintainer runtime fixture. Read the [finite-output recipe](../../../site/src/content/docs/streaming/output.mdx) for consumer code.
+Maintainer runtime fixture. Read the [finite-output recipe](../../../site/src/content/docs/streaming/output.mdx) for
+consumer code.
 
-The documentation recipe uses [FiniteStreamingExample](src/main/java/io/github/suppierk/shoostr/example/streaming/FiniteStreamingExample.java)
+The documentation recipe
+uses [FiniteStreamingExample](src/main/java/io/github/suppierk/shoostr/example/streaming/FiniteStreamingExample.java)
 and its [HTTP test](src/test/java/io/github/suppierk/shoostr/example/streaming/FiniteStreamingExampleTest.java).
 The launcher below also serves classpath assets.
 

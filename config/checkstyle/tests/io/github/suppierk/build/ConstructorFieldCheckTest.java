@@ -54,13 +54,14 @@ class ConstructorFieldCheckTest {
   }
 
   @Test
-  void resolvesInheritedFieldsFromACompiledDependency() throws Exception {
+  void resolvesInheritedFieldsFromCompiledDependency() throws Exception {
     var dependency = directory.resolve("Base.java");
     var classes = directory.resolve("classes");
     Files.createDirectories(classes);
     Files.writeString(
         dependency,
-        "package dependency; public class Base { protected int inherited; protected static int shared; }");
+        "package dependency; public class Base { protected "
+            + "int inherited; protected static int shared; }");
 
     assertEquals(
         0,
@@ -76,7 +77,7 @@ class ConstructorFieldCheckTest {
                 classes.toString(),
                 dependency.toString()));
 
-    var source = createSourceForResolvesInheritedFieldsFromACompiledDependency();
+    var source = createSourceForResolvesInheritedFieldsFromCompiledDependency();
     var diagnostics = ConstructorFieldCheck.check(List.of(source), classes.toString());
 
     assertEquals(1, diagnostics.size());
@@ -84,7 +85,7 @@ class ConstructorFieldCheckTest {
     assertTrue(diagnostics.getFirst().getMessage(Locale.ROOT).contains("receiver: inherited"));
   }
 
-  private Path createSourceForResolvesInheritedFieldsFromACompiledDependency() throws Exception {
+  private Path createSourceForResolvesInheritedFieldsFromCompiledDependency() throws Exception {
     return write(
         """
         class Example extends dependency.Base {
@@ -97,7 +98,7 @@ class ConstructorFieldCheckTest {
   }
 
   @Test
-  void reportsEveryTargetOfAChainedAssignment() throws Exception {
+  void reportsEveryTargetOfChainedAssignment() throws Exception {
     var diagnostics =
         check("class Example { int first, second; Example() { first = second = 1; } }");
 
@@ -126,7 +127,7 @@ class ConstructorFieldCheckTest {
   }
 
   @Test
-  void commandLineWritesAReportAndFailsForViolations() throws Exception {
+  void commandLineWritesReportAndFailsForViolations() throws Exception {
     var source = write("class Example { int count; Example() { count = 1; } }");
     var sources = directory.resolve("source files.txt");
     var classpath = directory.resolve("classpath.txt");
@@ -173,10 +174,14 @@ class ConstructorFieldCheckTest {
         "class Example { int count; Example() { { int count = 0; count++; } count = 1; } }",
         "enum Example { VALUE; int count; Example() { count = 1; } }",
         "class Example { int count; class Inner { Inner() { count = 1; } } }",
-        "class Example { void run() { new Object() { int count; void create() { class Local { Local() { count = 1; } } new Local(); } }; } }",
+        "class Example { void run() { new Object() { int "
+            + "count; void create() { class Local { Local() { "
+            + "count = 1; } } new Local(); } }; } }",
         "class Example { int μέτρο; Example() { μέτρο = 1; } }",
         "class Example { void run() { class Local { int count; Local() { count = 1; } } } }",
-        "record Example(int count) { Example { count = Math.max(count, 0); class Local { int value; Local() { value = 1; } } new Local(); } }",
+        "record Example(int count) { Example { count = "
+            + "Math.max(count, 0); class Local { int value; "
+            + "Local() { value = 1; } } new Local(); } }",
         "@SuppressWarnings(\"all\") class Example { int count; Example() { count = 1; } }");
   }
 
@@ -186,22 +191,35 @@ class ConstructorFieldCheckTest {
         "class Example { int count; Example() { int count; count = 1; } }",
         "class Example { int count; Example() { for (int count = 0; count < 1; count++) {} } }",
         "class Example { int count; Example() { for (int count : new int[]{1}) { count = 2; } } }",
-        "class Example { RuntimeException failure; Example() { try { throw new RuntimeException(); } catch (RuntimeException failure) { failure = new RuntimeException(); } } }",
-        "class Example { String value; Example(Object input) { if (input instanceof String value) { value = value.strip(); } } }",
-        "class Example { String value; Example() { java.util.function.Function<String, String> trim = value -> { value = value.strip(); return value; }; } }",
-        "class Example { int count; Example() { Runnable update = () -> { int count; count = 1; }; } }",
+        "class Example { RuntimeException failure; "
+            + "Example() { try { throw new RuntimeException(); } "
+            + "catch (RuntimeException failure) { failure = new "
+            + "RuntimeException(); } } }",
+        "class Example { String value; Example(Object "
+            + "input) { if (input instanceof String value) { "
+            + "value = value.strip(); } } }",
+        "class Example { String value; Example() { "
+            + "java.util.function.Function<String, String> trim "
+            + "= value -> { value = value.strip(); return value; "
+            + "}; } }",
+        "class Example { int count; Example() { Runnable "
+            + "update = () -> { int count; count = 1; }; } }",
         "class Example { static int count; Example() { count = 1; } }",
         "class Example { int count; Example(Example other) { other.count = 1; this.count = 2; } }",
         "class Example { int[] values; Example() { this.values = new int[1]; values[0] = 1; } }",
         "class Base { int count; } class Example extends Base { Example() { super.count = 1; } }",
         "class Example { int count; class Inner { Inner() { Example.this.count = 1; } } }",
-        "class Example { int count; Example() { new Runnable() { public void run() { count = 1; } }; } }",
+        "class Example { int count; Example() { new "
+            + "Runnable() { public void run() { count = 1; } }; "
+            + "} }",
         "class Example { int count; Example() { new Object() { int local = (count = 1); }; } }",
         "class Example { int count; void Example() { count = 1; } }",
         "record Example(int count) { Example { count = Math.max(count, 0); } }",
         "record Example(int count) { Example(int count) { this.count = count; } }",
         "record Example(int count) {}",
-        "class Example { String text; Example() { this.text = \"count = new Value()\"; /* count = 1; */ } }");
+        "class Example { String text; Example() { "
+            + "this.text = \"count = new Value()\"; /* count = 1; "
+            + "*/ } }");
   }
 
   private List<Diagnostic<? extends JavaFileObject>> check(String source) throws Exception {

@@ -24,6 +24,14 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class OpenApiValidationTest {
+  private static Stream<Arguments> schemaDictionaryEntries() {
+    return Stream.of("patternProperties", "dependentSchemas")
+        .flatMap(
+            keyword ->
+                Stream.of("example", "default", "x-name")
+                    .map(entry -> Arguments.of(keyword, entry)));
+  }
+
   @ParameterizedTest
   @MethodSource("schemaDictionaryEntries")
   void rejectsMissingReferencesWithinSchemaDictionaries(String keyword, String entry)
@@ -326,13 +334,5 @@ class OpenApiValidationTest {
         assertEquals("Unknown OpenAPI security scheme: missing", failure.getMessage());
       }
     }
-  }
-
-  private static Stream<Arguments> schemaDictionaryEntries() {
-    return Stream.of("patternProperties", "dependentSchemas")
-        .flatMap(
-            keyword ->
-                Stream.of("example", "default", "x-name")
-                    .map(entry -> Arguments.of(keyword, entry)));
   }
 }

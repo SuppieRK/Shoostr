@@ -16,19 +16,7 @@ import org.yaml.snakeyaml.Yaml;
 class CorsYamlTest {
   @Test
   void emptyAndExplicitlyNullMappingsKeepTheEstablishedDefaults() {
-    for (var mapping :
-        new String[] {
-          "{}",
-          """
-        origins: null
-        methods: null
-        allMethods: null
-        allowedHeaders: null
-        credentials: null
-        exposedHeaders: null
-        maxAgeSeconds: null
-        """
-        }) {
+    for (var mapping : new String[] {"{}", explicitNullMapping()}) {
       var policy = new Yaml().loadAs(mapping, CorsPolicy.class);
 
       assertEquals(Set.of(), policy.origins());
@@ -39,6 +27,19 @@ class CorsYamlTest {
       assertEquals(Set.of(), policy.exposedHeaders());
       assertEquals(5, policy.maxAgeSeconds());
     }
+  }
+
+  private static String explicitNullMapping() {
+    return
+        """
+        origins: null
+        methods: null
+        allMethods: null
+        allowedHeaders: null
+        credentials: null
+        exposedHeaders: null
+        maxAgeSeconds: null
+        """;
   }
 
   @Test
@@ -61,7 +62,7 @@ class CorsYamlTest {
   @Test
   void settersRestoreDefaultsAndInvalidValuesRetainPreviousSettings() {
     var settings = createSettingsForSettersRestoreDefaultsAndInvalidValuesRetainPreviousSettings();
-    var snapshot = new Cors(settings).policy();
+    final var snapshot = new Cors(settings).policy();
 
     assertThrows(
         IllegalArgumentException.class, () -> settings.setOrigins(Set.of("not-an-origin")));
@@ -96,13 +97,13 @@ class CorsYamlTest {
     return new Yaml()
         .loadAs(
             """
-        origins: [https://client.example]
-        methods: [POST]
-        allowedHeaders: [X-Proof]
-        credentials: true
-        exposedHeaders: [ETag]
-        maxAgeSeconds: 60
-        """,
+            origins: [https://client.example]
+            methods: [POST]
+            allowedHeaders: [X-Proof]
+            credentials: true
+            exposedHeaders: [ETag]
+            maxAgeSeconds: 60
+            """,
             CorsPolicy.class);
   }
 
@@ -137,14 +138,14 @@ class CorsYamlTest {
     return new Yaml()
         .loadAs(
             """
-        origins: [https://client.example]
-        methods: [POST, OPTIONS]
-        allMethods: false
-        allowedHeaders: [Content-Type, X-Proof]
-        credentials: true
-        exposedHeaders: [ETag, X-Request-Id]
-        maxAgeSeconds: 60
-        """,
+            origins: [https://client.example]
+            methods: [POST, OPTIONS]
+            allMethods: false
+            allowedHeaders: [Content-Type, X-Proof]
+            credentials: true
+            exposedHeaders: [ETag, X-Request-Id]
+            maxAgeSeconds: 60
+            """,
             CorsPolicy.class);
   }
 

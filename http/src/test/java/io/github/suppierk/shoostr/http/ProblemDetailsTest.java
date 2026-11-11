@@ -386,7 +386,7 @@ class ProblemDetailsTest {
   }
 
   @Test
-  void keepsThePreviousExtensionWhenItsReplacementContainsACycle() {
+  void keepsThePreviousExtensionWhenItsReplacementContainsCycle() {
     var builder = ProblemDetails.builder().extension("errors", List.of("quantity"));
     var cyclic = new ArrayList<>();
     var child = new ArrayList<>();

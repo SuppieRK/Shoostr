@@ -37,7 +37,7 @@ class McpResourceUnsubscribeTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var mcp =
         createMcpForStopsUpdatesForAnUnsubscribedUriWithoutClosingOtherSubscriptions(
             security, alpha);

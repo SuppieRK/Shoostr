@@ -47,21 +47,23 @@ import org.openjdk.jmh.annotations.Warmup;
 @Threads(1)
 public class SchedulingBenchmark {
   private static final byte[] PAYLOAD = "Hello, World!".getBytes(StandardCharsets.UTF_8);
+  private final LinkedBlockingQueue<Exchange> pending;
+  private final Options options;
 
+  /** Execution pool used to dispatch the request. */
   @Param({"queued-platform", "queued-virtual"})
   public String pool;
 
+  /** Number of queued requests in each submission batch. */
   @Param({"1", "32", "4096"})
   public int batchSize;
 
-  private final LinkedBlockingQueue<Exchange> pending;
-  private final Options options;
+  Exchange[] exchanges;
   private @Nullable ExecutorService virtualThreads;
   private QueuedThreadPool nativePool;
   private CountDownLatch finished;
   private volatile @Nullable Throwable failure;
   private AdaptiveExecutionStrategy strategy;
-  Exchange[] exchanges;
 
   /** Creates the common producer queue and framework options outside timing. */
   public SchedulingBenchmark() {

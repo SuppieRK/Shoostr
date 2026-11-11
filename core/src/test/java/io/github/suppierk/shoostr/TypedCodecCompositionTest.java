@@ -33,6 +33,48 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class TypedCodecCompositionTest {
+  private static Stream<Arguments> executors() {
+    Function<Set<Thread>, ExecutorService> platform =
+        workers ->
+            Executors.newSingleThreadExecutor(
+                recordingFactory(Thread.ofPlatform().factory(), workers));
+    Function<Set<Thread>, ExecutorService> virtual =
+        workers ->
+            Executors.newThreadPerTaskExecutor(
+                recordingFactory(Thread.ofVirtual().factory(), workers));
+    Function<Set<Thread>, ExecutorService> forkJoin = TypedCodecCompositionTest::createForkJoin;
+    Function<Set<Thread>, ExecutorService> wrapped =
+        workers -> Executors.unconfigurableExecutorService(platform.apply(workers));
+
+    return Stream.of(
+        Arguments.of("platform", platform),
+        Arguments.of("virtual", virtual),
+        Arguments.of("forkJoin", forkJoin),
+        Arguments.of("wrapped", wrapped));
+  }
+
+  private static ExecutorService createForkJoin(Set<Thread> workers) {
+    return new ForkJoinPool(
+        2,
+        pool -> {
+          var thread = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
+          workers.add(thread);
+
+          return thread;
+        },
+        null,
+        false);
+  }
+
+  private static ThreadFactory recordingFactory(ThreadFactory factory, Set<Thread> workers) {
+    return task -> {
+      var thread = factory.newThread(task);
+      workers.add(thread);
+
+      return thread;
+    };
+  }
+
   @ParameterizedTest(name = "{0}")
   @MethodSource("executors")
   void invokesCodecOnSelectedExecutor(String name, Function<Set<Thread>, ExecutorService> factory)
@@ -253,48 +295,5 @@ class TypedCodecCompositionTest {
           }
         },
         HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static Stream<Arguments> executors() {
-    Function<Set<Thread>, ExecutorService> platform =
-        workers ->
-            Executors.newSingleThreadExecutor(
-                recordingFactory(Thread.ofPlatform().factory(), workers));
-    Function<Set<Thread>, ExecutorService> virtual =
-        workers ->
-            Executors.newThreadPerTaskExecutor(
-                recordingFactory(Thread.ofVirtual().factory(), workers));
-    Function<Set<Thread>, ExecutorService> forkJoin = createForkJoinForExecutors();
-    Function<Set<Thread>, ExecutorService> wrapped =
-        workers -> Executors.unconfigurableExecutorService(platform.apply(workers));
-
-    return Stream.of(
-        Arguments.of("platform", platform),
-        Arguments.of("virtual", virtual),
-        Arguments.of("forkJoin", forkJoin),
-        Arguments.of("wrapped", wrapped));
-  }
-
-  private static Function<Set<Thread>, ExecutorService> createForkJoinForExecutors() {
-    return workers ->
-        new ForkJoinPool(
-            2,
-            pool -> {
-              var thread = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
-              workers.add(thread);
-
-              return thread;
-            },
-            null,
-            false);
-  }
-
-  private static ThreadFactory recordingFactory(ThreadFactory factory, Set<Thread> workers) {
-    return task -> {
-      var thread = factory.newThread(task);
-      workers.add(thread);
-
-      return thread;
-    };
   }
 }

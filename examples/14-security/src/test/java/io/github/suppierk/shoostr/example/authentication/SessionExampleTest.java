@@ -19,8 +19,16 @@ import org.junit.jupiter.api.io.TempDir;
 
 @Timeout(10)
 class SessionExampleTest {
+  private static String createSession(TestServer test) throws Exception {
+    var created = test.send(request -> request.path("/preferences/session"));
+
+    assertEquals(200, created.statusCode());
+
+    return created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+  }
+
   @Test
-  void createsASecurePreferenceCookieAndKeepsStateOnlyForItsSession(@TempDir Path directory)
+  void createsSecurePreferenceCookieAndKeepsStateOnlyForItsSession(@TempDir Path directory)
       throws Exception {
 
     try (var test =
@@ -149,7 +157,7 @@ class SessionExampleTest {
   }
 
   @Test
-  void rejectsRenewalWithoutCreatingANewSession(@TempDir Path directory) throws Exception {
+  void rejectsRenewalWithoutCreatingNewSession(@TempDir Path directory) throws Exception {
 
     try (var test =
         TestServer.start(
@@ -169,13 +177,5 @@ class SessionExampleTest {
 
     assertThrows(IllegalArgumentException.class, () -> SessionExample.application(file));
     assertThrows(IOException.class, () -> SessionExample.application(directory.resolve("missing")));
-  }
-
-  private static String createSession(TestServer test) throws Exception {
-    var created = test.send(request -> request.path("/preferences/session"));
-
-    assertEquals(200, created.statusCode());
-
-    return created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
   }
 }

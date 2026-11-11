@@ -17,8 +17,71 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class OptionsTest {
+  private static Stream<Arguments> nullResets() {
+    return Stream.of(
+        Arguments.of("host", (Consumer<Options>) o -> o.setHost(null), "0.0.0.0"),
+        Arguments.of("port", (Consumer<Options>) o -> o.setPort(null), 8080),
+        Arguments.of(
+            "maxRequestBytes", (Consumer<Options>) o -> o.setMaxRequestBytes(null), 1_048_576),
+        Arguments.of(
+            "maxResponseBytes", (Consumer<Options>) o -> o.setMaxResponseBytes(null), 1_048_576),
+        Arguments.of(
+            "maxRequestHeaderBytes",
+            (Consumer<Options>) o -> o.setMaxRequestHeaderBytes(null),
+            8192),
+        Arguments.of(
+            "idleTimeout", (Consumer<Options>) o -> o.setIdleTimeout(null), Duration.ofSeconds(30)),
+        Arguments.of(
+            "shutdownTimeout",
+            (Consumer<Options>) o -> o.setShutdownTimeout(null),
+            Duration.ofSeconds(5)),
+        Arguments.of("http2", (Consumer<Options>) o -> o.setHttp2(null), false),
+        Arguments.of("compression", (Consumer<Options>) o -> o.setCompression(null), false),
+        Arguments.of("maxParameters", (Consumer<Options>) o -> o.setMaxParameters(null), 1000),
+        Arguments.of(
+            "multipart",
+            (Consumer<Options>) o -> o.setMultipart(null),
+            MultipartOptions.defaults()),
+        Arguments.of(
+            "streamBufferBytes", (Consumer<Options>) o -> o.setStreamBufferBytes(null), 8192),
+        Arguments.of("virtualThreads", (Consumer<Options>) o -> o.setVirtualThreads(null), false));
+  }
+
+  private static Stream<Arguments> invalidMutations() {
+    return Stream.<Consumer<Options>>of(
+            o -> o.setHost(""),
+            o -> o.setPort(-1),
+            o -> o.setPort(65536),
+            o -> o.setMaxRequestBytes(0),
+            o -> o.setMaxRequestBytes(-1),
+            o -> o.setMaxRequestBytes(Integer.MAX_VALUE),
+            o -> o.setMaxResponseBytes(0),
+            o -> o.setMaxResponseBytes(-1),
+            o -> o.setMaxRequestHeaderBytes(0),
+            o -> o.setMaxRequestHeaderBytes(-1),
+            o -> o.setMaxParameters(0),
+            o -> o.setMaxParameters(-1),
+            o -> o.setStreamBufferBytes(0),
+            o -> o.setStreamBufferBytes(-1),
+            o -> o.setShutdownTimeout(Duration.ZERO))
+        .map(mutation -> Arguments.of(mutation));
+  }
+
+  private static Stream<Duration> invalidTimeouts() {
+    return Stream.of(
+        Duration.ZERO,
+        Duration.ofMillis(-1),
+        Duration.ofNanos(1),
+        Duration.ofNanos(1_000_001),
+        Duration.ofSeconds(Long.MAX_VALUE));
+  }
+
+  private static Stream<Duration> validTimeouts() {
+    return Stream.of(Duration.ofMillis(1), Duration.ofMillis(Long.MAX_VALUE));
+  }
+
   @Test
-  void initializesEveryServingDefaultOnANewInstance() {
+  void initializesEveryServingDefaultOnNewInstance() {
     var options = new Options();
 
     assertEquals("0.0.0.0", options.getHost());
@@ -168,68 +231,5 @@ class OptionsTest {
           descriptor.getReadMethod().invoke(options),
           descriptor.getName());
     }
-  }
-
-  private static Stream<Arguments> nullResets() {
-    return Stream.of(
-        Arguments.of("host", (Consumer<Options>) o -> o.setHost(null), "0.0.0.0"),
-        Arguments.of("port", (Consumer<Options>) o -> o.setPort(null), 8080),
-        Arguments.of(
-            "maxRequestBytes", (Consumer<Options>) o -> o.setMaxRequestBytes(null), 1_048_576),
-        Arguments.of(
-            "maxResponseBytes", (Consumer<Options>) o -> o.setMaxResponseBytes(null), 1_048_576),
-        Arguments.of(
-            "maxRequestHeaderBytes",
-            (Consumer<Options>) o -> o.setMaxRequestHeaderBytes(null),
-            8192),
-        Arguments.of(
-            "idleTimeout", (Consumer<Options>) o -> o.setIdleTimeout(null), Duration.ofSeconds(30)),
-        Arguments.of(
-            "shutdownTimeout",
-            (Consumer<Options>) o -> o.setShutdownTimeout(null),
-            Duration.ofSeconds(5)),
-        Arguments.of("http2", (Consumer<Options>) o -> o.setHttp2(null), false),
-        Arguments.of("compression", (Consumer<Options>) o -> o.setCompression(null), false),
-        Arguments.of("maxParameters", (Consumer<Options>) o -> o.setMaxParameters(null), 1000),
-        Arguments.of(
-            "multipart",
-            (Consumer<Options>) o -> o.setMultipart(null),
-            MultipartOptions.defaults()),
-        Arguments.of(
-            "streamBufferBytes", (Consumer<Options>) o -> o.setStreamBufferBytes(null), 8192),
-        Arguments.of("virtualThreads", (Consumer<Options>) o -> o.setVirtualThreads(null), false));
-  }
-
-  private static Stream<Arguments> invalidMutations() {
-    return Stream.<Consumer<Options>>of(
-            o -> o.setHost(""),
-            o -> o.setPort(-1),
-            o -> o.setPort(65536),
-            o -> o.setMaxRequestBytes(0),
-            o -> o.setMaxRequestBytes(-1),
-            o -> o.setMaxRequestBytes(Integer.MAX_VALUE),
-            o -> o.setMaxResponseBytes(0),
-            o -> o.setMaxResponseBytes(-1),
-            o -> o.setMaxRequestHeaderBytes(0),
-            o -> o.setMaxRequestHeaderBytes(-1),
-            o -> o.setMaxParameters(0),
-            o -> o.setMaxParameters(-1),
-            o -> o.setStreamBufferBytes(0),
-            o -> o.setStreamBufferBytes(-1),
-            o -> o.setShutdownTimeout(Duration.ZERO))
-        .map(mutation -> Arguments.of(mutation));
-  }
-
-  private static Stream<Duration> invalidTimeouts() {
-    return Stream.of(
-        Duration.ZERO,
-        Duration.ofMillis(-1),
-        Duration.ofNanos(1),
-        Duration.ofNanos(1_000_001),
-        Duration.ofSeconds(Long.MAX_VALUE));
-  }
-
-  private static Stream<Duration> validTimeouts() {
-    return Stream.of(Duration.ofMillis(1), Duration.ofMillis(Long.MAX_VALUE));
   }
 }

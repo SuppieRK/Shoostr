@@ -119,7 +119,7 @@ class McpFinalFlushExpiryTest {
 
               return new McpIdentity("public", McpTransportContext.EMPTY, verifiedExpiry);
             },
-            (ignored, ignoredJSONRPCMessage) -> {}),
+            (ignored, ignoredJsonRpcMessage) -> {}),
         transport -> McpServer.sync(transport).build());
   }
 
@@ -135,10 +135,10 @@ class McpFinalFlushExpiryTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                  "protocolVersion":"2025-11-25","capabilities":{},
-                  "clientInfo":{"name":"final-flush","version":"1.0"}}}
-                """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"final-flush","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 

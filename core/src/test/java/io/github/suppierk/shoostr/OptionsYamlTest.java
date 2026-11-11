@@ -58,11 +58,11 @@ class OptionsYamlTest {
     return new Yaml()
         .loadAs(
             """
-        host: 127.0.0.1
-        port: 9090
-        maxRequestBytes: 2048
-        compression: true
-        """,
+            host: 127.0.0.1
+            port: 9090
+            maxRequestBytes: 2048
+            compression: true
+            """,
             Options.class);
   }
 
@@ -89,20 +89,20 @@ class OptionsYamlTest {
     return new Yaml()
         .loadAs(
             """
-        host: null
-        port: null
-        maxRequestBytes: null
-        maxResponseBytes: null
-        maxRequestHeaderBytes: null
-        idleTimeout: null
-        shutdownTimeout: null
-        http2: null
-        compression: null
-        maxParameters: null
-        multipart: null
-        streamBufferBytes: null
-        virtualThreads: null
-        """,
+            host: null
+            port: null
+            maxRequestBytes: null
+            maxResponseBytes: null
+            maxRequestHeaderBytes: null
+            idleTimeout: null
+            shutdownTimeout: null
+            http2: null
+            compression: null
+            maxParameters: null
+            multipart: null
+            streamBufferBytes: null
+            virtualThreads: null
+            """,
             Options.class);
   }
 

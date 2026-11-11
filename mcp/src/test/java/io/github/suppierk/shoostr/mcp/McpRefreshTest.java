@@ -35,29 +35,19 @@ class McpRefreshTest {
   @Timeout(20)
   void replacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener() throws Exception {
     var oldExpiry = new AtomicReference<Instant>();
-    var security =
-        createSecurityForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-            oldExpiry);
-    var mcp =
-        createMcpForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-            security);
+    var security = createSecurityForRefreshedListener(oldExpiry);
+    var mcp = createMcpForRefreshedListener(security);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var readers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {
-      var initialized =
-          sendInitializedRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-              test);
+      var initialized = sendInitializedRequestForRefreshedListener(test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
-      var oldGet =
-          sendOldGetRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-              test, sessionId);
+      var oldGet = sendOldGetRequestForRefreshedListener(test, sessionId);
 
       try (var oldInput = oldGet.body()) {
-        var refreshedGet =
-            sendRefreshedGetRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-                test, sessionId);
+        var refreshedGet = sendRefreshedGetRequestForRefreshedListener(test, sessionId);
 
         try (var refreshedInput =
             new BufferedReader(
@@ -65,9 +55,7 @@ class McpRefreshTest {
           assertEquals(200, oldGet.statusCode());
           assertEquals(200, refreshedGet.statusCode());
 
-          var oldEnded =
-              submitOldEndedForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-                  readers, oldInput);
+          var oldEnded = submitOldEndedForRefreshedListener(readers, oldInput);
           oldEnded.get(1, TimeUnit.SECONDS);
           var target = oldExpiry.get().plusMillis(100);
           var started = System.nanoTime();
@@ -87,9 +75,7 @@ class McpRefreshTest {
                         && !Instant.now().isBefore(target);
                   });
           mcp.server().notifyToolsListChanged();
-          var received =
-              submitReceivedForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-                  readers, refreshedInput);
+          var received = submitReceivedForRefreshedListener(readers, refreshedInput);
 
           var notification =
               assertInstanceOf(
@@ -100,9 +86,7 @@ class McpRefreshTest {
     }
   }
 
-  private McpHttpSecurity
-      createSecurityForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-          AtomicReference<Instant> oldExpiry) {
+  private McpHttpSecurity createSecurityForRefreshedListener(AtomicReference<Instant> oldExpiry) {
     return new McpHttpSecurity(
         Set.of(),
         request -> {
@@ -114,12 +98,10 @@ class McpRefreshTest {
 
           return new McpIdentity("alice:client", McpTransportContext.EMPTY, expiry);
         },
-        (ignored, ignoredJSONRPCMessage) -> {});
+        (ignored, ignoredJsonRpcMessage) -> {});
   }
 
-  private Mcp<McpSyncServer>
-      createMcpForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-          McpHttpSecurity security) {
+  private Mcp<McpSyncServer> createMcpForRefreshedListener(McpHttpSecurity security) {
     return Mcp.sync(
         security,
         transport ->
@@ -128,9 +110,8 @@ class McpRefreshTest {
                 .build());
   }
 
-  private HttpResponse<byte[]>
-      sendInitializedRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendInitializedRequestForRefreshedListener(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -140,16 +121,15 @@ class McpRefreshTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"refresh-fixture","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"refresh-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
-  private HttpResponse<InputStream>
-      sendOldGetRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-          TestServer test, String sessionId) throws IOException, InterruptedException {
+  private HttpResponse<InputStream> sendOldGetRequestForRefreshedListener(
+      TestServer test, String sessionId) throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -161,9 +141,8 @@ class McpRefreshTest {
         HttpResponse.BodyHandlers.ofInputStream());
   }
 
-  private HttpResponse<InputStream>
-      sendRefreshedGetRequestForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-          TestServer test, String sessionId) throws IOException, InterruptedException {
+  private HttpResponse<InputStream> sendRefreshedGetRequestForRefreshedListener(
+      TestServer test, String sessionId) throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -174,9 +153,8 @@ class McpRefreshTest {
         HttpResponse.BodyHandlers.ofInputStream());
   }
 
-  private Future<Object>
-      submitOldEndedForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-          ExecutorService readers, InputStream oldInput) {
+  private Future<Object> submitOldEndedForRefreshedListener(
+      ExecutorService readers, InputStream oldInput) {
     return readers.submit(
         () -> {
           try {
@@ -189,9 +167,8 @@ class McpRefreshTest {
         });
   }
 
-  private Future<JSONRPCMessage>
-      submitReceivedForReplacingAnOldGetClosesItsConnectionWithoutDetachingTheRefreshedListener(
-          ExecutorService readers, BufferedReader refreshedInput) {
+  private Future<JSONRPCMessage> submitReceivedForRefreshedListener(
+      ExecutorService readers, BufferedReader refreshedInput) {
     return readers.submit(
         () -> {
           String line;

@@ -7,7 +7,7 @@ version = '2026.11.10.1'
 dependencies {
 	api shoostrDependency('core', '2026.11.10.0')
 	api 'org.pac4j:pac4j-core:6.6.0'
-	testImplementation project(':test')
+	testImplementation dependencies.project(':test')
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 	testImplementation 'org.pac4j:pac4j-http:6.6.0'
 	testImplementation 'org.pac4j:pac4j-jwt:6.6.0'

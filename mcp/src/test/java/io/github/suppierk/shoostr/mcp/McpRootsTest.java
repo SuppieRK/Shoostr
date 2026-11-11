@@ -59,7 +59,7 @@ class McpRootsTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
         transport ->
             McpServer.sync(transport)
                 .serverInfo("roots", "1.0")

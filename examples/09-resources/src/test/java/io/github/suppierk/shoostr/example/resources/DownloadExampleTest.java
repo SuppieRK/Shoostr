@@ -17,7 +17,7 @@ class DownloadExampleTest {
   @TempDir Path directory;
 
   @Test
-  void downloadsTheReportToAFileWithAsciiAndUtf8AttachmentFilenames() throws Exception {
+  void downloadsTheReportToFileWithAsciiAndUtf8AttachmentFilenames() throws Exception {
     var report =
         Files.writeString(directory.resolve("report.csv"), "name\nAda\n", StandardCharsets.UTF_8);
     var downloaded = directory.resolve("downloaded.csv");

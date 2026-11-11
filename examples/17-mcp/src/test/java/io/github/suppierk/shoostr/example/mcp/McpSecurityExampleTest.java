@@ -36,6 +36,33 @@ class McpSecurityExampleTest {
       {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"identity","arguments":{}}}
       """;
 
+  private static String initializationRequest() {
+    return
+        """
+        {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+          "protocolVersion":"2025-11-25","capabilities":{},
+          "clientInfo":{"name":"security-recipe","version":"1.0"}}}
+        """;
+  }
+
+  private static HttpResponse<byte[]> message(
+      TestServer test, String token, String session, String body) throws Exception {
+    return test.send(
+        request -> {
+          request
+              .method("POST")
+              .path("/mcp")
+              .header("Authorization", "Bearer " + token)
+              .header("Content-Type", "application/json")
+              .header("Accept", "application/json, text/event-stream")
+              .header("MCP-Protocol-Version", "2025-11-25")
+              .body(body.getBytes(StandardCharsets.UTF_8));
+          if (!session.isEmpty()) {
+            request.header("Mcp-Session-Id", session);
+          }
+        });
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {"", "Basic reader", "Bearer", "Bearer unknown-token", "Bearer expired-token"})
@@ -99,7 +126,7 @@ class McpSecurityExampleTest {
             HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
                 .endpoint("/mcp")
                 .addHttpRequestCustomizer(
-                    (builder, ignored, ignoredURI, ignoredString, ignoredMcpTransportContext) ->
+                    (builder, ignored, ignoredUri, ignoredString, ignoredMcpTransportContext) ->
                         builder.header("Authorization", "Bearer reader-token"))
                 .build())
         .requestTimeout(Duration.ofSeconds(3))
@@ -215,18 +242,15 @@ class McpSecurityExampleTest {
                           .header("Origin", "https://client.example"))
               .statusCode());
 
-      var accepted =
-          sendAcceptedRequestForRejectsRepeatedCredentialsAndUntrustedOriginsButAdmitsTheExactOrigin(
-              test);
+      var accepted = sendAcceptedRequestForExactOrigin(test);
 
       assertEquals(200, accepted.statusCode());
       assertTrue(accepted.headers().firstValue("Mcp-Session-Id").isPresent());
     }
   }
 
-  private HttpResponse<byte[]>
-      sendAcceptedRequestForRejectsRepeatedCredentialsAndUntrustedOriginsButAdmitsTheExactOrigin(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendAcceptedRequestForExactOrigin(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -247,7 +271,7 @@ class McpSecurityExampleTest {
 
       assertEquals(200, first.statusCode());
 
-      var firstSession = first.headers().firstValue("Mcp-Session-Id").orElseThrow();
+      final var firstSession = first.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var second = message(test, "reader-token", "", INITIALIZE);
 
       assertEquals(200, second.statusCode());
@@ -284,7 +308,7 @@ class McpSecurityExampleTest {
 
   @Test
   @Timeout(30)
-  void expiresAQuietSessionAndReclaimsItsCapacityWithoutKeepalivePolling() throws Exception {
+  void expiresQuietSessionAndReclaimsItsCapacityWithoutKeepalivePolling() throws Exception {
     try (var readers = Executors.newVirtualThreadPerTaskExecutor()) {
 
       try (var test = TestServer.start(McpSecurityExample.application())) {
@@ -297,9 +321,7 @@ class McpSecurityExampleTest {
         assertEquals(200, message(test, "reader-token", "", INITIALIZE).statusCode());
         assertEquals(429, message(test, "reader-token", "", INITIALIZE).statusCode());
 
-        var listening =
-            sendListeningRequestForExpiresAQuietSessionAndReclaimsItsCapacityWithoutKeepalivePolling(
-                test, session);
+        var listening = sendListeningRequestForIdleSessionExpiry(test, session);
 
         assertEquals(200, listening.statusCode());
 
@@ -320,18 +342,15 @@ class McpSecurityExampleTest {
                     "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}")
                 .statusCode());
 
-        var replacement =
-            awaitReclaimedCapacityForExpiresAQuietSessionAndReclaimsItsCapacityWithoutKeepalivePolling(
-                test);
+        var replacement = awaitReclaimedCapacityForIdleSessionExpiry(test);
 
         assertEquals(200, replacement.statusCode());
       }
     }
   }
 
-  private HttpResponse<InputStream>
-      sendListeningRequestForExpiresAQuietSessionAndReclaimsItsCapacityWithoutKeepalivePolling(
-          TestServer test, String session) throws IOException, InterruptedException {
+  private HttpResponse<InputStream> sendListeningRequestForIdleSessionExpiry(
+      TestServer test, String session) throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -343,9 +362,7 @@ class McpSecurityExampleTest {
         HttpResponse.BodyHandlers.ofInputStream());
   }
 
-  private HttpResponse<byte[]>
-      awaitReclaimedCapacityForExpiresAQuietSessionAndReclaimsItsCapacityWithoutKeepalivePolling(
-          TestServer test) {
+  private HttpResponse<byte[]> awaitReclaimedCapacityForIdleSessionExpiry(TestServer test) {
     return await("native MCP cleanup releases the session reservation")
         .atMost(Duration.ofSeconds(5))
         .pollDelay(Duration.ZERO)
@@ -365,9 +382,7 @@ class McpSecurityExampleTest {
         assertEquals(200, initialized.statusCode());
 
         var session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
-        var listening =
-            sendListeningRequestForEndsAnOpenStreamAtItsFixedTokenExpiryWithoutDeletingTheOwnersSession(
-                test, session);
+        var listening = sendListeningRequestForFixedTokenExpiry(test, session);
 
         assertEquals(200, listening.statusCode());
 
@@ -385,9 +400,7 @@ class McpSecurityExampleTest {
                     assertEquals(200, message(test, "reader-token", session, ping).statusCode());
 
                     var endedBeforeProbe = ended.isDone();
-                    var probe =
-                        sendProbeRequestForEndsAnOpenStreamAtItsFixedTokenExpiryWithoutDeletingTheOwnersSession(
-                            test);
+                    var probe = sendProbeRequestForFixedTokenExpiry(test);
                     // A valid token reaches the missing-session check; an expired one receives 401.
                     assertTrue(probe.statusCode() == 400 || probe.statusCode() == 401);
 
@@ -415,9 +428,8 @@ class McpSecurityExampleTest {
     }
   }
 
-  private HttpResponse<InputStream>
-      sendListeningRequestForEndsAnOpenStreamAtItsFixedTokenExpiryWithoutDeletingTheOwnersSession(
-          TestServer test, String session) throws IOException, InterruptedException {
+  private HttpResponse<InputStream> sendListeningRequestForFixedTokenExpiry(
+      TestServer test, String session) throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -429,9 +441,8 @@ class McpSecurityExampleTest {
         HttpResponse.BodyHandlers.ofInputStream());
   }
 
-  private HttpResponse<byte[]>
-      sendProbeRequestForEndsAnOpenStreamAtItsFixedTokenExpiryWithoutDeletingTheOwnersSession(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendProbeRequestForFixedTokenExpiry(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -487,31 +498,5 @@ class McpSecurityExampleTest {
                   "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"ping\"}")
               .statusCode());
     }
-  }
-
-  private static String initializationRequest() {
-    return """
-      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-11-25","capabilities":{},
-        "clientInfo":{"name":"security-recipe","version":"1.0"}}}
-      """;
-  }
-
-  private static HttpResponse<byte[]> message(
-      TestServer test, String token, String session, String body) throws Exception {
-    return test.send(
-        request -> {
-          request
-              .method("POST")
-              .path("/mcp")
-              .header("Authorization", "Bearer " + token)
-              .header("Content-Type", "application/json")
-              .header("Accept", "application/json, text/event-stream")
-              .header("MCP-Protocol-Version", "2025-11-25")
-              .body(body.getBytes(StandardCharsets.UTF_8));
-          if (!session.isEmpty()) {
-            request.header("Mcp-Session-Id", session);
-          }
-        });
   }
 }

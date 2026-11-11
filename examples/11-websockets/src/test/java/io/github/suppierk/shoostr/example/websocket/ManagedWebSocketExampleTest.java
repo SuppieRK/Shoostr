@@ -11,7 +11,6 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
-import java.net.http.WebSocket.Builder;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.util.List;
@@ -29,6 +28,25 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class ManagedWebSocketExampleTest {
+  private static WebSocket connect(HttpClient client, TestServer test, Messages messages)
+      throws Exception {
+    return client
+        .newWebSocketBuilder()
+        .header("Origin", "https://app.example")
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/rooms/lobby", null, null), messages)
+        .get(3, TimeUnit.SECONDS);
+  }
+
+  private static Stream<List<String>> rejectedOrigins() {
+    return Stream.of(
+        List.of(),
+        List.of("https://other.example"),
+        List.of("null"),
+        List.of("https://app.example", "https://app.example"),
+        List.of("https://app.example, https://other.example"));
+  }
+
   @Test
   @Timeout(15)
   void handlesCompleteTextMessagesInOrderWithAnIndependentCounterForEachConnection()
@@ -81,7 +99,7 @@ class ManagedWebSocketExampleTest {
   }
 
   private ExecutionException assertFailureForRejectsMissingForeignOrAmbiguousOriginsBeforeUpgrading(
-      Builder builder, TestServer test) {
+      WebSocket.Builder builder, TestServer test) {
     return assertThrows(
         ExecutionException.class,
         () ->
@@ -186,25 +204,6 @@ class ManagedWebSocketExampleTest {
             new URI("ws", test.baseUri().getRawAuthority(), "/fixture/failure", null, null),
             messages)
         .get(3, TimeUnit.SECONDS);
-  }
-
-  private static WebSocket connect(HttpClient client, TestServer test, Messages messages)
-      throws Exception {
-    return client
-        .newWebSocketBuilder()
-        .header("Origin", "https://app.example")
-        .buildAsync(
-            new URI("ws", test.baseUri().getRawAuthority(), "/rooms/lobby", null, null), messages)
-        .get(3, TimeUnit.SECONDS);
-  }
-
-  private static Stream<List<String>> rejectedOrigins() {
-    return Stream.of(
-        List.of(),
-        List.of("https://other.example"),
-        List.of("null"),
-        List.of("https://app.example", "https://app.example"),
-        List.of("https://app.example, https://other.example"));
   }
 
   private static final class Messages implements WebSocket.Listener {

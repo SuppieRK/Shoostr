@@ -35,11 +35,11 @@ import org.jspecify.annotations.Nullable;
 final class StaticFiles implements Closeable {
   private static final String BINARY_CONTENT_TYPE = "application/octet-stream";
   private final String mount;
-  private @Nullable EndpointBehavior behavior;
   private final StaticOptions options;
   private final boolean filesystem;
   private final ResourceFactory.Closeable resourceFactory;
   private final Resource source;
+  private @Nullable EndpointBehavior behavior;
 
   /**
    * Validates a filesystem directory mount at registration time.
@@ -146,6 +146,41 @@ final class StaticFiles implements Closeable {
     } catch (IOException failure) {
       throw new IllegalArgumentException("Static-file source cannot be resolved", failure);
     }
+  }
+
+  /**
+   * Selects a deterministic MIME type while keeping unknown files safely binary.
+   *
+   * @param name selected resource filename
+   * @return detected or fallback media type
+   */
+  private static String contentType(String name) {
+    return Objects.requireNonNullElse(
+        URLConnection.guessContentTypeFromName(name), BINARY_CONTENT_TYPE);
+  }
+
+  /**
+   * Rejects traversal, empty segments and platform separators before resource resolution.
+   *
+   * @param path decoded relative path
+   * @return true when the path contains no traversal or platform separator
+   */
+  private static boolean safe(String path) {
+    if (path.indexOf(HttpCharacters.BACKSLASH) >= 0
+        || path.indexOf('\u0000') >= 0
+        || path.isEmpty()) {
+      return false;
+    }
+
+    for (var segment : path.split(HttpCharacters.PATH_SEPARATOR_STRING, -1)) {
+      if (segment.isEmpty()
+          || HttpCharacters.DOT_STRING.equals(segment)
+          || HttpCharacters.PARENT_DIRECTORY.equals(segment)) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   /**
@@ -348,17 +383,6 @@ final class StaticFiles implements Closeable {
   }
 
   /**
-   * Selects a deterministic MIME type while keeping unknown files safely binary.
-   *
-   * @param name selected resource filename
-   * @return detected or fallback media type
-   */
-  private static String contentType(String name) {
-    return Objects.requireNonNullElse(
-        URLConnection.guessContentTypeFromName(name), BINARY_CONTENT_TYPE);
-  }
-
-  /**
    * Reports whether an existing GET resource is available without opening a file before gates run.
    *
    * @param path request path
@@ -461,30 +485,6 @@ final class StaticFiles implements Closeable {
             && path.length() > mount.length()
             && (mount.length() == 1
                 || path.charAt(mount.length()) == HttpCharacters.PATH_SEPARATOR));
-  }
-
-  /**
-   * Rejects traversal, empty segments and platform separators before resource resolution.
-   *
-   * @param path decoded relative path
-   * @return true when the path contains no traversal or platform separator
-   */
-  private static boolean safe(String path) {
-    if (path.indexOf(HttpCharacters.BACKSLASH) >= 0
-        || path.indexOf('\u0000') >= 0
-        || path.isEmpty()) {
-      return false;
-    }
-
-    for (var segment : path.split(HttpCharacters.PATH_SEPARATOR_STRING, -1)) {
-      if (segment.isEmpty()
-          || HttpCharacters.DOT_STRING.equals(segment)
-          || HttpCharacters.PARENT_DIRECTORY.equals(segment)) {
-        return false;
-      }
-    }
-
-    return true;
   }
 
   /**

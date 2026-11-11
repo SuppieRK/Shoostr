@@ -3,7 +3,7 @@ updates:
   - package-ecosystem: gradle
     directories:
       - /
-      - /buildSrc
+      - /build-logic
       - /http
       - /core
       - /test

@@ -38,18 +38,23 @@ import org.openjdk.jmh.annotations.Warmup;
 public class BufferedRequestBenchmark {
   private static final int LIMIT = 1_048_576;
 
+  /** Number of bytes in the buffered request body. */
   @Param({"0", "1024", "16384", "1048576"})
   public int bytes;
 
+  /** How the request declares its content length. */
   @Param({"known", "unknown"})
   public String length;
 
+  /** Number of extra headers on each request. */
   @Param({"0", "4", "12"})
   public int headers;
 
+  /** Character set declared for the request body. */
   @Param({"UTF-8"})
   public String charset;
 
+  /** Content pattern used to generate the request body. */
   @Param({"ascii"})
   public String content;
 

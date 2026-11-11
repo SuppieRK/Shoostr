@@ -121,7 +121,7 @@ class FileCachingExampleTest {
       assertEquals(200, first.statusCode());
 
       var tag = first.headers().firstValue("ETag").orElseThrow();
-      var modified = first.headers().firstValue("Last-Modified").orElseThrow();
+      final var modified = first.headers().firstValue("Last-Modified").orElseThrow();
       var byTag = test.send(request -> request.path("/file").header("If-None-Match", tag));
 
       assertEquals(304, byTag.statusCode());
@@ -158,13 +158,13 @@ class FileCachingExampleTest {
   }
 
   @Test
-  void evaluatesPreconditionsBeforeSelectingARange() throws Exception {
+  void evaluatesPreconditionsBeforeSelectingRange() throws Exception {
     var file =
         Files.writeString(
             directory.resolve("revision.txt"), "0123456789", StandardCharsets.US_ASCII);
 
     try (var test = TestServer.start(FileCachingExample.application(file))) {
-      var response = sendResponseForEvaluatesPreconditionsBeforeSelectingARange(test);
+      var response = sendResponseForEvaluatesPreconditionsBeforeSelectingRange(test);
 
       assertEquals(412, response.statusCode());
       assertEquals(0, response.body().length);
@@ -172,7 +172,7 @@ class FileCachingExampleTest {
     }
   }
 
-  private HttpResponse<byte[]> sendResponseForEvaluatesPreconditionsBeforeSelectingARange(
+  private HttpResponse<byte[]> sendResponseForEvaluatesPreconditionsBeforeSelectingRange(
       TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->

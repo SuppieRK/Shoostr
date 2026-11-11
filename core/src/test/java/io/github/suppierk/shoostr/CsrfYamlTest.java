@@ -30,7 +30,7 @@ class CsrfYamlTest {
   }
 
   @Test
-  void invalidOriginsRetainPreviousSettingsAndRuntimeStateIsNotAProperty() {
+  void invalidOriginsRetainPreviousSettingsAndRuntimeStateIsNotProperty() {
     var settings = new Yaml().loadAs("trustedOrigins: [https://client.example]", Csrf.class);
     for (var invalid : new String[] {"*", "null", "not-an-origin", "https://client.example/path"}) {
       assertThrows(

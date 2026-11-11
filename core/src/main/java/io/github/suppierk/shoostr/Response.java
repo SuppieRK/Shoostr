@@ -55,41 +55,8 @@ import org.jspecify.annotations.Nullable;
 
 /** Finite output is staged until handler return. The framework owns close(). */
 public sealed class Response implements AutoCloseable permits TypedResponse {
-  /** Tracks writable phases and terminal outcomes independently of transport commitment. */
-  private enum State {
-    OPEN,
-    STREAMING,
-    CLOSED,
-    FAILED
-  }
-
-  /** Represents the inclusive interval selected from one byte range request. */
-  private record ByteRange(long first, long last) {
-    /**
-     * Creates one inclusive byte interval.
-     *
-     * @param first first selected byte offset
-     * @param last last selected byte offset
-     * @throws IllegalArgumentException if the first offset exceeds the last
-     */
-    private ByteRange {
-      if (first > last) {
-        throw new IllegalArgumentException("Byte range start exceeds end");
-      }
-    }
-
-    /**
-     * Calculates the selected number of bytes.
-     *
-     * @return the interval length
-     */
-    private long length() {
-      return last - first + 1;
-    }
-  }
-
-  private static final byte[] EMPTY = new byte[0];
   static final String EVENT_STREAM_CONTENT_TYPE = "text/event-stream; charset=utf-8";
+  private static final byte[] EMPTY = new byte[0];
   private static final List<HttpHeaders> CORS_RESPONSE_HEADERS =
       List.of(
           HttpHeaders.ACCESS_CONTROL_ALLOW_ORIGIN, HttpHeaders.ACCESS_CONTROL_ALLOW_CREDENTIALS,
@@ -168,6 +135,378 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     this.headContentLength = -1;
     this.state = State.OPEN;
     this.body = EMPTY;
+  }
+
+  /**
+   * Resolves the native compressor selected by Jetty's encoding and preference rules.
+   *
+   * @param handler active native compression handler
+   * @param config native configuration matched for the outer request path
+   * @param acceptEncoding raw field values at the compression handler's context boundary
+   * @return selected native compressor, or null if no registered compressor matches
+   */
+  private static @Nullable Compression selectedCompressor(
+      CompressionHandler handler, CompressionConfig config, List<String> acceptEncoding) {
+    var encoders = new TreeMap<String, Compression>(String.CASE_INSENSITIVE_ORDER);
+    for (var encoder : handler.getBeans(Compression.class)) {
+      encoders.put(encoder.getEncodingName(), encoder);
+    }
+
+    var parser = new QuotedQualityCSV();
+    for (var value : acceptEncoding) {
+      parser.addValue(value);
+    }
+
+    var matches = new ArrayList<String>();
+    boolean wildcardAccepted = false;
+    for (var value : parser.getQualityValues()) {
+      var encoding = value.getValue();
+      if (HttpCharacters.ASTERISK_STRING.equals(encoding)) {
+        wildcardAccepted = value.isAcceptable();
+      } else if (value.isAcceptable()
+          && encoders.containsKey(encoding)
+          && compressionEncodingAllowed(config, encoding)) {
+        matches.add(encoding);
+      }
+    }
+
+    if (matches.isEmpty()) {
+      return wildcardCompressor(config, encoders, wildcardAccepted);
+    }
+
+    var preferred = config.getCompressPreferredEncodings();
+    var selected =
+        preferred.stream().filter(matches::contains).findFirst().orElse(matches.getFirst());
+
+    return encoders.get(selected);
+  }
+
+  /**
+   * Selects a compressor when the client accepts only a wildcard encoding.
+   *
+   * @param config selected native compression configuration
+   * @param encoders available compressors by encoding name
+   * @param wildcardAccepted whether the wildcard has positive quality
+   * @return selected compressor, or null when none is permitted
+   */
+  private static @Nullable Compression wildcardCompressor(
+      CompressionConfig config, Map<String, Compression> encoders, boolean wildcardAccepted) {
+    if (!wildcardAccepted) {
+      return null;
+    }
+
+    var preferred = config.getCompressPreferredEncodings();
+    String candidate;
+    if (preferred.isEmpty()) {
+      candidate = encoders.isEmpty() ? null : encoders.keySet().iterator().next();
+    } else {
+      candidate = preferred.stream().filter(encoders::containsKey).findFirst().orElse(null);
+    }
+
+    return candidate != null && compressionEncodingAllowed(config, candidate)
+        ? encoders.get(candidate)
+        : null;
+  }
+
+  /**
+   * Applies a native configuration's encoding exclusions before includes.
+   *
+   * @param config selected native configuration
+   * @param encoding candidate content coding
+   * @return whether that coding remains enabled
+   */
+  private static boolean compressionEncodingAllowed(CompressionConfig config, String encoding) {
+    return !config.getCompressExcludeEncodings().contains(encoding)
+        && (config.getCompressIncludeEncodings().isEmpty()
+            || config.getCompressIncludeEncodings().contains(encoding));
+  }
+
+  /**
+   * Produces a safe dual-form attachment field under RFC 6266 and RFC 8187 conventions.
+   *
+   * @param filename caller-supplied attachment filename
+   * @return complete Content-Disposition value
+   * @throws IllegalArgumentException if the filename is empty or unsafe
+   */
+  private static String attachmentDisposition(String filename) {
+    var value = Objects.requireNonNull(filename);
+    if (value.isEmpty()) {
+      throw new IllegalArgumentException("Attachment filename cannot be empty");
+    }
+
+    var fallback = new StringBuilder(value.length());
+    for (int index = 0; index < value.length(); index++) {
+      var character = value.charAt(index);
+      if (character < 0x20
+          || character == 0x7f
+          || character == HttpCharacters.PATH_SEPARATOR
+          || character == HttpCharacters.BACKSLASH) {
+        throw new IllegalArgumentException("Attachment filename contains an unsafe character");
+      }
+
+      fallback.append(
+          character <= 0x7e && character != HttpCharacters.DOUBLE_QUOTE
+              ? character
+              : HttpCharacters.UNDERSCORE);
+    }
+
+    return "attachment; filename=\"" + fallback + "\"; filename*=UTF-8''" + encodedFilename(value);
+  }
+
+  /**
+   * Percent-encodes non-attribute UTF-8 octets for the extended attachment filename.
+   *
+   * @param filename validated attachment filename
+   * @return RFC 8187 encoded filename value
+   */
+  private static String encodedFilename(String filename) {
+    var encoded = new StringBuilder();
+    for (var value : filename.getBytes(StandardCharsets.UTF_8)) {
+      var octet = Byte.toUnsignedInt(value);
+      if ((octet >= 'a' && octet <= 'z')
+          || (octet >= 'A' && octet <= 'Z')
+          || (octet >= '0' && octet <= '9')
+          || "!#$&+-.^_`|~".indexOf(octet) >= 0) {
+        encoded.append((char) octet);
+      } else {
+        encoded
+            .append(HttpCharacters.PERCENT_SIGN)
+            .append(Character.toUpperCase(Character.forDigit(octet >>> 4, 16)));
+        encoded.append(Character.toUpperCase(Character.forDigit(octet & 0xf, 16)));
+      }
+    }
+
+    return encoded.toString();
+  }
+
+  /**
+   * Clamps resource metadata to the selected response date because a future Last-Modified value is
+   * invalid for conditional comparison and caching.
+   *
+   * @param lastModified resource modification time
+   * @param date response date
+   * @return a usable modification time, or null when unavailable
+   */
+  private static @Nullable Instant effectiveLastModified(
+      @Nullable Instant lastModified, Instant date) {
+    if (lastModified == null) {
+      return null;
+    }
+
+    return lastModified.isAfter(date) ? date : lastModified;
+  }
+
+  /**
+   * Creates a weak descriptor-relative entity tag without reading a mutable filesystem pathname.
+   *
+   * @param length selected representation length
+   * @param lastModified selected resource modification time, independent of the response date
+   * @return valid weak entity tag
+   */
+  private static String resourceTag(long length, Instant lastModified) {
+    return "W/\""
+        + length
+        + HttpCharacters.DASH_STRING
+        + lastModified.toEpochMilli()
+        + HttpCharacters.DOUBLE_QUOTE_STRING;
+  }
+
+  /**
+   * Removes a weak marker so cache validation compares the opaque tag value.
+   *
+   * @param value entity tag value
+   * @return opaque-tag representation
+   */
+  private static String weakTag(String value) {
+    return value.startsWith("W/") ? value.substring(2) : value;
+  }
+
+  /**
+   * Validates the limited entity-tag syntax accepted for application-supplied validators.
+   *
+   * @param value candidate entity tag
+   * @return whether the value is a strong or weak quoted entity tag
+   */
+  private static boolean entityTag(String value) {
+    var start = value.startsWith("W/") ? 2 : 0;
+    if (value.length() <= start + 1
+        || value.charAt(start) != HttpCharacters.DOUBLE_QUOTE
+        || value.charAt(value.length() - 1) != HttpCharacters.DOUBLE_QUOTE) {
+      return false;
+    }
+
+    for (int index = start + 1; index < value.length() - 1; index++) {
+      var character = value.charAt(index);
+      if (character == HttpCharacters.DOUBLE_QUOTE
+          || character < 0x21
+          || character == 0x7f
+          || character > 0xff) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Splits entity-tag list members without treating quoted opaque commas as list delimiters.
+   *
+   * @param values field values containing entity-tag lists
+   * @return parsed list members
+   */
+  private static List<String> entityTags(List<String> values) {
+    var tags = new ArrayList<String>();
+    var current = new StringBuilder();
+    var quoted = false;
+    for (var value : values) {
+      for (int index = 0; index < value.length(); index++) {
+        var character = value.charAt(index);
+        if (character == HttpCharacters.DOUBLE_QUOTE) {
+          quoted = !quoted;
+        }
+
+        if (character == HttpCharacters.COMMA_SIGN && !quoted) {
+          tags.add(current.toString().trim());
+          current.setLength(0);
+        } else {
+          current.append(character);
+        }
+      }
+
+      if (!current.isEmpty()) {
+        tags.add(current.toString().trim());
+        current.setLength(0);
+      }
+    }
+
+    return tags;
+  }
+
+  /**
+   * Parses a suffix interval after its leading hyphen.
+   *
+   * @param length full representation length
+   * @param suffixText digits after the hyphen
+   * @return selected range, unsatisfiable marker, or null for invalid syntax
+   */
+  private static @Nullable ByteRange suffixRange(long length, String suffixText) {
+    if (!decimal(suffixText)) {
+      return null;
+    }
+
+    var suffix = Long.parseLong(suffixText);
+    if (suffix <= 0 || length == 0) {
+      return UNSATISFIABLE_RANGE;
+    }
+
+    return new ByteRange(Math.max(0, length - suffix), length - 1);
+  }
+
+  /**
+   * Parses a first-last interval, including an omitted final position.
+   *
+   * @param length full representation length
+   * @param firstText first byte position
+   * @param lastText final byte position, or empty for the end of the representation
+   * @return selected range, unsatisfiable marker, or null for invalid syntax
+   */
+  private static @Nullable ByteRange explicitRange(long length, String firstText, String lastText) {
+    if (!decimal(firstText) || (!lastText.isEmpty() && !decimal(lastText))) {
+      return null;
+    }
+
+    var first = Long.parseLong(firstText);
+    if (lastText.isEmpty() && first >= length) {
+      return UNSATISFIABLE_RANGE;
+    }
+
+    var last = lastText.isEmpty() ? length - 1 : Long.parseLong(lastText);
+    if (last < first) {
+      return null;
+    }
+
+    if (first >= length) {
+      return UNSATISFIABLE_RANGE;
+    }
+
+    return new ByteRange(first, Math.min(last, length - 1));
+  }
+
+  /**
+   * Verifies that an HTTP numeric field uses only ASCII decimal digits.
+   *
+   * @param value candidate decimal text
+   * @return whether the text is a nonempty unsigned decimal integer
+   */
+  private static boolean decimal(String value) {
+    if (value.isEmpty()) {
+      return false;
+    }
+
+    for (int index = 0; index < value.length(); index++) {
+      if (value.charAt(index) < '0' || value.charAt(index) > '9') {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  /**
+   * Validates a mutable application field name while reserving framing for the framework.
+   *
+   * @param name proposed field name
+   * @throws IllegalArgumentException if the name is invalid or controls HTTP framing
+   */
+  private static void validateHeaderName(String name) {
+    Objects.requireNonNull(name);
+    if (!HttpCharacters.isValidHttpToken(name)) {
+      throw new IllegalArgumentException("Invalid header");
+    }
+
+    if (HttpHeaders.CONTENT_LENGTH.equalsIgnoreCase(name)
+        || HttpHeaders.TRANSFER_ENCODING.equalsIgnoreCase(name)) {
+      throw new IllegalArgumentException("HTTP framing is managed by the framework");
+    }
+  }
+
+  /**
+   * Rejects null values and invalid HTTP controls before values reach the transport.
+   *
+   * @param value proposed HTTP field value
+   * @throws IllegalArgumentException if the value contains a control other than horizontal tab
+   */
+  private static void validateHeaderValue(String value) {
+    Objects.requireNonNull(value);
+    for (int index = 0; index < value.length(); index++) {
+      char character = value.charAt(index);
+      if ((character < 0x20 && character != HttpCharacters.TAB) || character == 0x7f) {
+        throw new IllegalArgumentException("Invalid header");
+      }
+    }
+  }
+
+  /**
+   * Uses the transport parser to compare explicit cookie scopes without parsing attributes locally.
+   *
+   * @param field existing Set-Cookie field
+   * @param cookie replacement cookie
+   * @return whether the existing field has the same case-sensitive name/path and canonical domain
+   */
+  private static boolean matchesCookie(HttpField field, Cookie cookie) {
+    var previous = COOKIE_PARSER.parse(field.getValue());
+    if (previous == null) {
+      return false;
+    }
+
+    var domain = previous.getDomain();
+    if (domain != null && domain.startsWith(HttpCharacters.DOT_STRING)) {
+      domain = domain.substring(1);
+    }
+
+    return cookie.name().equals(previous.getName())
+        && cookie.path().equals(previous.getPath())
+        && (cookie.domain() == null ? domain == null : cookie.domain().equalsIgnoreCase(domain));
   }
 
   /**
@@ -420,90 +759,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
         throw new NotAcceptableException();
       }
     }
-  }
-
-  /**
-   * Resolves the native compressor selected by Jetty's encoding and preference rules.
-   *
-   * @param handler active native compression handler
-   * @param config native configuration matched for the outer request path
-   * @param acceptEncoding raw field values at the compression handler's context boundary
-   * @return selected native compressor, or null if no registered compressor matches
-   */
-  private static @Nullable Compression selectedCompressor(
-      CompressionHandler handler, CompressionConfig config, List<String> acceptEncoding) {
-    var encoders = new TreeMap<String, Compression>(String.CASE_INSENSITIVE_ORDER);
-    for (var encoder : handler.getBeans(Compression.class)) {
-      encoders.put(encoder.getEncodingName(), encoder);
-    }
-
-    var parser = new QuotedQualityCSV();
-    for (var value : acceptEncoding) {
-      parser.addValue(value);
-    }
-
-    var matches = new ArrayList<String>();
-    boolean wildcardAccepted = false;
-    for (var value : parser.getQualityValues()) {
-      var encoding = value.getValue();
-      if (HttpCharacters.ASTERISK_STRING.equals(encoding)) {
-        wildcardAccepted = value.isAcceptable();
-      } else if (value.isAcceptable()
-          && encoders.containsKey(encoding)
-          && compressionEncodingAllowed(config, encoding)) {
-        matches.add(encoding);
-      }
-    }
-
-    if (matches.isEmpty()) {
-      return wildcardCompressor(config, encoders, wildcardAccepted);
-    }
-
-    var preferred = config.getCompressPreferredEncodings();
-    var selected =
-        preferred.stream().filter(matches::contains).findFirst().orElse(matches.getFirst());
-
-    return encoders.get(selected);
-  }
-
-  /**
-   * Selects a compressor when the client accepts only a wildcard encoding.
-   *
-   * @param config selected native compression configuration
-   * @param encoders available compressors by encoding name
-   * @param wildcardAccepted whether the wildcard has positive quality
-   * @return selected compressor, or null when none is permitted
-   */
-  private static @Nullable Compression wildcardCompressor(
-      CompressionConfig config, Map<String, Compression> encoders, boolean wildcardAccepted) {
-    if (!wildcardAccepted) {
-      return null;
-    }
-
-    var preferred = config.getCompressPreferredEncodings();
-    String candidate;
-    if (preferred.isEmpty()) {
-      candidate = encoders.isEmpty() ? null : encoders.keySet().iterator().next();
-    } else {
-      candidate = preferred.stream().filter(encoders::containsKey).findFirst().orElse(null);
-    }
-
-    return candidate != null && compressionEncodingAllowed(config, candidate)
-        ? encoders.get(candidate)
-        : null;
-  }
-
-  /**
-   * Applies a native configuration's encoding exclusions before includes.
-   *
-   * @param config selected native configuration
-   * @param encoding candidate content coding
-   * @return whether that coding remains enabled
-   */
-  private static boolean compressionEncodingAllowed(CompressionConfig config, String encoding) {
-    return !config.getCompressExcludeEncodings().contains(encoding)
-        && (config.getCompressIncludeEncodings().isEmpty()
-            || config.getCompressIncludeEncodings().contains(encoding));
   }
 
   /**
@@ -851,64 +1106,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   }
 
   /**
-   * Produces a safe dual-form attachment field under RFC 6266 and RFC 8187 conventions.
-   *
-   * @param filename caller-supplied attachment filename
-   * @return complete Content-Disposition value
-   * @throws IllegalArgumentException if the filename is empty or unsafe
-   */
-  private static String attachmentDisposition(String filename) {
-    var value = Objects.requireNonNull(filename);
-    if (value.isEmpty()) {
-      throw new IllegalArgumentException("Attachment filename cannot be empty");
-    }
-
-    var fallback = new StringBuilder(value.length());
-    for (int index = 0; index < value.length(); index++) {
-      var character = value.charAt(index);
-      if (character < 0x20
-          || character == 0x7f
-          || character == HttpCharacters.PATH_SEPARATOR
-          || character == HttpCharacters.BACKSLASH) {
-        throw new IllegalArgumentException("Attachment filename contains an unsafe character");
-      }
-
-      fallback.append(
-          character <= 0x7e && character != HttpCharacters.DOUBLE_QUOTE
-              ? character
-              : HttpCharacters.UNDERSCORE);
-    }
-
-    return "attachment; filename=\"" + fallback + "\"; filename*=UTF-8''" + encodedFilename(value);
-  }
-
-  /**
-   * Percent-encodes non-attribute UTF-8 octets for the extended attachment filename.
-   *
-   * @param filename validated attachment filename
-   * @return RFC 8187 encoded filename value
-   */
-  private static String encodedFilename(String filename) {
-    var encoded = new StringBuilder();
-    for (var value : filename.getBytes(StandardCharsets.UTF_8)) {
-      var octet = Byte.toUnsignedInt(value);
-      if ((octet >= 'a' && octet <= 'z')
-          || (octet >= 'A' && octet <= 'Z')
-          || (octet >= '0' && octet <= '9')
-          || "!#$&+-.^_`|~".indexOf(octet) >= 0) {
-        encoded.append((char) octet);
-      } else {
-        encoded
-            .append(HttpCharacters.PERCENT_SIGN)
-            .append(Character.toUpperCase(Character.forDigit(octet >>> 4, 16)));
-        encoded.append(Character.toUpperCase(Character.forDigit(octet & 0xf, 16)));
-      }
-    }
-
-    return encoded.toString();
-  }
-
-  /**
    * Stages one framework-selected Jetty resource for transfer after handler return.
    *
    * @param resource readable resource selected by framework infrastructure
@@ -1095,23 +1292,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   }
 
   /**
-   * Clamps resource metadata to the selected response date because a future Last-Modified value is
-   * invalid for conditional comparison and caching.
-   *
-   * @param lastModified resource modification time
-   * @param date response date
-   * @return a usable modification time, or null when unavailable
-   */
-  private static @Nullable Instant effectiveLastModified(
-      @Nullable Instant lastModified, Instant date) {
-    if (lastModified == null) {
-      return null;
-    }
-
-    return lastModified.isAfter(date) ? date : lastModified;
-  }
-
-  /**
    * Gets or establishes the file response Date field used as the validator-generation boundary.
    *
    * @return response origination date
@@ -1127,21 +1307,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     delegate.getHeaders().put(HttpHeaders.DATE.value(), HttpDateTime.format(date));
 
     return date;
-  }
-
-  /**
-   * Creates a weak descriptor-relative entity tag without reading a mutable filesystem pathname.
-   *
-   * @param length selected representation length
-   * @param lastModified selected resource modification time, independent of the response date
-   * @return valid weak entity tag
-   */
-  private static String resourceTag(long length, Instant lastModified) {
-    return "W/\""
-        + length
-        + HttpCharacters.DASH_STRING
-        + lastModified.toEpochMilli()
-        + HttpCharacters.DOUBLE_QUOTE_STRING;
   }
 
   /**
@@ -1243,77 +1408,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   }
 
   /**
-   * Removes a weak marker so cache validation compares the opaque tag value.
-   *
-   * @param value entity tag value
-   * @return opaque-tag representation
-   */
-  private static String weakTag(String value) {
-    return value.startsWith("W/") ? value.substring(2) : value;
-  }
-
-  /**
-   * Validates the limited entity-tag syntax accepted for application-supplied validators.
-   *
-   * @param value candidate entity tag
-   * @return whether the value is a strong or weak quoted entity tag
-   */
-  private static boolean entityTag(String value) {
-    var start = value.startsWith("W/") ? 2 : 0;
-    if (value.length() <= start + 1
-        || value.charAt(start) != HttpCharacters.DOUBLE_QUOTE
-        || value.charAt(value.length() - 1) != HttpCharacters.DOUBLE_QUOTE) {
-      return false;
-    }
-
-    for (int index = start + 1; index < value.length() - 1; index++) {
-      var character = value.charAt(index);
-      if (character == HttpCharacters.DOUBLE_QUOTE
-          || character < 0x21
-          || character == 0x7f
-          || character > 0xff) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  /**
-   * Splits entity-tag list members without treating quoted opaque commas as list delimiters.
-   *
-   * @param values field values containing entity-tag lists
-   * @return parsed list members
-   */
-  private static List<String> entityTags(List<String> values) {
-    var tags = new ArrayList<String>();
-    var current = new StringBuilder();
-    var quoted = false;
-    for (var value : values) {
-      for (int index = 0; index < value.length(); index++) {
-        var character = value.charAt(index);
-        if (character == HttpCharacters.DOUBLE_QUOTE) {
-          quoted = !quoted;
-        }
-
-        if (character == HttpCharacters.COMMA_SIGN && !quoted) {
-          tags.add(current.toString().trim());
-          current.setLength(0);
-        } else {
-          current.append(character);
-        }
-      }
-
-      if (!current.isEmpty()) {
-        tags.add(current.toString().trim());
-        current.setLength(0);
-      }
-    }
-
-    return tags;
-  }
-
-  /**
    * Parses the one supported satisfiable byte interval, ignoring unsupported Range syntax.
    *
    * @param length full representation length
@@ -1374,76 +1468,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     var validator = values.getFirst();
 
     return tag != null && !tag.startsWith("W/") && validator.equals(tag);
-  }
-
-  /**
-   * Parses a suffix interval after its leading hyphen.
-   *
-   * @param length full representation length
-   * @param suffixText digits after the hyphen
-   * @return selected range, unsatisfiable marker, or null for invalid syntax
-   */
-  private static @Nullable ByteRange suffixRange(long length, String suffixText) {
-    if (!decimal(suffixText)) {
-      return null;
-    }
-
-    var suffix = Long.parseLong(suffixText);
-    if (suffix <= 0 || length == 0) {
-      return UNSATISFIABLE_RANGE;
-    }
-
-    return new ByteRange(Math.max(0, length - suffix), length - 1);
-  }
-
-  /**
-   * Parses a first-last interval, including an omitted final position.
-   *
-   * @param length full representation length
-   * @param firstText first byte position
-   * @param lastText final byte position, or empty for the end of the representation
-   * @return selected range, unsatisfiable marker, or null for invalid syntax
-   */
-  private static @Nullable ByteRange explicitRange(long length, String firstText, String lastText) {
-    if (!decimal(firstText) || (!lastText.isEmpty() && !decimal(lastText))) {
-      return null;
-    }
-
-    var first = Long.parseLong(firstText);
-    if (lastText.isEmpty() && first >= length) {
-      return UNSATISFIABLE_RANGE;
-    }
-
-    var last = lastText.isEmpty() ? length - 1 : Long.parseLong(lastText);
-    if (last < first) {
-      return null;
-    }
-
-    if (first >= length) {
-      return UNSATISFIABLE_RANGE;
-    }
-
-    return new ByteRange(first, Math.min(last, length - 1));
-  }
-
-  /**
-   * Verifies that an HTTP numeric field uses only ASCII decimal digits.
-   *
-   * @param value candidate decimal text
-   * @return whether the text is a nonempty unsigned decimal integer
-   */
-  private static boolean decimal(String value) {
-    if (value.isEmpty()) {
-      return false;
-    }
-
-    for (int index = 0; index < value.length(); index++) {
-      if (value.charAt(index) < '0' || value.charAt(index) > '9') {
-        return false;
-      }
-    }
-
-    return true;
   }
 
   /**
@@ -1655,40 +1679,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
   }
 
   /**
-   * Validates a mutable application field name while reserving framing for the framework.
-   *
-   * @param name proposed field name
-   * @throws IllegalArgumentException if the name is invalid or controls HTTP framing
-   */
-  private static void validateHeaderName(String name) {
-    Objects.requireNonNull(name);
-    if (!HttpCharacters.isValidHttpToken(name)) {
-      throw new IllegalArgumentException("Invalid header");
-    }
-
-    if (HttpHeaders.CONTENT_LENGTH.equalsIgnoreCase(name)
-        || HttpHeaders.TRANSFER_ENCODING.equalsIgnoreCase(name)) {
-      throw new IllegalArgumentException("HTTP framing is managed by the framework");
-    }
-  }
-
-  /**
-   * Rejects null values and invalid HTTP controls before values reach the transport.
-   *
-   * @param value proposed HTTP field value
-   * @throws IllegalArgumentException if the value contains a control other than horizontal tab
-   */
-  private static void validateHeaderValue(String value) {
-    Objects.requireNonNull(value);
-    for (int index = 0; index < value.length(); index++) {
-      char character = value.charAt(index);
-      if ((character < 0x20 && character != HttpCharacters.TAB) || character == 0x7f) {
-        throw new IllegalArgumentException("Invalid header");
-      }
-    }
-  }
-
-  /**
    * Stages a root-path, host-only session cookie with an already encoded value.
    *
    * @param name case-sensitive cookie name
@@ -1802,29 +1792,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     return delegate.getHeaders().getValuesList(HttpHeaders.SET_COOKIE.value()).stream()
         .filter(value -> value.startsWith(name))
         .toList();
-  }
-
-  /**
-   * Uses the transport parser to compare explicit cookie scopes without parsing attributes locally.
-   *
-   * @param field existing Set-Cookie field
-   * @param cookie replacement cookie
-   * @return whether the existing field has the same case-sensitive name/path and canonical domain
-   */
-  private static boolean matchesCookie(HttpField field, Cookie cookie) {
-    var previous = COOKIE_PARSER.parse(field.getValue());
-    if (previous == null) {
-      return false;
-    }
-
-    var domain = previous.getDomain();
-    if (domain != null && domain.startsWith(HttpCharacters.DOT_STRING)) {
-      domain = domain.substring(1);
-    }
-
-    return cookie.name().equals(previous.getName())
-        && cookie.path().equals(previous.getPath())
-        && (cookie.domain() == null ? domain == null : cookie.domain().equalsIgnoreCase(domain));
   }
 
   /**
@@ -2012,7 +1979,7 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     switch (state) {
       case OPEN -> completeOpen();
       case STREAMING -> completeStreaming();
-      case CLOSED, FAILED -> throw new IOException("Response already terminated");
+      default -> throw new IOException("Response already terminated");
     }
   }
 
@@ -2292,6 +2259,170 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
     }
   }
 
+  /** Tracks writable phases and terminal outcomes independently of transport commitment. */
+  private enum State {
+    OPEN,
+    STREAMING,
+    CLOSED,
+    FAILED
+  }
+
+  /** Represents the inclusive interval selected from one byte range request. */
+  private record ByteRange(long first, long last) {
+    /**
+     * Creates one inclusive byte interval.
+     *
+     * @param first first selected byte offset
+     * @param last last selected byte offset
+     * @throws IllegalArgumentException if the first offset exceeds the last
+     */
+    private ByteRange {
+      if (first > last) {
+        throw new IllegalArgumentException("Byte range start exceeds end");
+      }
+    }
+
+    /**
+     * Calculates the selected number of bytes.
+     *
+     * @return the interval length
+     */
+    private long length() {
+      return last - first + 1;
+    }
+  }
+
+  /** Writes complete server-sent event frames through the response's bounded stream. */
+  public static sealed class EventStream permits TypedEventStream {
+    private static final byte[] DATA_PREFIX = "data: ".getBytes(StandardCharsets.UTF_8);
+    private static final byte[] EVENT_TERMINATOR = "\n\n".getBytes(StandardCharsets.UTF_8);
+    private final Stream output;
+
+    /**
+     * Wraps the response-owned byte stream.
+     *
+     * @param output bounded response stream
+     */
+    EventStream(Stream output) {
+      this.output = Objects.requireNonNull(output);
+    }
+
+    /** Checks the existing response-owned stream without writing any event bytes. */
+    final void requireWritable() {
+      output.checkWritable();
+    }
+
+    /**
+     * Sends one UTF-8 data event, including its dispatching blank line.
+     *
+     * @param data event payload; each line becomes a data field
+     * @return this event stream
+     * @throws IOException if the transport write fails
+     */
+    public EventStream send(String data) throws IOException {
+      writeData(Objects.requireNonNull(data));
+      output.flush();
+      return this;
+    }
+
+    /**
+     * Sends an event with optional name, ID and retry metadata.
+     *
+     * @param event immutable event to send
+     * @return this event stream
+     * @throws IOException if the transport write fails
+     */
+    public EventStream send(SseEvent event) throws IOException {
+      Objects.requireNonNull(event);
+      if (event.event() != null) {
+        output.write("event: " + event.event() + "\n");
+      }
+
+      if (event.id() != null) {
+        output.write("id: " + event.id() + "\n");
+      }
+
+      if (event.retry() != null) {
+        output.write("retry: " + event.retry().toMillis() + "\n");
+      }
+
+      writeData(event.data());
+      output.flush();
+      return this;
+    }
+
+    /**
+     * Sends one comment block without dispatching an event.
+     *
+     * @param value comment text, split safely at every event-stream line ending
+     * @return this event stream
+     * @throws IOException if the transport write fails
+     */
+    public EventStream comment(String value) throws IOException {
+      writeLines(Objects.requireNonNull(value), ": ");
+
+      output.write("\n");
+      output.flush();
+      return this;
+    }
+
+    /**
+     * Sends a minimal comment heartbeat without dispatching an event.
+     *
+     * @return this event stream
+     * @throws IOException if the transport write fails
+     */
+    public EventStream heartbeat() throws IOException {
+      output.write(":\n\n");
+      output.flush();
+      return this;
+    }
+
+    /**
+     * Writes every payload line as one data field without ending the event until the final line.
+     *
+     * @param data event payload
+     * @throws IOException if the transport write fails
+     */
+    private void writeData(String data) throws IOException {
+      // Check LF first so common multiline data avoids a full scan for absent CR.
+      if (data.indexOf('\n') < 0 && data.indexOf('\r') < 0) {
+        output.write(DATA_PREFIX);
+        output.write(data);
+        output.write(EVENT_TERMINATOR);
+        return;
+      }
+
+      writeLines(data, "data: ");
+
+      output.write("\n");
+    }
+
+    /**
+     * Normalizes all event-stream line endings and prefixes every line, including a trailing empty
+     * line, so payload text cannot create another protocol field.
+     *
+     * @param value caller-supplied field text
+     * @param prefix wire field prefix
+     * @throws IOException if the transport write fails
+     */
+    private void writeLines(String value, String prefix) throws IOException {
+      var normalized = value.replace("\r\n", "\n").replace('\r', '\n');
+      int start = 0;
+      int end;
+      while ((end = normalized.indexOf('\n', start)) >= 0) {
+        output.write(prefix);
+        output.write(normalized.substring(start, end));
+        output.write("\n");
+        start = end + 1;
+      }
+
+      output.write(prefix);
+      output.write(normalized.substring(start));
+      output.write("\n");
+    }
+  }
+
   /** Coordinates transport completion with the post-flush callback exactly once. */
   private final class FlushCompletion implements Callback {
     private boolean afterFinished;
@@ -2453,137 +2584,6 @@ public sealed class Response implements AutoCloseable permits TypedResponse {
       System.arraycopy(buffer, 0, grown, 0, used);
       buffer = grown;
       view = null;
-    }
-  }
-
-  /** Writes complete server-sent event frames through the response's bounded stream. */
-  public static sealed class EventStream permits TypedEventStream {
-    private static final byte[] DATA_PREFIX = "data: ".getBytes(StandardCharsets.UTF_8);
-    private static final byte[] EVENT_TERMINATOR = "\n\n".getBytes(StandardCharsets.UTF_8);
-    private final Stream output;
-
-    /**
-     * Wraps the response-owned byte stream.
-     *
-     * @param output bounded response stream
-     */
-    EventStream(Stream output) {
-      this.output = Objects.requireNonNull(output);
-    }
-
-    /** Checks the existing response-owned stream without writing any event bytes. */
-    final void requireWritable() {
-      output.checkWritable();
-    }
-
-    /**
-     * Sends one UTF-8 data event, including its dispatching blank line.
-     *
-     * @param data event payload; each line becomes a data field
-     * @return this event stream
-     * @throws IOException if the transport write fails
-     */
-    public EventStream send(String data) throws IOException {
-      writeData(Objects.requireNonNull(data));
-      output.flush();
-      return this;
-    }
-
-    /**
-     * Sends an event with optional name, ID and retry metadata.
-     *
-     * @param event immutable event to send
-     * @return this event stream
-     * @throws IOException if the transport write fails
-     */
-    public EventStream send(SseEvent event) throws IOException {
-      Objects.requireNonNull(event);
-      if (event.event() != null) {
-        output.write("event: " + event.event() + "\n");
-      }
-
-      if (event.id() != null) {
-        output.write("id: " + event.id() + "\n");
-      }
-
-      if (event.retry() != null) {
-        output.write("retry: " + event.retry().toMillis() + "\n");
-      }
-
-      writeData(event.data());
-      output.flush();
-      return this;
-    }
-
-    /**
-     * Sends one comment block without dispatching an event.
-     *
-     * @param value comment text, split safely at every event-stream line ending
-     * @return this event stream
-     * @throws IOException if the transport write fails
-     */
-    public EventStream comment(String value) throws IOException {
-      writeLines(Objects.requireNonNull(value), ": ");
-
-      output.write("\n");
-      output.flush();
-      return this;
-    }
-
-    /**
-     * Sends a minimal comment heartbeat without dispatching an event.
-     *
-     * @return this event stream
-     * @throws IOException if the transport write fails
-     */
-    public EventStream heartbeat() throws IOException {
-      output.write(":\n\n");
-      output.flush();
-      return this;
-    }
-
-    /**
-     * Writes every payload line as one data field without ending the event until the final line.
-     *
-     * @param data event payload
-     * @throws IOException if the transport write fails
-     */
-    private void writeData(String data) throws IOException {
-      // Check LF first so common multiline data avoids a full scan for absent CR.
-      if (data.indexOf('\n') < 0 && data.indexOf('\r') < 0) {
-        output.write(DATA_PREFIX);
-        output.write(data);
-        output.write(EVENT_TERMINATOR);
-        return;
-      }
-
-      writeLines(data, "data: ");
-
-      output.write("\n");
-    }
-
-    /**
-     * Normalizes all event-stream line endings and prefixes every line, including a trailing empty
-     * line, so payload text cannot create another protocol field.
-     *
-     * @param value caller-supplied field text
-     * @param prefix wire field prefix
-     * @throws IOException if the transport write fails
-     */
-    private void writeLines(String value, String prefix) throws IOException {
-      var normalized = value.replace("\r\n", "\n").replace('\r', '\n');
-      int start = 0;
-      int end;
-      while ((end = normalized.indexOf('\n', start)) >= 0) {
-        output.write(prefix);
-        output.write(normalized.substring(start, end));
-        output.write("\n");
-        start = end + 1;
-      }
-
-      output.write(prefix);
-      output.write(normalized.substring(start));
-      output.write("\n");
     }
   }
 }

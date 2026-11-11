@@ -8,6 +8,34 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 class ExtensionRequestBenchmarkTest {
+  private static Stream<Arguments> cases() {
+    return Stream.of(
+            "plain",
+            "inactive",
+            "callbacks",
+            "authentication",
+            "localObserver",
+            "appObserver",
+            "localInstrumentation",
+            "unselectedInstrumentation",
+            "appInstrumentation")
+        .flatMap(
+            configuration ->
+                Stream.of(1, 1000)
+                    .flatMap(
+                        groups ->
+                            Stream.of("matched", "missed", "wrongMethod")
+                                .map(outcome -> Arguments.of(configuration, groups, outcome))));
+  }
+
+  private static Stream<Arguments> tracingCases() {
+    return Stream.of("plain", "otelSelected", "otelUnselected", "otelAppWide")
+        .flatMap(
+            configuration ->
+                Stream.of("default", "platform", "forkJoin")
+                    .map(execution -> Arguments.of(configuration, execution)));
+  }
+
   @ParameterizedTest
   @MethodSource("tracingCases")
   void dispatchesSdkTracingModesAcrossExecutorTypes(String configuration, String execution)
@@ -46,33 +74,5 @@ class ExtensionRequestBenchmarkTest {
     } finally {
       benchmark.close();
     }
-  }
-
-  private static Stream<Arguments> cases() {
-    return Stream.of(
-            "plain",
-            "inactive",
-            "callbacks",
-            "authentication",
-            "localObserver",
-            "appObserver",
-            "localInstrumentation",
-            "unselectedInstrumentation",
-            "appInstrumentation")
-        .flatMap(
-            configuration ->
-                Stream.of(1, 1000)
-                    .flatMap(
-                        groups ->
-                            Stream.of("matched", "missed", "wrongMethod")
-                                .map(outcome -> Arguments.of(configuration, groups, outcome))));
-  }
-
-  private static Stream<Arguments> tracingCases() {
-    return Stream.of("plain", "otelSelected", "otelUnselected", "otelAppWide")
-        .flatMap(
-            configuration ->
-                Stream.of("default", "platform", "forkJoin")
-                    .map(execution -> Arguments.of(configuration, execution)));
   }
 }

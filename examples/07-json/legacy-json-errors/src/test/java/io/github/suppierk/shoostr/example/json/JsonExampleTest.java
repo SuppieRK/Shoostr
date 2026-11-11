@@ -17,10 +17,10 @@ import org.junit.jupiter.params.provider.ValueSource;
 class JsonExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"{\"name\":\"Ada\"} trailing", "{\"name\":\"Ada\"}{}"})
-  void rejectsTrailingContentAfterAValidJsonObject(String body) throws Exception {
+  void rejectsTrailingContentAfterValidJsonObject(String body) throws Exception {
 
     try (var test = TestServer.start(JsonExample.application())) {
-      var response = sendResponseForRejectsTrailingContentAfterAValidJsonObject(test, body);
+      var response = sendResponseForRejectsTrailingContentAfterValidJsonObject(test, body);
 
       assertAll(
           () -> assertEquals(400, response.statusCode()),
@@ -28,7 +28,7 @@ class JsonExampleTest {
     }
   }
 
-  private HttpResponse<String> sendResponseForRejectsTrailingContentAfterAValidJsonObject(
+  private HttpResponse<String> sendResponseForRejectsTrailingContentAfterValidJsonObject(
       TestServer test, String body) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -41,11 +41,10 @@ class JsonExampleTest {
   }
 
   @Test
-  void rendersMalformedJsonAsAnInputErrorRatherThanAServerFailure() throws Exception {
+  void rendersMalformedJsonAsAnInputErrorRatherThanServerFailure() throws Exception {
 
     try (var test = TestServer.start(JsonExample.application())) {
-      var response =
-          sendResponseForRendersMalformedJsonAsAnInputErrorRatherThanAServerFailure(test);
+      var response = sendResponseForRendersMalformedJsonAsAnInputErrorRatherThanServerFailure(test);
 
       assertAll(
           () -> assertEquals(400, response.statusCode()),
@@ -54,7 +53,7 @@ class JsonExampleTest {
   }
 
   private HttpResponse<String>
-      sendResponseForRendersMalformedJsonAsAnInputErrorRatherThanAServerFailure(TestServer test)
+      sendResponseForRendersMalformedJsonAsAnInputErrorRatherThanServerFailure(TestServer test)
           throws IOException, InterruptedException {
     return test.send(
         request ->

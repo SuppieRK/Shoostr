@@ -29,6 +29,25 @@ import org.eclipse.jetty.util.component.LifeCycle;
 import org.junit.jupiter.api.Test;
 
 class ExtensionShutdownTest {
+  private static ApplicationExtension<Object> capability(String name, List<String> events) {
+    return new ApplicationExtension<Object>() {
+      @Override
+      public Object configure(Lifecycle lifecycle, Object inherited) {
+        return this;
+      }
+
+      @Override
+      public void beforeStop() {
+        events.add("before-" + name);
+      }
+
+      @Override
+      public void close() {
+        events.add("close-" + name);
+      }
+    };
+  }
+
   @Test
   void keepsOwnedResourcesUsableForDrainingHandlersAndTheirObservations() throws Exception {
     var entered = new CountDownLatch(1);
@@ -110,7 +129,7 @@ class ExtensionShutdownTest {
           try {
             assertTrue(entered.await(5, TimeUnit.SECONDS));
 
-            var closing = submitApplicationClose(workers, app);
+            final var closing = submitApplicationClose(workers, app);
 
             assertTrue(signalled.await(5, TimeUnit.SECONDS));
             assertTrue(stopping.await(5, TimeUnit.SECONDS));
@@ -428,13 +447,14 @@ class ExtensionShutdownTest {
             }
           }
         }
+
         app.withExtension(new WaitingShutdown());
         var first = submitFirstClose(workers, app);
 
         try {
           assertTrue(entered.await(5, TimeUnit.SECONDS));
 
-          var second = submitSecondClose(workers, secondAttempt, app);
+          final var second = submitSecondClose(workers, secondAttempt, app);
 
           assertTrue(secondAttempt.await(5, TimeUnit.SECONDS));
 
@@ -468,24 +488,5 @@ class ExtensionShutdownTest {
 
           return null;
         });
-  }
-
-  private static ApplicationExtension<Object> capability(String name, List<String> events) {
-    return new ApplicationExtension<Object>() {
-      @Override
-      public Object configure(Lifecycle lifecycle, Object inherited) {
-        return this;
-      }
-
-      @Override
-      public void beforeStop() {
-        events.add("before-" + name);
-      }
-
-      @Override
-      public void close() {
-        events.add("close-" + name);
-      }
-    };
   }
 }

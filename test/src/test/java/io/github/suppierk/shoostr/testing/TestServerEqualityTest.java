@@ -15,6 +15,8 @@ import java.nio.channels.ServerSocketChannel;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
 import nl.jqno.equalsverifier.EqualsVerifier;
 import nl.jqno.equalsverifier.Warning;
 import org.junit.jupiter.api.Test;
@@ -45,8 +47,8 @@ class TestServerEqualityTest {
 
           try (var first = TestServer.start(firstApp);
               var second = TestServer.start(secondApp)) {
-            var firstHash = first.hashCode();
-            var secondHash = second.hashCode();
+            final var firstHash = first.hashCode();
+            final var secondHash = second.hashCode();
 
             assertTrue(serverSet.add(first));
             assertTrue(serverSet.add(second));
@@ -60,8 +62,7 @@ class TestServerEqualityTest {
                 .verify();
             for (var server : new TestServer[] {first, second}) {
               var response =
-                  sendResponseForRetainsLiveServerIdentityAndBuilderMembershipThroughSendingAndClosing(
-                      server, builders, builderHashes, builderSet);
+                  sendResponseForLiveFixtureIdentity(server, builders, builderHashes, builderSet);
 
               assertEquals(200, response.statusCode());
               assertEquals("payload", response.body());
@@ -91,13 +92,12 @@ class TestServerEqualityTest {
     assertTrue(serverSet.isEmpty());
   }
 
-  private HttpResponse<String>
-      sendResponseForRetainsLiveServerIdentityAndBuilderMembershipThroughSendingAndClosing(
-          TestServer server,
-          ArrayList<TestRequest> builders,
-          ArrayList<Integer> builderHashes,
-          HashSet<TestRequest> builderSet)
-          throws IOException, InterruptedException {
+  private HttpResponse<String> sendResponseForLiveFixtureIdentity(
+      TestServer server,
+      List<TestRequest> builders,
+      List<Integer> builderHashes,
+      Set<TestRequest> builderSet)
+      throws IOException, InterruptedException {
     return server.send(
         request -> {
           builders.add(request);

@@ -38,14 +38,13 @@ class McpNotificationCleanupTest {
   @ParameterizedTest
   @ValueSource(strings = {"session deletion", "application shutdown"})
   @Timeout(20)
-  void cancelsAPendingNativeNotificationWhenItsOwnerTerminates(String termination)
-      throws Exception {
+  void cancelsPendingNativeNotificationWhenItsOwnerTerminates(String termination) throws Exception {
     var release = Sinks.<Void>empty();
     var pending = new CountDownLatch(1);
     var cancelled = new CountDownLatch(1);
     var cancellations = new AtomicInteger();
     var mcp =
-        createMcpForCancelsAPendingNativeNotificationWhenItsOwnerTerminates(
+        createMcpForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
             release, pending, cancellations, cancelled);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
@@ -54,16 +53,16 @@ class McpNotificationCleanupTest {
         var test = TestServer.start(app)) {
       try {
         var initialized =
-            sendInitializedRequestForCancelsAPendingNativeNotificationWhenItsOwnerTerminates(test);
+            sendInitializedRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(test);
         var session = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
         var listening =
-            sendListeningRequestForCancelsAPendingNativeNotificationWhenItsOwnerTerminates(
+            sendListeningRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
                 test, session);
 
         try (var reader =
             new BufferedReader(new InputStreamReader(listening.body(), StandardCharsets.UTF_8))) {
-          var notification =
-              submitNotificationForCancelsAPendingNativeNotificationWhenItsOwnerTerminates(
+          final var notification =
+              submitNotificationForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
                   callers, test, session);
           String line;
           do {
@@ -84,7 +83,7 @@ class McpNotificationCleanupTest {
                   .writeValueAsBytes(
                       McpSchema.JSONRPCResponse.result(roots.id(), Map.of("roots", List.of())));
           var replied =
-              sendRepliedRequestForCancelsAPendingNativeNotificationWhenItsOwnerTerminates(
+              sendRepliedRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
                   test, session, reply);
 
           assertEquals(202, replied.statusCode());
@@ -116,7 +115,7 @@ class McpNotificationCleanupTest {
     }
   }
 
-  private Mcp<McpAsyncServer> createMcpForCancelsAPendingNativeNotificationWhenItsOwnerTerminates(
+  private Mcp<McpAsyncServer> createMcpForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
       Empty<Void> release,
       CountDownLatch pending,
       AtomicInteger cancellations,
@@ -125,7 +124,7 @@ class McpNotificationCleanupTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
         transport ->
             McpServer.async(transport)
                 .requestTimeout(Duration.ofSeconds(5))
@@ -143,7 +142,7 @@ class McpNotificationCleanupTest {
   }
 
   private HttpResponse<byte[]>
-      sendInitializedRequestForCancelsAPendingNativeNotificationWhenItsOwnerTerminates(
+      sendInitializedRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
           TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -154,15 +153,15 @@ class McpNotificationCleanupTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-                {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                  "protocolVersion":"2025-11-25","capabilities":{"roots":{"listChanged":true}},
-                  "clientInfo":{"name":"notification-cleanup","version":"1.0"}}}
-                """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{"roots":{"listChanged":true}},
+                      "clientInfo":{"name":"notification-cleanup","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
-      sendListeningRequestForCancelsAPendingNativeNotificationWhenItsOwnerTerminates(
+      sendListeningRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
           TestServer test, String session) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -174,7 +173,7 @@ class McpNotificationCleanupTest {
   }
 
   private Future<HttpResponse<byte[]>>
-      submitNotificationForCancelsAPendingNativeNotificationWhenItsOwnerTerminates(
+      submitNotificationForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
           ExecutorService callers, TestServer test, String session) {
     return callers.submit(
         () ->
@@ -192,7 +191,7 @@ class McpNotificationCleanupTest {
   }
 
   private HttpResponse<byte[]>
-      sendRepliedRequestForCancelsAPendingNativeNotificationWhenItsOwnerTerminates(
+      sendRepliedRequestForCancelsPendingNativeNotificationWhenItsOwnerTerminates(
           TestServer test, String session, byte[] reply) throws IOException, InterruptedException {
     return test.send(
         request ->

@@ -5,7 +5,7 @@
 !settings.gradle
 !build.gradle
 !gradle/**
-!buildSrc/**
+!build-logic/**
 !config/**
 !core/**
 !http/**
@@ -22,8 +22,8 @@
 **/.gradle
 **/node_modules
 **/.sonar
-!buildSrc/src/main/java/io/github/suppierk/build
-!buildSrc/src/main/java/io/github/suppierk/build/**
+!build-logic/src/main/java/io/github/suppierk/build
+!build-logic/src/main/java/io/github/suppierk/build/**
 # Retired Git-ignored documentation can remain in a local checkout.
 core/HTTP_CONTRACT.md
 core/MUTATION_TESTING.md

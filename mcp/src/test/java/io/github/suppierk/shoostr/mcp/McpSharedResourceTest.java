@@ -45,7 +45,7 @@ class McpSharedResourceTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     mcp = createMcp(security);
 
     var app = new Shoostr();
@@ -91,7 +91,7 @@ class McpSharedResourceTest {
 
   @Test
   @Timeout(20)
-  void deliversAResourceUpdateToEverySubscriberOfTheSameUri() throws Exception {
+  void deliversResourceUpdateToEverySubscriberOfTheSameUri() throws Exception {
     var alphaUpdates = new LinkedBlockingQueue<List<McpSchema.ResourceContents>>();
     var betaUpdates = new LinkedBlockingQueue<List<McpSchema.ResourceContents>>();
 

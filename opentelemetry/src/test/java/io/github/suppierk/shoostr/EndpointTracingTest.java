@@ -43,6 +43,54 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
 class EndpointTracingTest {
+  private static ExecutorService executor(String type, Set<Thread> owned) {
+    ThreadFactory factory = createFactoryForExecutor(type, owned);
+
+    return switch (type) {
+      case "platform" -> Executors.newFixedThreadPool(1, factory);
+      case "virtual" -> Executors.newThreadPerTaskExecutor(factory);
+      case "fork-join" -> forkJoin(1, owned);
+      case "fork-join-2" -> forkJoin(2, owned);
+      case "context-wrapped-fork-join" -> Context.taskWrapping(forkJoin(1, owned));
+      case "wrapped-fork-join" -> Executors.unconfigurableExecutorService(forkJoin(1, owned));
+      default -> throw new IllegalArgumentException(type);
+    };
+  }
+
+  private static ThreadFactory createFactoryForExecutor(String type, Set<Thread> owned) {
+    return task -> {
+      var thread =
+          "virtual".equals(type)
+              ? Thread.ofVirtual().unstarted(task)
+              : Thread.ofPlatform().unstarted(task);
+      owned.add(thread);
+
+      return thread;
+    };
+  }
+
+  private static ForkJoinPool forkJoin(int parallelism, Set<Thread> owned) {
+    return new ForkJoinPool(
+        parallelism,
+        pool -> {
+          var worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
+          owned.add(worker);
+
+          return worker;
+        },
+        null,
+        false);
+  }
+
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  }
+
   @ParameterizedTest(name = "{0}, appWide={1}, virtualApplication={2}")
   @CsvSource({
     "platform,false,false",
@@ -528,7 +576,7 @@ class EndpointTracingTest {
         }
 
         try (var test = TestServer.start(app)) {
-          var sent =
+          final var sent =
               submitSentForCompletesForkJoinTraceExactlyOnceWhenClosingWithQueuedOrRunningRequest(
                   drivers, test);
 
@@ -619,53 +667,5 @@ class EndpointTracingTest {
     return OpenTelemetrySdk.builder()
         .setTracerProvider(provider)
         .setPropagators(ContextPropagators.create(W3CTraceContextPropagator.getInstance()));
-  }
-
-  private static ExecutorService executor(String type, Set<Thread> owned) {
-    ThreadFactory factory = createFactoryForExecutor(type, owned);
-
-    return switch (type) {
-      case "platform" -> Executors.newFixedThreadPool(1, factory);
-      case "virtual" -> Executors.newThreadPerTaskExecutor(factory);
-      case "fork-join" -> forkJoin(1, owned);
-      case "fork-join-2" -> forkJoin(2, owned);
-      case "context-wrapped-fork-join" -> Context.taskWrapping(forkJoin(1, owned));
-      case "wrapped-fork-join" -> Executors.unconfigurableExecutorService(forkJoin(1, owned));
-      default -> throw new IllegalArgumentException(type);
-    };
-  }
-
-  private static ThreadFactory createFactoryForExecutor(String type, Set<Thread> owned) {
-    return task -> {
-      var thread =
-          "virtual".equals(type)
-              ? Thread.ofVirtual().unstarted(task)
-              : Thread.ofPlatform().unstarted(task);
-      owned.add(thread);
-
-      return thread;
-    };
-  }
-
-  private static ForkJoinPool forkJoin(int parallelism, Set<Thread> owned) {
-    return new ForkJoinPool(
-        parallelism,
-        pool -> {
-          var worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
-          owned.add(worker);
-
-          return worker;
-        },
-        null,
-        false);
-  }
-
-  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
-    options.setVirtualThreads(virtualApplication);
-
-    return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

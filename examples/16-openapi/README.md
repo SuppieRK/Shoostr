@@ -11,7 +11,8 @@ docker compose -f examples/16-openapi/compose.yaml up --build -d
 
 Startup is asynchronous. Check diagnostics with `docker compose -f examples/16-openapi/compose.yaml logs -f app`.
 Open `http://127.0.0.1:8080/docs/`. Expect the authenticated Swagger UI; credentials are below.
-Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and
+use that port in requests.
 Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
 are for trusted local development. Direct Java runs use the default wildcard listener.
 
@@ -33,15 +34,16 @@ container validation is described in [CONTRIBUTING](../../CONTRIBUTING.md#exampl
 
 ## Recipe and direct-run notes
 
-Maintainer UI fixture. Consumer recipes cover [OpenAPI descriptions](../../site/src/content/docs/openapi/documents.mdx) and the [protected UI](../../site/src/content/docs/openapi/ui.mdx).
+Maintainer UI fixture. Consumer recipes cover [OpenAPI descriptions](../../site/src/content/docs/openapi/documents.mdx)
+and the [protected UI](../../site/src/content/docs/openapi/ui.mdx).
 
 `OpenApiDocumentExample` and `OpenApiUiExample` are the compiled factories used by
 the consumer recipes. Their adjacent test classes verify descriptions and runtime
 behavior independently. The launcher below retains the broader local UI fixture.
 
 Run `cmdshape ./gradlew :openapi-example:run` with Java 21. Open
-`http://127.0.0.1:8080/docs/` and answer the browser's HTTP Basic challenge with
-**demo / local-only**. These are public local-development fixture credentials, not a production
+`http://127.0.0.1:8080/docs/` and answer the browser's HTTP Basic challenge with **demo / local-only**. These are public
+local-development fixture credentials, not a production
 identity store. Jetty's default wildcard listener accepts connections beyond loopback.
 Use a trusted development environment. Production Basic authentication requires TLS;
 replace this authenticator with a real identity provider.
@@ -56,7 +58,7 @@ authentication is not supported by this UI policy. Startup prints the demo usern
 use a fresh browser profile for a clean challenge check.
 
 | Route                                    | Behavior                                                                   |
-| ---------------------------------------- | -------------------------------------------------------------------------- |
+|------------------------------------------|----------------------------------------------------------------------------|
 | `GET /health`                            | Public plain text; Try it out returns `healthy`.                           |
 | `GET /users/`                            | Public plain text beside the JSON route.                                   |
 | `GET /users/{id:[0-9]+}`                 | Public explicit JSON bytes; group defaults and a constrained path.         |

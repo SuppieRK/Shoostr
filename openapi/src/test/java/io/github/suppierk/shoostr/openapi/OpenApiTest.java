@@ -193,7 +193,7 @@ class OpenApiTest {
   }
 
   @Test
-  void permitsNativeRequestMediaDeclarationsWithoutInventingASchema() throws Exception {
+  void permitsNativeRequestMediaDeclarationsWithoutInventingSchema() throws Exception {
     var docs = new OpenApi("API", "1");
     var body =
         new RequestBody()
@@ -216,7 +216,7 @@ class OpenApiTest {
 
         try (var test = TestServer.start(app)) {
           var content =
-              createContentForPermitsNativeRequestMediaDeclarationsWithoutInventingASchema(test);
+              createContentForPermitsNativeRequestMediaDeclarationsWithoutInventingSchema(test);
 
           assertTrue(content.has("text/plain"));
           assertFalse(content.path("text/plain").has("schema"));
@@ -225,7 +225,7 @@ class OpenApiTest {
     }
   }
 
-  private JsonNode createContentForPermitsNativeRequestMediaDeclarationsWithoutInventingASchema(
+  private JsonNode createContentForPermitsNativeRequestMediaDeclarationsWithoutInventingSchema(
       TestServer test) throws JacksonException, IOException, InterruptedException {
     return Json31.mapper()
         .readTree(test.send(request -> request.path("/openapi.json")).body())
@@ -305,7 +305,7 @@ class OpenApiTest {
   }
 
   @Test
-  void documentsExplicitRequestShapesWithoutAConfiguredCodec() throws Exception {
+  void documentsExplicitRequestShapesWithoutConfiguredCodec() throws Exception {
     var docs =
         new OpenApi("Users API", "1.0")
             .description("Example service")
@@ -498,9 +498,7 @@ class OpenApiTest {
             });
 
         try (var test = TestServer.start(app)) {
-          var intersection =
-              createIntersectionForIntersectsDeclaredSchemaPatternWithRouteConstraintWithoutMutatingCallerSchema(
-                  test);
+          var intersection = createIntersectionForConstrainedSchema(test);
 
           assertEquals(2, intersection.size());
           assertEquals("string", intersection.path(0).path("type").asString());
@@ -516,9 +514,8 @@ class OpenApiTest {
     }
   }
 
-  private JsonNode
-      createIntersectionForIntersectsDeclaredSchemaPatternWithRouteConstraintWithoutMutatingCallerSchema(
-          TestServer test) throws JacksonException, IOException, InterruptedException {
+  private JsonNode createIntersectionForConstrainedSchema(TestServer test)
+      throws JacksonException, IOException, InterruptedException {
     return Json31.mapper()
         .readTree(test.send(request -> request.path("/openapi.json")).body())
         .path("paths")
@@ -639,7 +636,7 @@ class OpenApiTest {
                   .readTree(test.send(request -> request.path("/openapi.json")).body())
                   .path("paths");
           var first = paths.path("/api/first").path("get");
-          var second = paths.path("/api/second").path("get");
+          final var second = paths.path("/api/second").path("get");
 
           assertEquals("First", first.path("summary").asString());
           assertEquals("Shared description", first.path("description").asString());

@@ -80,7 +80,7 @@ class MethodsExampleTest {
 
   @ParameterizedTest
   @ValueSource(strings = {"HEAD", "OPTIONS"})
-  void doesNotAddImplicitMethodsToAGetRoute(String method) throws Exception {
+  void doesNotAddImplicitMethodsToGetRoute(String method) throws Exception {
 
     try (var test = TestServer.start(MethodsExample.application())) {
       var response = test.send(request -> request.path("/read-only").method(method));
@@ -91,7 +91,7 @@ class MethodsExampleTest {
   }
 
   @Test
-  void acceptsARecognizedWireMethodName() throws Exception {
+  void acceptsRecognizedWireMethodName() throws Exception {
     {
       var app = MethodsExample.application();
 

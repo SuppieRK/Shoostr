@@ -9,6 +9,18 @@ import org.junit.jupiter.api.Timeout;
 
 @Timeout(15)
 class ClientStateTest {
+  private static Shoostr cookieApp() {
+    var app = new Shoostr();
+    app.routes()
+        .get("/set", (ignoredRequest, response) -> response.cookie("token", "value").text("set"));
+    app.routes()
+        .get(
+            "/read",
+            (request, response) -> response.text(request.cookie("token").orElse("absent")));
+
+    return app;
+  }
+
   @Test
   void keepsCookiesAcrossRequestsWithinOneFixture() throws Exception {
 
@@ -55,17 +67,5 @@ class ClientStateTest {
       assertEquals(302, reply.statusCode());
       assertEquals("redirect", reply.body());
     }
-  }
-
-  private static Shoostr cookieApp() {
-    var app = new Shoostr();
-    app.routes()
-        .get("/set", (ignoredRequest, response) -> response.cookie("token", "value").text("set"));
-    app.routes()
-        .get(
-            "/read",
-            (request, response) -> response.text(request.cookie("token").orElse("absent")));
-
-    return app;
   }
 }

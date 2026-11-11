@@ -26,8 +26,7 @@ class McpRequestLifetimeTest {
 
     try (var deadlines = new ScheduledThreadPoolExecutor(1)) {
       var heldDeadlineWorker =
-          submitHeldDeadlineWorkerForDoesNotInterruptAuthenticationErrorRenderingAfterAnEarlierExpiryRejection(
-              deadlines, schedulerEntered, releaseScheduler);
+          submitHeldDeadlineWorkerForExpiryRejection(deadlines, schedulerEntered, releaseScheduler);
 
       try (var lifetime = new McpRequestLifetime(deadlines, "Bearer error=\"invalid_token\"")) {
         try {
@@ -62,11 +61,10 @@ class McpRequestLifetimeTest {
     }
   }
 
-  private Future<Object>
-      submitHeldDeadlineWorkerForDoesNotInterruptAuthenticationErrorRenderingAfterAnEarlierExpiryRejection(
-          ScheduledThreadPoolExecutor deadlines,
-          CountDownLatch schedulerEntered,
-          CountDownLatch releaseScheduler) {
+  private Future<Object> submitHeldDeadlineWorkerForExpiryRejection(
+      ScheduledThreadPoolExecutor deadlines,
+      CountDownLatch schedulerEntered,
+      CountDownLatch releaseScheduler) {
     return deadlines.submit(
         () -> {
           schedulerEntered.countDown();

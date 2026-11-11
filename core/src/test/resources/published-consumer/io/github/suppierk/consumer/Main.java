@@ -12,7 +12,14 @@ import java.time.Duration;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.server.ServerConnector;
 
+/** Exercises a consumer using the published Shoostr artifacts. */
 public final class Main {
+  /**
+   * Starts the application and verifies its response over HTTP.
+   *
+   * @param args unused command-line arguments
+   * @throws Exception if the application or HTTP exchange fails
+   */
   public static void main(String[] args) throws Exception {
     var configuredOptions = options();
     var app = new Shoostr(configuredOptions).modifyServer(Main::configureListener);

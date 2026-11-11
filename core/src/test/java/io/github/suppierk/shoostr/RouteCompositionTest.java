@@ -40,6 +40,21 @@ class RouteCompositionTest {
     this.retainedRequest = new AtomicReference<>();
   }
 
+  private static void orders(Routes orders) {
+    orders.get((ignoredRequest, response) -> response.text("list"));
+    orders.post((ignoredRequest, response) -> response.text("create"));
+    orders.get("/", (ignoredRequest, response) -> response.text("slash"));
+    orders.path(
+        "/{id}",
+        order -> {
+          order.get((request, response) -> response.text(request.pathParam("id").orElseThrow()));
+          order.patch(
+              (request, response) ->
+                  response.text("update:" + request.pathParam("id").orElseThrow()));
+          order.delete((ignoredRequest, response) -> response.status(204));
+        });
+  }
+
   @BeforeEach
   void start() throws Exception {
     var configuredOptions = new Options();
@@ -272,7 +287,7 @@ class RouteCompositionTest {
   }
 
   @Test
-  void prefersLiteralRoutesAndContinuesAfterAPathOrMethodMismatch() throws Exception {
+  void prefersLiteralRoutesAndContinuesAfterPathOrMethodMismatch() throws Exception {
     assertEquals(
         "literal",
         test.send(request -> request.path("/order/latest"), HttpResponse.BodyHandlers.ofString())
@@ -615,21 +630,6 @@ class RouteCompositionTest {
           } catch (Throwable error) {
             failure.set(error);
           }
-        });
-  }
-
-  private static void orders(Routes orders) {
-    orders.get((ignoredRequest, response) -> response.text("list"));
-    orders.post((ignoredRequest, response) -> response.text("create"));
-    orders.get("/", (ignoredRequest, response) -> response.text("slash"));
-    orders.path(
-        "/{id}",
-        order -> {
-          order.get((request, response) -> response.text(request.pathParam("id").orElseThrow()));
-          order.patch(
-              (request, response) ->
-                  response.text("update:" + request.pathParam("id").orElseThrow()));
-          order.delete((ignoredRequest, response) -> response.status(204));
         });
   }
 }

@@ -41,23 +41,22 @@ class McpGetLifetimeTest {
   @ParameterizedTest(name = "{0}")
   @ValueSource(strings = {"replacement", "expiry"})
   @Timeout(25)
-  void aFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(String ending)
-      throws Exception {
+  void freshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(String ending) throws Exception {
     var roots = new CompletableFuture<List<McpSchema.Root>>();
     var expiry = new AtomicReference<Instant>();
     var mcp =
-        createMcpForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(expiry, roots);
+        createMcpForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(expiry, roots);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var readers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {
       var initialized =
-          sendInitializedRequestForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+          sendInitializedRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
               test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var oldGet =
-          sendOldGetRequestForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+          sendOldGetRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
               test, sessionId);
 
       var body = oldGet.body();
@@ -66,7 +65,7 @@ class McpGetLifetimeTest {
       try (var reader = new BufferedReader(new InputStreamReader(body, StandardCharsets.UTF_8));
           body) {
         var notified =
-            sendNotifiedRequestForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+            sendNotifiedRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
                 test, sessionId);
 
         assertEquals(202, notified.statusCode());
@@ -86,7 +85,7 @@ class McpGetLifetimeTest {
         assertEquals("roots/list", nativeRequest.method());
 
         var oldEnded =
-            submitOldEndedForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+            submitOldEndedForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
                 readers, reader);
         if ("expiry".equals(ending)) {
           awaitTermination(expiry.get(), oldEnded::isDone);
@@ -95,7 +94,7 @@ class McpGetLifetimeTest {
         }
 
         var refreshed =
-            sendRefreshedRequestForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+            sendRefreshedRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
                 test, sessionId);
 
         try (var ignoredInputStream = refreshed.body()) {
@@ -107,10 +106,10 @@ class McpGetLifetimeTest {
           oldEnded.get();
           var expected = new McpSchema.Root("file:///workspace/refreshed", "refreshed");
           var replyBody =
-              createReplyBodyForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+              createReplyBodyForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
                   mapper, nativeRequest, expected);
           var reply =
-              sendReplyRequestForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+              sendReplyRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
                   test, sessionId, replyBody);
 
           assertEquals(202, reply.statusCode());
@@ -126,7 +125,7 @@ class McpGetLifetimeTest {
   }
 
   private Mcp<McpSyncServer>
-      createMcpForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+      createMcpForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
           AtomicReference<Instant> expiry, CompletableFuture<List<Root>> roots) {
     return Mcp.sync(
         new McpHttpSecurity(
@@ -141,7 +140,7 @@ class McpGetLifetimeTest {
 
               return new McpIdentity("alice:client", McpTransportContext.EMPTY, verifiedExpiry);
             },
-            (ignored, ignoredJSONRPCMessage) -> {}),
+            (ignored, ignoredJsonRpcMessage) -> {}),
         new McpSessionLimits(1, 1, Duration.ofSeconds(1)),
         transport ->
             McpServer.sync(transport)
@@ -153,7 +152,7 @@ class McpGetLifetimeTest {
   }
 
   private HttpResponse<byte[]>
-      sendInitializedRequestForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+      sendInitializedRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
           TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -164,15 +163,15 @@ class McpGetLifetimeTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{"roots":{"listChanged":true}},
-                "clientInfo":{"name":"get-lifetime-fixture","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{"roots":{"listChanged":true}},
+                      "clientInfo":{"name":"get-lifetime-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
-      sendOldGetRequestForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+      sendOldGetRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
           TestServer test, String sessionId) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -186,7 +185,7 @@ class McpGetLifetimeTest {
   }
 
   private HttpResponse<byte[]>
-      sendNotifiedRequestForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+      sendNotifiedRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
           TestServer test, String sessionId) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -199,13 +198,13 @@ class McpGetLifetimeTest {
                 .header("MCP-Protocol-Version", "2025-11-25")
                 .body(
                     """
-                {"jsonrpc":"2.0","method":"notifications/roots/list_changed"}
-                """
+                    {"jsonrpc":"2.0","method":"notifications/roots/list_changed"}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
   private Future<Instant>
-      submitOldEndedForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+      submitOldEndedForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
           ExecutorService readers, BufferedReader reader) {
     return readers.submit(
         () -> {
@@ -222,7 +221,7 @@ class McpGetLifetimeTest {
   }
 
   private HttpResponse<InputStream>
-      sendRefreshedRequestForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+      sendRefreshedRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
           TestServer test, String sessionId) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -234,7 +233,7 @@ class McpGetLifetimeTest {
         HttpResponse.BodyHandlers.ofInputStream());
   }
 
-  private byte[] createReplyBodyForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+  private byte[] createReplyBodyForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
       McpJsonMapper mapper, JSONRPCRequest nativeRequest, Root expected) throws IOException {
     return mapper.writeValueAsBytes(
         McpSchema.JSONRPCResponse.result(
@@ -243,7 +242,7 @@ class McpGetLifetimeTest {
   }
 
   private HttpResponse<byte[]>
-      sendReplyRequestForAFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
+      sendReplyRequestForFreshReplyCompletesTheRootsCallbackAfterItsGetTransportEnds(
           TestServer test, String sessionId, byte[] replyBody)
           throws IOException, InterruptedException {
     return test.send(

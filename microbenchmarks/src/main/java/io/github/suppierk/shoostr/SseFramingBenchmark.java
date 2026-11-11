@@ -32,12 +32,15 @@ import org.openjdk.jmh.annotations.Warmup;
     jvmArgsAppend = {"-Xms512m", "-Xmx512m", "-XX:+UseG1GC"})
 @Threads(1)
 public class SseFramingBenchmark {
+  /** Number of bytes in the prepared event payload. */
   @Param({"128", "65536"})
   public int payloadBytes;
 
+  /** Whether the payload spans multiple lines. */
   @Param({"single", "multiline"})
   public String lineShape;
 
+  /** Whether the event carries data or metadata. */
   @Param({"data", "metadata"})
   public String eventShape;
 
@@ -50,6 +53,9 @@ public class SseFramingBenchmark {
   private int bytesWritten;
   private int checksum;
   private int writes;
+
+  /** Creates a benchmark state for JMH. */
+  public SseFramingBenchmark() {}
 
   /** Prepares payloads and a callback-completing transport outside timed work. */
   @Setup

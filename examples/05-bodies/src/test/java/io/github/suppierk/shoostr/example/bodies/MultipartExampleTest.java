@@ -22,11 +22,46 @@ import org.junit.jupiter.params.provider.ValueSource;
 class MultipartExampleTest {
   @TempDir Path directory;
 
+  private static HttpResponse<String> send(TestServer test, byte[] body) throws Exception {
+    return test.send(
+        request ->
+            request
+                .path("/documents")
+                .method("POST")
+                .header("Content-Type", "multipart/form-data; boundary=example")
+                .body(body),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static byte[] multipart(byte[]... parts) {
+    var body = new ByteArrayOutputStream();
+    for (var part : parts) {
+      body.writeBytes(part);
+    }
+    body.writeBytes("--example--\r\n".getBytes(StandardCharsets.US_ASCII));
+
+    return body.toByteArray();
+  }
+
+  private static byte[] part(String name, String filename, byte[] content) {
+    var body = new ByteArrayOutputStream();
+    var disposition = "--example\r\nContent-Disposition: form-data; name=\"" + name + "\"";
+    if (filename != null) {
+      disposition += "; filename=\"" + filename + "\"";
+    }
+
+    body.writeBytes((disposition + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
+    body.writeBytes(content);
+    body.writeBytes("\r\n".getBytes(StandardCharsets.US_ASCII));
+
+    return body.toByteArray();
+  }
+
   @Test
-  void readsAFieldAndUploadedBytes() throws Exception {
+  void readsFieldAndUploadedBytes() throws Exception {
 
     try (var test = TestServer.start(MultipartExample.application(directory))) {
-      var response = sendResponseForReadsAFieldAndUploadedBytes(test);
+      var response = sendResponseForReadsFieldAndUploadedBytes(test);
 
       assertEquals(200, response.statusCode());
       assertEquals(
@@ -34,7 +69,7 @@ class MultipartExampleTest {
     }
   }
 
-  private HttpResponse<String> sendResponseForReadsAFieldAndUploadedBytes(TestServer test)
+  private HttpResponse<String> sendResponseForReadsFieldAndUploadedBytes(TestServer test)
       throws Exception {
     return send(
         test,
@@ -231,22 +266,11 @@ class MultipartExampleTest {
   }
 
   @Test
-  void rejectsAFileAsTheStorageDirectoryBeforeStartup() throws Exception {
+  void rejectsFileAsTheStorageDirectoryBeforeStartup() throws Exception {
     var file = Files.createFile(directory.resolve("not-a-directory"));
 
     assertThrows(IOException.class, () -> MultipartExample.application(file));
     assertThrows(NullPointerException.class, () -> MultipartExample.application(null));
-  }
-
-  private static HttpResponse<String> send(TestServer test, byte[] body) throws Exception {
-    return test.send(
-        request ->
-            request
-                .path("/documents")
-                .method("POST")
-                .header("Content-Type", "multipart/form-data; boundary=example")
-                .body(body),
-        HttpResponse.BodyHandlers.ofString());
   }
 
   private void awaitEmptyDirectory() {
@@ -258,29 +282,5 @@ class MultipartExampleTest {
                 assertEquals(0, files.count());
               }
             });
-  }
-
-  private static byte[] multipart(byte[]... parts) {
-    var body = new ByteArrayOutputStream();
-    for (var part : parts) {
-      body.writeBytes(part);
-    }
-    body.writeBytes("--example--\r\n".getBytes(StandardCharsets.US_ASCII));
-
-    return body.toByteArray();
-  }
-
-  private static byte[] part(String name, String filename, byte[] content) {
-    var body = new ByteArrayOutputStream();
-    var disposition = "--example\r\nContent-Disposition: form-data; name=\"" + name + "\"";
-    if (filename != null) {
-      disposition += "; filename=\"" + filename + "\"";
-    }
-
-    body.writeBytes((disposition + "\r\n\r\n").getBytes(StandardCharsets.UTF_8));
-    body.writeBytes(content);
-    body.writeBytes("\r\n".getBytes(StandardCharsets.US_ASCII));
-
-    return body.toByteArray();
   }
 }

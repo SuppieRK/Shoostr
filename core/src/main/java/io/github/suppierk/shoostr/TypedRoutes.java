@@ -30,6 +30,18 @@ public final class TypedRoutes {
   }
 
   /**
+   * Adapts only handler static types; both callbacks see the same exchange objects.
+   *
+   * @param handler typed endpoint handler
+   * @return ordinary registration handler
+   */
+  private static Handler adapt(TypedHandler handler) {
+    Objects.requireNonNull(handler);
+
+    return (request, response) -> handler.handle((TypedRequest) request, (TypedResponse) response);
+  }
+
+  /**
    * Registers a renderer for this whole typed scope, including earlier endpoints and descendants.
    * Uses the same scope inheritance and local-before-app selection as ordinary Routes. The renderer
    * receives the original Request and Response; codec-backed instances remain available through
@@ -1396,17 +1408,5 @@ public final class TypedRoutes {
     routes.sse(executor, adapt(handler), configuration);
 
     return this;
-  }
-
-  /**
-   * Adapts only handler static types; both callbacks see the same exchange objects.
-   *
-   * @param handler typed endpoint handler
-   * @return ordinary registration handler
-   */
-  private static Handler adapt(TypedHandler handler) {
-    Objects.requireNonNull(handler);
-
-    return (request, response) -> handler.handle((TypedRequest) request, (TypedResponse) response);
   }
 }

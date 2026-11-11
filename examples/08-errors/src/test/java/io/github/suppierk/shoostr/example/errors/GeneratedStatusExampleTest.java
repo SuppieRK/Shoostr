@@ -14,7 +14,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 @Timeout(15)
 class GeneratedStatusExampleTest {
   @Test
-  void usesTheLocalRendererForASelectedButUnavailableRoute() throws Exception {
+  void usesTheLocalRendererForSelectedButUnavailableRoute() throws Exception {
 
     try (var test = TestServer.start(GeneratedStatusExample.application())) {
       var response =

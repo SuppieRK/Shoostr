@@ -251,14 +251,12 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup3 = app::close) {
-        var cors = createCorsForAdmitsPreflightWithoutExecutingRouteAuthenticationOrBusinessLogic();
+        final var cors = createCorsForPreflightWithoutRouteWork();
 
         app.beforeRouteHandler((ignoredRequest, ignoredResponse) -> gates.incrementAndGet());
         app.afterRequest(completions::add);
         app.onRequestHeaders((ignoredRequest, ignoredResponse) -> admissions.incrementAndGet());
-        var admission =
-            createAdmissionForAdmitsPreflightWithoutExecutingRouteAuthenticationOrBusinessLogic(
-                authentications);
+        var admission = createAdmissionForPreflightWithoutRouteWork(authentications);
         app.routes()
             .path(
                 "/",
@@ -271,9 +269,7 @@ class CorsTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var preflight =
-              sendPreflightRequestForAdmitsPreflightWithoutExecutingRouteAuthenticationOrBusinessLogic(
-                  test);
+          var preflight = sendPreflightRequestForPreflightWithoutRouteWork(test);
 
           assertEquals(204, preflight.statusCode());
           assertEquals("", preflight.body());
@@ -282,9 +278,7 @@ class CorsTest {
           assertEquals(0, gates.get());
           assertEquals(0, executions.get());
 
-          var actual =
-              sendActualRequestForAdmitsPreflightWithoutExecutingRouteAuthenticationOrBusinessLogic(
-                  test);
+          var actual = sendActualRequestForPreflightWithoutRouteWork(test);
 
           assertEquals(401, actual.statusCode());
           assertEquals("Bearer", actual.headers().firstValue("WWW-Authenticate").orElseThrow());
@@ -314,7 +308,7 @@ class CorsTest {
     }
   }
 
-  private Cors createCorsForAdmitsPreflightWithoutExecutingRouteAuthenticationOrBusinessLogic() {
+  private Cors createCorsForPreflightWithoutRouteWork() {
     return new Cors(
         new CorsPolicy(
             Set.of("https://client.example"),
@@ -325,9 +319,8 @@ class CorsTest {
             5));
   }
 
-  private AuthenticationExtension
-      createAdmissionForAdmitsPreflightWithoutExecutingRouteAuthenticationOrBusinessLogic(
-          AtomicInteger authentications) {
+  private AuthenticationExtension createAdmissionForPreflightWithoutRouteWork(
+      AtomicInteger authentications) {
     return new AuthenticationExtension() {
       @Override
       public void handle(Request request, Response response) {
@@ -338,9 +331,8 @@ class CorsTest {
     };
   }
 
-  private HttpResponse<String>
-      sendPreflightRequestForAdmitsPreflightWithoutExecutingRouteAuthenticationOrBusinessLogic(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendPreflightRequestForPreflightWithoutRouteWork(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -352,9 +344,8 @@ class CorsTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<String>
-      sendActualRequestForAdmitsPreflightWithoutExecutingRouteAuthenticationOrBusinessLogic(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendActualRequestForPreflightWithoutRouteWork(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -370,8 +361,7 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup4 = app::close) {
-        var cors =
-            createCorsForAnswersCredentialedPreflightWithExplicitMethodAndHeaderPermissions();
+        var cors = createCorsForCredentialedPreflight();
 
         app.routes()
             .path(
@@ -381,8 +371,7 @@ class CorsTest {
                 scope -> scope.withExtension(cors));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              sendResultForAnswersCredentialedPreflightWithExplicitMethodAndHeaderPermissions(test);
+          var result = sendResultForCredentialedPreflight(test);
 
           assertEquals(204, result.statusCode());
           assertEquals(
@@ -395,9 +384,7 @@ class CorsTest {
               result.headers().firstValue("Access-Control-Allow-Headers").orElseThrow());
           assertEquals("600", result.headers().firstValue("Access-Control-Max-Age").orElseThrow());
 
-          var actual =
-              sendActualRequestForAnswersCredentialedPreflightWithExplicitMethodAndHeaderPermissions(
-                  test);
+          var actual = sendActualRequestForCredentialedPreflight(test);
 
           assertEquals(200, actual.statusCode());
           assertEquals(
@@ -407,7 +394,7 @@ class CorsTest {
     }
   }
 
-  private Cors createCorsForAnswersCredentialedPreflightWithExplicitMethodAndHeaderPermissions() {
+  private Cors createCorsForCredentialedPreflight() {
     return new Cors(
         new CorsPolicy(
             Set.of("https://client.example"),
@@ -418,9 +405,8 @@ class CorsTest {
             600));
   }
 
-  private HttpResponse<String>
-      sendResultForAnswersCredentialedPreflightWithExplicitMethodAndHeaderPermissions(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendResultForCredentialedPreflight(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -434,9 +420,8 @@ class CorsTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<String>
-      sendActualRequestForAnswersCredentialedPreflightWithExplicitMethodAndHeaderPermissions(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendActualRequestForCredentialedPreflight(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -520,27 +505,21 @@ class CorsTest {
                 scope -> scope.withExtension(cors));
 
         try (var test = TestServer.start(app)) {
-          String[][] invalidFields =
-              createInvalidFieldsForRejectsAmbiguousOrDisallowedPreflightAfterAdmissionWithoutExecutingRoutes();
+          String[][] invalidFields = createInvalidFieldsForInvalidPreflight();
           for (var fields : invalidFields) {
-            var result =
-                sendResultForRejectsAmbiguousOrDisallowedPreflightAfterAdmissionWithoutExecutingRoutes(
-                    test, fields);
+            var result = sendResultForInvalidPreflight(test, fields);
 
             assertEquals(400, result.statusCode(), Arrays.toString(fields));
             assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
           }
-          String[][] deniedFields =
-              createDeniedFieldsForRejectsAmbiguousOrDisallowedPreflightAfterAdmissionWithoutExecutingRoutes();
+          String[][] deniedFields = createDeniedFieldsForInvalidPreflight();
           for (var fields : deniedFields) {
             var result = sendAmbiguousPreflight(test, fields);
 
             assertEquals(403, result.statusCode(), Arrays.toString(fields));
             assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
           }
-          var unsupported =
-              sendUnsupportedRequestForRejectsAmbiguousOrDisallowedPreflightAfterAdmissionWithoutExecutingRoutes(
-                  test);
+          var unsupported = sendUnsupportedRequestForInvalidPreflight(test);
 
           assertEquals(405, unsupported.statusCode());
           assertTrue(unsupported.headers().firstValue("Allow").orElseThrow().contains("GET"));
@@ -552,8 +531,7 @@ class CorsTest {
     }
   }
 
-  private String[][]
-      createInvalidFieldsForRejectsAmbiguousOrDisallowedPreflightAfterAdmissionWithoutExecutingRoutes() {
+  private String[][] createInvalidFieldsForInvalidPreflight() {
     return new String[][] {
       {
         "Origin",
@@ -593,9 +571,8 @@ class CorsTest {
     };
   }
 
-  private HttpResponse<String>
-      sendResultForRejectsAmbiguousOrDisallowedPreflightAfterAdmissionWithoutExecutingRoutes(
-          TestServer test, String[] fields) throws IOException, InterruptedException {
+  private HttpResponse<String> sendResultForInvalidPreflight(TestServer test, String[] fields)
+      throws IOException, InterruptedException {
     return test.send(
         request -> {
           request.path("/data").timeout(Duration.ofSeconds(5)).method("OPTIONS");
@@ -606,8 +583,7 @@ class CorsTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private String[][]
-      createDeniedFieldsForRejectsAmbiguousOrDisallowedPreflightAfterAdmissionWithoutExecutingRoutes() {
+  private String[][] createDeniedFieldsForInvalidPreflight() {
     return new String[][] {
       {"Origin", "null", "Access-Control-Request-Method", "GET"},
       {"Origin", "https://other.example", "Access-Control-Request-Method", "GET"},
@@ -635,9 +611,8 @@ class CorsTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<byte[]>
-      sendUnsupportedRequestForRejectsAmbiguousOrDisallowedPreflightAfterAdmissionWithoutExecutingRoutes(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendUnsupportedRequestForInvalidPreflight(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -663,9 +638,7 @@ class CorsTest {
                 scope -> scope.withExtension(cors));
 
         try (var test = TestServer.start(app)) {
-          var sameOrigin =
-              sendSameOriginRequestForPreservesSameOriginAndAbsentOriginDispatchWithoutCrossOriginPermissions(
-                  test, app);
+          var sameOrigin = sendSameOriginRequestForSameOriginDispatch(test, app);
 
           assertEquals(200, sameOrigin.statusCode());
           assertEquals("local", sameOrigin.body());
@@ -682,9 +655,8 @@ class CorsTest {
     }
   }
 
-  private HttpResponse<String>
-      sendSameOriginRequestForPreservesSameOriginAndAbsentOriginDispatchWithoutCrossOriginPermissions(
-          TestServer test, Shoostr app) throws IOException, InterruptedException {
+  private HttpResponse<String> sendSameOriginRequestForSameOriginDispatch(
+      TestServer test, Shoostr app) throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -737,8 +709,7 @@ class CorsTest {
       try (Closeable appCleanup8 = app::close) {
         var cors = new Cors(new CorsPolicy(Set.of("https://client.example")));
 
-        Handler conflictingHeaders =
-            createConflictingHeadersForProtectsSharingAndCacheFieldsAcrossFiniteStreamingPreflightAndErrorResponses();
+        Handler conflictingHeaders = createConflictingHeadersForProtectedSharingFields();
         app.onRequestHeaders(conflictingHeaders);
         app.exception(
             RuntimeException.class,
@@ -768,9 +739,7 @@ class CorsTest {
         try (var test = TestServer.start(app)) {
           for (var scenario : expectedStatuses().entrySet()) {
             var mode = scenario.getKey();
-            var result =
-                sendResultForProtectsSharingAndCacheFieldsAcrossFiniteStreamingPreflightAndErrorResponses(
-                    test, mode);
+            var result = sendResultForProtectedSharingFields(test, mode);
 
             assertEquals(scenario.getValue(), result.statusCode(), mode);
             assertEquals(
@@ -793,9 +762,7 @@ class CorsTest {
                 result.headers().allValues("Access-Control-Max-Age"),
                 mode);
 
-            var vary =
-                createVaryForProtectsSharingAndCacheFieldsAcrossFiniteStreamingPreflightAndErrorResponses(
-                    result);
+            var vary = createVaryForProtectedSharingFields(result);
 
             assertEquals(
                 "preflight".equals(mode)
@@ -814,8 +781,7 @@ class CorsTest {
     }
   }
 
-  private Handler
-      createConflictingHeadersForProtectsSharingAndCacheFieldsAcrossFiniteStreamingPreflightAndErrorResponses() {
+  private Handler createConflictingHeadersForProtectedSharingFields() {
     return (ignoredRequest, response) -> {
       response.setHeader("Vary", "Accept-Encoding, origin").addHeader("Vary", "Accept-Language");
       response
@@ -841,9 +807,8 @@ class CorsTest {
     return Map.copyOf(entries);
   }
 
-  private HttpResponse<String>
-      sendResultForProtectsSharingAndCacheFieldsAcrossFiniteStreamingPreflightAndErrorResponses(
-          TestServer test, String mode) throws IOException, InterruptedException {
+  private HttpResponse<String> sendResultForProtectedSharingFields(TestServer test, String mode)
+      throws IOException, InterruptedException {
     return test.send(
         request -> {
           request.path("/data").timeout(Duration.ofSeconds(5));
@@ -863,9 +828,7 @@ class CorsTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private List<String>
-      createVaryForProtectsSharingAndCacheFieldsAcrossFiniteStreamingPreflightAndErrorResponses(
-          HttpResponse<String> result) {
+  private List<String> createVaryForProtectedSharingFields(HttpResponse<String> result) {
     return result.headers().allValues("Vary").stream()
         .flatMap(value -> Arrays.stream(value.split(",", -1)))
         .map(String::trim)
@@ -898,15 +861,11 @@ class CorsTest {
                 scope -> scope.withExtension(cors));
 
         try (var test = TestServer.start(app)) {
-          var allowed =
-              sendAllowedRequestForPreventsAdmissionFromCommittingBeforeAnInterceptedPreflightDecision(
-                  test);
+          var allowed = sendAllowedRequestForInterceptedPreflight(test);
 
           assertEquals(204, allowed.statusCode());
 
-          var denied =
-              sendDeniedRequestForPreventsAdmissionFromCommittingBeforeAnInterceptedPreflightDecision(
-                  test);
+          var denied = sendDeniedRequestForInterceptedPreflight(test);
 
           assertEquals(403, denied.statusCode());
           assertEquals(
@@ -926,9 +885,8 @@ class CorsTest {
     }
   }
 
-  private HttpResponse<String>
-      sendAllowedRequestForPreventsAdmissionFromCommittingBeforeAnInterceptedPreflightDecision(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendAllowedRequestForInterceptedPreflight(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -940,9 +898,8 @@ class CorsTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<String>
-      sendDeniedRequestForPreventsAdmissionFromCommittingBeforeAnInterceptedPreflightDecision(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendDeniedRequestForInterceptedPreflight(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1008,8 +965,7 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup11 = app::close) {
-        var cors =
-            createCorsForPreservesExplicitOptionsWithDisabledCorsAndOrdinaryOptionsWithEnabledCors();
+        var cors = createCorsForExplicitOptions();
         if (enabled) {}
 
         app.routes()
@@ -1049,8 +1005,7 @@ class CorsTest {
     }
   }
 
-  private Cors
-      createCorsForPreservesExplicitOptionsWithDisabledCorsAndOrdinaryOptionsWithEnabledCors() {
+  private Cors createCorsForExplicitOptions() {
     return new Cors(
         new CorsPolicy(
             Set.of("https://client.example"),
@@ -1084,7 +1039,7 @@ class CorsTest {
     var methods = new HashSet<>(Set.of(HttpMethods.GET));
     var headers = new HashSet<>(Set.of(HttpHeaders.AUTHORIZATION));
     var exposed = new HashSet<>(Set.of(HttpHeaders.ETAG));
-    var policy = new CorsPolicy(origins, methods, headers, true, exposed, 0);
+    final var policy = new CorsPolicy(origins, methods, headers, true, exposed, 0);
     origins.clear();
     methods.clear();
     headers.clear();
@@ -1092,7 +1047,7 @@ class CorsTest {
     var retainedOrigins = policy.origins();
     var retainedMethods = policy.methods();
     var retainedHeaders = policy.allowedHeaders();
-    var retainedExposedHeaders = policy.exposedHeaders();
+    final var retainedExposedHeaders = policy.exposedHeaders();
 
     assertThrows(UnsupportedOperationException.class, retainedOrigins::clear);
     assertThrows(UnsupportedOperationException.class, retainedMethods::clear);
@@ -1152,9 +1107,7 @@ class CorsTest {
                     .firstValue("Access-Control-Expose-Headers")
                     .orElseThrow());
           }
-          var preflight =
-              sendPreflightRequestForKeepsSharingDecisionsIndependentAcrossConcurrentRequestsAndConfigurationMutation(
-                  test);
+          var preflight = sendPreflightRequestForConcurrentPolicySnapshots(test);
 
           assertEquals(204, preflight.statusCode());
           assertEquals("0", preflight.headers().firstValue("Access-Control-Max-Age").orElseThrow());
@@ -1163,9 +1116,8 @@ class CorsTest {
     }
   }
 
-  private HttpResponse<String>
-      sendPreflightRequestForKeepsSharingDecisionsIndependentAcrossConcurrentRequestsAndConfigurationMutation(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendPreflightRequestForConcurrentPolicySnapshots(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1333,8 +1285,7 @@ class CorsTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup15 = app::close) {
-        var cors =
-            createCorsForDoesNotGrantCorsForUnmatchedRoutesWithoutGroupFallbackAndPreservesAdmissionVary();
+        var cors = createCorsForUnmatchedRoutes();
 
         app.onRequestHeaders((ignoredRequest, response) -> response.setHeader("Vary", "*"));
         if (expected == 405) {
@@ -1346,9 +1297,7 @@ class CorsTest {
         }
 
         try (var test = TestServer.start(app)) {
-          var result =
-              sendResultForDoesNotGrantCorsForUnmatchedRoutesWithoutGroupFallbackAndPreservesAdmissionVary(
-                  test);
+          var result = sendResultForUnmatchedRoutes(test);
 
           assertEquals(expected, result.statusCode());
           assertTrue(result.headers().firstValue("Access-Control-Allow-Origin").isEmpty());
@@ -1359,8 +1308,7 @@ class CorsTest {
     }
   }
 
-  private Cors
-      createCorsForDoesNotGrantCorsForUnmatchedRoutesWithoutGroupFallbackAndPreservesAdmissionVary() {
+  private Cors createCorsForUnmatchedRoutes() {
     return new Cors(
         new CorsPolicy(
             Set.of("https://client.example"),
@@ -1371,9 +1319,8 @@ class CorsTest {
             5));
   }
 
-  private HttpResponse<String>
-      sendResultForDoesNotGrantCorsForUnmatchedRoutesWithoutGroupFallbackAndPreservesAdmissionVary(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendResultForUnmatchedRoutes(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -1384,7 +1331,8 @@ class CorsTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Null is the invalid policy under test.
+  @SuppressWarnings("NullAway")
+  // Null is the invalid policy under test.
   void freezesScopedCorsConfigurationAndRejectsInstallationAfterStartupOrClose() throws Exception {
     var policy = new CorsPolicy(Set.of("https://client.example"));
 
@@ -1610,22 +1558,24 @@ class CorsTest {
   }
 
   private String createOutgoingForPreservesRawQueryDispatchForSameAndCrossOriginRequests() {
-    return """
-            GET /raw?bad=%GG HTTP/1.1\r
-            Host: example.test\r
-            Origin: http://example.test\r
-            Connection: close\r
-            \r
-            """;
+    return
+        """
+        GET /raw?bad=%GG HTTP/1.1\r
+        Host: example.test\r
+        Origin: http://example.test\r
+        Connection: close\r
+        \r
+        """;
   }
 
   private String malformedQueryRequest() {
-    return """
-            GET /raw?bad=%GG HTTP/1.1\r
-            Host: example.test\r
-            Origin: https://client.example\r
-            Connection: close\r
-            \r
-            """;
+    return
+        """
+        GET /raw?bad=%GG HTTP/1.1\r
+        Host: example.test\r
+        Origin: https://client.example\r
+        Connection: close\r
+        \r
+        """;
   }
 }

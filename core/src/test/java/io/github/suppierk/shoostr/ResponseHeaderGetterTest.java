@@ -48,7 +48,7 @@ class ResponseHeaderGetterTest {
   }
 
   @Test
-  void doesNotExposeAGetterUnderTheSetterName() {
+  void doesNotExposeGetterUnderTheSetterName() {
     assertThrows(
         NoSuchMethodException.class, () -> Response.class.getMethod("setHeader", String.class));
   }

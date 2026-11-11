@@ -51,7 +51,7 @@ class ExceptionHandlerTest {
   }
 
   @Test
-  void writesCustomErrorsWithALiveRequestAndCleanResponse() throws Exception {
+  void writesCustomErrorsWithLiveRequestAndCleanResponse() throws Exception {
     app.exception(
         UnauthorizedException.class,
         (ignored, request, response) ->
@@ -73,7 +73,7 @@ class ExceptionHandlerTest {
             });
 
     try (var test = TestServer.start(app)) {
-      var result = sendResultForWritesCustomErrorsWithALiveRequestAndCleanResponse(test);
+      var result = sendResultForWritesCustomErrorsWithLiveRequestAndCleanResponse(test);
 
       assertEquals(401, result.statusCode());
       assertEquals("POST 42 payload", result.body());
@@ -83,7 +83,7 @@ class ExceptionHandlerTest {
     }
   }
 
-  private HttpResponse<String> sendResultForWritesCustomErrorsWithALiveRequestAndCleanResponse(
+  private HttpResponse<String> sendResultForWritesCustomErrorsWithLiveRequestAndCleanResponse(
       TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->

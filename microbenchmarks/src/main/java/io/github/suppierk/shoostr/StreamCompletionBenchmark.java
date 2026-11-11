@@ -33,15 +33,18 @@ import org.openjdk.jmh.annotations.Warmup;
     jvmArgsAppend = {"-Xms256m", "-Xmx256m", "-XX:+UseG1GC"})
 @Threads(1)
 public class StreamCompletionBenchmark {
-  @Param({"fresh", "shared"})
-  public String blocker;
-
-  @Param({"inline", "deferred"})
-  public String completion;
-
   private final ByteBuffer bytes;
   private final Content.Sink sink;
   private final ArrayBlockingQueue<Callback> pending;
+
+  /** Whether the stream uses a fresh or shared blocker. */
+  @Param({"fresh", "shared"})
+  public String blocker;
+
+  /** Whether the write completes inline or later. */
+  @Param({"inline", "deferred"})
+  public String completion;
+
   private @Nullable Thread worker;
   private int writes;
 

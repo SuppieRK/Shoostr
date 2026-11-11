@@ -42,6 +42,10 @@ class ApplicationCloseCallbacksTest {
   private static final String BEFORE_CLOSE = "beforeClose";
   private static final String AFTER_CLOSE = "afterClose";
 
+  private static AssertionError assertionFailure(String message) {
+    return assertThrows(AssertionError.class, () -> fail(message));
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {BEFORE_CLOSE, AFTER_CLOSE})
   void returnsTheSameApplicationWhenRegisteringCallbacks(String phase) throws Exception {
@@ -168,7 +172,7 @@ class ApplicationCloseCallbacksTest {
 
   @ParameterizedTest
   @ValueSource(strings = {BEFORE_CLOSE, AFTER_CLOSE})
-  void ignoresRecursiveCloseFromACallback(String phase) throws Exception {
+  void ignoresRecursiveCloseFromCallback(String phase) throws Exception {
     var invoked = new AtomicInteger();
 
     {
@@ -312,7 +316,7 @@ class ApplicationCloseCallbacksTest {
   private ClaimingExtension
       createExtensionForPreservesClaimCleanupFailuresBeforeDisposingApplicationResources(
           Shoostr app,
-          ArrayList<String> invoked,
+          List<String> invoked,
           IllegalArgumentException stopping,
           IllegalStateException cleanup) {
     return new ClaimingExtension(
@@ -354,7 +358,7 @@ class ApplicationCloseCallbacksTest {
   }
 
   private ClaimingExtension createExtensionForKeepsRejectedClaimCallerOwnedAfterReentrantClosure(
-      Shoostr app, IllegalArgumentException rejected, ArrayList<String> invoked) {
+      Shoostr app, IllegalArgumentException rejected, List<String> invoked) {
     return new ClaimingExtension(
         () -> {
           assertDoesNotThrow(app::close);
@@ -552,8 +556,7 @@ class ApplicationCloseCallbacksTest {
   }
 
   @Test
-  void stopsOwnedResourcesAndRunsFinalCallbacksBeforeRethrowingABeforeCloseError()
-      throws Exception {
+  void stopsOwnedResourcesAndRunsFinalCallbacksBeforeRethrowingBeforeCloseError() throws Exception {
     var rejected = assertionFailure("Stop failed");
 
     var nativeServer = new AtomicReference<Server>();
@@ -736,7 +739,7 @@ class ApplicationCloseCallbacksTest {
   }
 
   @Test
-  void preservesAFatalShutdownFailureOverAnOrdinaryInstallationFailure() throws Exception {
+  void preservesFatalShutdownFailureOverAnOrdinaryInstallationFailure() throws Exception {
     var installation = new IllegalArgumentException("Install failed");
 
     var fatal = assertionFailure("Signalling failed");
@@ -762,7 +765,8 @@ class ApplicationCloseCallbacksTest {
   }
 
   @Test
-  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
+  @SuppressWarnings("java:S9357")
+  // Extension has no abstract methods and cannot be a lambda.
   void keepsTheInstallationErrorPrimaryWhenShutdownAndFinalCallbacksAlsoFail() throws Exception {
     var installation = assertionFailure("Install failed");
     var shutdown = assertionFailure("Signalling failed");
@@ -822,9 +826,7 @@ class ApplicationCloseCallbacksTest {
               throw fatal;
             });
         app.afterClose(() -> events.add("after"));
-        var extension =
-            createExtensionForRunsDeferredFinalCallbacksAfterReentrantInstallationCleanupThrowsError(
-                app, events);
+        var extension = createExtensionForReentrantCleanupError(app, events);
 
         assertSame(fatal, assertThrows(AssertionError.class, () -> app.withExtension(extension)));
         assertEquals(List.of("extension", "after"), events);
@@ -832,9 +834,8 @@ class ApplicationCloseCallbacksTest {
     }
   }
 
-  private ApplicationExtension<Object>
-      createExtensionForRunsDeferredFinalCallbacksAfterReentrantInstallationCleanupThrowsError(
-          Shoostr app, ArrayList<String> events) {
+  private ApplicationExtension<Object> createExtensionForReentrantCleanupError(
+      Shoostr app, List<String> events) {
     return new ApplicationExtension<Object>() {
       @Override
       public Object configure(Lifecycle lifecycle, Object inherited) {
@@ -858,7 +859,7 @@ class ApplicationCloseCallbacksTest {
   }
 
   @Test
-  void leavesBorrowedExecutorsAvailableAfterABeforeCloseError() throws Exception {
+  void leavesBorrowedExecutorsAvailableAfterBeforeCloseError() throws Exception {
     var fatal = assertionFailure("Signalling failed");
 
     try (var borrowed = Executors.newSingleThreadExecutor()) {
@@ -1024,10 +1025,6 @@ class ApplicationCloseCallbacksTest {
         throw stopping;
       }
     };
-  }
-
-  private static AssertionError assertionFailure(String message) {
-    return assertThrows(AssertionError.class, () -> fail(message));
   }
 
   private record ClaimingExtension(Runnable claim, Runnable stopping, Runnable cleanup)

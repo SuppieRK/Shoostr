@@ -162,8 +162,7 @@ class TransportConfigurationTest {
   }
 
   @Test
-  void preservesVerifiedTlsAndHttp2WithAPreboundRangePort(@TempDir Path temporary)
-      throws Exception {
+  void preservesVerifiedTlsAndHttp2WithPreboundRangePort(@TempDir Path temporary) throws Exception {
     var storePath = temporary.resolve("localhost.p12");
     var keytool =
         Path.of(
@@ -171,7 +170,7 @@ class TransportConfigurationTest {
             "bin",
             System.getProperty("os.name").startsWith("Windows") ? "keytool.exe" : "keytool");
     var generator =
-        startKeytoolForPreservesVerifiedTlsAndHttp2WithAPreboundRangePort(keytool, storePath);
+        startKeytoolForPreservesVerifiedTlsAndHttp2WithPreboundRangePort(keytool, storePath);
 
     try {
       assertTrue(generator.waitFor(10, TimeUnit.SECONDS), "keytool must finish within ten seconds");
@@ -186,7 +185,7 @@ class TransportConfigurationTest {
       store.load(input, "changeit".toCharArray());
     }
 
-    var context = createTrustContext(store);
+    final var context = createTrustContext(store);
 
     var configuredOptions = new Options();
     configuredOptions.setHttp2(true);
@@ -213,7 +212,7 @@ class TransportConfigurationTest {
     }
   }
 
-  private Process startKeytoolForPreservesVerifiedTlsAndHttp2WithAPreboundRangePort(
+  private Process startKeytoolForPreservesVerifiedTlsAndHttp2WithPreboundRangePort(
       Path keytool, Path storePath) throws IOException {
     return new ProcessBuilder(
             keytool.toString(),

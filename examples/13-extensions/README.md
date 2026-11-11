@@ -11,7 +11,8 @@ docker compose -f examples/13-extensions/compose.yaml up --build -d
 
 Startup is asynchronous. Check diagnostics with `docker compose -f examples/13-extensions/compose.yaml logs -f app`.
 Open `http://127.0.0.1:8080/health`. Expect ok.
-Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and use that port in requests.
+Retry the request if the listener is not ready yet. Set `APP_PORT=8081` before the command if port 8080 is occupied, and
+use that port in requests.
 Compose exposes the app on host loopback. These credentials and unauthenticated fixtures
 are for trusted local development. Direct Java runs use the default wildcard listener.
 

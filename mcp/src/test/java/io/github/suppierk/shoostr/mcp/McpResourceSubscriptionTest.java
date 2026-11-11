@@ -41,7 +41,7 @@ class McpResourceSubscriptionTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var mcp = createMcpForDeliversResourceUpdatesOnlyToSubscribersOfThatUri(security, alpha, beta);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));

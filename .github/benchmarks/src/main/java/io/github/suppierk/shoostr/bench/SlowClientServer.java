@@ -37,7 +37,7 @@ public final class SlowClientServer implements AutoCloseable {
     this.release = new CountDownLatch(1);
     this.connectors = List.of();
     this.nativeConfiguration = "";
-    var defaults = new Options();
+    final var defaults = new Options();
     this.app =
         new Shoostr()
             .modifyServer(

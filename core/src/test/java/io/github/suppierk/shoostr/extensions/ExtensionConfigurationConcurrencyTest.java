@@ -163,7 +163,8 @@ class ExtensionConfigurationConcurrencyTest {
 
   @Test
   @Timeout(10)
-  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
+  @SuppressWarnings("java:S9357")
+  // Extension has no abstract methods and cannot be a lambda.
   void inheritedProviderConfigurationRunsOutsideTheLockWithStartupGuarded() throws Exception {
     {
       var app =

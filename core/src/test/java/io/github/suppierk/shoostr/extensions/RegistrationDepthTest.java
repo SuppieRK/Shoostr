@@ -19,6 +19,53 @@ import org.eclipse.jetty.server.ServerConnector;
 import org.junit.jupiter.api.Test;
 
 class RegistrationDepthTest {
+  private static void paths(Routes routes, int remaining, AtomicInteger entered) {
+    if (remaining == 0) {
+      return;
+    }
+
+    routes.path(
+        "/level",
+        child -> {
+          entered.incrementAndGet();
+          paths(child, remaining - 1, entered);
+        });
+  }
+
+  private static void conditions(Routes routes, int remaining, AtomicInteger entered) {
+    if (remaining == 0) {
+      return;
+    }
+
+    routes.when(
+        () -> true,
+        child -> {
+          entered.incrementAndGet();
+          conditions(child, remaining - 1, entered);
+        });
+  }
+
+  private static void nested(Routes routes, int remaining, boolean mixed, Consumer<Routes> leaf) {
+    if (remaining == 0) {
+      leaf.accept(routes);
+    } else if (mixed && remaining % 2 == 0) {
+      routes.when(() -> true, child -> nested(child, remaining - 1, true, leaf));
+    } else {
+      routes.path("/", child -> nested(child, remaining - 1, mixed, leaf));
+    }
+  }
+
+  private static void capturedRoot(Routes root, int remaining, AtomicInteger entered) {
+    if (remaining > 0) {
+      root.path(
+          "/",
+          ignoredRoutes -> {
+            entered.incrementAndGet();
+            capturedRoot(root, remaining - 1, entered);
+          });
+    }
+  }
+
   @Test
   void acceptsTenPathScopesAndAllowsEndpointRegistrationAtTheLimit() throws Exception {
     {
@@ -74,7 +121,7 @@ class RegistrationDepthTest {
   }
 
   @Test
-  void countsSameThreadGroupingThroughACapturedRoot() throws Exception {
+  void countsSameThreadGroupingThroughCapturedRoot() throws Exception {
     var entered = new AtomicInteger();
 
     {
@@ -106,7 +153,7 @@ class RegistrationDepthTest {
   }
 
   @Test
-  void restoresGroupingDepthAfterARegistrationException() throws Exception {
+  void restoresGroupingDepthAfterRegistrationException() throws Exception {
     {
       var app =
           new Shoostr()
@@ -140,7 +187,8 @@ class RegistrationDepthTest {
   }
 
   @Test
-  @SuppressWarnings("java:S9357") // Extension has no abstract methods and cannot be a lambda.
+  @SuppressWarnings("java:S9357")
+  // Extension has no abstract methods and cannot be a lambda.
   void rejectsExcessDepthBeforeConfigurationOrInheritedProvidersRun() throws Exception {
     var configured = new AtomicInteger();
     var userCalls = new AtomicInteger();
@@ -255,53 +303,6 @@ class RegistrationDepthTest {
         assertThrows(IllegalStateException.class, () -> paths(routes, 11, entered));
         assertEquals(10, entered.get());
       }
-    }
-  }
-
-  private static void paths(Routes routes, int remaining, AtomicInteger entered) {
-    if (remaining == 0) {
-      return;
-    }
-
-    routes.path(
-        "/level",
-        child -> {
-          entered.incrementAndGet();
-          paths(child, remaining - 1, entered);
-        });
-  }
-
-  private static void conditions(Routes routes, int remaining, AtomicInteger entered) {
-    if (remaining == 0) {
-      return;
-    }
-
-    routes.when(
-        () -> true,
-        child -> {
-          entered.incrementAndGet();
-          conditions(child, remaining - 1, entered);
-        });
-  }
-
-  private static void nested(Routes routes, int remaining, boolean mixed, Consumer<Routes> leaf) {
-    if (remaining == 0) {
-      leaf.accept(routes);
-    } else if (mixed && remaining % 2 == 0) {
-      routes.when(() -> true, child -> nested(child, remaining - 1, true, leaf));
-    } else {
-      routes.path("/", child -> nested(child, remaining - 1, mixed, leaf));
-    }
-  }
-
-  private static void capturedRoot(Routes root, int remaining, AtomicInteger entered) {
-    if (remaining > 0) {
-      root.path(
-          "/",
-          ignoredRoutes -> {
-            entered.incrementAndGet();
-            capturedRoot(root, remaining - 1, entered);
-          });
     }
   }
 }

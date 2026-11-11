@@ -22,6 +22,49 @@ class HttpHeadersTest {
 
   private static final Set<String> OBSOLETED = obsoleteHeaderNames();
 
+  private static Set<String> obsoleteHeaderNames() {
+    return Set.of(
+        "ACCESS_CONTROL",
+        "C_EXT",
+        "C_MAN",
+        "C_OPT",
+        "C_PEP",
+        "CONTENT_BASE",
+        "CONTENT_MD5",
+        "CONTENT_SCRIPT_TYPE",
+        "CONTENT_STYLE_TYPE",
+        "CONTENT_VERSION",
+        "COOKIE2",
+        "DEFAULT_STYLE",
+        "DERIVED_FROM",
+        "DIGEST",
+        "EXT",
+        "GETPROFILE",
+        "HTTP2_SETTINGS",
+        "MAN",
+        "METHOD_CHECK",
+        "METHOD_CHECK_EXPIRES",
+        "OPT",
+        "P3P",
+        "PEP",
+        "PEP_INFO",
+        "PICS_LABEL",
+        "PROFILEOBJECT",
+        "PROTOCOL",
+        "PROTOCOL_REQUEST",
+        "PROXY_FEATURES",
+        "PROXY_INSTRUCTION",
+        "PUBLIC",
+        "REFERER_ROOT",
+        "SAFE",
+        "SECURITY_SCHEME",
+        "SET_COOKIE2",
+        "SETPROFILE",
+        "URI",
+        "WANT_DIGEST",
+        "WARNING");
+  }
+
   @Test
   void satisfiesEqualsAndHashCodeContract() {
     EqualsVerifier.forClass(HttpHeaders.class).withNonnullFields("value").verify();
@@ -130,48 +173,5 @@ class HttpHeadersTest {
         assertEquals(OBSOLETED.contains(field.getName()), deprecated, field.getName());
       }
     }
-  }
-
-  private static Set<String> obsoleteHeaderNames() {
-    return Set.of(
-        "ACCESS_CONTROL",
-        "C_EXT",
-        "C_MAN",
-        "C_OPT",
-        "C_PEP",
-        "CONTENT_BASE",
-        "CONTENT_MD5",
-        "CONTENT_SCRIPT_TYPE",
-        "CONTENT_STYLE_TYPE",
-        "CONTENT_VERSION",
-        "COOKIE2",
-        "DEFAULT_STYLE",
-        "DERIVED_FROM",
-        "DIGEST",
-        "EXT",
-        "GETPROFILE",
-        "HTTP2_SETTINGS",
-        "MAN",
-        "METHOD_CHECK",
-        "METHOD_CHECK_EXPIRES",
-        "OPT",
-        "P3P",
-        "PEP",
-        "PEP_INFO",
-        "PICS_LABEL",
-        "PROFILEOBJECT",
-        "PROTOCOL",
-        "PROTOCOL_REQUEST",
-        "PROXY_FEATURES",
-        "PROXY_INSTRUCTION",
-        "PUBLIC",
-        "REFERER_ROOT",
-        "SAFE",
-        "SECURITY_SCHEME",
-        "SET_COOKIE2",
-        "SETPROFILE",
-        "URI",
-        "WANT_DIGEST",
-        "WARNING");
   }
 }

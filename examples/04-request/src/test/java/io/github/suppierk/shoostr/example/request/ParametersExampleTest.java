@@ -163,7 +163,7 @@ class ParametersExampleTest {
                       UnsupportedOperationException.class, () -> path.put("id", "changed"));
 
                   var queryTags = query.get("tag");
-                  var formTags = form.get("tag");
+                  final var formTags = form.get("tag");
 
                   assertThrows(UnsupportedOperationException.class, query::clear);
                   assertThrows(UnsupportedOperationException.class, () -> queryTags.add("changed"));

@@ -72,9 +72,7 @@ class McpOperationsExampleTest {
     try {
       try (var pending = Executors.newVirtualThreadPerTaskExecutor()) {
 
-        try (var test =
-                openTestForRejectsExcessToolExecutionAndRecoversWithoutBlockingHealthOrClientReplies(
-                    calls, entered, release, bulkhead, callbacks);
+        try (var test = openTestForToolSaturation(calls, entered, release, bulkhead, callbacks);
             var client = openClient(test, Duration.ofSeconds(5));
             var other = openClient(test, Duration.ofSeconds(5))) {
           client.initialize();
@@ -115,14 +113,13 @@ class McpOperationsExampleTest {
     }
   }
 
-  private TestServer
-      openTestForRejectsExcessToolExecutionAndRecoversWithoutBlockingHealthOrClientReplies(
-          AtomicInteger calls,
-          CountDownLatch entered,
-          CountDownLatch release,
-          Bulkhead bulkhead,
-          Scheduler callbacks)
-          throws Exception {
+  private TestServer openTestForToolSaturation(
+      AtomicInteger calls,
+      CountDownLatch entered,
+      CountDownLatch release,
+      Bulkhead bulkhead,
+      Scheduler callbacks)
+      throws Exception {
     return TestServer.start(
         McpOperationsExample.application(
             () -> {

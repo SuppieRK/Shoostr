@@ -35,7 +35,7 @@ class McpInitialWriteFailureTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
     var mcp =
         createMcpForFailsQueuedNativeSendsWhenTheInitialHttpFlushFails(
@@ -108,10 +108,10 @@ class McpInitialWriteFailureTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"initial-failure-fixture","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"initial-failure-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
@@ -129,9 +129,9 @@ class McpInitialWriteFailureTest {
                 .header("X-Fail-Initial-Flush", "true")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-                "name":"ping-client","arguments":{}}}
-              """
+                    {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                      "name":"ping-client","arguments":{}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 }

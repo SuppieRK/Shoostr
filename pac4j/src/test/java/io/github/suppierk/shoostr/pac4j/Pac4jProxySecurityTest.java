@@ -34,6 +34,63 @@ import org.pac4j.http.client.direct.DirectBasicAuthClient;
 
 @Timeout(15)
 class Pac4jProxySecurityTest {
+  private static Stream<Arguments> metadataSources() {
+    return Stream.of("host", "port", "scheme")
+        .flatMap(
+            accessor ->
+                Stream.concat(
+                        Stream.of("direct"),
+                        Arrays.stream(ForwardedHeaders.values()).map(Enum::name))
+                    .map(source -> Arguments.of(accessor, source)));
+  }
+
+  private static Shoostr application(
+      ForwardedHeaders family, boolean trusted, AtomicReference<String> scheme) {
+    var provider = createProviderForApplication(scheme);
+    var app =
+        new Shoostr()
+            .modifyServer(
+                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
+    var auth = new Pac4j(provider, "Basic", (context, ignored, ignoredList) -> context.isSecure());
+    app.trustedProxies(address -> trusted && address.isLoopbackAddress(), family)
+        .routes()
+        .get(
+            "/secure",
+            (ignoredRequest, response) -> response.text("private"),
+            lifecycle -> lifecycle.withExtension(auth));
+
+    return app;
+  }
+
+  private static DirectBasicAuthClient createProviderForApplication(
+      AtomicReference<String> scheme) {
+    return new DirectBasicAuthClient(
+        (context, supplied) -> {
+          scheme.set(context.webContext().getScheme());
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          supplied.setUserProfile(profile);
+
+          return Optional.of(supplied);
+        });
+  }
+
+  private static TestRequest authorized(TestRequest request) {
+    return request.path("/secure").header("Authorization", "Basic YWxpY2U6Y29ycmVjdA==");
+  }
+
+  private static void forwarding(TestRequest request, ForwardedHeaders family, String protocol) {
+    if (family == ForwardedHeaders.RFC7239) {
+      request.header(
+          "Forwarded", "for=203.0.113.7" + (protocol.isEmpty() ? "" : ";proto=" + protocol));
+    } else {
+      request.header("X-Forwarded-For", "203.0.113.7");
+      if (!protocol.isEmpty()) {
+        request.header("X-Forwarded-Proto", protocol);
+      }
+    }
+  }
+
   @ParameterizedTest
   @MethodSource("metadataSources")
   void readsOriginMetadataWithoutParsingTheOpaqueRawQuery(String accessor, String source)
@@ -117,7 +174,9 @@ class Pac4jProxySecurityTest {
         ? ""
         : family == ForwardedHeaders.RFC7239
             ? "Forwarded: for=203.0.113.7;proto=https;host=\"public.example:9443\"\r\n"
-            : "X-Forwarded-For: 203.0.113.7\r\nX-Forwarded-Proto: https\r\nX-Forwarded-Host: public.example:9443\r\nX-Forwarded-Port: 9443\r\n";
+            : "X-Forwarded-For: 203.0.113.7\r\nX-Forwarded-Proto: "
+                + "https\r\nX-Forwarded-Host: public.example:9443\r\n"
+                + "X-Forwarded-Port: 9443\r\n";
   }
 
   private String createRequestForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(
@@ -138,19 +197,9 @@ class Pac4jProxySecurityTest {
     };
   }
 
-  private static Stream<Arguments> metadataSources() {
-    return Stream.of("host", "port", "scheme")
-        .flatMap(
-            accessor ->
-                Stream.concat(
-                        Stream.of("direct"),
-                        Arrays.stream(ForwardedHeaders.values()).map(Enum::name))
-                    .map(source -> Arguments.of(accessor, source)));
-  }
-
   @ParameterizedTest
   @EnumSource(ForwardedHeaders.class)
-  void authorizesHttpsAssertedByATrustedProxyOnAPlainBackendConnection(ForwardedHeaders family)
+  void authorizesHttpsAssertedByTrustedProxyOnPlainBackendConnection(ForwardedHeaders family)
       throws Exception {
     var scheme = new AtomicReference<String>();
 
@@ -214,7 +263,7 @@ class Pac4jProxySecurityTest {
 
   @ParameterizedTest
   @EnumSource(ForwardedHeaders.class)
-  void rejectsTrustedHttpDespiteBackendTlsAndFallsBackToTlsWithoutAProtocol(ForwardedHeaders family)
+  void rejectsTrustedHttpDespiteBackendTlsAndFallsBackToTlsWithoutProtocol(ForwardedHeaders family)
       throws Exception {
     var identity = KeyStore.getInstance("PKCS12");
 
@@ -268,52 +317,5 @@ class Pac4jProxySecurityTest {
 
   private void configureTlsClient(HttpClient.Builder client, SSLContext context) {
     client.sslContext(context);
-  }
-
-  private static Shoostr application(
-      ForwardedHeaders family, boolean trusted, AtomicReference<String> scheme) {
-    var provider = createProviderForApplication(scheme);
-    var app =
-        new Shoostr()
-            .modifyServer(
-                nativeServer -> ((ServerConnector) nativeServer.getConnectors()[0]).setPort(0));
-    var auth = new Pac4j(provider, "Basic", (context, ignored, ignoredList) -> context.isSecure());
-    app.trustedProxies(address -> trusted && address.isLoopbackAddress(), family)
-        .routes()
-        .get(
-            "/secure",
-            (ignoredRequest, response) -> response.text("private"),
-            lifecycle -> lifecycle.withExtension(auth));
-
-    return app;
-  }
-
-  private static DirectBasicAuthClient createProviderForApplication(
-      AtomicReference<String> scheme) {
-    return new DirectBasicAuthClient(
-        (context, supplied) -> {
-          scheme.set(context.webContext().getScheme());
-          var profile = new CommonProfile();
-          profile.setId("alice");
-          supplied.setUserProfile(profile);
-
-          return Optional.of(supplied);
-        });
-  }
-
-  private static TestRequest authorized(TestRequest request) {
-    return request.path("/secure").header("Authorization", "Basic YWxpY2U6Y29ycmVjdA==");
-  }
-
-  private static void forwarding(TestRequest request, ForwardedHeaders family, String protocol) {
-    if (family == ForwardedHeaders.RFC7239) {
-      request.header(
-          "Forwarded", "for=203.0.113.7" + (protocol.isEmpty() ? "" : ";proto=" + protocol));
-    } else {
-      request.header("X-Forwarded-For", "203.0.113.7");
-      if (!protocol.isEmpty()) {
-        request.header("X-Forwarded-Proto", protocol);
-      }
-    }
   }
 }

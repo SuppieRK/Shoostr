@@ -39,6 +39,25 @@ import org.eclipse.jetty.util.thread.AutoLock;
 import org.junit.jupiter.api.Test;
 
 class ApplicationOwnerEqualityTest {
+  private static Object pendingTask(Shoostr app) throws ReflectiveOperationException {
+    var pending = (Set<?>) field(app, "pendingMatches");
+    synchronized (pending) {
+      return pending.iterator().next();
+    }
+  }
+
+  private static Object field(Object owner, String name) throws ReflectiveOperationException {
+    var field = owner.getClass().getDeclaredField(name);
+    field.setAccessible(true);
+
+    return field.get(owner);
+  }
+
+  private static <T> ConfiguredEqualsVerifier prefab(
+      ConfiguredEqualsVerifier configuration, Class<T> type, Object first, Object second) {
+    return configuration.withPrefabValues(type, type.cast(first), type.cast(second));
+  }
+
   @Test
   void retainsApplicationHandlerTaskAndCompletionIdentityThroughExecutionAndShutdown()
       throws Exception {
@@ -84,9 +103,7 @@ class ApplicationOwnerEqualityTest {
               var secondServer = TestServer.start(second)) {
             var servers = List.of(firstServer, secondServer);
             for (int index = 0; index < servers.size(); index++) {
-              var response =
-                  sendResponseForRetainsApplicationHandlerTaskAndCompletionIdentityThroughExecutionAndShutdown(
-                      client, servers, index);
+              var response = sendResponseForShutdownIdentity(client, servers, index);
 
               try {
                 assertTrue(entered.get(index).await(3, TimeUnit.SECONDS));
@@ -167,9 +184,8 @@ class ApplicationOwnerEqualityTest {
     assertTrue(owners.isEmpty());
   }
 
-  private CompletableFuture<HttpResponse<String>>
-      sendResponseForRetainsApplicationHandlerTaskAndCompletionIdentityThroughExecutionAndShutdown(
-          HttpClient client, List<TestServer> servers, int index) {
+  private CompletableFuture<HttpResponse<String>> sendResponseForShutdownIdentity(
+      HttpClient client, List<TestServer> servers, int index) {
     return client.sendAsync(
         HttpRequest.newBuilder(servers.get(index).baseUri().resolve("/same")).GET().build(),
         HttpResponse.BodyHandlers.ofString());
@@ -179,8 +195,8 @@ class ApplicationOwnerEqualityTest {
       ConfiguredEqualsVerifier configuration,
       Shoostr first,
       Shoostr second,
-      ArrayList<Entry<Request, Response>> exchanges,
-      ArrayList<Server> nativeServers,
+      List<Entry<Request, Response>> exchanges,
+      List<Server> nativeServers,
       Handler firstHandler,
       Handler secondHandler,
       ExecutorService firstExecutor,
@@ -240,24 +256,5 @@ class ApplicationOwnerEqualityTest {
             new IllegalStateException("first"),
             new IllegalStateException("second"))
         .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED);
-  }
-
-  private static Object pendingTask(Shoostr app) throws ReflectiveOperationException {
-    var pending = (Set<?>) field(app, "pendingMatches");
-    synchronized (pending) {
-      return pending.iterator().next();
-    }
-  }
-
-  private static Object field(Object owner, String name) throws ReflectiveOperationException {
-    var field = owner.getClass().getDeclaredField(name);
-    field.setAccessible(true);
-
-    return field.get(owner);
-  }
-
-  private static <T> ConfiguredEqualsVerifier prefab(
-      ConfiguredEqualsVerifier configuration, Class<T> type, Object first, Object second) {
-    return configuration.withPrefabValues(type, type.cast(first), type.cast(second));
   }
 }

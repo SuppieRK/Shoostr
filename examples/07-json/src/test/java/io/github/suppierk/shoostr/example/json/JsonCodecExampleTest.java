@@ -39,7 +39,7 @@ class JsonCodecExampleTest {
   }
 
   @Test
-  void keepsOrdinaryTextAvailableWithATypedApplication() throws Exception {
+  void keepsOrdinaryTextAvailableWithTypedApplication() throws Exception {
 
     try (var test = TestServer.start(JsonCodecExample.application())) {
       var response =
@@ -66,11 +66,11 @@ class JsonCodecExampleTest {
         "{\"name\":\"Ada\"} trailing",
         "{\"name\":\"Ada\"}{}"
       })
-  void rejectsMalformedJsonAndInvalidNamesWithASafeJsonError(String body) throws Exception {
+  void rejectsMalformedJsonAndInvalidNamesWithSafeJsonError(String body) throws Exception {
 
     try (var test = TestServer.start(JsonCodecExample.application())) {
       var response =
-          sendResponseForRejectsMalformedJsonAndInvalidNamesWithASafeJsonError(test, body);
+          sendResponseForRejectsMalformedJsonAndInvalidNamesWithSafeJsonError(test, body);
 
       assertEquals(400, response.statusCode());
       assertEquals("application/json", response.headers().firstValue("Content-Type").orElseThrow());
@@ -78,7 +78,7 @@ class JsonCodecExampleTest {
     }
   }
 
-  private HttpResponse<String> sendResponseForRejectsMalformedJsonAndInvalidNamesWithASafeJsonError(
+  private HttpResponse<String> sendResponseForRejectsMalformedJsonAndInvalidNamesWithSafeJsonError(
       TestServer test, String body) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -91,11 +91,10 @@ class JsonCodecExampleTest {
   }
 
   @Test
-  void returnsAValidatedUserAsJsonWithUnicodeAndEscapedCharacters() throws Exception {
+  void returnsValidatedUserAsJsonWithUnicodeAndEscapedCharacters() throws Exception {
 
     try (var test = TestServer.start(JsonCodecExample.application())) {
-      var response =
-          sendResponseForReturnsAValidatedUserAsJsonWithUnicodeAndEscapedCharacters(test);
+      var response = sendResponseForReturnsValidatedUserAsJsonWithUnicodeAndEscapedCharacters(test);
 
       assertEquals(201, response.statusCode());
       assertEquals("application/json", response.headers().firstValue("Content-Type").orElseThrow());
@@ -104,7 +103,7 @@ class JsonCodecExampleTest {
   }
 
   private HttpResponse<String>
-      sendResponseForReturnsAValidatedUserAsJsonWithUnicodeAndEscapedCharacters(TestServer test)
+      sendResponseForReturnsValidatedUserAsJsonWithUnicodeAndEscapedCharacters(TestServer test)
           throws IOException, InterruptedException {
     return test.send(
         request ->

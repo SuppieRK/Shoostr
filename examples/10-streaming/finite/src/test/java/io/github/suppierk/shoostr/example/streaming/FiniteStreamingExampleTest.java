@@ -89,7 +89,7 @@ class FiniteStreamingExampleTest {
 
   @Test
   @Timeout(15)
-  void exposesAFlushedChunkBeforeTheHandlerFinishes() throws Exception {
+  void exposesFlushedChunkBeforeTheHandlerFinishes() throws Exception {
     var report = Files.writeString(directory.resolve("report.csv"), "unused");
     var release = new CountDownLatch(1);
     var finished = new AtomicBoolean();
@@ -116,7 +116,7 @@ class FiniteStreamingExampleTest {
     try (var test = TestServer.start(app);
         var client = HttpClient.newHttpClient()) {
       try {
-        var response = sendResponseForExposesAFlushedChunkBeforeTheHandlerFinishes(client, test);
+        var response = sendResponseForExposesFlushedChunkBeforeTheHandlerFinishes(client, test);
 
         assertEquals(200, response.statusCode());
 
@@ -134,7 +134,7 @@ class FiniteStreamingExampleTest {
     }
   }
 
-  private HttpResponse<InputStream> sendResponseForExposesAFlushedChunkBeforeTheHandlerFinishes(
+  private HttpResponse<InputStream> sendResponseForExposesFlushedChunkBeforeTheHandlerFinishes(
       HttpClient client, TestServer test) throws IOException, InterruptedException {
     return client.send(
         HttpRequest.newBuilder(test.baseUri().resolve("flush-boundary"))
@@ -146,7 +146,7 @@ class FiniteStreamingExampleTest {
 
   @Test
   @Timeout(15)
-  void closesAFailingInputAndAbortsOutputAfterTheFirstBufferWasSent() throws Exception {
+  void closesFailingInputAndAbortsOutputAfterTheFirstBufferWasSent() throws Exception {
     var report = Files.writeString(directory.resolve("report.csv"), "A".repeat(16_384));
     var closed = new AtomicBoolean();
     var app = FiniteStreamingExample.application(report);

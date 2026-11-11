@@ -15,6 +15,11 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 class OpenApiUiExampleTest {
+  private static String credentials() {
+    return "Basic "
+        + Base64.getEncoder().encodeToString("reader:local-only".getBytes(StandardCharsets.UTF_8));
+  }
+
   @Test
   void requiresAuthenticationForThePageEveryAssetAndTheSpecification() throws Exception {
 
@@ -147,10 +152,5 @@ class OpenApiUiExampleTest {
       assertFalse(document.path("paths").has("/docs/{*asset}"));
       assertFalse(document.path("paths").has("/openapi.json"));
     }
-  }
-
-  private static String credentials() {
-    return "Basic "
-        + Base64.getEncoder().encodeToString("reader:local-only".getBytes(StandardCharsets.UTF_8));
   }
 }

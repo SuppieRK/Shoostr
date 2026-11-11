@@ -61,9 +61,26 @@ import org.pac4j.jwt.profile.JwtGenerator;
 class Pac4jTest {
   @TempDir private Path temporary;
 
+  private static DirectBasicAuthClient authenticatedAliceClient() {
+    return new DirectBasicAuthClient(
+        (ignoredCallContext, supplied) -> {
+          if (!(supplied instanceof UsernamePasswordCredentials credentials)
+              || !"alice".equals(credentials.getUsername())
+              || !"correct".equals(credentials.getPassword())) {
+            return Optional.empty();
+          }
+
+          var profile = new CommonProfile();
+          profile.setId("alice");
+          credentials.setUserProfile(profile);
+
+          return Optional.of(credentials);
+        });
+  }
+
   @Test
   @Timeout(10)
-  void authenticatesWithoutCreatingASessionWhenSessionsAreEnabled() throws Exception {
+  void authenticatesWithoutCreatingSessionWhenSessionsAreEnabled() throws Exception {
     {
       var app = new Shoostr();
 
@@ -87,8 +104,7 @@ class Pac4jTest {
                 client ->
                     client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
 
-          var result =
-              sendResultForAuthenticatesWithoutCreatingASessionWhenSessionsAreEnabled(test);
+          var result = sendResultForAuthenticatesWithoutCreatingSessionWhenSessionsAreEnabled(test);
 
           assertEquals(200, result.statusCode());
           assertEquals("alice", result.body());
@@ -99,7 +115,7 @@ class Pac4jTest {
   }
 
   private HttpResponse<String>
-      sendResultForAuthenticatesWithoutCreatingASessionWhenSessionsAreEnabled(TestServer test)
+      sendResultForAuthenticatesWithoutCreatingSessionWhenSessionsAreEnabled(TestServer test)
           throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -112,7 +128,7 @@ class Pac4jTest {
 
   @Test
   @Timeout(15)
-  void createsAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt() throws Exception {
+  void createsAndResumesSessionOnlyWhenTheAuthenticatedHandlerRequestsIt() throws Exception {
     {
       var app = new Shoostr();
 
@@ -143,9 +159,7 @@ class Pac4jTest {
                 client ->
                     client.cookieHandler(new CookieManager(null, CookiePolicy.ACCEPT_NONE)))) {
 
-          var created =
-              sendCreatedSessionRequestForCreatesAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt(
-                  test);
+          var created = sendCreatedSessionRequestForLazySession(test);
 
           assertEquals(200, created.statusCode());
           assertEquals("alice:created", created.body());
@@ -158,9 +172,7 @@ class Pac4jTest {
 
           assertTrue(cookie.startsWith("JSESSIONID="));
 
-          var resumed =
-              sendResumedRequestForCreatesAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt(
-                  test, cookie);
+          var resumed = sendResumedRequestForLazySession(test, cookie);
 
           assertEquals(200, resumed.statusCode());
           assertEquals("alice:resumed", resumed.body());
@@ -170,9 +182,8 @@ class Pac4jTest {
     }
   }
 
-  private HttpResponse<String>
-      sendCreatedSessionRequestForCreatesAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendCreatedSessionRequestForLazySession(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -182,9 +193,8 @@ class Pac4jTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<String>
-      sendResumedRequestForCreatesAndResumesASessionOnlyWhenTheAuthenticatedHandlerRequestsIt(
-          TestServer test, String cookie) throws IOException, InterruptedException {
+  private HttpResponse<String> sendResumedRequestForLazySession(TestServer test, String cookie)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -333,7 +343,7 @@ class Pac4jTest {
   }
 
   @Test
-  void rejectsAnExpiredProviderProfileBeforeEstablishingAPrincipal() throws Exception {
+  void rejectsAnExpiredProviderProfileBeforeEstablishingPrincipal() throws Exception {
     var provider = expiredProfileClient();
 
     {
@@ -356,7 +366,7 @@ class Pac4jTest {
           var encoded =
               Base64.getEncoder().encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8));
           var result =
-              sendResultForRejectsAnExpiredProviderProfileBeforeEstablishingAPrincipal(
+              sendResultForRejectsAnExpiredProviderProfileBeforeEstablishingPrincipal(
                   test, encoded);
 
           assertEquals(401, result.statusCode());
@@ -370,7 +380,7 @@ class Pac4jTest {
     return new DirectBasicAuthClient(
         (ignoredCallContext, supplied) -> {
           var profile =
-              createProfileForRejectsAnExpiredProviderProfileBeforeEstablishingAPrincipal();
+              createProfileForRejectsAnExpiredProviderProfileBeforeEstablishingPrincipal();
           profile.setId("alice");
           supplied.setUserProfile(profile);
 
@@ -379,7 +389,7 @@ class Pac4jTest {
   }
 
   private CommonProfile
-      createProfileForRejectsAnExpiredProviderProfileBeforeEstablishingAPrincipal() {
+      createProfileForRejectsAnExpiredProviderProfileBeforeEstablishingPrincipal() {
     return new CommonProfile() {
       @Override
       public boolean isExpired() {
@@ -389,7 +399,7 @@ class Pac4jTest {
   }
 
   private HttpResponse<String>
-      sendResultForRejectsAnExpiredProviderProfileBeforeEstablishingAPrincipal(
+      sendResultForRejectsAnExpiredProviderProfileBeforeEstablishingPrincipal(
           TestServer test, String encoded) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -685,9 +695,7 @@ class Pac4jTest {
     configuredOptions.setMultipart(MultipartOptions.defaults());
 
     {
-      var app =
-          createAppForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(
-              configuredOptions);
+      var app = createAppForFormCredentials(configuredOptions);
 
       try (Closeable appCleanup10 = app::close;
           var client = HttpClient.newHttpClient()) {
@@ -700,15 +708,12 @@ class Pac4jTest {
                 lifecycle -> lifecycle.withExtension(auth));
 
         try (var test = TestServer.start(app)) {
-          var result =
-              sendResultForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(test);
+          var result = sendResultForFormCredentials(test);
 
           assertEquals(200, result.statusCode());
           assertEquals("token=allowed", result.body());
           // An independent publisher preserves the unknown-length body limit under test.
-          var oversized =
-              sendOversizedRequestForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(
-                  client, test);
+          var oversized = sendOversizedRequestForFormCredentials(client, test);
 
           assertEquals(413, oversized.statusCode());
         }
@@ -728,8 +733,7 @@ class Pac4jTest {
     client.setSupportGetRequest(false);
   }
 
-  private Shoostr createAppForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(
-      Options configuredOptions) {
+  private Shoostr createAppForFormCredentials(Options configuredOptions) {
     return new Shoostr(configuredOptions)
         .modifyServer(
             nativeServer -> {
@@ -740,9 +744,8 @@ class Pac4jTest {
             });
   }
 
-  private HttpResponse<String>
-      sendResultForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendResultForFormCredentials(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -754,9 +757,8 @@ class Pac4jTest {
         HttpResponse.BodyHandlers.ofString());
   }
 
-  private HttpResponse<String>
-      sendOversizedRequestForSupportsExplicitProviderFormCredentialsUsingTheFrameworkBodyLimits(
-          HttpClient client, TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<String> sendOversizedRequestForFormCredentials(
+      HttpClient client, TestServer test) throws IOException, InterruptedException {
     return client.send(
         HttpRequest.newBuilder(test.baseUri().resolve("/me"))
             .timeout(Duration.ofSeconds(5))
@@ -1213,23 +1215,6 @@ class Pac4jTest {
                         + Base64.getEncoder()
                             .encodeToString("alice:correct".getBytes(StandardCharsets.UTF_8))),
         HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static DirectBasicAuthClient authenticatedAliceClient() {
-    return new DirectBasicAuthClient(
-        (ignoredCallContext, supplied) -> {
-          if (!(supplied instanceof UsernamePasswordCredentials credentials)
-              || !"alice".equals(credentials.getUsername())
-              || !"correct".equals(credentials.getPassword())) {
-            return Optional.empty();
-          }
-
-          var profile = new CommonProfile();
-          profile.setId("alice");
-          credentials.setUserProfile(profile);
-
-          return Optional.of(credentials);
-        });
   }
 
   private Optional<Credentials> authenticateFormToken(CallContext context, Credentials supplied) {

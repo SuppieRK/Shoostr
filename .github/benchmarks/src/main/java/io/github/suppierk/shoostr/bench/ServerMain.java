@@ -23,6 +23,9 @@ public final class ServerMain {
   private static final String EVENT_PAYLOAD = "x".repeat(128);
   private static final String LARGE_EVENT_PAYLOAD = "x".repeat(65536);
 
+  /** Creates the HTTP workload launcher. */
+  public ServerMain() {}
+
   /**
    * Starts the fixture until process termination.
    *
@@ -186,6 +189,9 @@ public final class ServerMain {
   /** Echoes text and binary frames through Jetty's application listener API. */
   public static final class EchoListener implements Session.Listener.AutoDemanding {
     private @Nullable Session session;
+
+    /** Creates a listener for one WebSocket connection. */
+    public EchoListener() {}
 
     /**
      * Stores the open session for subsequent callbacks.

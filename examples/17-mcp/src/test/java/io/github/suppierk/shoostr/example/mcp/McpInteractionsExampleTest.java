@@ -45,15 +45,50 @@ import org.junit.jupiter.params.provider.ValueSource;
 class McpInteractionsExampleTest {
   private static final String INITIALIZE = initializationRequest();
 
+  private static String initializationRequest() {
+    return
+        """
+        {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+          "protocolVersion":"2025-11-25","capabilities":{},
+          "clientInfo":{"name":"interactions-lifecycle","version":"1.0"}}}
+        """;
+  }
+
+  private static McpClient.SyncSpec client(TestServer test) {
+    return McpClient.sync(
+            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
+                .endpoint("/mcp")
+                .build())
+        .requestTimeout(Duration.ofSeconds(5))
+        .initializationTimeout(Duration.ofSeconds(5));
+  }
+
+  private static HttpResponse<byte[]> message(TestServer test, String session, String body)
+      throws Exception {
+    return test.send(
+        request -> {
+          request
+              .method("POST")
+              .path("/mcp")
+              .header("Content-Type", "application/json")
+              .header("Accept", "application/json, text/event-stream")
+              .header("MCP-Protocol-Version", "2025-11-25")
+              .body(body.getBytes(StandardCharsets.UTF_8));
+          if (!session.isEmpty()) {
+            request.header("Mcp-Session-Id", session);
+          }
+        });
+  }
+
   @Test
-  void asksForAnAudienceBeforeRequestingAClientGeneratedSummary() throws Exception {
+  void asksForAnAudienceBeforeRequestingClientGeneratedSummary() throws Exception {
     var stages = new CopyOnWriteArrayList<String>();
     var form = new AtomicReference<McpSchema.ElicitFormRequest>();
     var sampling = new AtomicReference<McpSchema.CreateMessageRequest>();
 
     try (var test = TestServer.start(McpInteractionsExample.application());
         var client =
-            openClientForAsksForAnAudienceBeforeRequestingAClientGeneratedSummary(
+            openClientForAsksForAnAudienceBeforeRequestingClientGeneratedSummary(
                 test, stages, form, sampling)) {
       client.initialize();
 
@@ -81,17 +116,17 @@ class McpInteractionsExampleTest {
     }
   }
 
-  private McpSyncClient openClientForAsksForAnAudienceBeforeRequestingAClientGeneratedSummary(
+  private McpSyncClient openClientForAsksForAnAudienceBeforeRequestingClientGeneratedSummary(
       TestServer test,
       CopyOnWriteArrayList<String> stages,
       AtomicReference<ElicitFormRequest> form,
       AtomicReference<CreateMessageRequest> sampling) {
-    return clientPropertiesForAsksForAnAudienceBeforeRequestingAClientGeneratedSummary(
+    return clientPropertiesForAsksForAnAudienceBeforeRequestingClientGeneratedSummary(
             test, stages, form, sampling)
         .build();
   }
 
-  private SyncSpec clientPropertiesForAsksForAnAudienceBeforeRequestingAClientGeneratedSummary(
+  private SyncSpec clientPropertiesForAsksForAnAudienceBeforeRequestingClientGeneratedSummary(
       TestServer test,
       CopyOnWriteArrayList<String> stages,
       AtomicReference<ElicitFormRequest> form,
@@ -484,10 +519,10 @@ class McpInteractionsExampleTest {
   }
 
   @Test
-  void rejectsABlankClientGeneratedSummary() throws Exception {
+  void rejectsBlankClientGeneratedSummary() throws Exception {
 
     try (var test = TestServer.start(McpInteractionsExample.application());
-        var client = openClientForRejectsABlankClientGeneratedSummary(test)) {
+        var client = openClientForRejectsBlankClientGeneratedSummary(test)) {
       client.initialize();
 
       try {
@@ -505,11 +540,11 @@ class McpInteractionsExampleTest {
     }
   }
 
-  private McpSyncClient openClientForRejectsABlankClientGeneratedSummary(TestServer test) {
-    return clientPropertiesForRejectsABlankClientGeneratedSummary(test).build();
+  private McpSyncClient openClientForRejectsBlankClientGeneratedSummary(TestServer test) {
+    return clientPropertiesForRejectsBlankClientGeneratedSummary(test).build();
   }
 
-  private SyncSpec clientPropertiesForRejectsABlankClientGeneratedSummary(TestServer test) {
+  private SyncSpec clientPropertiesForRejectsBlankClientGeneratedSummary(TestServer test) {
     return client(test)
         .capabilities(
             McpSchema.ClientCapabilities.builder().sampling().elicitation(true, false).build())
@@ -602,14 +637,6 @@ class McpInteractionsExampleTest {
         HttpResponse.BodyHandlers.ofInputStream());
   }
 
-  private static String initializationRequest() {
-    return """
-      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-11-25","capabilities":{},
-        "clientInfo":{"name":"interactions-lifecycle","version":"1.0"}}}
-      """;
-  }
-
   @Test
   void validatesHttpUpdatesBeforeChangingTheResource() throws Exception {
 
@@ -654,31 +681,5 @@ class McpInteractionsExampleTest {
         assertTrue(client.closeGracefully());
       }
     }
-  }
-
-  private static McpClient.SyncSpec client(TestServer test) {
-    return McpClient.sync(
-            HttpClientStreamableHttpTransport.builder(test.baseUri().toString())
-                .endpoint("/mcp")
-                .build())
-        .requestTimeout(Duration.ofSeconds(5))
-        .initializationTimeout(Duration.ofSeconds(5));
-  }
-
-  private static HttpResponse<byte[]> message(TestServer test, String session, String body)
-      throws Exception {
-    return test.send(
-        request -> {
-          request
-              .method("POST")
-              .path("/mcp")
-              .header("Content-Type", "application/json")
-              .header("Accept", "application/json, text/event-stream")
-              .header("MCP-Protocol-Version", "2025-11-25")
-              .body(body.getBytes(StandardCharsets.UTF_8));
-          if (!session.isEmpty()) {
-            request.header("Mcp-Session-Id", session);
-          }
-        });
   }
 }

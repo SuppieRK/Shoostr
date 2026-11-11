@@ -38,12 +38,20 @@ class JavadocPolicyTest {
         "/** Documented. */ class Example { private Example() {} }",
         "/** Documented. */ record Example(int value) { Example {} }",
         "/** Documented. */ class Example { int value; public int getValue() { return value; } }",
-        "/** Documented. */ class Example { int value; public void setValue(int value) { this.value = value; } }",
+        "/** Documented. */ class Example { int value; "
+            + "public void setValue(int value) { this.value = "
+            + "value; } }",
         "/** Documented. */ class Example { @Override public String toString() { return \"x\"; } }",
         "/** Documented. */ class Example { /** Runs. */ void run() {\n class Local {} } }",
-        "/** Documented. */ class Example { /** Runs. */ void run() { /** Local. */ class Local { private void work() {} } } }",
-        "/** Documented. */ class Example { Runnable task = new Runnable() { @Override public void run() {} }; }",
-        "/** Documented. */ enum Example { VALUE { @Override public String toString() { return \"x\"; } } }"
+        "/** Documented. */ class Example { /** Runs. */ "
+            + "void run() { /** Local. */ class Local { private "
+            + "void work() {} } } }",
+        "/** Documented. */ class Example { Runnable task "
+            + "= new Runnable() { @Override public void run() {} "
+            + "}; }",
+        "/** Documented. */ enum Example { VALUE { "
+            + "@Override public String toString() { return \"x\"; "
+            + "} } }"
       })
   void rejectsMissingDocumentation(String declaration) throws Exception {
     assertEquals(1, violations(declaration), declaration);
@@ -55,7 +63,9 @@ class JavadocPolicyTest {
         "/** Documented. */ class Example { /** Runs. */ private void run(int count) {} }",
         "/** Documented. */ class Example { /** Reads. */ private int read() { return 1; } }",
         "/** Documented. */ class Example { /** Runs. */ private void run() throws Exception {} }",
-        "/** Documented. */ class Example { /** Runs. */ private void run() { throw new IllegalStateException(); } }",
+        "/** Documented. */ class Example { /** Runs. */ "
+            + "private void run() { throw new IllegalStateExcepti"
+            + "on(); } }",
         "/** Documented. */ class Example { /** Creates. */ private Example(int count) {} }"
       })
   void validatesPrivateMethodTags(String declaration) throws Exception {
@@ -69,11 +79,23 @@ class JavadocPolicyTest {
         "/** Documented. */ record Example(int value) {}",
         "/** Documented. */ enum Example { VALUE }",
         "/** Documented. */ class Example { /** Creates. */ private Example() {} }",
-        "/** Documented. */ record Example(int value) { /** Copies.\n * @param value stored value\n */ Example {} }",
-        "/** Documented. */ class Example { /** Reads.\n * @return description\n */ @Override public String toString() { return \"x\"; } }",
-        "/** Documented. */ class Example { Runnable task = new Runnable() { /** Runs. */ @Override public void run() {} }; }",
-        "/** Documented. */ class Example { /** Runs. */ void run() { /** Local. */ class Local { /** Works. */ private void work() {} } } }",
-        "/** Documented. */ class Example { /** Counts.\n * @param count input\n * @return count\n * @throws IllegalArgumentException if negative\n */ private int count(int count) { if (count < 0) { throw new IllegalArgumentException(); } return count; } }"
+        "/** Documented. */ record Example(int value) { "
+            + "/** Copies.\n * @param value stored value\n */ "
+            + "Example {} }",
+        "/** Documented. */ class Example { /** Reads.\n * "
+            + "@return description\n */ @Override public String "
+            + "toString() { return \"x\"; } }",
+        "/** Documented. */ class Example { Runnable task "
+            + "= new Runnable() { /** Runs. */ @Override public "
+            + "void run() {} }; }",
+        "/** Documented. */ class Example { /** Runs. */ "
+            + "void run() { /** Local. */ class Local { /** "
+            + "Works. */ private void work() {} } } }",
+        "/** Documented. */ class Example { /** Counts.\n * "
+            + "@param count input\n * @return count\n * @throws "
+            + "IllegalArgumentException if negative\n */ private "
+            + "int count(int count) { if (count < 0) { throw new "
+            + "IllegalArgumentException(); } return count; } }"
       })
   void acceptsCompleteDocumentation(String declaration) throws Exception {
     assertEquals(0, violations(declaration), declaration);
@@ -171,7 +193,9 @@ class JavadocPolicyTest {
         XPathFactory.newInstance()
             .newXPath()
             .evaluate(
-                "/module/module/module[@name='MissingJavadocType' or @name='MissingJavadocMethod' or @name='JavadocMethod']",
+                "/module/module/module[@name='MissingJavadocType' "
+                    + "or @name='MissingJavadocMethod' or "
+                    + "@name='JavadocMethod']",
                 document,
                 XPathConstants.NODESET);
   }

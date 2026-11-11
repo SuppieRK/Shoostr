@@ -38,7 +38,7 @@ class RangeConditionalResponseTest {
   @TempDir Path temporaryDirectory;
 
   @Test
-  void servesOneInclusiveByteRangeFromAFile() throws Exception {
+  void servesOneInclusiveByteRangeFromFile() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
@@ -94,7 +94,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void returnsNotModifiedForAMatchingIfNoneMatchValidator() throws Exception {
+  void returnsNotModifiedForMatchingIfNoneMatchValidator() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "cached", StandardCharsets.US_ASCII);
 
@@ -124,7 +124,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void servesASuffixByteRangeFromAFile() throws Exception {
+  void servesSuffixByteRangeFromFile() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
@@ -151,7 +151,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void servesAnOpenEndedByteRangeFromAFile() throws Exception {
+  void servesAnOpenEndedByteRangeFromFile() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
@@ -210,7 +210,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void rejectsIfMatchBeforeEvaluatingARange() throws Exception {
+  void rejectsIfMatchBeforeEvaluatingRange() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
@@ -227,7 +227,7 @@ class RangeConditionalResponseTest {
                         .file(file, "text/plain"));
 
         try (var test = TestServer.start(app)) {
-          var result = sendResultForRejectsIfMatchBeforeEvaluatingARange(test);
+          var result = sendResultForRejectsIfMatchBeforeEvaluatingRange(test);
 
           assertEquals(412, result.statusCode());
           assertEquals("", result.body());
@@ -238,7 +238,7 @@ class RangeConditionalResponseTest {
     }
   }
 
-  private HttpResponse<String> sendResultForRejectsIfMatchBeforeEvaluatingARange(TestServer test)
+  private HttpResponse<String> sendResultForRejectsIfMatchBeforeEvaluatingRange(TestServer test)
       throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -369,7 +369,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void usesRangeOnlyWhenIfRangeMatchesAStrongValidator() throws Exception {
+  void usesRangeOnlyWhenIfRangeMatchesStrongValidator() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
@@ -386,9 +386,9 @@ class RangeConditionalResponseTest {
                         .file(file, "text/plain"));
 
         try (var test = TestServer.start(app)) {
-          var matched = sendMatchedRequestForUsesRangeOnlyWhenIfRangeMatchesAStrongValidator(test);
+          var matched = sendMatchedRequestForUsesRangeOnlyWhenIfRangeMatchesStrongValidator(test);
           var mismatched =
-              sendMismatchedRequestForUsesRangeOnlyWhenIfRangeMatchesAStrongValidator(test);
+              sendMismatchedRequestForUsesRangeOnlyWhenIfRangeMatchesStrongValidator(test);
 
           assertEquals(206, matched.statusCode());
           assertEquals("2345", matched.body());
@@ -401,7 +401,7 @@ class RangeConditionalResponseTest {
     }
   }
 
-  private HttpResponse<String> sendMatchedRequestForUsesRangeOnlyWhenIfRangeMatchesAStrongValidator(
+  private HttpResponse<String> sendMatchedRequestForUsesRangeOnlyWhenIfRangeMatchesStrongValidator(
       TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -410,7 +410,7 @@ class RangeConditionalResponseTest {
   }
 
   private HttpResponse<String>
-      sendMismatchedRequestForUsesRangeOnlyWhenIfRangeMatchesAStrongValidator(TestServer test)
+      sendMismatchedRequestForUsesRangeOnlyWhenIfRangeMatchesStrongValidator(TestServer test)
           throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -419,7 +419,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void matchesAnEntityTagContainingACommaWithinAnIfMatchList() throws Exception {
+  void matchesAnEntityTagContainingCommaWithinAnIfMatchList() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "current", StandardCharsets.US_ASCII);
 
@@ -519,7 +519,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void ignoresRangeWhenIfRangeUsesAWeakFilesystemDate() throws Exception {
+  void ignoresRangeWhenIfRangeUsesWeakFilesystemDate() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "conditional-response-test", ".txt");
     Files.writeString(file, "0123456789", StandardCharsets.US_ASCII);
 
@@ -534,7 +534,7 @@ class RangeConditionalResponseTest {
               test.send(request -> request.path("/file"), HttpResponse.BodyHandlers.ofString());
           var lastModified = first.headers().firstValue("Last-Modified").orElseThrow();
           var range =
-              sendRangeRequestForIgnoresRangeWhenIfRangeUsesAWeakFilesystemDate(test, lastModified);
+              sendRangeRequestForIgnoresRangeWhenIfRangeUsesWeakFilesystemDate(test, lastModified);
 
           assertEquals(200, range.statusCode());
           assertEquals("0123456789", range.body());
@@ -545,7 +545,7 @@ class RangeConditionalResponseTest {
     }
   }
 
-  private HttpResponse<String> sendRangeRequestForIgnoresRangeWhenIfRangeUsesAWeakFilesystemDate(
+  private HttpResponse<String> sendRangeRequestForIgnoresRangeWhenIfRangeUsesWeakFilesystemDate(
       TestServer test, String lastModified) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -554,7 +554,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void keepsAnExplicitErrorStatusWhenServingAFile() throws Exception {
+  void keepsAnExplicitErrorStatusWhenServingFile() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "missing", StandardCharsets.US_ASCII);
 
@@ -583,7 +583,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void rejectsOutputModesAfterSelectingAFile() throws Exception {
+  void rejectsOutputModesAfterSelectingFile() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "file", StandardCharsets.US_ASCII);
 
@@ -783,7 +783,7 @@ class RangeConditionalResponseTest {
               test.send(
                   request -> request.path("/file").header("Range", "bytes=7-99"),
                   HttpResponse.BodyHandlers.ofString());
-          var repeated =
+          final var repeated =
               sendRepeatedRequestForAppliesTheDocumentedZeroSuffixClampAndRepeatedRangePolicies(
                   test);
 
@@ -866,7 +866,7 @@ class RangeConditionalResponseTest {
               ZonedDateTime.parse(
                   result.headers().firstValue("Last-Modified").orElseThrow(),
                   DateTimeFormatter.RFC_1123_DATE_TIME);
-          var date =
+          final var date =
               ZonedDateTime.parse(
                   result.headers().firstValue("Date").orElseThrow(),
                   DateTimeFormatter.RFC_1123_DATE_TIME);
@@ -989,7 +989,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void continuesServingFilesAfterAClientDisconnectsDuringTransfer() throws Exception {
+  void continuesServingFilesAfterClientDisconnectsDuringTransfer() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.write(file, new byte[8 * 1024 * 1024]);
     var completed = new CountDownLatch(1);
@@ -1049,7 +1049,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void releasesACompletedFileBeforeTheApplicationStops() throws Exception {
+  void releasesCompletedFileBeforeTheApplicationStops() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "complete", StandardCharsets.US_ASCII);
     var completed = new CountDownLatch(1);
@@ -1079,7 +1079,7 @@ class RangeConditionalResponseTest {
   }
 
   @Test
-  void reportsTerminalFailureWhenAStagedFileDisappearsBeforeTransfer() throws Exception {
+  void reportsTerminalFailureWhenStagedFileDisappearsBeforeTransfer() throws Exception {
     var file = Files.createTempFile(temporaryDirectory, "range-response-test", ".txt");
     Files.writeString(file, "missing", StandardCharsets.US_ASCII);
     var completed = new CountDownLatch(1);

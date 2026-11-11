@@ -47,7 +47,7 @@ class McpOperationLifetimeTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var tool = McpSchema.Tool.builder("ping-client", Map.of("type", "object")).build();
     var mcp = operationServer(security, tool, nativeCompleted, cancelled, breakResponse);
     var app = new Shoostr();
@@ -66,11 +66,9 @@ class McpOperationLifetimeTest {
         });
 
     try (var test = TestServer.start(app)) {
-      var initialized =
-          sendInitializedRequestForCompletesAnIssuedNativeRequestAfterItsHttpResponseFails(test);
+      var initialized = sendInitializedRequestForFailedResponse(test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
-      var response =
-          sendResponseForCompletesAnIssuedNativeRequestAfterItsHttpResponseFails(test, sessionId);
+      var response = sendResponseForFailedResponse(test, sessionId);
       var mapper = McpJsonDefaults.getMapper();
 
       try (var reader =
@@ -97,9 +95,7 @@ class McpOperationLifetimeTest {
 
         var replyBody =
             mapper.writeValueAsBytes(McpSchema.JSONRPCResponse.result(ping.id(), Map.of()));
-        var reply =
-            sendReplyRequestForCompletesAnIssuedNativeRequestAfterItsHttpResponseFails(
-                test, sessionId, replyBody);
+        var reply = sendReplyRequestForFailedResponse(test, sessionId, replyBody);
 
         assertEquals(202, reply.statusCode());
         assertTrue(nativeCompleted.await(5, TimeUnit.SECONDS));
@@ -131,8 +127,7 @@ class McpOperationLifetimeTest {
                                       .doOnSuccess(ignoredObject -> nativeCompleted.countDown())
                                       .doOnCancel(cancelled::incrementAndGet);
                               var notification =
-                                  createNotificationForCompletesAnIssuedNativeRequestAfterItsHttpResponseFails(
-                                      breakResponse, exchange);
+                                  createNotificationForFailedResponse(breakResponse, exchange);
 
                               return Mono.when(ping, notification)
                                   .thenReturn(
@@ -144,7 +139,7 @@ class McpOperationLifetimeTest {
                 .build());
   }
 
-  private Mono<Void> createNotificationForCompletesAnIssuedNativeRequestAfterItsHttpResponseFails(
+  private Mono<Void> createNotificationForFailedResponse(
       Empty<Void> breakResponse, McpAsyncServerExchange exchange) {
     return breakResponse
         .asMono()
@@ -156,9 +151,8 @@ class McpOperationLifetimeTest {
         .onErrorResume(ignoredFailure -> Mono.empty());
   }
 
-  private HttpResponse<byte[]>
-      sendInitializedRequestForCompletesAnIssuedNativeRequestAfterItsHttpResponseFails(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendInitializedRequestForFailedResponse(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -168,16 +162,15 @@ class McpOperationLifetimeTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"operation-lifetime-fixture","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"operation-lifetime-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
-  private HttpResponse<InputStream>
-      sendResponseForCompletesAnIssuedNativeRequestAfterItsHttpResponseFails(
-          TestServer test, String sessionId) throws IOException, InterruptedException {
+  private HttpResponse<InputStream> sendResponseForFailedResponse(TestServer test, String sessionId)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -190,17 +183,16 @@ class McpOperationLifetimeTest {
                 .header("X-Fail-Response", "true")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-                "name":"ping-client","arguments":{}}}
-              """
+                    {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                      "name":"ping-client","arguments":{}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)),
         HttpResponse.BodyHandlers.ofInputStream());
   }
 
-  private HttpResponse<byte[]>
-      sendReplyRequestForCompletesAnIssuedNativeRequestAfterItsHttpResponseFails(
-          TestServer test, String sessionId, byte[] replyBody)
-          throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendReplyRequestForFailedResponse(
+      TestServer test, String sessionId, byte[] replyBody)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request

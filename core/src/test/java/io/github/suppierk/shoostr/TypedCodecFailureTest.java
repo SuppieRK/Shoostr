@@ -21,6 +21,15 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 @Timeout(15)
 class TypedCodecFailureTest {
+  private static Stream<Arguments> failures() {
+    return Stream.of(
+        Arguments.of(new BadRequestException("malformed"), 400),
+        Arguments.of(new UnsupportedMediaTypeException("unsupported"), 415),
+        Arguments.of(new InternalServerErrorException("internal"), 500),
+        Arguments.of(new IOException("checked failure"), 500),
+        Arguments.of(new IllegalStateException("unexpected failure"), 500));
+  }
+
   @ParameterizedTest
   @MethodSource("failures")
   void preservesDecodeFailureClassification(Exception failure, int status) throws Exception {
@@ -181,7 +190,8 @@ class TypedCodecFailureTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // A deliberately broken codec violates its nonnull output contract.
+  @SuppressWarnings("NullAway")
+  // A deliberately broken codec violates its nonnull output contract.
   void rejectsNullEncodedBytesAsServerFailure() throws Exception {
     var codec = createCodecForRejectsNullEncodedBytesAsServerFailure();
 
@@ -212,7 +222,8 @@ class TypedCodecFailureTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // A deliberately broken codec violates its nonnull result contract.
+  @SuppressWarnings("NullAway")
+  // A deliberately broken codec violates its nonnull result contract.
   void rejectsNullDecodedValueAsServerFailure() throws Exception {
     var codec = createCodecForRejectsNullDecodedValueAsServerFailure();
 
@@ -239,14 +250,5 @@ class TypedCodecFailureTest {
         return null;
       }
     };
-  }
-
-  private static Stream<Arguments> failures() {
-    return Stream.of(
-        Arguments.of(new BadRequestException("malformed"), 400),
-        Arguments.of(new UnsupportedMediaTypeException("unsupported"), 415),
-        Arguments.of(new InternalServerErrorException("internal"), 500),
-        Arguments.of(new IOException("checked failure"), 500),
-        Arguments.of(new IllegalStateException("unexpected failure"), 500));
   }
 }

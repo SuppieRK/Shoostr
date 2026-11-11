@@ -44,7 +44,9 @@ class QualifiedTypePolicyTest {
     assertEquals(
         0,
         violations(
-            "import java.util.Objects; class Example { String value(String input) { return Objects.requireNonNull(input); } }"));
+            "import java.util.Objects; class Example { String "
+                + "value(String input) { return Objects.requireNonNul"
+                + "l(input); } }"));
   }
 
   @Test
@@ -52,7 +54,9 @@ class QualifiedTypePolicyTest {
     assertEquals(
         0,
         violations(
-            "class Objects { String value(String input) { return java.util.Objects.requireNonNull(input); } }"));
+            "class Objects { String value(String input) { "
+                + "return java.util.Objects.requireNonNull(input); } "
+                + "}"));
     assertEquals(0, violations("class Request { org.eclipse.jetty.server.Request delegate; }"));
   }
 
@@ -78,13 +82,15 @@ class QualifiedTypePolicyTest {
         annotationViolations(
             profile,
             "package-info.java",
-            "@NullMarked\npackage io.github.suppierk.fixture;\nimport org.jspecify.annotations.NullMarked;"));
+            "@NullMarked\npackage io.github.suppierk.fixture;\n"
+                + "import org.jspecify.annotations.NullMarked;"));
     assertEquals(
         0,
         annotationViolations(
             profile,
             "Example.java",
-            "// @java.lang.Deprecated\nclass Example { String value = \"@java.lang.Deprecated\"; }"));
+            "// @java.lang.Deprecated\nclass Example { String "
+                + "value = \"@java.lang.Deprecated\"; }"));
   }
 
   @ParameterizedTest
@@ -95,7 +101,9 @@ class QualifiedTypePolicyTest {
         annotationViolations(
             profile,
             "Example.java",
-            "import org.junit.jupiter.api.TestInstance;\n@TestInstance(TestInstance.Lifecycle.PER_CLASS) class Example {}"));
+            "import org.junit.jupiter.api.TestInstance;\n"
+                + "@TestInstance(TestInstance.Lifecycle.PER_CLASS) "
+                + "class Example {}"));
   }
 
   private int annotationViolations(String profile, String name, String source) throws Exception {
@@ -117,7 +125,9 @@ class QualifiedTypePolicyTest {
     return XPathFactory.newInstance()
         .newXPath()
         .evaluate(
-            "/module/module/module[@name='MatchXpath'][property[@name='id' and @value='qualifiedAnnotation']]/property[@name='query']/@value",
+            "/module/module/module[@name='MatchXpath'][property"
+                + "[@name='id' and @value='qualifiedAnnotation']]/pro"
+                + "perty[@name='query']/@value",
             rules);
   }
 

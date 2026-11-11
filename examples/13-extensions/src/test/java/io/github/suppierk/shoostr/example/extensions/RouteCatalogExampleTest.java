@@ -27,7 +27,8 @@ class RouteCatalogExampleTest {
           GET /api/items/{id} — Read an item
           GET /api/status — Check readiness
           GET /catalog — List route descriptions
-          GET /preview — Preview content [conditional]""",
+          GET /preview — Preview content [conditional]\
+          """,
           response.body());
     }
   }
@@ -85,16 +86,16 @@ class RouteCatalogExampleTest {
   }
 
   @Test
-  void describesConditionalAvailabilityWithoutEvaluatingItUntilARequestMatches() throws Exception {
+  void describesConditionalAvailabilityWithoutEvaluatingItUntilRequestMatches() throws Exception {
     var enabled = new AtomicBoolean();
     var checks = new AtomicInteger();
 
     try (var test =
-        openTestForDescribesConditionalAvailabilityWithoutEvaluatingItUntilARequestMatches(
+        openTestForDescribesConditionalAvailabilityWithoutEvaluatingItUntilRequestMatches(
             checks, enabled)) {
       assertEquals(0, checks.get());
 
-      var before =
+      final var before =
           test.send(request -> request.path("/catalog"), HttpResponse.BodyHandlers.ofString());
 
       assertEquals(0, checks.get());
@@ -113,7 +114,7 @@ class RouteCatalogExampleTest {
   }
 
   private TestServer
-      openTestForDescribesConditionalAvailabilityWithoutEvaluatingItUntilARequestMatches(
+      openTestForDescribesConditionalAvailabilityWithoutEvaluatingItUntilRequestMatches(
           AtomicInteger checks, AtomicBoolean enabled) throws Exception {
     return TestServer.start(
         RouteCatalogExample.application(

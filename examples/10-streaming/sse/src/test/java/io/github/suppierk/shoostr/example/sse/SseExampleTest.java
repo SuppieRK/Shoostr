@@ -13,7 +13,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class SseExampleTest {
   @Test
-  void sendsTheSuppliedReportAsAResultEvent() throws Exception {
+  void sendsTheSuppliedReportAsResultEvent() throws Exception {
 
     try (var test = TestServer.start(SseExample.application(() -> "Ready"))) {
       var response =
@@ -32,7 +32,7 @@ class SseExampleTest {
   }
 
   @Test
-  void sendsASafeFailureEventAfterStreamingHasStarted() throws Exception {
+  void sendsSafeFailureEventAfterStreamingHasStarted() throws Exception {
 
     try (var test = TestServer.start(SseExample.application())) {
       var response =
@@ -55,10 +55,10 @@ class SseExampleTest {
   }
 
   @Test
-  void handlesAFailureBeforeStreamingAsAnHttpError() throws Exception {
+  void handlesFailureBeforeStreamingAsAnHttpError() throws Exception {
 
     try (var test = TestServer.start(SseExample.application())) {
-      var response = sendResponseForHandlesAFailureBeforeStreamingAsAnHttpError(test);
+      var response = sendResponseForHandlesFailureBeforeStreamingAsAnHttpError(test);
 
       assertAll(
           () -> assertEquals(500, response.statusCode()),
@@ -70,7 +70,7 @@ class SseExampleTest {
     }
   }
 
-  private HttpResponse<String> sendResponseForHandlesAFailureBeforeStreamingAsAnHttpError(
+  private HttpResponse<String> sendResponseForHandlesFailureBeforeStreamingAsAnHttpError(
       TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -128,10 +128,10 @@ class SseExampleTest {
 
   @ParameterizedTest
   @ValueSource(strings = {"abc", "-1", "4", "2147483648"})
-  void rejectsInvalidReplayCursorsBeforeStartingAStream(String cursor) throws Exception {
+  void rejectsInvalidReplayCursorsBeforeStartingStream(String cursor) throws Exception {
 
     try (var test = TestServer.start(SseExample.application())) {
-      var response = sendResponseForRejectsInvalidReplayCursorsBeforeStartingAStream(test, cursor);
+      var response = sendResponseForRejectsInvalidReplayCursorsBeforeStartingStream(test, cursor);
 
       assertAll(
           () -> assertEquals(400, response.statusCode()),
@@ -143,7 +143,7 @@ class SseExampleTest {
     }
   }
 
-  private HttpResponse<String> sendResponseForRejectsInvalidReplayCursorsBeforeStartingAStream(
+  private HttpResponse<String> sendResponseForRejectsInvalidReplayCursorsBeforeStartingStream(
       TestServer test, String cursor) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -155,7 +155,7 @@ class SseExampleTest {
   }
 
   @Test
-  void replaysAllThreeEntriesWithoutALastEventId() throws Exception {
+  void replaysAllThreeEntriesWithoutLastEventId() throws Exception {
 
     try (var test = TestServer.start(SseExample.application())) {
       var response =
@@ -168,7 +168,9 @@ class SseExampleTest {
           () -> assertEquals(200, response.statusCode()),
           () ->
               assertEquals(
-                  "id: 1\nretry: 1000\ndata: Entry 1\n\nid: 2\nretry: 1000\ndata: Entry 2\n\nid: 3\nretry: 1000\ndata: Entry 3\n\n",
+                  "id: 1\nretry: 1000\ndata: Entry 1\n\nid: 2\nretry: "
+                      + "1000\ndata: Entry 2\n\nid: 3\nretry: 1000\ndata: Entry "
+                      + "3\n\n",
                   response.body()));
     }
   }
@@ -187,7 +189,9 @@ class SseExampleTest {
           () -> assertEquals(200, response.statusCode()),
           () ->
               assertEquals(
-                  ": connection ready\n\n:\n\nevent: progress\nid: 1\nretry: 2000\ndata: Preparing\ndata: Waiting\n\nevent: done\nid: 2\ndata: Complete\n\n",
+                  ": connection ready\n\n:\n\nevent: progress\nid: 1\n"
+                      + "retry: 2000\ndata: Preparing\ndata: Waiting\n\nevent: "
+                      + "done\nid: 2\ndata: Complete\n\n",
                   response.body()));
     }
   }

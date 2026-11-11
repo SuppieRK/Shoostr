@@ -72,7 +72,8 @@ class ResponseMetadataTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Deliberately verifies rejection of an invalid public API input.
+  @SuppressWarnings("NullAway")
+  // Deliberately verifies rejection of an invalid public API input.
   void rejectsNullTextWithoutChangingStagedResponse() throws Exception {
     app.routes()
         .get(
@@ -208,7 +209,8 @@ class ResponseMetadataTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Null header inputs must fail before mutating the response.
+  @SuppressWarnings("NullAway")
+  // Null header inputs must fail before mutating the response.
   void protectsHeaderNamesAndFraming() throws Exception {
     app.routes()
         .get(
@@ -283,7 +285,7 @@ class ResponseMetadataTest {
                     .get(3, TimeUnit.SECONDS);
               }
 
-              var stream = response.startStream("text/plain");
+              final var stream = response.startStream("text/plain");
 
               assertTrue(response.isCommitted());
               assertEquals(202, response.status());
@@ -425,7 +427,8 @@ class ResponseMetadataTest {
   }
 
   @Test
-  @SuppressWarnings("NullAway") // Null redirect inputs are rejected by the response API.
+  @SuppressWarnings("NullAway")
+  // Null redirect inputs are rejected by the response API.
   void validatesRedirectBeforeChangingOutput() throws Exception {
     app.routes()
         .get(

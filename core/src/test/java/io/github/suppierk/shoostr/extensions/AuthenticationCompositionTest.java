@@ -82,7 +82,7 @@ class AuthenticationCompositionTest {
   }
 
   @Test
-  void rejectsAChildRequiringADifferentIdentitySourceThanItsParent() throws Exception {
+  void rejectsChildRequiringDifferentIdentitySourceThanItsParent() throws Exception {
     var first = new IdentitySource("first");
     var second = new IdentitySource("second");
 
@@ -230,7 +230,7 @@ class AuthenticationCompositionTest {
   }
 
   @Test
-  void rejectsANullIdentitySourceBeforeClaimingOwnership() throws Exception {
+  void rejectsNullIdentitySourceBeforeClaimingOwnership() throws Exception {
     var app = new Shoostr();
 
     try (Closeable cleanup = app::close) {

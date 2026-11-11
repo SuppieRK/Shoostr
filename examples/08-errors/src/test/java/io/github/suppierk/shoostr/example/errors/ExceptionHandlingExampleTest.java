@@ -22,7 +22,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 @Timeout(15)
 class ExceptionHandlingExampleTest {
   @Test
-  void fallsBackSafelyWhenAScopedRendererFailsWithoutTryingTheApplicationRenderer()
+  void fallsBackSafelyWhenScopedRendererFailsWithoutTryingTheApplicationRenderer()
       throws Exception {
     {
       var app = ExceptionHandlingExample.application();

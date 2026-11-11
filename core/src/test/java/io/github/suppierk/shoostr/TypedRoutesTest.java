@@ -27,68 +27,6 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class TypedRoutesTest {
-  @ParameterizedTest(name = "{0}")
-  @MethodSource("registrations")
-  void registersTypedHttpOverloadsOnExistingRouter(RegistrationCase selected) throws Exception {
-    var workerThread = new AtomicReference<Thread>();
-
-    try (var executor = openExecutorForRegistersTypedHttpOverloadsOnExistingRouter(workerThread)) {
-      var app = new Shoostr();
-
-      try (Closeable appCleanup = app::close) {
-        TypedHandler handler =
-            createHandlerForRegistersTypedHttpOverloadsOnExistingRouter(selected, workerThread);
-        var routes = app.codec(new TestCodec()).routes();
-        var registration = selected.registration().apply(executor, handler);
-        if (selected.pathless()) {
-          routes.path("/selected", registration);
-        } else {
-          registration.accept(routes);
-        }
-
-        try (var test = TestServer.start(app)) {
-          var result =
-              test.send(
-                  request -> request.path("/selected").method(selected.method()),
-                  HttpResponse.BodyHandlers.ofString());
-
-          assertEquals(200, result.statusCode());
-          assertEquals(selected.method(), result.headers().firstValue("X-Method").orElseThrow());
-          assertEquals(
-              selected.local() ? "configured" : "",
-              result.headers().firstValue("X-Local").orElse(""));
-          assertEquals("HEAD".equals(selected.method()) ? "" : "\"done\"", result.body());
-          assertEquals(
-              "application/json", result.headers().firstValue("Content-Type").orElseThrow());
-        }
-      }
-    }
-  }
-
-  private ExecutorService openExecutorForRegistersTypedHttpOverloadsOnExistingRouter(
-      AtomicReference<Thread> workerThread) {
-    return Executors.newSingleThreadExecutor(
-        task -> {
-          var thread = new Thread(task);
-          workerThread.set(thread);
-
-          return thread;
-        });
-  }
-
-  private TypedHandler createHandlerForRegistersTypedHttpOverloadsOnExistingRouter(
-      RegistrationCase selected, AtomicReference<Thread> workerThread) throws Exception {
-    return (request, response) -> {
-      if (selected.worker()) {
-        assertSame(workerThread.get(), Thread.currentThread());
-      } else {
-        assertFalse(Thread.currentThread().isVirtual());
-      }
-
-      response.setHeader("X-Method", request.method()).body(MediaType.APPLICATION_JSON, "done");
-    };
-  }
-
   private static Stream<RegistrationCase> registrations() {
     return Stream.of(
         new RegistrationCase(
@@ -99,7 +37,9 @@ class TypedRoutesTest {
             false,
             (executor, handler) -> routes -> routes.get("/selected", executor, handler)),
         new RegistrationCase(
-            "get(String path, ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "get(String path, ExecutorService executor, "
+                + "TypedHandler handler, Consumer<Extensions> "
+                + "configuration)",
             "GET",
             true,
             true,
@@ -122,7 +62,8 @@ class TypedRoutesTest {
             true,
             (executor, handler) -> routes -> routes.get(executor, handler)),
         new RegistrationCase(
-            "get(ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "get(ExecutorService executor, TypedHandler "
+                + "handler, Consumer<Extensions> configuration)",
             "GET",
             true,
             true,
@@ -144,7 +85,9 @@ class TypedRoutesTest {
             false,
             (executor, handler) -> routes -> routes.post("/selected", executor, handler)),
         new RegistrationCase(
-            "post(String path, ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "post(String path, ExecutorService executor, "
+                + "TypedHandler handler, Consumer<Extensions> "
+                + "configuration)",
             "POST",
             true,
             true,
@@ -167,7 +110,8 @@ class TypedRoutesTest {
             true,
             (executor, handler) -> routes -> routes.post(executor, handler)),
         new RegistrationCase(
-            "post(ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "post(ExecutorService executor, TypedHandler "
+                + "handler, Consumer<Extensions> configuration)",
             "POST",
             true,
             true,
@@ -189,7 +133,9 @@ class TypedRoutesTest {
             false,
             (executor, handler) -> routes -> routes.put("/selected", executor, handler)),
         new RegistrationCase(
-            "put(String path, ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "put(String path, ExecutorService executor, "
+                + "TypedHandler handler, Consumer<Extensions> "
+                + "configuration)",
             "PUT",
             true,
             true,
@@ -212,7 +158,8 @@ class TypedRoutesTest {
             true,
             (executor, handler) -> routes -> routes.put(executor, handler)),
         new RegistrationCase(
-            "put(ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "put(ExecutorService executor, TypedHandler "
+                + "handler, Consumer<Extensions> configuration)",
             "PUT",
             true,
             true,
@@ -234,7 +181,9 @@ class TypedRoutesTest {
             false,
             (executor, handler) -> routes -> routes.patch("/selected", executor, handler)),
         new RegistrationCase(
-            "patch(String path, ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "patch(String path, ExecutorService executor, "
+                + "TypedHandler handler, Consumer<Extensions> "
+                + "configuration)",
             "PATCH",
             true,
             true,
@@ -257,7 +206,8 @@ class TypedRoutesTest {
             true,
             (executor, handler) -> routes -> routes.patch(executor, handler)),
         new RegistrationCase(
-            "patch(ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "patch(ExecutorService executor, TypedHandler "
+                + "handler, Consumer<Extensions> configuration)",
             "PATCH",
             true,
             true,
@@ -279,7 +229,9 @@ class TypedRoutesTest {
             false,
             (executor, handler) -> routes -> routes.delete("/selected", executor, handler)),
         new RegistrationCase(
-            "delete(String path, ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "delete(String path, ExecutorService executor, "
+                + "TypedHandler handler, Consumer<Extensions> "
+                + "configuration)",
             "DELETE",
             true,
             true,
@@ -302,7 +254,8 @@ class TypedRoutesTest {
             true,
             (executor, handler) -> routes -> routes.delete(executor, handler)),
         new RegistrationCase(
-            "delete(ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "delete(ExecutorService executor, TypedHandler "
+                + "handler, Consumer<Extensions> configuration)",
             "DELETE",
             true,
             true,
@@ -324,7 +277,9 @@ class TypedRoutesTest {
             false,
             (executor, handler) -> routes -> routes.head("/selected", executor, handler)),
         new RegistrationCase(
-            "head(String path, ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "head(String path, ExecutorService executor, "
+                + "TypedHandler handler, Consumer<Extensions> "
+                + "configuration)",
             "HEAD",
             true,
             true,
@@ -347,7 +302,8 @@ class TypedRoutesTest {
             true,
             (executor, handler) -> routes -> routes.head(executor, handler)),
         new RegistrationCase(
-            "head(ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "head(ExecutorService executor, TypedHandler "
+                + "handler, Consumer<Extensions> configuration)",
             "HEAD",
             true,
             true,
@@ -369,7 +325,9 @@ class TypedRoutesTest {
             false,
             (executor, handler) -> routes -> routes.options("/selected", executor, handler)),
         new RegistrationCase(
-            "options(String path, ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "options(String path, ExecutorService executor, "
+                + "TypedHandler handler, Consumer<Extensions> "
+                + "configuration)",
             "OPTIONS",
             true,
             true,
@@ -392,7 +350,8 @@ class TypedRoutesTest {
             true,
             (executor, handler) -> routes -> routes.options(executor, handler)),
         new RegistrationCase(
-            "options(ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "options(ExecutorService executor, TypedHandler "
+                + "handler, Consumer<Extensions> configuration)",
             "OPTIONS",
             true,
             true,
@@ -407,7 +366,8 @@ class TypedRoutesTest {
                                 (ignoredRequest, response) ->
                                     response.setHeader("X-Local", "configured")))),
         new RegistrationCase(
-            "route(HttpMethods method, String path, ExecutorService executor, TypedHandler handler)",
+            "route(HttpMethods method, String path, "
+                + "ExecutorService executor, TypedHandler handler)",
             "PATCH",
             true,
             false,
@@ -415,7 +375,9 @@ class TypedRoutesTest {
             (executor, handler) ->
                 routes -> routes.route(HttpMethods.PATCH, "/selected", executor, handler)),
         new RegistrationCase(
-            "route(HttpMethods method, String path, ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "route(HttpMethods method, String path, "
+                + "ExecutorService executor, TypedHandler handler, "
+                + "Consumer<Extensions> configuration)",
             "PATCH",
             true,
             true,
@@ -439,7 +401,9 @@ class TypedRoutesTest {
             true,
             (executor, handler) -> routes -> routes.route(HttpMethods.PATCH, executor, handler)),
         new RegistrationCase(
-            "route(HttpMethods method, ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "route(HttpMethods method, ExecutorService "
+                + "executor, TypedHandler handler, "
+                + "Consumer<Extensions> configuration)",
             "PATCH",
             true,
             true,
@@ -462,7 +426,9 @@ class TypedRoutesTest {
             false,
             (executor, handler) -> routes -> routes.route("PATCH", "/selected", executor, handler)),
         new RegistrationCase(
-            "route(String method, String path, ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "route(String method, String path, ExecutorService "
+                + "executor, TypedHandler handler, "
+                + "Consumer<Extensions> configuration)",
             "PATCH",
             true,
             true,
@@ -486,7 +452,9 @@ class TypedRoutesTest {
             true,
             (executor, handler) -> routes -> routes.route("PATCH", executor, handler)),
         new RegistrationCase(
-            "route(String method, ExecutorService executor, TypedHandler handler, Consumer<Extensions> configuration)",
+            "route(String method, ExecutorService executor, "
+                + "TypedHandler handler, Consumer<Extensions> "
+                + "configuration)",
             "PATCH",
             true,
             true,
@@ -810,7 +778,9 @@ class TypedRoutesTest {
             false,
             (executor, handler) -> routes -> routes.route(HttpMethods.PATCH, "/selected", handler)),
         new RegistrationCase(
-            "route(HttpMethods method, String path, TypedHandler handler, Consumer<Extensions> configuration)",
+            "route(HttpMethods method, String path, "
+                + "TypedHandler handler, Consumer<Extensions> "
+                + "configuration)",
             "PATCH",
             false,
             true,
@@ -833,7 +803,8 @@ class TypedRoutesTest {
             false,
             (executor, handler) -> routes -> routes.route("PATCH", "/selected", handler)),
         new RegistrationCase(
-            "route(String method, String path, TypedHandler handler, Consumer<Extensions> configuration)",
+            "route(String method, String path, TypedHandler "
+                + "handler, Consumer<Extensions> configuration)",
             "PATCH",
             false,
             true,
@@ -892,6 +863,86 @@ class TypedRoutesTest {
             false,
             true,
             (executor, handler) -> routes -> routes.route("PATCH", handler)));
+  }
+
+  private static void nestedPaths(TypedRoutes routes, int remaining) {
+    if (remaining > 0) {
+      routes.path("/p", child -> nestedPaths(child, remaining - 1));
+    }
+  }
+
+  private static void nestedConditions(TypedRoutes routes, int remaining) {
+    if (remaining > 0) {
+      routes.when(() -> true, child -> nestedConditions(child, remaining - 1));
+    }
+  }
+
+  private static void capturedRootPaths(TypedRoutes root, int remaining) {
+    if (remaining > 0) {
+      root.path("/p", ignoredRoutes -> capturedRootPaths(root, remaining - 1));
+    }
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("registrations")
+  void registersTypedHttpOverloadsOnExistingRouter(RegistrationCase selected) throws Exception {
+    var workerThread = new AtomicReference<Thread>();
+
+    try (var executor = openExecutorForRegistersTypedHttpOverloadsOnExistingRouter(workerThread)) {
+      var app = new Shoostr();
+
+      try (Closeable appCleanup = app::close) {
+        TypedHandler handler =
+            createHandlerForRegistersTypedHttpOverloadsOnExistingRouter(selected, workerThread);
+        var routes = app.codec(new TestCodec()).routes();
+        var registration = selected.registration().apply(executor, handler);
+        if (selected.pathless()) {
+          routes.path("/selected", registration);
+        } else {
+          registration.accept(routes);
+        }
+
+        try (var test = TestServer.start(app)) {
+          var result =
+              test.send(
+                  request -> request.path("/selected").method(selected.method()),
+                  HttpResponse.BodyHandlers.ofString());
+
+          assertEquals(200, result.statusCode());
+          assertEquals(selected.method(), result.headers().firstValue("X-Method").orElseThrow());
+          assertEquals(
+              selected.local() ? "configured" : "",
+              result.headers().firstValue("X-Local").orElse(""));
+          assertEquals("HEAD".equals(selected.method()) ? "" : "\"done\"", result.body());
+          assertEquals(
+              "application/json", result.headers().firstValue("Content-Type").orElseThrow());
+        }
+      }
+    }
+  }
+
+  private ExecutorService openExecutorForRegistersTypedHttpOverloadsOnExistingRouter(
+      AtomicReference<Thread> workerThread) {
+    return Executors.newSingleThreadExecutor(
+        task -> {
+          var thread = new Thread(task);
+          workerThread.set(thread);
+
+          return thread;
+        });
+  }
+
+  private TypedHandler createHandlerForRegistersTypedHttpOverloadsOnExistingRouter(
+      RegistrationCase selected, AtomicReference<Thread> workerThread) throws Exception {
+    return (request, response) -> {
+      if (selected.worker()) {
+        assertSame(workerThread.get(), Thread.currentThread());
+      } else {
+        assertFalse(Thread.currentThread().isVirtual());
+      }
+
+      response.setHeader("X-Method", request.method()).body(MediaType.APPLICATION_JSON, "done");
+    };
   }
 
   @Test
@@ -1087,24 +1138,6 @@ class TypedRoutesTest {
           assertEquals(404, test.send(request -> request.path("/late")).statusCode());
         }
       }
-    }
-  }
-
-  private static void nestedPaths(TypedRoutes routes, int remaining) {
-    if (remaining > 0) {
-      routes.path("/p", child -> nestedPaths(child, remaining - 1));
-    }
-  }
-
-  private static void nestedConditions(TypedRoutes routes, int remaining) {
-    if (remaining > 0) {
-      routes.when(() -> true, child -> nestedConditions(child, remaining - 1));
-    }
-  }
-
-  private static void capturedRootPaths(TypedRoutes root, int remaining) {
-    if (remaining > 0) {
-      root.path("/p", ignoredRoutes -> capturedRootPaths(root, remaining - 1));
     }
   }
 

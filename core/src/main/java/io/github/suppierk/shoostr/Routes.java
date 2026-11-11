@@ -49,10 +49,8 @@ public final class Routes {
   private final int scopeDepth;
   private final ThreadLocal<Integer> activeGroupDepth;
   private final List<Predicate<Request>> conditions;
-  private @Nullable Lifecycle configuration;
   private final Set<Extension> installed;
   private final List<Runnable> notifications;
-  private boolean localObservers;
   private final List<RadixRoutes.Endpoint> registrations;
   private final List<RadixRoutes.Endpoint> websocketRegistrations;
   private final List<StaticFiles> staticFiles;
@@ -61,6 +59,8 @@ public final class Routes {
   private final IdentityHashMap<StaticFiles, Routes> staticScopes;
   private final Set<String> routeKeys;
   private final Set<String> websocketRouteKeys;
+  private @Nullable Lifecycle configuration;
+  private boolean localObservers;
   private @Nullable RadixRoutes websocketRouter;
   private int activeRegistrations;
   private boolean registrationStarted;
@@ -129,6 +129,26 @@ public final class Routes {
     this.staticScopes = root.staticScopes;
     this.routeKeys = root.routeKeys;
     this.websocketRouteKeys = root.websocketRouteKeys;
+  }
+
+  /**
+   * Composes a relative endpoint or group path without allowing a leading slash to escape scope.
+   * Empty paths select the current group, or the root slash when no prefix exists.
+   *
+   * @param prefix enclosing group prefix
+   * @param path relative path, optionally beginning with a separator
+   * @return composed absolute path; trailing separators remain significant
+   */
+  private static String join(String prefix, String path) {
+    Objects.requireNonNull(path);
+    if (path.isEmpty()) {
+      return prefix.isEmpty() ? HttpCharacters.PATH_SEPARATOR_STRING : prefix;
+    }
+
+    return prefix
+        + (path.charAt(0) == HttpCharacters.PATH_SEPARATOR
+            ? path
+            : HttpCharacters.PATH_SEPARATOR + path);
   }
 
   /**
@@ -2163,7 +2183,7 @@ public final class Routes {
             Objects.requireNonNull(staticScopes.get(files)).exceptionMappings(resolved));
       }
 
-      var router = RadixRoutes.from(endpoints, staticFiles);
+      final var router = RadixRoutes.from(endpoints, staticFiles);
       root.websocketRouter = handshakes.isEmpty() ? null : RadixRoutes.from(handshakes);
       root.closed = true;
       registrations.clear();
@@ -2369,25 +2389,5 @@ public final class Routes {
    */
   boolean localObservers() {
     return root.localObservers;
-  }
-
-  /**
-   * Composes a relative endpoint or group path without allowing a leading slash to escape scope.
-   * Empty paths select the current group, or the root slash when no prefix exists.
-   *
-   * @param prefix enclosing group prefix
-   * @param path relative path, optionally beginning with a separator
-   * @return composed absolute path; trailing separators remain significant
-   */
-  private static String join(String prefix, String path) {
-    Objects.requireNonNull(path);
-    if (path.isEmpty()) {
-      return prefix.isEmpty() ? HttpCharacters.PATH_SEPARATOR_STRING : prefix;
-    }
-
-    return prefix
-        + (path.charAt(0) == HttpCharacters.PATH_SEPARATOR
-            ? path
-            : HttpCharacters.PATH_SEPARATOR + path);
   }
 }

@@ -86,7 +86,7 @@ class BufferedBodyExampleTest {
               HttpResponse.BodyHandlers.ofString());
 
       assertEquals(200, response.statusCode());
-      assertEquals("\uFFFD(", response.body());
+      assertEquals("�(", response.body());
     }
   }
 
@@ -268,7 +268,7 @@ class BufferedBodyExampleTest {
   }
 
   @Test
-  void leavesNonmultipartInputAvailableAfterAFileLookup() throws Exception {
+  void leavesNonmultipartInputAvailableAfterFileLookup() throws Exception {
     {
       var app = BufferedBodyExample.application();
 
@@ -284,7 +284,7 @@ class BufferedBodyExampleTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var response = sendResponseForLeavesNonmultipartInputAvailableAfterAFileLookup(test);
+          var response = sendResponseForLeavesNonmultipartInputAvailableAfterFileLookup(test);
 
           assertEquals(200, response.statusCode());
           assertEquals("abc", response.body());
@@ -293,7 +293,7 @@ class BufferedBodyExampleTest {
     }
   }
 
-  private HttpResponse<String> sendResponseForLeavesNonmultipartInputAvailableAfterAFileLookup(
+  private HttpResponse<String> sendResponseForLeavesNonmultipartInputAvailableAfterFileLookup(
       TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->

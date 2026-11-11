@@ -56,16 +56,6 @@ final class TelemetryConfiguration implements AutoCloseable {
   }
 
   /**
-   * Configures service metadata and batched export for this application's spans.
-   *
-   * @param exporter application-owned span exporter
-   * @return tracer provider owned by the SDK
-   */
-  private SdkTracerProvider tracerProvider(OtlpHttpSpanExporter exporter) {
-    return tracerProviderProperties(exporter).build();
-  }
-
-  /**
    * Configures service identity and the batching processor before provider construction.
    *
    * @param exporter exporter owned by the provider's processor
@@ -82,6 +72,16 @@ final class TelemetryConfiguration implements AutoCloseable {
                             .build())))
         .addSpanProcessor(
             BatchSpanProcessor.builder(exporter).setScheduleDelay(Duration.ofMillis(100)).build());
+  }
+
+  /**
+   * Configures service metadata and batched export for this application's spans.
+   *
+   * @param exporter application-owned span exporter
+   * @return tracer provider owned by the SDK
+   */
+  private SdkTracerProvider tracerProvider(OtlpHttpSpanExporter exporter) {
+    return tracerProviderProperties(exporter).build();
   }
 
   /**

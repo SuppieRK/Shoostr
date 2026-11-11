@@ -99,9 +99,7 @@ class CorsExampleTest {
 
     try (var test = TestServer.start(CorsExample.application())) {
       for (var path : new String[] {"/reports/missing", "/reports/daily"}) {
-        var preflight =
-            sendPreflightForKeepsMissingTargetsAndUnsupportedMethodsAsRoutingErrorsWithoutCorsGrants(
-                test, path);
+        var preflight = sendPreflightForMissingTargets(test, path);
 
         assertEquals(path.endsWith("daily") ? 405 : 404, preflight.statusCode());
         assertFalse(preflight.headers().firstValue("Access-Control-Allow-Origin").isPresent());
@@ -121,9 +119,8 @@ class CorsExampleTest {
     }
   }
 
-  private HttpResponse<byte[]>
-      sendPreflightForKeepsMissingTargetsAndUnsupportedMethodsAsRoutingErrorsWithoutCorsGrants(
-          TestServer test, String path) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendPreflightForMissingTargets(TestServer test, String path)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -134,15 +131,13 @@ class CorsExampleTest {
   }
 
   @Test
-  void givesASeparatelyRegisteredEndpointApplicationDefaultsInsteadOfTheReportsPolicy()
+  void givesSeparatelyRegisteredEndpointApplicationDefaultsInsteadOfTheReportsPolicy()
       throws Exception {
     var app = CorsExample.application();
     app.routes().get("/reports/outside", (request, response) -> response.text("outside"));
 
     try (var test = TestServer.start(app)) {
-      var preflight =
-          sendPreflightForGivesASeparatelyRegisteredEndpointApplicationDefaultsInsteadOfTheReportsPolicy(
-              test);
+      var preflight = sendPreflightForIndependentEndpoint(test);
 
       assertEquals(403, preflight.statusCode());
 
@@ -168,9 +163,8 @@ class CorsExampleTest {
     }
   }
 
-  private HttpResponse<byte[]>
-      sendPreflightForGivesASeparatelyRegisteredEndpointApplicationDefaultsInsteadOfTheReportsPolicy(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendPreflightForIndependentEndpoint(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -271,12 +265,12 @@ class CorsExampleTest {
 
   @ParameterizedTest
   @CsvSource({"DELETE, authorization, 405", "POST, x-unlisted, 403"})
-  void rejectsAPreflightRequestingAnUnregisteredMethodOrUnlistedHeader(
+  void rejectsPreflightRequestingAnUnregisteredMethodOrUnlistedHeader(
       String method, String header, int status) throws Exception {
 
     try (var test = TestServer.start(CorsExample.application())) {
       var response =
-          sendResponseForRejectsAPreflightRequestingAnUnregisteredMethodOrUnlistedHeader(
+          sendResponseForRejectsPreflightRequestingAnUnregisteredMethodOrUnlistedHeader(
               test, method, header);
 
       assertEquals(status, response.statusCode());
@@ -285,7 +279,7 @@ class CorsExampleTest {
   }
 
   private HttpResponse<byte[]>
-      sendResponseForRejectsAPreflightRequestingAnUnregisteredMethodOrUnlistedHeader(
+      sendResponseForRejectsPreflightRequestingAnUnregisteredMethodOrUnlistedHeader(
           TestServer test, String method, String header) throws IOException, InterruptedException {
     return test.send(
         request ->

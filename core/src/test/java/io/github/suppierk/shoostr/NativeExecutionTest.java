@@ -29,6 +29,24 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(20)
 class NativeExecutionTest {
+  private static Shoostr application(AtomicReference<ExecutorService> owned) {
+    var configuredOptions = new Options();
+    configuredOptions.setVirtualThreads(true);
+
+    return new Shoostr(configuredOptions)
+        .modifyServer(
+            server ->
+                owned.set(
+                    (ExecutorService)
+                        ((QueuedThreadPool) server.getThreadPool()).getVirtualThreadsExecutor()))
+        .routes(
+            routes ->
+                routes.get(
+                    "/thread",
+                    (request, response) ->
+                        response.text("virtual=" + Thread.currentThread().isVirtual())));
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void runsHandlersOnTheSelectedNativeExecutionMode(boolean virtual) throws Exception {
@@ -200,7 +218,7 @@ class NativeExecutionTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void progressesMultiplexedHttp2ResponsesWithABoundedNativePlatformPool(boolean virtual)
+  void progressesMultiplexedHttp2ResponsesWithBoundedNativePlatformPool(boolean virtual)
       throws Exception {
     var payload = "x".repeat(131_072);
 
@@ -255,23 +273,5 @@ class NativeExecutionTest {
         }
       }
     }
-  }
-
-  private static Shoostr application(AtomicReference<ExecutorService> owned) {
-    var configuredOptions = new Options();
-    configuredOptions.setVirtualThreads(true);
-
-    return new Shoostr(configuredOptions)
-        .modifyServer(
-            server ->
-                owned.set(
-                    (ExecutorService)
-                        ((QueuedThreadPool) server.getThreadPool()).getVirtualThreadsExecutor()))
-        .routes(
-            routes ->
-                routes.get(
-                    "/thread",
-                    (request, response) ->
-                        response.text("virtual=" + Thread.currentThread().isVirtual())));
   }
 }

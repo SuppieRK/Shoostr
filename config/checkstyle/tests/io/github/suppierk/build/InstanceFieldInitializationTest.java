@@ -41,9 +41,11 @@ class InstanceFieldInitializationTest {
         "package io.github.suppierk.shoostr; class CorsPolicy { class Builder { int value = 1; } }",
         "package io.github.suppierk.fixture; class Csrf { int value = 1; }",
         "package io.github.suppierk.shoostr; class CorsPolicy { class Nested { int value = 1; } }",
-        "package io.github.suppierk.shoostr.mcp; class Mcp { static class Options { int value = 1; } }",
+        "package io.github.suppierk.shoostr.mcp; class Mcp "
+            + "{ static class Options { int value = 1; } }",
         "package io.github.suppierk.shoostr; class Csrf { Object value; { value = null; } }",
-        "package io.github.suppierk.shoostr; class Options { Object field; { field = new Object(); } }"
+        "package io.github.suppierk.shoostr; class Options "
+            + "{ Object field; { field = new Object(); } }"
       })
   void rejectsInstanceInitializationOutsideConstructors(String source) throws Exception {
     assertEquals(1, violations(source), source);
@@ -54,7 +56,9 @@ class InstanceFieldInitializationTest {
       strings = {
         "class Example { final Object field; Example() { field = new Object(); } }",
         "class Example { final Object field; Example(Object value) { field = value; } }",
-        "class Example { final Object field; Example() { this(new Object()); } Example(Object value) { field = value; } }",
+        "class Example { final Object field; Example() { "
+            + "this(new Object()); } Example(Object value) { "
+            + "field = value; } }",
         "class Example { static final Object VALUE = new Object(); }",
         "class Example { static Object value = create(); }",
         "class Example { static Object value; static { value = new Object(); } }",
@@ -66,8 +70,12 @@ class InstanceFieldInitializationTest {
         "enum Example { VALUE; final Object field; Example() { field = new Object(); } }",
         "package io.github.suppierk.shoostr; class CorsPolicy { int maxAgeSeconds = 5; }",
         "package io.github.suppierk.shoostr; class Csrf { Object trustedOrigins = null; }",
-        "package io.github.suppierk.shoostr.mcp; class McpSessionLimits { int maxSessions = 1024; }",
-        "package io.github.suppierk.shoostr; class Options { private String host = \"0.0.0.0\"; private Integer port = 8080; private Boolean virtualThreads = false; }"
+        "package io.github.suppierk.shoostr.mcp; class "
+            + "McpSessionLimits { int maxSessions = 1024; }",
+        "package io.github.suppierk.shoostr; class Options "
+            + "{ private String host = \"0.0.0.0\"; private "
+            + "Integer port = 8080; private Boolean "
+            + "virtualThreads = false; }"
       })
   void permitsConstructorsStaticFieldsAndLocalVariables(String source) throws Exception {
     assertEquals(0, violations(source), source);

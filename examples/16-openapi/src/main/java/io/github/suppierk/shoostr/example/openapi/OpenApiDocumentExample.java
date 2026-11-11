@@ -29,7 +29,7 @@ public final class OpenApiDocumentExample {
   public static Shoostr application() {
     var docs = new OpenApi("Items API", "1.0").tag(ITEMS_TAG, "Item operations");
     // Each instance owns its own document; route selection decides which receives an operation.
-    var internal = new OpenApi("Operations API", "1.0");
+    final var internal = new OpenApi("Operations API", "1.0");
 
     // This schema describes input; it does not install runtime validation on the handler.
     var schema = new JsonSchema();

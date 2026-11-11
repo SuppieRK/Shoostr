@@ -14,58 +14,6 @@ import java.util.TreeSet;
 /** Enforces statement spacing using the same syntax-aware boundaries as the formatter. */
 public final class StatementSpacingCheck extends AbstractCheck {
   /**
-   * Subscribes to try and if statements when the rule uses its default configuration.
-   *
-   * @return default syntax token types
-   */
-  @Override
-  public int[] getDefaultTokens() {
-    return new int[] {TokenTypes.LITERAL_TRY, TokenTypes.LITERAL_IF};
-  }
-
-  /**
-   * Limits configured subscriptions to try and if statements.
-   *
-   * @return supported syntax token types
-   */
-  @Override
-  public int[] getAcceptableTokens() {
-    return getDefaultTokens();
-  }
-
-  /**
-   * Keeps try and if statements checked even when explicit token configuration is supplied.
-   *
-   * @return mandatory syntax token types
-   */
-  @Override
-  public int[] getRequiredTokens() {
-    return getDefaultTokens();
-  }
-
-  /**
-   * Reports missing separators at complete statement boundaries, excluding attached clauses and
-   * closing braces.
-   *
-   * @param token syntax node supplied by Checkstyle
-   */
-  @Override
-  public void visitToken(DetailAST token) {
-    int before = beforeBoundary(token, getLines());
-    if (before >= 0 && missingLine(token, before, getLines(), true)) {
-      log(token, "statement.spacing", "before try");
-    }
-
-    int after = afterBoundary(token);
-    if (after >= 0 && missingLine(token, after, getLines(), false)) {
-      log(
-          token,
-          "statement.spacing",
-          token.getType() == TokenTypes.LITERAL_TRY ? "after try/catch/finally" : "after if/else");
-    }
-  }
-
-  /**
    * Adds required blank lines after standard Java formatting, without touching strings or comments.
    *
    * @param source formatted Java source
@@ -190,5 +138,57 @@ public final class StatementSpacingCheck extends AbstractCheck {
 
     return token.getNextSibling().getLineNo() <= boundary
         || boundary < lines.length && !lines[boundary].isBlank();
+  }
+
+  /**
+   * Subscribes to try and if statements when the rule uses its default configuration.
+   *
+   * @return default syntax token types
+   */
+  @Override
+  public int[] getDefaultTokens() {
+    return new int[] {TokenTypes.LITERAL_TRY, TokenTypes.LITERAL_IF};
+  }
+
+  /**
+   * Limits configured subscriptions to try and if statements.
+   *
+   * @return supported syntax token types
+   */
+  @Override
+  public int[] getAcceptableTokens() {
+    return getDefaultTokens();
+  }
+
+  /**
+   * Keeps try and if statements checked even when explicit token configuration is supplied.
+   *
+   * @return mandatory syntax token types
+   */
+  @Override
+  public int[] getRequiredTokens() {
+    return getDefaultTokens();
+  }
+
+  /**
+   * Reports missing separators at complete statement boundaries, excluding attached clauses and
+   * closing braces.
+   *
+   * @param token syntax node supplied by Checkstyle
+   */
+  @Override
+  public void visitToken(DetailAST token) {
+    int before = beforeBoundary(token, getLines());
+    if (before >= 0 && missingLine(token, before, getLines(), true)) {
+      log(token, "statement.spacing", "before try");
+    }
+
+    int after = afterBoundary(token);
+    if (after >= 0 && missingLine(token, after, getLines(), false)) {
+      log(
+          token,
+          "statement.spacing",
+          token.getType() == TokenTypes.LITERAL_TRY ? "after try/catch/finally" : "after if/else");
+    }
   }
 }

@@ -33,22 +33,43 @@ import reactor.core.publisher.Mono;
 class McpScopeDenialTest {
   private static final String INITIALIZATION = initializationRequest();
 
+  private static Mcp<McpSyncServer> refusingServer() {
+    var security = createSecurityForRefusingServer();
+
+    return Mcp.sync(security, transport -> McpServer.sync(transport).build());
+  }
+
+  private static McpHttpSecurity createSecurityForRefusingServer() {
+    return new McpHttpSecurity(
+        Set.of(),
+        ignoredRequest -> new McpIdentity("alice:client", McpTransportContext.EMPTY, null),
+        (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {
+          throw McpHttpSecurity.scopeDenied(
+              Set.of("tools:read"),
+              URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
+        });
+  }
+
+  private static String initializationRequest() {
+    return
+        """
+        {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+          "protocolVersion":"2025-11-25","capabilities":{},
+          "clientInfo":{"name":"permission-fixture","version":"1.0"}}}
+        """;
+  }
+
   @Test
-  void deniesInitializationWithTheRequiredScopesAndMetadataBeforeCreatingASession()
+  void deniesInitializationWithTheRequiredScopesAndMetadataBeforeCreatingSession()
       throws Exception {
     var starts = new AtomicInteger();
-    var security =
-        createSecurityForDeniesInitializationWithTheRequiredScopesAndMetadataBeforeCreatingASession();
-    var mcp =
-        createMcpForDeniesInitializationWithTheRequiredScopesAndMetadataBeforeCreatingASession(
-            security, starts);
+    var security = createSecurityForDeniedInitialization();
+    var mcp = createMcpForDeniedInitialization(security, starts);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
-      var denied =
-          sendDeniedRequestForDeniesInitializationWithTheRequiredScopesAndMetadataBeforeCreatingASession(
-              test);
+      var denied = sendDeniedRequestForDeniedInitialization(test);
 
       assertEquals(403, denied.statusCode());
       assertEquals(
@@ -59,9 +80,7 @@ class McpScopeDenialTest {
       assertEquals(
           0, starts.get(), "Denied initialization must not enter the native session factory");
 
-      var granted =
-          sendGrantedRequestForDeniesInitializationWithTheRequiredScopesAndMetadataBeforeCreatingASession(
-              test);
+      var granted = sendGrantedRequestForDeniedInitialization(test);
 
       assertEquals(200, granted.statusCode());
       assertFalse(granted.headers().firstValue("Mcp-Session-Id").orElseThrow().isBlank());
@@ -69,8 +88,7 @@ class McpScopeDenialTest {
     }
   }
 
-  private McpHttpSecurity
-      createSecurityForDeniesInitializationWithTheRequiredScopesAndMetadataBeforeCreatingASession() {
+  private McpHttpSecurity createSecurityForDeniedInitialization() {
     return new McpHttpSecurity(
         Set.of(),
         request ->
@@ -88,45 +106,44 @@ class McpScopeDenialTest {
         });
   }
 
-  private Mcp<McpSyncServer>
-      createMcpForDeniesInitializationWithTheRequiredScopesAndMetadataBeforeCreatingASession(
-          McpHttpSecurity security, AtomicInteger starts) {
+  private Mcp<McpSyncServer> createMcpForDeniedInitialization(
+      McpHttpSecurity security, AtomicInteger starts) {
     return Mcp.sync(
-        security,
-        transport ->
-            McpServer.sync(
-                    new McpStreamableServerTransportProvider() {
-                      @Override
-                      public void setSessionFactory(McpStreamableServerSession.Factory factory) {
-                        transport.setSessionFactory(
-                            request -> {
-                              starts.incrementAndGet();
-
-                              return factory.startSession(request);
-                            });
-                      }
-
-                      @Override
-                      public Mono<Void> notifyClients(String method, Object params) {
-                        return transport.notifyClients(method, params);
-                      }
-
-                      @Override
-                      public Mono<Void> closeGracefully() {
-                        return transport.closeGracefully();
-                      }
-
-                      @Override
-                      public List<String> protocolVersions() {
-                        return transport.protocolVersions();
-                      }
-                    })
-                .build());
+        security, transport -> McpServer.sync(countingTransport(transport, starts)).build());
   }
 
-  private HttpResponse<byte[]>
-      sendDeniedRequestForDeniesInitializationWithTheRequiredScopesAndMetadataBeforeCreatingASession(
-          TestServer test) throws IOException, InterruptedException {
+  private static McpStreamableServerTransportProvider countingTransport(
+      McpStreamableServerTransportProvider transport, AtomicInteger starts) {
+    return new McpStreamableServerTransportProvider() {
+      @Override
+      public void setSessionFactory(McpStreamableServerSession.Factory factory) {
+        transport.setSessionFactory(
+            request -> {
+              starts.incrementAndGet();
+
+              return factory.startSession(request);
+            });
+      }
+
+      @Override
+      public Mono<Void> notifyClients(String method, Object params) {
+        return transport.notifyClients(method, params);
+      }
+
+      @Override
+      public Mono<Void> closeGracefully() {
+        return transport.closeGracefully();
+      }
+
+      @Override
+      public List<String> protocolVersions() {
+        return transport.protocolVersions();
+      }
+    };
+  }
+
+  private HttpResponse<byte[]> sendDeniedRequestForDeniedInitialization(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -137,9 +154,8 @@ class McpScopeDenialTest {
                 .body(INITIALIZATION.getBytes(StandardCharsets.UTF_8)));
   }
 
-  private HttpResponse<byte[]>
-      sendGrantedRequestForDeniesInitializationWithTheRequiredScopesAndMetadataBeforeCreatingASession(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendGrantedRequestForDeniedInitialization(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -152,29 +168,22 @@ class McpScopeDenialTest {
   }
 
   @Test
-  void deniesAToolBeforeItsSideEffectsAndAcceptsAGrantedRetryOnTheSameSession() throws Exception {
+  void deniesToolBeforeItsSideEffectsAndAcceptsGrantedRetryOnTheSameSession() throws Exception {
     var calls = new AtomicInteger();
-    var security =
-        createSecurityForDeniesAToolBeforeItsSideEffectsAndAcceptsAGrantedRetryOnTheSameSession();
-    var mcp =
-        createMcpForDeniesAToolBeforeItsSideEffectsAndAcceptsAGrantedRetryOnTheSameSession(
-            security, calls);
+    var security = createSecurityForGrantedRetry();
+    var mcp = createMcpForGrantedRetry(security, calls);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
-      var initialized =
-          sendInitializedRequestForDeniesAToolBeforeItsSideEffectsAndAcceptsAGrantedRetryOnTheSameSession(
-              test);
+      var initialized = sendInitializedRequestForGrantedRetry(test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var call =
           """
           {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"write","arguments":{}}}
           """
               .getBytes(StandardCharsets.UTF_8);
-      var denied =
-          sendDeniedRequestForDeniesAToolBeforeItsSideEffectsAndAcceptsAGrantedRetryOnTheSameSession(
-              test, sessionId, call);
+      var denied = sendDeniedRequestForGrantedRetry(test, sessionId, call);
 
       assertEquals(403, denied.statusCode());
       assertEquals(
@@ -185,9 +194,7 @@ class McpScopeDenialTest {
           denied.headers().firstValue("Content-Type").orElse("").contains("text/event-stream"));
       assertEquals(0, calls.get());
 
-      var retried =
-          sendRetriedRequestForDeniesAToolBeforeItsSideEffectsAndAcceptsAGrantedRetryOnTheSameSession(
-              test, sessionId, call);
+      var retried = sendRetriedRequestForGrantedRetry(test, sessionId, call);
 
       assertEquals(200, retried.statusCode());
       assertTrue(retried.body().contains("write completed"));
@@ -195,8 +202,7 @@ class McpScopeDenialTest {
     }
   }
 
-  private McpHttpSecurity
-      createSecurityForDeniesAToolBeforeItsSideEffectsAndAcceptsAGrantedRetryOnTheSameSession() {
+  private McpHttpSecurity createSecurityForGrantedRetry() {
     return new McpHttpSecurity(
         Set.of(),
         request ->
@@ -216,9 +222,8 @@ class McpScopeDenialTest {
         });
   }
 
-  private Mcp<McpSyncServer>
-      createMcpForDeniesAToolBeforeItsSideEffectsAndAcceptsAGrantedRetryOnTheSameSession(
-          McpHttpSecurity security, AtomicInteger calls) {
+  private Mcp<McpSyncServer> createMcpForGrantedRetry(
+      McpHttpSecurity security, AtomicInteger calls) {
     return Mcp.sync(
         security,
         transport ->
@@ -239,9 +244,8 @@ class McpScopeDenialTest {
                 .build());
   }
 
-  private HttpResponse<byte[]>
-      sendInitializedRequestForDeniesAToolBeforeItsSideEffectsAndAcceptsAGrantedRetryOnTheSameSession(
-          TestServer test) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendInitializedRequestForGrantedRetry(TestServer test)
+      throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -251,16 +255,15 @@ class McpScopeDenialTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-                          {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                            "protocolVersion":"2025-11-25","capabilities":{},
-                            "clientInfo":{"name":"permission-fixture","version":"1.0"}}}
-                          """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"permission-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
-  private HttpResponse<byte[]>
-      sendDeniedRequestForDeniesAToolBeforeItsSideEffectsAndAcceptsAGrantedRetryOnTheSameSession(
-          TestServer test, String sessionId, byte[] call) throws IOException, InterruptedException {
+  private HttpResponse<byte[]> sendDeniedRequestForGrantedRetry(
+      TestServer test, String sessionId, byte[] call) throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -273,9 +276,8 @@ class McpScopeDenialTest {
                 .body(call));
   }
 
-  private HttpResponse<String>
-      sendRetriedRequestForDeniesAToolBeforeItsSideEffectsAndAcceptsAGrantedRetryOnTheSameSession(
-          TestServer test, String sessionId, byte[] call) throws IOException, InterruptedException {
+  private HttpResponse<String> sendRetriedRequestForGrantedRetry(
+      TestServer test, String sessionId, byte[] call) throws IOException, InterruptedException {
     return test.send(
         request ->
             request
@@ -352,30 +354,5 @@ class McpScopeDenialTest {
                 .header("Content-Type", "application/json")
                 .header("Accept", "application/json, text/event-stream")
                 .body(INITIALIZATION.getBytes(StandardCharsets.UTF_8)));
-  }
-
-  private static Mcp<McpSyncServer> refusingServer() {
-    var security = createSecurityForRefusingServer();
-
-    return Mcp.sync(security, transport -> McpServer.sync(transport).build());
-  }
-
-  private static McpHttpSecurity createSecurityForRefusingServer() {
-    return new McpHttpSecurity(
-        Set.of(),
-        ignoredRequest -> new McpIdentity("alice:client", McpTransportContext.EMPTY, null),
-        (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {
-          throw McpHttpSecurity.scopeDenied(
-              Set.of("tools:read"),
-              URI.create("https://example.com/.well-known/oauth-protected-resource/mcp"));
-        });
-  }
-
-  private static String initializationRequest() {
-    return """
-      {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-        "protocolVersion":"2025-11-25","capabilities":{},
-        "clientInfo":{"name":"permission-fixture","version":"1.0"}}}
-      """;
   }
 }

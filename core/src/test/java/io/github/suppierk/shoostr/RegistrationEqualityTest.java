@@ -18,6 +18,56 @@ import org.junit.jupiter.api.io.TempDir;
 class RegistrationEqualityTest {
   @TempDir Path directory;
 
+  private static List<Lifecycle> scopes(Shoostr app) {
+    var cors = new Cors(CorsPolicy.builder().origins("https://first.example").build());
+
+    var scopes = new ArrayList<Lifecycle>();
+    app.routes()
+        .get(
+            "/first",
+            (request, response) -> {},
+            extensions -> {
+              extensions.withExtension(cors);
+              extensions.onRouteMatched(
+                  (request, response) -> response.setHeader("X-Scope", "first"));
+              scopes.add(extensions);
+            })
+        .get(
+            "/second",
+            (request, response) -> {},
+            extensions -> {
+              extensions
+                  .withExtension(cors)
+                  .policy(CorsPolicy.builder().origins("https://second.example").build());
+              extensions.afterRouteHandler(
+                  (request, response) -> response.setHeader("X-Scope", "second"));
+              scopes.add(extensions);
+            });
+
+    return scopes;
+  }
+
+  private static <K, V> IdentityHashMap<K, V> identityMap(K key, V value) {
+    var result = new IdentityHashMap<K, V>();
+    result.put(key, value);
+
+    return result;
+  }
+
+  private static Codec codec(String marker) {
+    return new Codec() {
+      @Override
+      public <T> T read(byte[] source, Class<T> type) {
+        return type.cast(marker);
+      }
+
+      @Override
+      public byte[] write(Object value) {
+        return (marker + value).getBytes(StandardCharsets.UTF_8);
+      }
+    };
+  }
+
   @Test
   void lifecycleCollectorRetainsRegistrationIdentity() throws Exception {
     {
@@ -194,55 +244,5 @@ class RegistrationEqualityTest {
         .withNonnullFields("codec")
         .suppress(Warning.INHERITED_DIRECTLY_FROM_OBJECT, Warning.ALL_FIELDS_SHOULD_BE_USED)
         .verify();
-  }
-
-  private static List<Lifecycle> scopes(Shoostr app) {
-    var cors = new Cors(CorsPolicy.builder().origins("https://first.example").build());
-
-    var scopes = new ArrayList<Lifecycle>();
-    app.routes()
-        .get(
-            "/first",
-            (request, response) -> {},
-            extensions -> {
-              extensions.withExtension(cors);
-              extensions.onRouteMatched(
-                  (request, response) -> response.setHeader("X-Scope", "first"));
-              scopes.add(extensions);
-            })
-        .get(
-            "/second",
-            (request, response) -> {},
-            extensions -> {
-              extensions
-                  .withExtension(cors)
-                  .policy(CorsPolicy.builder().origins("https://second.example").build());
-              extensions.afterRouteHandler(
-                  (request, response) -> response.setHeader("X-Scope", "second"));
-              scopes.add(extensions);
-            });
-
-    return scopes;
-  }
-
-  private static <K, V> IdentityHashMap<K, V> identityMap(K key, V value) {
-    var result = new IdentityHashMap<K, V>();
-    result.put(key, value);
-
-    return result;
-  }
-
-  private static Codec codec(String marker) {
-    return new Codec() {
-      @Override
-      public <T> T read(byte[] source, Class<T> type) {
-        return type.cast(marker);
-      }
-
-      @Override
-      public byte[] write(Object value) {
-        return (marker + value).getBytes(StandardCharsets.UTF_8);
-      }
-    };
   }
 }

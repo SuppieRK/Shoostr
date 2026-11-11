@@ -164,7 +164,8 @@ public final class TestRequest {
    * @return immutable outgoing request
    * @throws IllegalStateException if no path was configured or the callback has finished
    */
-  @SuppressWarnings("javabugs:S6416") // Missing paths deliberately fail after caller configuration.
+  @SuppressWarnings("javabugs:S6416")
+  // Missing paths deliberately fail after caller configuration.
   HttpRequest build() {
     requireOpen();
 

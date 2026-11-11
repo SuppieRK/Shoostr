@@ -38,6 +38,14 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(15)
 class TypedWebSocketTest {
+  private static WebSocket connect(
+      HttpClient client, TestServer server, String path, Messages messages) throws Exception {
+    return client
+        .newWebSocketBuilder()
+        .buildAsync(new URI("ws", server.baseUri().getRawAuthority(), path, null, null), messages)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void suppliesTheSameTypedConnectionToOpeningTextObjectAndCloseCallbacks(boolean virtual)
@@ -333,12 +341,12 @@ class TypedWebSocketTest {
   }
 
   @Test
-  void allowsRecoveryFromACaughtEncodeFailureWithoutSubmittingBinaryOutput() throws Exception {
+  void allowsRecoveryFromCaughtEncodeFailureWithoutSubmittingBinaryOutput() throws Exception {
     var failure = new IOException("encoding failed");
     var codec =
-        createCodecForAllowsRecoveryFromACaughtEncodeFailureWithoutSubmittingBinaryOutput(failure);
+        createCodecForAllowsRecoveryFromCaughtEncodeFailureWithoutSubmittingBinaryOutput(failure);
     var app =
-        createAppForAllowsRecoveryFromACaughtEncodeFailureWithoutSubmittingBinaryOutput(
+        createAppForAllowsRecoveryFromCaughtEncodeFailureWithoutSubmittingBinaryOutput(
             codec, failure);
 
     try (var server = TestServer.start(app);
@@ -359,7 +367,7 @@ class TypedWebSocketTest {
   }
 
   private TextCodec
-      createCodecForAllowsRecoveryFromACaughtEncodeFailureWithoutSubmittingBinaryOutput(
+      createCodecForAllowsRecoveryFromCaughtEncodeFailureWithoutSubmittingBinaryOutput(
           IOException failure) {
     return new TextCodec() {
       @Override
@@ -369,7 +377,7 @@ class TypedWebSocketTest {
     };
   }
 
-  private Shoostr createAppForAllowsRecoveryFromACaughtEncodeFailureWithoutSubmittingBinaryOutput(
+  private Shoostr createAppForAllowsRecoveryFromCaughtEncodeFailureWithoutSubmittingBinaryOutput(
       TextCodec codec, IOException failure) {
     return new Shoostr()
         .codec(codec)
@@ -486,7 +494,7 @@ class TypedWebSocketTest {
 
       try {
         var connection = opened.get(3, TimeUnit.SECONDS);
-        var send =
+        final var send =
             producers.submit(
                 () -> assertThrows(IOException.class, () -> connection.sendObject("blocked")));
 
@@ -668,7 +676,7 @@ class TypedWebSocketTest {
 
       try {
         var connection = opened.get(3, TimeUnit.SECONDS);
-        var first =
+        final var first =
             submitFirstForSerializesObjectAndRawSendsAndAllowsInterruptionOfAnEstablishedWaiter(
                 producers, connection);
 
@@ -802,14 +810,6 @@ class TypedWebSocketTest {
                 interrupted.completeExceptionally(failure);
               }
             });
-  }
-
-  private static WebSocket connect(
-      HttpClient client, TestServer server, String path, Messages messages) throws Exception {
-    return client
-        .newWebSocketBuilder()
-        .buildAsync(new URI("ws", server.baseUri().getRawAuthority(), path, null, null), messages)
-        .get(3, TimeUnit.SECONDS);
   }
 
   private static class TextCodec implements Codec {

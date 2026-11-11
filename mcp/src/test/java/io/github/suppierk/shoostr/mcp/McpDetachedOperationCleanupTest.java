@@ -44,7 +44,7 @@ class McpDetachedOperationCleanupTest {
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {});
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {});
     var tool = McpSchema.Tool.builder("wait", Map.of("type", "object")).build();
     var mcp =
         createMcpForCancelsDetachedNativeWorkWhenItsOwnerTerminates(
@@ -151,11 +151,12 @@ class McpDetachedOperationCleanupTest {
   }
 
   private byte[] createInitializationForCancelsDetachedNativeWorkWhenItsOwnerTerminates() {
-    return """
-          {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-            "protocolVersion":"2025-11-25","capabilities":{},
-            "clientInfo":{"name":"detached-cleanup-fixture","version":"1.0"}}}
-          """
+    return
+        """
+        {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+          "protocolVersion":"2025-11-25","capabilities":{},
+          "clientInfo":{"name":"detached-cleanup-fixture","version":"1.0"}}}
+        """
         .getBytes(StandardCharsets.UTF_8);
   }
 
@@ -185,9 +186,9 @@ class McpDetachedOperationCleanupTest {
                 .header("X-Fail-Response", "true")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-                "name":"wait","arguments":{}}}
-              """
+                    {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                      "name":"wait","arguments":{}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)),
         HttpResponse.BodyHandlers.ofInputStream());
   }
@@ -216,8 +217,8 @@ class McpDetachedOperationCleanupTest {
                 .header("MCP-Protocol-Version", "2025-11-25")
                 .body(
                     """
-                  {"jsonrpc":"2.0","id":3,"method":"ping"}
-                  """
+                    {"jsonrpc":"2.0","id":3,"method":"ping"}
+                    """
                         .getBytes(StandardCharsets.UTF_8)),
         HttpResponse.BodyHandlers.ofString());
   }

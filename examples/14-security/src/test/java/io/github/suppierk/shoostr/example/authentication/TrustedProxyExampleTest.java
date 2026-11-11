@@ -8,7 +8,6 @@ import io.github.suppierk.shoostr.http.ForwardedHeaders;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.IOException;
 import java.net.InetAddress;
-import java.net.UnknownHostException;
 import java.net.http.HttpResponse;
 import java.util.HashSet;
 import java.util.Set;
@@ -143,7 +142,7 @@ class TrustedProxyExampleTest {
 
   private TestServer
       openTestForStopsAtTheFirstUntrustedNodeInsteadOfAcceptingTheSpoofedLeftmostEntry()
-          throws Exception, UnknownHostException {
+          throws Exception {
     return TestServer.start(
         TrustedProxyExample.application(
             Set.of(

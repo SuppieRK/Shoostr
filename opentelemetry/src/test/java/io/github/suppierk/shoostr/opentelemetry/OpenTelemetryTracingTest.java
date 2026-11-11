@@ -37,6 +37,15 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class OpenTelemetryTracingTest {
+  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
+    options.setVirtualThreads(virtualApplication);
+
+    return new Shoostr(options)
+        .onRequestHeaders(
+            (request, response) ->
+                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
+  }
+
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void routeSelectionDoesNotTraceOtherEndpointsOrOwnTheProvider(boolean virtualApplication)
@@ -302,7 +311,7 @@ class OpenTelemetryTracingTest {
 
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
-  void extractsTheRemoteParentAndScopesAChildSpanUntilTerminalCompletion(boolean virtualApplication)
+  void extractsTheRemoteParentAndScopesChildSpanUntilTerminalCompletion(boolean virtualApplication)
       throws Exception {
     var exporter = InMemorySpanExporter.create();
     var completed = new CompletableFuture<Void>();
@@ -333,9 +342,8 @@ class OpenTelemetryTracingTest {
                 });
 
         try (var test = TestServer.start(app)) {
-          var response =
-              sendResponseForExtractsTheRemoteParentAndScopesAChildSpanUntilTerminalCompletion(
-                  test);
+          final var response =
+              sendResponseForExtractsTheRemoteParentAndScopesChildSpanUntilTerminalCompletion(test);
           completed.get(5, TimeUnit.SECONDS);
           var spans = exporter.getFinishedSpanItems();
 
@@ -346,7 +354,7 @@ class OpenTelemetryTracingTest {
                   .filter(span -> span.getKind() == SpanKind.SERVER)
                   .findFirst()
                   .orElseThrow();
-          var child =
+          final var child =
               spans.stream()
                   .filter(span -> "child".equals(span.getName()))
                   .findFirst()
@@ -363,7 +371,7 @@ class OpenTelemetryTracingTest {
   }
 
   private HttpResponse<String>
-      sendResponseForExtractsTheRemoteParentAndScopesAChildSpanUntilTerminalCompletion(
+      sendResponseForExtractsTheRemoteParentAndScopesChildSpanUntilTerminalCompletion(
           TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -371,14 +379,5 @@ class OpenTelemetryTracingTest {
                 .path("/orders/secret")
                 .header("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"),
         HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static Shoostr withExecutionMode(Options options, boolean virtualApplication) {
-    options.setVirtualThreads(virtualApplication);
-
-    return new Shoostr(options)
-        .onRequestHeaders(
-            (request, response) ->
-                assertEquals(virtualApplication, Thread.currentThread().isVirtual()));
   }
 }

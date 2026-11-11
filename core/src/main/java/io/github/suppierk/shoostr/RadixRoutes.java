@@ -67,42 +67,6 @@ class RadixRoutes {
   }
 
   /**
-   * Compares the node kind and frozen route state without executing handlers.
-   *
-   * <p>EqualsGetClass is suppressed because node subclasses implement different matching behavior
-   * and must remain unequal even when their shared fields match.
-   *
-   * @param other candidate node
-   * @return whether both nodes have the same kind and stored state
-   */
-  @Override
-  @SuppressWarnings("EqualsGetClass")
-  public boolean equals(@Nullable Object other) {
-    if (other == null || getClass() != other.getClass()) {
-      return false;
-    }
-
-    var node = (RadixRoutes) other;
-
-    return label == node.label
-        && Objects.equals(edge, node.edge)
-        && endpoints.equals(node.endpoints)
-        && Arrays.equals(children, node.children)
-        && Objects.equals(parameter, node.parameter)
-        && staticFiles.equals(node.staticFiles);
-  }
-
-  /**
-   * Hashes the same node state used by equality, including child array contents.
-   *
-   * @return hash of the stored node state
-   */
-  @Override
-  public int hashCode() {
-    return Objects.hash(edge, label, endpoints, Arrays.hashCode(children), parameter, staticFiles);
-  }
-
-  /**
    * Compiles registrations into a compressed tree. Sorting normalized patterns makes shared
    * prefixes adjacent; parameter names stay in endpoints.
    *
@@ -165,12 +129,12 @@ class RadixRoutes {
           Routes.EMPTY_PATH, (char) 0, Map.of(), new RadixRoutes[0], null, staticFiles);
     }
 
-    int subtreeFrom = from;
+    final int subtreeFrom = from;
     String first = paths[from];
     String last = paths[to - 1];
-    boolean parameterEdge = first.startsWith(HttpCharacters.CURLY_BRACES, offset);
-    boolean catchAllEdge = first.startsWith(CATCH_ALL_EDGE, offset);
-    boolean constrainedEdge = first.startsWith(CONSTRAINT_PREFIX, offset);
+    final boolean parameterEdge = first.startsWith(HttpCharacters.CURLY_BRACES, offset);
+    final boolean catchAllEdge = first.startsWith(CATCH_ALL_EDGE, offset);
+    final boolean constrainedEdge = first.startsWith(CONSTRAINT_PREFIX, offset);
     int end = edgeEnd(first, last, offset);
 
     Map<HttpMethods, Endpoint> endpoints = Map.of();
@@ -344,78 +308,6 @@ class RadixRoutes {
       }
     }
     return ranks;
-  }
-
-  /** Releases every static resource source, attempting all closures before reporting failures. */
-  void close() {
-    RuntimeException failure = null;
-    for (var files : staticFiles) {
-      try {
-        files.close();
-      } catch (RuntimeException closeFailure) {
-        if (failure == null) {
-          failure = closeFailure;
-        } else {
-          failure.addSuppressed(closeFailure);
-        }
-      }
-    }
-
-    if (failure != null) {
-      throw failure;
-    }
-  }
-
-  /**
-   * Finds an existing static resource after ordinary endpoint lookup has failed.
-   *
-   * @param path request path
-   * @param method requested HTTP method
-   * @return synthetic static endpoint, or null when no resource matches
-   */
-  @Nullable Endpoint staticEndpoint(String path, @Nullable HttpMethods method) {
-    for (var mount : staticFiles) {
-      var endpoint = mount.endpoint(path, method);
-      if (endpoint != null) {
-        return endpoint;
-      }
-    }
-
-    return null;
-  }
-
-  /**
-   * Finds a complete path-and-method match, preferring literal, constrained, ordinary parameter,
-   * then catch-all branches at each depth. Overlapping constraints use registration order.
-   *
-   * @param path Jetty-canonical encoded request path, without query or fragment
-   * @param method requested method, or null for an unrecognized verb
-   * @return matching endpoint, or null when no registration accepts both path and method
-   */
-  @Nullable Endpoint match(String path, @Nullable HttpMethods method) {
-    return method == null ? null : find(path, method, 0);
-  }
-
-  /**
-   * Collects methods from every complete path match for a method-not-allowed response.
-   *
-   * @param path Jetty-canonical encoded request path
-   * @return matching methods, or an empty set for an unknown path
-   */
-  Set<HttpMethods> allowedMethods(String path) {
-    var methods = collectMethods(path, 0, null);
-    for (var mount : staticFiles) {
-      if (mount.exists(path)) {
-        if (methods == null) {
-          methods = EnumSet.noneOf(HttpMethods.class);
-        }
-
-        methods.add(HttpMethods.GET);
-        methods.add(HttpMethods.HEAD);
-      }
-    }
-
-    return methods == null ? Set.of() : methods;
   }
 
   /**
@@ -862,6 +754,114 @@ class RadixRoutes {
   }
 
   /**
+   * Compares the node kind and frozen route state without executing handlers.
+   *
+   * <p>EqualsGetClass is suppressed because node subclasses implement different matching behavior
+   * and must remain unequal even when their shared fields match.
+   *
+   * @param other candidate node
+   * @return whether both nodes have the same kind and stored state
+   */
+  @Override
+  @SuppressWarnings("EqualsGetClass")
+  public boolean equals(@Nullable Object other) {
+    if (other == null || getClass() != other.getClass()) {
+      return false;
+    }
+
+    var node = (RadixRoutes) other;
+
+    return label == node.label
+        && Objects.equals(edge, node.edge)
+        && endpoints.equals(node.endpoints)
+        && Arrays.equals(children, node.children)
+        && Objects.equals(parameter, node.parameter)
+        && staticFiles.equals(node.staticFiles);
+  }
+
+  /**
+   * Hashes the same node state used by equality, including child array contents.
+   *
+   * @return hash of the stored node state
+   */
+  @Override
+  public int hashCode() {
+    return Objects.hash(edge, label, endpoints, Arrays.hashCode(children), parameter, staticFiles);
+  }
+
+  /** Releases every static resource source, attempting all closures before reporting failures. */
+  void close() {
+    RuntimeException failure = null;
+    for (var files : staticFiles) {
+      try {
+        files.close();
+      } catch (RuntimeException closeFailure) {
+        if (failure == null) {
+          failure = closeFailure;
+        } else {
+          failure.addSuppressed(closeFailure);
+        }
+      }
+    }
+
+    if (failure != null) {
+      throw failure;
+    }
+  }
+
+  /**
+   * Finds an existing static resource after ordinary endpoint lookup has failed.
+   *
+   * @param path request path
+   * @param method requested HTTP method
+   * @return synthetic static endpoint, or null when no resource matches
+   */
+  @Nullable Endpoint staticEndpoint(String path, @Nullable HttpMethods method) {
+    for (var mount : staticFiles) {
+      var endpoint = mount.endpoint(path, method);
+      if (endpoint != null) {
+        return endpoint;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Finds a complete path-and-method match, preferring literal, constrained, ordinary parameter,
+   * then catch-all branches at each depth. Overlapping constraints use registration order.
+   *
+   * @param path Jetty-canonical encoded request path, without query or fragment
+   * @param method requested method, or null for an unrecognized verb
+   * @return matching endpoint, or null when no registration accepts both path and method
+   */
+  @Nullable Endpoint match(String path, @Nullable HttpMethods method) {
+    return method == null ? null : find(path, method, 0);
+  }
+
+  /**
+   * Collects methods from every complete path match for a method-not-allowed response.
+   *
+   * @param path Jetty-canonical encoded request path
+   * @return matching methods, or an empty set for an unknown path
+   */
+  Set<HttpMethods> allowedMethods(String path) {
+    var methods = collectMethods(path, 0, null);
+    for (var mount : staticFiles) {
+      if (mount.exists(path)) {
+        if (methods == null) {
+          methods = EnumSet.noneOf(HttpMethods.class);
+        }
+
+        methods.add(HttpMethods.GET);
+        methods.add(HttpMethods.HEAD);
+      }
+    }
+
+    return methods == null ? Set.of() : methods;
+  }
+
+  /**
    * Searches literal, constrained, plain parameter, then catch-all branches. A partial literal
    * prefix or method mismatch cannot hide a less-specific complete match.
    *
@@ -1199,6 +1199,17 @@ class RadixRoutes {
     }
 
     /**
+     * Requires at least one nonempty segment at the catch-all position.
+     *
+     * @param path encoded request path
+     * @param offset tail start
+     * @return whether the tail is valid
+     */
+    private static boolean validTail(String path, int offset) {
+      return offset < path.length() && path.charAt(offset) != HttpCharacters.PATH_SEPARATOR;
+    }
+
+    /**
      * Matches a nonempty tail and then resolves the requested method.
      *
      * @param path encoded request path
@@ -1226,17 +1237,6 @@ class RadixRoutes {
           ? ((RadixRoutes) this).collectAfterSpecial(path, path.length(), methods)
           : methods;
     }
-
-    /**
-     * Requires at least one nonempty segment at the catch-all position.
-     *
-     * @param path encoded request path
-     * @param offset tail start
-     * @return whether the tail is valid
-     */
-    private static boolean validTail(String path, int offset) {
-      return offset < path.length() && path.charAt(offset) != HttpCharacters.PATH_SEPARATOR;
-    }
   }
 
   /** Segment-local character-class matcher kept off the ordinary node's consume hot path. */
@@ -1260,6 +1260,19 @@ class RadixRoutes {
         List<StaticFiles> staticFiles) {
       super(null, CONSTRAINT_LABEL, endpoints, children, parameter, staticFiles);
       this.constraint = Objects.requireNonNull(constraint);
+    }
+
+    /**
+     * Finds the next slash without allocating a segment substring.
+     *
+     * @param path encoded request path
+     * @param offset segment start
+     * @return offset after the segment
+     */
+    private static int segmentEnd(String path, int offset) {
+      int end = path.indexOf(HttpCharacters.PATH_SEPARATOR, offset);
+
+      return end < 0 ? path.length() : end;
     }
 
     /**
@@ -1316,19 +1329,6 @@ class RadixRoutes {
       return constraint.matches(path, offset, end)
           ? ((RadixRoutes) this).collectAfterSpecial(path, end, methods)
           : methods;
-    }
-
-    /**
-     * Finds the next slash without allocating a segment substring.
-     *
-     * @param path encoded request path
-     * @param offset segment start
-     * @return offset after the segment
-     */
-    private static int segmentEnd(String path, int offset) {
-      int end = path.indexOf(HttpCharacters.PATH_SEPARATOR, offset);
-
-      return end < 0 ? path.length() : end;
     }
   }
 

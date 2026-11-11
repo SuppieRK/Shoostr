@@ -118,38 +118,6 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
   }
 
   /**
-   * Builds the native server and releases owned transport resources if construction fails.
-   *
-   * @param factory eager native server factory
-   * @return non-null server bound to this transport
-   * @throws IllegalArgumentException if the factory does not bind the supplied transport
-   */
-  private S createServer(Function<McpStreamableServerTransportProvider, S> factory) {
-    boolean created = false;
-
-    try {
-      var nativeServer = Objects.requireNonNull(factory.apply(provider));
-      if (provider.factory == null) {
-        throw new IllegalArgumentException(
-            "The native factory must bind the supplied MCP transport");
-      }
-
-      provider.startIdleExpiry(deadlines);
-      created = true;
-
-      return nativeServer;
-    } finally {
-      if (!created) {
-        try {
-          provider.closeGracefully().block();
-        } finally {
-          deadlines.shutdownNow();
-        }
-      }
-    }
-  }
-
-  /**
    * Creates a synchronous native server without duplicating its configuration methods.
    *
    * @param security explicit HTTP security
@@ -203,6 +171,130 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
       McpSessionLimits limits,
       Function<McpStreamableServerTransportProvider, McpAsyncServer> factory) {
     return new Mcp<>(security, limits, factory);
+  }
+
+  /**
+   * Checks required initialization fields before native coercion and session allocation.
+   *
+   * @param parameters uncoerced initialization parameters
+   * @return whether the required version, capability and client-info shapes are present
+   */
+  private static boolean validInitialization(@Nullable Object parameters) {
+    return parameters instanceof Map<?, ?> fields
+        && fields.get("protocolVersion") instanceof String
+        && fields.get("capabilities") instanceof Map<?, ?>
+        && fields.get("clientInfo") instanceof Map<?, ?> client
+        && client.get("name") instanceof String
+        && client.get("version") instanceof String;
+  }
+
+  /**
+   * Validates the wire envelope before native mapper coercion can erase invalid field types. Native
+   * SDK dispatch remains responsible for method-specific parameters.
+   *
+   * @param fields parsed JSON object
+   * @return whether one dated MCP message can be passed to native decoding
+   */
+  private static boolean validEnvelope(Map<?, ?> fields) {
+    if (!"2.0".equals(fields.get("jsonrpc"))
+        || (fields.containsKey("id") && !validId(fields.get("id")))) {
+      return false;
+    }
+
+    if (fields.containsKey(FIELD_METHOD)) {
+      return fields.get(FIELD_METHOD) instanceof String method
+          && !method.isBlank()
+          && !fields.containsKey(FIELD_RESULT)
+          && !fields.containsKey(FIELD_ERROR)
+          && (!fields.containsKey("params") || fields.get("params") instanceof Map<?, ?>);
+    }
+
+    if (!fields.containsKey("id")
+        || fields.containsKey(FIELD_RESULT) == fields.containsKey(FIELD_ERROR)) {
+      return false;
+    }
+
+    if (fields.containsKey(FIELD_RESULT)) {
+      return fields.get(FIELD_RESULT) instanceof Map<?, ?>;
+    }
+
+    return fields.get(FIELD_ERROR) instanceof Map<?, ?> error
+        && error.get("code") instanceof Integer
+        && error.get("message") instanceof String;
+  }
+
+  /**
+   * Checks the non-null identifier types supported by the released SDK.
+   *
+   * @param id original wire identifier
+   * @return whether native correlation can retain this identifier without coercion
+   */
+  private static boolean validId(@Nullable Object id) {
+    return id instanceof String || id instanceof Integer || id instanceof Long;
+  }
+
+  /**
+   * Requires the explicit SSE acceptance shared by POST and GET, using core negotiation rules.
+   *
+   * @param request current HTTP request
+   * @param response uncommitted owner-thread response
+   * @throws NotAcceptableException if Accept is absent or excludes event streams
+   */
+  private static void requireAccept(Request request, Response response) {
+    if (request.headers("Accept").isEmpty()) {
+      throw new NotAcceptableException();
+    }
+
+    response.negotiate(EVENT_STREAM);
+  }
+
+  /**
+   * Rejects an explicit non-JSON or ambiguous representation without requiring Content-Type.
+   *
+   * @param request current HTTP request
+   * @throws UnsupportedMediaTypeException if an explicit representation is not JSON
+   */
+  private static void requireJson(Request request) {
+    var values = request.headers("Content-Type");
+    if (!values.isEmpty()
+        && (values.size() != 1
+            || !MediaType.APPLICATION_JSON
+                .value()
+                .equalsIgnoreCase(HttpField.getValueParameters(values.getFirst(), null)))) {
+      throw new UnsupportedMediaTypeException();
+    }
+  }
+
+  /**
+   * Builds the native server and releases owned transport resources if construction fails.
+   *
+   * @param factory eager native server factory
+   * @return non-null server bound to this transport
+   * @throws IllegalArgumentException if the factory does not bind the supplied transport
+   */
+  private S createServer(Function<McpStreamableServerTransportProvider, S> factory) {
+    boolean created = false;
+
+    try {
+      final var nativeServer = Objects.requireNonNull(factory.apply(provider));
+      if (provider.factory == null) {
+        throw new IllegalArgumentException(
+            "The native factory must bind the supplied MCP transport");
+      }
+
+      provider.startIdleExpiry(deadlines);
+      created = true;
+
+      return nativeServer;
+    } finally {
+      if (!created) {
+        try {
+          provider.closeGracefully().block();
+        } finally {
+          deadlines.shutdownNow();
+        }
+      }
+    }
   }
 
   /**
@@ -398,7 +490,7 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     requireAccept(request, response);
     response.negotiate(MediaType.APPLICATION_JSON);
 
-    var identity = identity(request);
+    final var identity = identity(request);
     byte[] bytes;
 
     try {
@@ -594,66 +686,6 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
   }
 
   /**
-   * Checks required initialization fields before native coercion and session allocation.
-   *
-   * @param parameters uncoerced initialization parameters
-   * @return whether the required version, capability and client-info shapes are present
-   */
-  private static boolean validInitialization(@Nullable Object parameters) {
-    return parameters instanceof Map<?, ?> fields
-        && fields.get("protocolVersion") instanceof String
-        && fields.get("capabilities") instanceof Map<?, ?>
-        && fields.get("clientInfo") instanceof Map<?, ?> client
-        && client.get("name") instanceof String
-        && client.get("version") instanceof String;
-  }
-
-  /**
-   * Validates the wire envelope before native mapper coercion can erase invalid field types. Native
-   * SDK dispatch remains responsible for method-specific parameters.
-   *
-   * @param fields parsed JSON object
-   * @return whether one dated MCP message can be passed to native decoding
-   */
-  private static boolean validEnvelope(Map<?, ?> fields) {
-    if (!"2.0".equals(fields.get("jsonrpc"))
-        || (fields.containsKey("id") && !validId(fields.get("id")))) {
-      return false;
-    }
-
-    if (fields.containsKey(FIELD_METHOD)) {
-      return fields.get(FIELD_METHOD) instanceof String method
-          && !method.isBlank()
-          && !fields.containsKey(FIELD_RESULT)
-          && !fields.containsKey(FIELD_ERROR)
-          && (!fields.containsKey("params") || fields.get("params") instanceof Map<?, ?>);
-    }
-
-    if (!fields.containsKey("id")
-        || fields.containsKey(FIELD_RESULT) == fields.containsKey(FIELD_ERROR)) {
-      return false;
-    }
-
-    if (fields.containsKey(FIELD_RESULT)) {
-      return fields.get(FIELD_RESULT) instanceof Map<?, ?>;
-    }
-
-    return fields.get(FIELD_ERROR) instanceof Map<?, ?> error
-        && error.get("code") instanceof Integer
-        && error.get("message") instanceof String;
-  }
-
-  /**
-   * Checks the non-null identifier types supported by the released SDK.
-   *
-   * @param id original wire identifier
-   * @return whether native correlation can retain this identifier without coercion
-   */
-  private static boolean validId(@Nullable Object id) {
-    return id instanceof String || id instanceof Integer || id instanceof Long;
-  }
-
-  /**
    * Emits a finite dated MCP transport error without allocating a session or committing SSE.
    *
    * @param response current owner-thread response
@@ -728,38 +760,6 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     if (!versions.isEmpty()
         && (versions.size() != 1 || !provider.protocolVersions().contains(versions.getFirst()))) {
       throw new BadRequestException("Unsupported MCP protocol version");
-    }
-  }
-
-  /**
-   * Requires the explicit SSE acceptance shared by POST and GET, using core negotiation rules.
-   *
-   * @param request current HTTP request
-   * @param response uncommitted owner-thread response
-   * @throws NotAcceptableException if Accept is absent or excludes event streams
-   */
-  private static void requireAccept(Request request, Response response) {
-    if (request.headers("Accept").isEmpty()) {
-      throw new NotAcceptableException();
-    }
-
-    response.negotiate(EVENT_STREAM);
-  }
-
-  /**
-   * Rejects an explicit non-JSON or ambiguous representation without requiring Content-Type.
-   *
-   * @param request current HTTP request
-   * @throws UnsupportedMediaTypeException if an explicit representation is not JSON
-   */
-  private static void requireJson(Request request) {
-    var values = request.headers("Content-Type");
-    if (!values.isEmpty()
-        && (values.size() != 1
-            || !MediaType.APPLICATION_JSON
-                .value()
-                .equalsIgnoreCase(HttpField.getValueParameters(values.getFirst(), null)))) {
-      throw new UnsupportedMediaTypeException();
     }
   }
 
@@ -872,11 +872,11 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
     private final Map<String, Integer> owners;
     private final Map<Session, Mono<Void>> closing;
     private final Map<Session, Sinks.Empty<Void>> initializing;
-    private int allocations;
     private final long idleNanos;
-    private @Nullable ScheduledFuture<?> idleExpiry;
     private final Map<String, Session> sessions;
     private final Map<McpStream, Session> streams;
+    private int allocations;
+    private @Nullable ScheduledFuture<?> idleExpiry;
     private McpStreamableServerSession.@Nullable Factory factory;
     private boolean stopping;
 

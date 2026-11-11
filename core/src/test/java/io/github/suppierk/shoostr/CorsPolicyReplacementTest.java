@@ -17,6 +17,19 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class CorsPolicyReplacementTest {
+  private static HttpResponse<String> preflight(
+      TestServer test, String path, String origin, String method, String headers) throws Exception {
+    return test.send(
+        testRequest ->
+            testRequest
+                .path(path)
+                .method("OPTIONS")
+                .header("Origin", origin)
+                .header("Access-Control-Request-Method", method)
+                .header("Access-Control-Request-Headers", headers),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"narrow", "empty-origins", "empty-methods", "wildcard"})
   void replacesEveryPermissionWithoutChangingTheParentOrSibling(String mode) throws Exception {
@@ -173,9 +186,9 @@ class CorsPolicyReplacementTest {
   }
 
   @Test
-  void reflectsCredentialedWildcardMethodsAndRequestHeadersForARegisteredTarget() throws Exception {
+  void reflectsCredentialedWildcardMethodsAndRequestHeadersForRegisteredTarget() throws Exception {
     var cors =
-        createCorsForReflectsCredentialedWildcardMethodsAndRequestHeadersForARegisteredTarget();
+        createCorsForReflectsCredentialedWildcardMethodsAndRequestHeadersForRegisteredTarget();
 
     {
       var app = new Shoostr();
@@ -207,7 +220,7 @@ class CorsPolicyReplacementTest {
   }
 
   private Cors
-      createCorsForReflectsCredentialedWildcardMethodsAndRequestHeadersForARegisteredTarget() {
+      createCorsForReflectsCredentialedWildcardMethodsAndRequestHeadersForRegisteredTarget() {
     return new Cors(
         CorsPolicy.builder()
             .origins(Set.of("https://client.example"))
@@ -228,18 +241,5 @@ class CorsPolicyReplacementTest {
     }
 
     assertThrows(IllegalArgumentException.class, builder::build);
-  }
-
-  private static HttpResponse<String> preflight(
-      TestServer test, String path, String origin, String method, String headers) throws Exception {
-    return test.send(
-        testRequest ->
-            testRequest
-                .path(path)
-                .method("OPTIONS")
-                .header("Origin", origin)
-                .header("Access-Control-Request-Method", method)
-                .header("Access-Control-Request-Headers", headers),
-        HttpResponse.BodyHandlers.ofString());
   }
 }

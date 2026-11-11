@@ -60,6 +60,32 @@ class HttpContractTest {
     this.releaseStream = new CountDownLatch(1);
   }
 
+  private static Response response(org.eclipse.jetty.server.Response sink, Callback completion) {
+    var nativeRequest = createNativeRequestForResponse();
+
+    return Request.create(nativeRequest, sink, new Options(), completion).response();
+  }
+
+  private static org.eclipse.jetty.server.Request createNativeRequestForResponse() {
+    return (org.eclipse.jetty.server.Request)
+        Proxy.newProxyInstance(
+            HttpContractTest.class.getClassLoader(),
+            new Class<?>[] {org.eclipse.jetty.server.Request.class},
+            (ignoredObject, method, ignoredObjectValues) ->
+                switch (method.getName()) {
+                  case "getMethod" -> "GET";
+                  case "getHeaders" -> HttpFields.EMPTY;
+                  case "getLength" -> 0L;
+                  case "consumeAvailable" -> true;
+                  case "addHttpStreamWrapper" -> null;
+                  default -> throw new UnsupportedOperationException(method.getName());
+                });
+  }
+
+  private static HttpRequest.Builder request(String uri) {
+    return HttpRequest.newBuilder(URI.create(uri)).timeout(Duration.ofSeconds(5));
+  }
+
   @BeforeEach
   void startServer() throws Exception {
     var configuredOptions = new Options();
@@ -479,7 +505,8 @@ class HttpContractTest {
     "false, true, true",
     "true, true, true"
   })
-  @SuppressWarnings("java:S2093") // The response must outlive the producer until its callback.
+  @SuppressWarnings("java:S2093")
+  // The response must outlive the producer until its callback.
   void completesFiniteResponsesAsynchronously(
       boolean transportFails, boolean hasAfterFlush, boolean afterFlushFails) throws Exception {
     var pending = new AtomicReference<Callback>();
@@ -643,31 +670,5 @@ class HttpContractTest {
                   }
                   default -> throw new UnsupportedOperationException(method.getName());
                 });
-  }
-
-  private static Response response(org.eclipse.jetty.server.Response sink, Callback completion) {
-    var nativeRequest = createNativeRequestForResponse();
-
-    return Request.create(nativeRequest, sink, new Options(), completion).response();
-  }
-
-  private static org.eclipse.jetty.server.Request createNativeRequestForResponse() {
-    return (org.eclipse.jetty.server.Request)
-        Proxy.newProxyInstance(
-            HttpContractTest.class.getClassLoader(),
-            new Class<?>[] {org.eclipse.jetty.server.Request.class},
-            (ignoredObject, method, ignoredObjectValues) ->
-                switch (method.getName()) {
-                  case "getMethod" -> "GET";
-                  case "getHeaders" -> HttpFields.EMPTY;
-                  case "getLength" -> 0L;
-                  case "consumeAvailable" -> true;
-                  case "addHttpStreamWrapper" -> null;
-                  default -> throw new UnsupportedOperationException(method.getName());
-                });
-  }
-
-  private static HttpRequest.Builder request(String uri) {
-    return HttpRequest.newBuilder(URI.create(uri)).timeout(Duration.ofSeconds(5));
   }
 }

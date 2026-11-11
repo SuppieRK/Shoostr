@@ -31,23 +31,23 @@ import org.junit.jupiter.api.Timeout;
 class McpReplyAuthorizationTest {
   @Test
   @Timeout(20)
-  void anUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan() throws Exception {
+  void anUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan() throws Exception {
     var completed = new CountDownLatch(1);
     var security =
-        createSecurityForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan();
+        createSecurityForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan();
     var mcp =
-        createMcpForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan(
+        createMcpForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
             security, completed);
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var initialized =
-          sendInitializedRequestForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan(
+          sendInitializedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
               test);
       var sessionId = initialized.headers().firstValue("Mcp-Session-Id").orElseThrow();
       var response =
-          sendResponseForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan(
+          sendResponseForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
               test, sessionId);
       var mapper = McpJsonDefaults.getMapper();
 
@@ -71,7 +71,7 @@ class McpReplyAuthorizationTest {
         var replyBody =
             mapper.writeValueAsBytes(McpSchema.JSONRPCResponse.result(ping.id(), Map.of()));
         var denied =
-            sendDeniedRequestForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan(
+            sendDeniedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
                 test, sessionId, replyBody);
 
         assertEquals(403, denied.statusCode());
@@ -82,7 +82,7 @@ class McpReplyAuthorizationTest {
         assertEquals(1L, completed.getCount());
 
         var granted =
-            sendGrantedRequestForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan(
+            sendGrantedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
                 test, sessionId, replyBody);
 
         assertEquals(202, granted.statusCode());
@@ -92,7 +92,7 @@ class McpReplyAuthorizationTest {
   }
 
   private McpHttpSecurity
-      createSecurityForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan() {
+      createSecurityForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan() {
     return new McpHttpSecurity(
         Set.of(),
         request ->
@@ -112,7 +112,7 @@ class McpReplyAuthorizationTest {
   }
 
   private Mcp<McpAsyncServer>
-      createMcpForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan(
+      createMcpForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
           McpHttpSecurity security, CountDownLatch completed) {
     return Mcp.async(
         security,
@@ -138,7 +138,7 @@ class McpReplyAuthorizationTest {
   }
 
   private HttpResponse<byte[]>
-      sendInitializedRequestForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan(
+      sendInitializedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
           TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -149,15 +149,15 @@ class McpReplyAuthorizationTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-                          {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                            "protocolVersion":"2025-11-25","capabilities":{},
-                            "clientInfo":{"name":"reply-authorization-fixture","version":"1.0"}}}
-                          """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"reply-authorization-fixture","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
-      sendResponseForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan(
+      sendResponseForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
           TestServer test, String sessionId) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -170,15 +170,15 @@ class McpReplyAuthorizationTest {
                 .header("MCP-Protocol-Version", "2025-11-25")
                 .body(
                     """
-                          {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-                            "name":"ping-client","arguments":{}}}
-                          """
+                    {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+                      "name":"ping-client","arguments":{}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)),
         HttpResponse.BodyHandlers.ofInputStream());
   }
 
   private HttpResponse<byte[]>
-      sendDeniedRequestForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan(
+      sendDeniedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
           TestServer test, String sessionId, byte[] replyBody)
           throws IOException, InterruptedException {
     return test.send(
@@ -194,7 +194,7 @@ class McpReplyAuthorizationTest {
   }
 
   private HttpResponse<byte[]>
-      sendGrantedRequestForAnUnauthorizedReplyCannotCompleteANativeRequestButAGrantedRetryCan(
+      sendGrantedRequestForAnUnauthorizedReplyCannotCompleteNativeRequestButGrantedRetryCan(
           TestServer test, String sessionId, byte[] replyBody)
           throws IOException, InterruptedException {
     return test.send(

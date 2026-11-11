@@ -16,8 +16,13 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 @Timeout(10)
 class Pac4jAuthenticationExampleTest {
+  private static String basic(String credentials) {
+    return "Basic "
+        + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
+  }
+
   @Test
-  void publishesAProfileOnlyAfterTheDirectClientValidatesItsCredentials() throws Exception {
+  void publishesProfileOnlyAfterTheDirectClientValidatesItsCredentials() throws Exception {
 
     try (var test = TestServer.start(Pac4jAuthenticationExample.application())) {
       var response =
@@ -108,7 +113,7 @@ class Pac4jAuthenticationExampleTest {
   }
 
   @Test
-  void doesNotCreateASessionEvenWhenTheApplicationEnablesSessions() throws Exception {
+  void doesNotCreateSessionEvenWhenTheApplicationEnablesSessions() throws Exception {
 
     var app = Pac4jAuthenticationExample.application().sessions();
     app.routes()
@@ -136,10 +141,5 @@ class Pac4jAuthenticationExampleTest {
 
       assertEquals("absent", state.body());
     }
-  }
-
-  private static String basic(String credentials) {
-    return "Basic "
-        + Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
   }
 }

@@ -12,7 +12,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 class ExceptionExampleTest {
   @Test
-  void recoversFromAMissingIntegerInsideTheHandler() throws Exception {
+  void recoversFromMissingIntegerInsideTheHandler() throws Exception {
 
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
@@ -29,7 +29,7 @@ class ExceptionExampleTest {
   }
 
   @Test
-  void keepsAThrownNotFoundSeparateFromTheGeneratedStatusRenderer() throws Exception {
+  void keepsThrownNotFoundSeparateFromTheGeneratedStatusRenderer() throws Exception {
 
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
@@ -47,7 +47,7 @@ class ExceptionExampleTest {
   }
 
   @Test
-  void rendersARouterGeneratedNotFoundWithTheStatusHandler() throws Exception {
+  void rendersRouterGeneratedNotFoundWithTheStatusHandler() throws Exception {
 
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
@@ -99,7 +99,7 @@ class ExceptionExampleTest {
   }
 
   @Test
-  void rendersARootScopedInputFailure() throws Exception {
+  void rendersRootScopedInputFailure() throws Exception {
 
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =
@@ -154,7 +154,7 @@ class ExceptionExampleTest {
   }
 
   @Test
-  void returnsAValidIntegerWithoutInvokingAnErrorRenderer() throws Exception {
+  void returnsValidIntegerWithoutInvokingAnErrorRenderer() throws Exception {
 
     try (var test = TestServer.start(ExceptionExample.application())) {
       var response =

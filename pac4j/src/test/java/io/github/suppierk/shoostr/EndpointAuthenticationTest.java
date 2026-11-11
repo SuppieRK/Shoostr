@@ -24,13 +24,57 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
-import org.pac4j.core.context.CallContext;
 import org.pac4j.core.credentials.Credentials;
 import org.pac4j.core.credentials.UsernamePasswordCredentials;
 import org.pac4j.core.profile.CommonProfile;
 import org.pac4j.http.client.direct.DirectBasicAuthClient;
 
 class EndpointAuthenticationTest {
+  private static ExecutorService executor(String type, Set<Thread> owned) {
+    ThreadFactory factory = createFactoryForExecutor(type, owned);
+
+    return switch (type) {
+      case "platform" -> Executors.newFixedThreadPool(1, factory);
+      case "virtual" -> Executors.newThreadPerTaskExecutor(factory);
+      case "fork-join" -> forkJoin(owned);
+      case "wrapped-fork-join" -> Executors.unconfigurableExecutorService(forkJoin(owned));
+      default -> throw new IllegalArgumentException(type);
+    };
+  }
+
+  private static ThreadFactory createFactoryForExecutor(String type, Set<Thread> owned) {
+    return task -> {
+      var thread =
+          "virtual".equals(type)
+              ? Thread.ofVirtual().unstarted(task)
+              : Thread.ofPlatform().unstarted(task);
+      owned.add(thread);
+
+      return thread;
+    };
+  }
+
+  private static ForkJoinPool forkJoin(Set<Thread> owned) {
+    return new ForkJoinPool(
+        1,
+        pool -> {
+          var worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
+          owned.add(worker);
+
+          return worker;
+        },
+        null,
+        false);
+  }
+
+  private static Stream<Arguments> rejections() {
+    return Stream.of("platform", "virtual", "fork-join", "wrapped-fork-join")
+        .flatMap(
+            type ->
+                Stream.of(
+                    Arguments.of(type, "wrong", 401), Arguments.of(type, "unauthorized", 403)));
+  }
+
   @ParameterizedTest
   @MethodSource("rejections")
   void rejectsSelectedRequestForInvalidCredentialsOrAuthorization(
@@ -139,12 +183,11 @@ class EndpointAuthenticationTest {
   }
 
   private DirectBasicAuthClient authenticationClient(CompletableFuture<Thread> authenticated) {
-    return new DirectBasicAuthClient(
-        (context, supplied) -> authenticate(authenticated, context, supplied));
+    return new DirectBasicAuthClient((ignored, supplied) -> authenticate(authenticated, supplied));
   }
 
   private Optional<Credentials> authenticate(
-      CompletableFuture<Thread> authenticated, CallContext context, Credentials supplied) {
+      CompletableFuture<Thread> authenticated, Credentials supplied) {
     authenticated.complete(Thread.currentThread());
     if (!(supplied instanceof UsernamePasswordCredentials credentials)
         || !"alice".equals(credentials.getUsername())
@@ -169,50 +212,5 @@ class EndpointAuthenticationTest {
 
           return true;
         });
-  }
-
-  private static ExecutorService executor(String type, Set<Thread> owned) {
-    ThreadFactory factory = createFactoryForExecutor(type, owned);
-
-    return switch (type) {
-      case "platform" -> Executors.newFixedThreadPool(1, factory);
-      case "virtual" -> Executors.newThreadPerTaskExecutor(factory);
-      case "fork-join" -> forkJoin(owned);
-      case "wrapped-fork-join" -> Executors.unconfigurableExecutorService(forkJoin(owned));
-      default -> throw new IllegalArgumentException(type);
-    };
-  }
-
-  private static ThreadFactory createFactoryForExecutor(String type, Set<Thread> owned) {
-    return task -> {
-      var thread =
-          "virtual".equals(type)
-              ? Thread.ofVirtual().unstarted(task)
-              : Thread.ofPlatform().unstarted(task);
-      owned.add(thread);
-
-      return thread;
-    };
-  }
-
-  private static ForkJoinPool forkJoin(Set<Thread> owned) {
-    return new ForkJoinPool(
-        1,
-        pool -> {
-          var worker = ForkJoinPool.defaultForkJoinWorkerThreadFactory.newThread(pool);
-          owned.add(worker);
-
-          return worker;
-        },
-        null,
-        false);
-  }
-
-  private static Stream<Arguments> rejections() {
-    return Stream.of("platform", "virtual", "fork-join", "wrapped-fork-join")
-        .flatMap(
-            type ->
-                Stream.of(
-                    Arguments.of(type, "wrong", 401), Arguments.of(type, "unauthorized", 403)));
   }
 }

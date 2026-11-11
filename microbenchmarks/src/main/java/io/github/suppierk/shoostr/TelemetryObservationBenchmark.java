@@ -42,16 +42,20 @@ import org.openjdk.jmh.annotations.Warmup;
     jvmArgsAppend = {"-Xms512m", "-Xmx512m", "-XX:+UseG1GC"})
 @Threads(1)
 public class TelemetryObservationBenchmark {
+  private final List<AutoCloseable> resources;
+
+  /** Extension configuration selected for the application. */
   @Param({"minimal", "micrometer", "otelNoop", "otelDropped", "otelRecording"})
   public String configuration;
 
+  /** Whether the request carries a remote parent span. */
   @Param({"absent", "remote"})
   public String parent;
 
+  /** Request outcome measured by the benchmark. */
   @Param({"matched", "missed", "serverError"})
   public String outcome;
 
-  private final List<AutoCloseable> resources;
   private Function<Request, RequestObservation> observer;
   private Request request;
   private RequestOutcome terminal;

@@ -14,7 +14,7 @@ dependencies {
 	api 'org.eclipse.jetty.compression:jetty-compression-server:12.1.14'
 	api 'org.eclipse.jetty.websocket:jetty-websocket-jetty-server:12.1.14'
 	runtimeOnly 'org.eclipse.jetty.compression:jetty-compression-gzip:12.1.14'
-	testImplementation project(':test')
+	testImplementation dependencies.project(':test')
 	testImplementation 'org.yaml:snakeyaml:2.7'
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
 	testImplementation 'org.eclipse.jetty.compression:jetty-compression-gzip:12.1.14'

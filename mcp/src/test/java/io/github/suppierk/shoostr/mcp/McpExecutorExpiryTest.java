@@ -28,7 +28,7 @@ class McpExecutorExpiryTest {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   @Timeout(20)
-  void expiresAStreamWithoutInterruptingTheReusedCallerOwnedWorker(boolean forkJoin)
+  void expiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(boolean forkJoin)
       throws Exception {
     ExecutorService selected =
         forkJoin
@@ -37,8 +37,7 @@ class McpExecutorExpiryTest {
                 Thread.ofPlatform().name("mcp-http-worker").factory());
     var owner = new AtomicReference<Thread>();
     var expiry = new AtomicReference<Instant>();
-    var mcp =
-        createMcpForExpiresAStreamWithoutInterruptingTheReusedCallerOwnedWorker(owner, expiry);
+    var mcp = createMcpForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(owner, expiry);
     var app = new Shoostr();
     app.routes(
         routes -> {
@@ -57,20 +56,19 @@ class McpExecutorExpiryTest {
         var readers = Executors.newVirtualThreadPerTaskExecutor();
         var test = TestServer.start(app)) {
       var initialized =
-          sendInitializedRequestForExpiresAStreamWithoutInterruptingTheReusedCallerOwnedWorker(
-              test);
+          sendInitializedRequestForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(test);
 
       assertEquals(200, initialized.statusCode());
 
       var listening =
-          sendListeningRequestForExpiresAStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+          sendListeningRequestForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
               test, initialized);
 
       try (var input = listening.body()) {
         assertEquals(200, listening.statusCode());
 
         var ended =
-            submitEndedForExpiresAStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+            submitEndedForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
                 readers, input);
         var verifiedExpiry = expiry.get();
         awaitTermination(verifiedExpiry, ended::isDone);
@@ -85,9 +83,8 @@ class McpExecutorExpiryTest {
     }
   }
 
-  private Mcp<McpSyncServer>
-      createMcpForExpiresAStreamWithoutInterruptingTheReusedCallerOwnedWorker(
-          AtomicReference<Thread> owner, AtomicReference<Instant> expiry) {
+  private Mcp<McpSyncServer> createMcpForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+      AtomicReference<Thread> owner, AtomicReference<Instant> expiry) {
     return Mcp.sync(
         new McpHttpSecurity(
             Set.of(),
@@ -102,12 +99,12 @@ class McpExecutorExpiryTest {
 
               return new McpIdentity("alice:client", McpTransportContext.EMPTY, null);
             },
-            (ignored, ignoredJSONRPCMessage) -> {}),
+            (ignored, ignoredJsonRpcMessage) -> {}),
         transport -> McpServer.sync(transport).build());
   }
 
   private HttpResponse<byte[]>
-      sendInitializedRequestForExpiresAStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+      sendInitializedRequestForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
           TestServer test) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -118,15 +115,15 @@ class McpExecutorExpiryTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"executor-expiry","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"executor-expiry","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
   private HttpResponse<InputStream>
-      sendListeningRequestForExpiresAStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+      sendListeningRequestForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
           TestServer test, HttpResponse<byte[]> initialized)
           throws IOException, InterruptedException {
     return test.send(
@@ -140,7 +137,7 @@ class McpExecutorExpiryTest {
         HttpResponse.BodyHandlers.ofInputStream());
   }
 
-  private Future<Instant> submitEndedForExpiresAStreamWithoutInterruptingTheReusedCallerOwnedWorker(
+  private Future<Instant> submitEndedForExpiresStreamWithoutInterruptingTheReusedCallerOwnedWorker(
       ExecutorService readers, InputStream input) {
     return readers.submit(
         () -> {

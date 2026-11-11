@@ -66,7 +66,7 @@ class CorsConfigurationEqualityTest {
                 (ignored, ignoredResponse) -> {},
                 extensions -> {
                   var configuration = extensions.withExtension(cors);
-                  var hash = configuration.hashCode();
+                  final var hash = configuration.hashCode();
 
                   assertTrue(configurations.add(configuration));
 

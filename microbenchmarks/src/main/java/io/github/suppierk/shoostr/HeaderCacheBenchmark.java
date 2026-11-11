@@ -31,9 +31,14 @@ import org.openjdk.jmh.annotations.Warmup;
     jvmArgsAppend = {"-Xms256m", "-Xmx256m", "-XX:+UseG1GC"})
 @Threads(1)
 public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
+  private final HttpParser parser;
+  private final ByteBuffer[] requests;
+
+  /** Header-cache capacity supplied to the parser. */
   @Param({"0", "128", "256", "512", "1024"})
   public int capacity;
 
+  /** Header value pattern used to exercise the parser cache. */
   @Param({
     "repeated",
     "varying",
@@ -46,8 +51,6 @@ public class HeaderCacheBenchmark implements HttpParser.RequestHandler {
   })
   public String headers;
 
-  private final HttpParser parser;
-  private final ByteBuffer[] requests;
   private int next;
   private int fields;
   private int messages;

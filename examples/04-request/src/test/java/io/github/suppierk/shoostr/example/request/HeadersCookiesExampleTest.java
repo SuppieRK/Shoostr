@@ -20,7 +20,15 @@ class HeadersCookiesExampleTest {
 
       assertEquals(200, missing.statusCode());
       assertEquals(
-          "header=(missing)\nheaders=\nheaderMap=\ncookie=(missing)\ncookies=\ncookieMap=\notherCookie=(missing)",
+          """
+          header=(missing)
+          headers=
+          headerMap=
+          cookie=(missing)
+          cookies=
+          cookieMap=
+          otherCookie=(missing)\
+          """,
           missing.body());
 
       var empty =
@@ -54,8 +62,8 @@ class HeadersCookiesExampleTest {
 
                   var headerValues = headers.get("x-label");
                   var selectedHeaders = request.headers("X-Label");
-                  var cookieValues = cookies.get("theme");
-                  var selectedCookies = request.cookies("theme");
+                  final var cookieValues = cookies.get("theme");
+                  final var selectedCookies = request.cookies("theme");
 
                   assertThrows(UnsupportedOperationException.class, headers::clear);
                   assertThrows(UnsupportedOperationException.class, () -> headerValues.add("bad"));

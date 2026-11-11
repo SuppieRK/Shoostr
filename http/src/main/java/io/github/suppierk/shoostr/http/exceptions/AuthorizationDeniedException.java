@@ -10,6 +10,7 @@ import java.util.Objects;
 public final class AuthorizationDeniedException extends ForbiddenException {
   @Serial private static final long serialVersionUID = 1L;
 
+  /** Complete WWW-Authenticate field value. */
   private final String challenge;
 
   /**

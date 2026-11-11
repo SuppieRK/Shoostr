@@ -19,7 +19,6 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.net.http.WebSocket;
-import java.net.http.WebSocket.Builder;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
@@ -43,6 +42,111 @@ import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class WebSocketExampleTest {
+  private static Shoostr sessionApplication(AtomicInteger listenerCreations) {
+    var app =
+        new Shoostr()
+            .sessions()
+            .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
+    app.routes()
+        .post(
+            "/fixture/authenticated",
+            (request, response) -> {
+              request.getOrCreateSession().setAttribute("authenticated", true);
+              response.text("created");
+            })
+        .post(
+            "/fixture/anonymous",
+            (request, response) -> {
+              request.getOrCreateSession().setAttribute("authenticated", false);
+              response.text("created");
+            });
+    WebSocketExample.sessionEcho(app.routes());
+    app.routes()
+        .websocket(
+            "/fixture/native",
+            (request, ignored) -> {
+              WebSocketExample.requireSessionOrigin(request);
+              listenerCreations.incrementAndGet();
+
+              return new Listener() {};
+            });
+
+    return app;
+  }
+
+  private static String sessionCookie(HttpClient client, TestServer test, String path)
+      throws Exception {
+    var created = sendCreatedRequestForSessionCookie(client, test, path);
+
+    assertEquals(200, created.statusCode());
+    assertEquals("created", created.body());
+
+    return created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
+  }
+
+  private static HttpResponse<String> sendCreatedRequestForSessionCookie(
+      HttpClient client, TestServer test, String path) throws IOException, InterruptedException {
+    return client.send(
+        HttpRequest.newBuilder(test.baseUri().resolve(path))
+            .timeout(Duration.ofSeconds(3))
+            .POST(HttpRequest.BodyPublishers.noBody())
+            .build(),
+        HttpResponse.BodyHandlers.ofString());
+  }
+
+  private static Stream<List<String>> rejectedOrigins() {
+    return Stream.of(
+        List.of(),
+        List.of("https://evil.example"),
+        List.of("not an origin"),
+        List.of("null"),
+        List.of("https://app.example", "https://app.example"),
+        List.of("https://app.example", "https://evil.example"),
+        List.of("https://app.example, https://evil.example"));
+  }
+
+  private static void assertDenied(
+      HttpClient client, TestServer test, String path, String cookie, List<String> origins) {
+    var builder =
+        client
+            .newWebSocketBuilder()
+            .connectTimeout(Duration.ofSeconds(3))
+            .header("Authorization", "Bearer unverified");
+    if (!cookie.isEmpty()) {
+      builder.header("Cookie", cookie);
+    }
+
+    for (var origin : origins) {
+      builder.header("Origin", origin);
+    }
+    var received = new Messages();
+    var failure = assertFailureForAssertDenied(builder, test, path, received);
+    var response =
+        assertInstanceOf(WebSocketHandshakeException.class, failure.getCause()).getResponse();
+
+    assertEquals(403, response.statusCode());
+    assertTrue(response.headers().allValues("Set-Cookie").isEmpty());
+    assertNull(received.text.poll());
+  }
+
+  private static ExecutionException assertFailureForAssertDenied(
+      WebSocket.Builder builder, TestServer test, String path, Messages received) {
+    return assertThrows(
+        ExecutionException.class,
+        () -> {
+          var socket = createSocketForAssertDenied(builder, test, path, received);
+          socket.abort();
+        });
+  }
+
+  private static WebSocket createSocketForAssertDenied(
+      WebSocket.Builder builder, TestServer test, String path, Messages received)
+      throws URISyntaxException, InterruptedException, ExecutionException, TimeoutException {
+    return builder
+        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), path, null, null), received)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"missing", "unknown", "anonymous"})
   @Timeout(15)
@@ -174,7 +278,7 @@ class WebSocketExampleTest {
 
   @Test
   @Timeout(10)
-  void echoesACompleteMessageAfterFragmentedText() throws Exception {
+  void echoesCompleteMessageAfterFragmentedText() throws Exception {
 
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
@@ -194,7 +298,7 @@ class WebSocketExampleTest {
 
   @Test
   @Timeout(10)
-  void acknowledgesANormalClientClose() throws Exception {
+  void acknowledgesNormalClientClose() throws Exception {
 
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
@@ -236,7 +340,7 @@ class WebSocketExampleTest {
 
   @Test
   @Timeout(10)
-  void closesWithASafeReasonAfterAnApplicationFailure() throws Exception {
+  void closesWithSafeReasonAfterAnApplicationFailure() throws Exception {
 
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
@@ -280,7 +384,7 @@ class WebSocketExampleTest {
 
   @Test
   @Timeout(10)
-  void doublesANumericTextMessage() throws Exception {
+  void doublesNumericTextMessage() throws Exception {
 
     try (var test = TestServer.start(WebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
@@ -469,111 +573,6 @@ class WebSocketExampleTest {
                   "text/plain; charset=utf-8",
                   response.headers().firstValue(HttpHeaders.CONTENT_TYPE.value()).orElseThrow()));
     }
-  }
-
-  private static Shoostr sessionApplication(AtomicInteger listenerCreations) {
-    var app =
-        new Shoostr()
-            .sessions()
-            .modifyServer(server -> ((ServerConnector) server.getConnectors()[0]).setPort(0));
-    app.routes()
-        .post(
-            "/fixture/authenticated",
-            (request, response) -> {
-              request.getOrCreateSession().setAttribute("authenticated", true);
-              response.text("created");
-            })
-        .post(
-            "/fixture/anonymous",
-            (request, response) -> {
-              request.getOrCreateSession().setAttribute("authenticated", false);
-              response.text("created");
-            });
-    WebSocketExample.sessionEcho(app.routes());
-    app.routes()
-        .websocket(
-            "/fixture/native",
-            (request, ignored) -> {
-              WebSocketExample.requireSessionOrigin(request);
-              listenerCreations.incrementAndGet();
-
-              return new Listener() {};
-            });
-
-    return app;
-  }
-
-  private static String sessionCookie(HttpClient client, TestServer test, String path)
-      throws Exception {
-    var created = sendCreatedRequestForSessionCookie(client, test, path);
-
-    assertEquals(200, created.statusCode());
-    assertEquals("created", created.body());
-
-    return created.headers().firstValue("Set-Cookie").orElseThrow().split(";", 2)[0];
-  }
-
-  private static HttpResponse<String> sendCreatedRequestForSessionCookie(
-      HttpClient client, TestServer test, String path) throws IOException, InterruptedException {
-    return client.send(
-        HttpRequest.newBuilder(test.baseUri().resolve(path))
-            .timeout(Duration.ofSeconds(3))
-            .POST(HttpRequest.BodyPublishers.noBody())
-            .build(),
-        HttpResponse.BodyHandlers.ofString());
-  }
-
-  private static Stream<List<String>> rejectedOrigins() {
-    return Stream.of(
-        List.of(),
-        List.of("https://evil.example"),
-        List.of("not an origin"),
-        List.of("null"),
-        List.of("https://app.example", "https://app.example"),
-        List.of("https://app.example", "https://evil.example"),
-        List.of("https://app.example, https://evil.example"));
-  }
-
-  private static void assertDenied(
-      HttpClient client, TestServer test, String path, String cookie, List<String> origins) {
-    var builder =
-        client
-            .newWebSocketBuilder()
-            .connectTimeout(Duration.ofSeconds(3))
-            .header("Authorization", "Bearer unverified");
-    if (!cookie.isEmpty()) {
-      builder.header("Cookie", cookie);
-    }
-
-    for (var origin : origins) {
-      builder.header("Origin", origin);
-    }
-    var received = new Messages();
-    var failure = assertFailureForAssertDenied(builder, test, path, received);
-    var response =
-        assertInstanceOf(WebSocketHandshakeException.class, failure.getCause()).getResponse();
-
-    assertEquals(403, response.statusCode());
-    assertTrue(response.headers().allValues("Set-Cookie").isEmpty());
-    assertNull(received.text.poll());
-  }
-
-  private static ExecutionException assertFailureForAssertDenied(
-      Builder builder, TestServer test, String path, Messages received) {
-    return assertThrows(
-        ExecutionException.class,
-        () -> {
-          var socket = createSocketForAssertDenied(builder, test, path, received);
-          socket.abort();
-        });
-  }
-
-  private static WebSocket createSocketForAssertDenied(
-      Builder builder, TestServer test, String path, Messages received)
-      throws URISyntaxException, InterruptedException, ExecutionException, TimeoutException {
-    return builder
-        .buildAsync(new URI("ws", test.baseUri().getRawAuthority(), path, null, null), received)
-        .get(3, TimeUnit.SECONDS);
   }
 
   private static final class Messages implements WebSocket.Listener {

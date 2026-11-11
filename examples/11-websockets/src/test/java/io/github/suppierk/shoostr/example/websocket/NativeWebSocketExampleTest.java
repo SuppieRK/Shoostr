@@ -10,7 +10,6 @@ import java.io.ByteArrayOutputStream;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
-import java.net.http.WebSocket.Builder;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.BlockingQueue;
@@ -25,6 +24,17 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 class NativeWebSocketExampleTest {
+  private static WebSocket connect(HttpClient client, TestServer test, Messages messages)
+      throws Exception {
+    return client
+        .newWebSocketBuilder()
+        .header("Origin", "https://app.example")
+        .subprotocols("chat.v1", "chat.v2")
+        .buildAsync(
+            new URI("ws", test.baseUri().getRawAuthority(), "/native/lobby", null, null), messages)
+        .get(3, TimeUnit.SECONDS);
+  }
+
   @ParameterizedTest
   @ValueSource(
       strings = {
@@ -58,7 +68,7 @@ class NativeWebSocketExampleTest {
   }
 
   private ExecutionException assertFailureForRejectsMissingForeignAndAmbiguousOrigins(
-      Builder builder, TestServer test) {
+      WebSocket.Builder builder, TestServer test) {
     return assertThrows(
         ExecutionException.class,
         () ->
@@ -201,7 +211,7 @@ class NativeWebSocketExampleTest {
   @ParameterizedTest
   @ValueSource(strings = {"", "chat.v1"})
   @Timeout(10)
-  void rejectsAHandshakeThatDoesNotOfferTheRequiredSubprotocol(String protocol) throws Exception {
+  void rejectsHandshakeThatDoesNotOfferTheRequiredSubprotocol(String protocol) throws Exception {
 
     try (var test = TestServer.start(NativeWebSocketExample.application());
         var client = HttpClient.newHttpClient()) {
@@ -211,16 +221,15 @@ class NativeWebSocketExampleTest {
       }
 
       var failure =
-          assertFailureForRejectsAHandshakeThatDoesNotOfferTheRequiredSubprotocol(builder, test);
+          assertFailureForRejectsHandshakeThatDoesNotOfferTheRequiredSubprotocol(builder, test);
 
       var handshake = assertInstanceOf(WebSocketHandshakeException.class, failure.getCause());
       assertEquals(400, handshake.getResponse().statusCode());
     }
   }
 
-  private ExecutionException
-      assertFailureForRejectsAHandshakeThatDoesNotOfferTheRequiredSubprotocol(
-          Builder builder, TestServer test) {
+  private ExecutionException assertFailureForRejectsHandshakeThatDoesNotOfferTheRequiredSubprotocol(
+      WebSocket.Builder builder, TestServer test) {
     return assertThrows(
         ExecutionException.class,
         () ->
@@ -235,17 +244,6 @@ class NativeWebSocketExampleTest {
                       return socket;
                     })
                 .get(3, TimeUnit.SECONDS));
-  }
-
-  private static WebSocket connect(HttpClient client, TestServer test, Messages messages)
-      throws Exception {
-    return client
-        .newWebSocketBuilder()
-        .header("Origin", "https://app.example")
-        .subprotocols("chat.v1", "chat.v2")
-        .buildAsync(
-            new URI("ws", test.baseUri().getRawAuthority(), "/native/lobby", null, null), messages)
-        .get(3, TimeUnit.SECONDS);
   }
 
   private static final class Messages implements WebSocket.Listener {

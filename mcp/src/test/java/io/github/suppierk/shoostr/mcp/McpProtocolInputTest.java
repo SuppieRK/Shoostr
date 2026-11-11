@@ -26,20 +26,23 @@ class McpProtocolInputTest {
   @ValueSource(
       strings = {
         "{}",
-        "{\"protocolVersion\":{},\"capabilities\":{},\"clientInfo\":{\"name\":\"input\",\"version\":\"1\"}}",
-        "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":[],\"clientInfo\":{\"name\":\"input\",\"version\":\"1\"}}",
+        "{\"protocolVersion\":{},\"capabilities\":{},"
+            + "\"clientInfo\":{\"name\":\"input\",\"version\":\"1\"}}",
+        "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":[],"
+            + "\"clientInfo\":{\"name\":\"input\",\"version\":\"1\"}}",
         "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":[]}",
-        "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},\"clientInfo\":{\"name\":1,\"version\":\"1\"}}"
+        "{\"protocolVersion\":\"2025-11-25\",\"capabilities\":{},"
+            + "\"clientInfo\":{\"name\":1,\"version\":\"1\"}}"
       })
-  void rejectsInvalidInitializationParametersWithoutCreatingASession(String parameters)
+  void rejectsInvalidInitializationParametersWithoutCreatingSession(String parameters)
       throws Exception {
-    var mcp = createMcpForRejectsInvalidInitializationParametersWithoutCreatingASession();
+    var mcp = createMcpForRejectsInvalidInitializationParametersWithoutCreatingSession();
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var response =
-          sendResponseForRejectsInvalidInitializationParametersWithoutCreatingASession(
+          sendResponseForRejectsInvalidInitializationParametersWithoutCreatingSession(
               test, parameters);
 
       assertEquals(400, response.statusCode());
@@ -55,17 +58,17 @@ class McpProtocolInputTest {
   }
 
   private Mcp<McpSyncServer>
-      createMcpForRejectsInvalidInitializationParametersWithoutCreatingASession() {
+      createMcpForRejectsInvalidInitializationParametersWithoutCreatingSession() {
     return Mcp.sync(
         new McpHttpSecurity(
             Set.of(),
             ignored -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
         transport -> McpServer.sync(transport).build());
   }
 
   private HttpResponse<String>
-      sendResponseForRejectsInvalidInitializationParametersWithoutCreatingASession(
+      sendResponseForRejectsInvalidInitializationParametersWithoutCreatingSession(
           TestServer test, String parameters) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -83,17 +86,17 @@ class McpProtocolInputTest {
   }
 
   @Test
-  void rejectsInvalidUtf8InsteadOfReplacingBytesAndStartingASession() throws Exception {
-    var mcp = createMcpForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingASession();
+  void rejectsInvalidUtf8InsteadOfReplacingBytesAndStartingSession() throws Exception {
+    var mcp = createMcpForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingSession();
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
-    var json = createJsonForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingASession();
+    var json = createJsonForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingSession();
     var body = json.getBytes(StandardCharsets.UTF_8);
     body[json.indexOf("broken")] = (byte) 0xff;
 
     try (var test = TestServer.start(app)) {
       var response =
-          sendResponseForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingASession(test, body);
+          sendResponseForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingSession(test, body);
 
       assertEquals(400, response.statusCode());
       assertTrue(response.headers().firstValue("Mcp-Session-Id").isEmpty());
@@ -107,17 +110,18 @@ class McpProtocolInputTest {
   }
 
   private Mcp<McpSyncServer>
-      createMcpForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingASession() {
+      createMcpForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingSession() {
     return Mcp.sync(
         new McpHttpSecurity(
             Set.of(),
             ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
         transport -> McpServer.sync(transport).build());
   }
 
-  private String createJsonForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingASession() {
-    return """
+  private String createJsonForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingSession() {
+    return
+        """
         {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
           "protocolVersion":"2025-11-25","capabilities":{},
           "clientInfo":{"name":"broken","version":"1.0"}}}
@@ -125,7 +129,7 @@ class McpProtocolInputTest {
   }
 
   private HttpResponse<String>
-      sendResponseForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingASession(
+      sendResponseForRejectsInvalidUtf8InsteadOfReplacingBytesAndStartingSession(
           TestServer test, byte[] body) throws IOException, InterruptedException {
     return test.send(
         request ->
@@ -172,7 +176,7 @@ class McpProtocolInputTest {
         new McpHttpSecurity(
             Set.of(),
             ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
         transport -> McpServer.sync(transport).serverInfo("input", "1.0").build());
   }
 
@@ -188,10 +192,10 @@ class McpProtocolInputTest {
                 .header("Accept", "application/json, text/event-stream")
                 .body(
                     """
-              {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
-                "protocolVersion":"2025-11-25","capabilities":{},
-                "clientInfo":{"name":"input","version":"1.0"}}}
-              """
+                    {"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+                      "protocolVersion":"2025-11-25","capabilities":{},
+                      "clientInfo":{"name":"input","version":"1.0"}}}
+                    """
                         .getBytes(StandardCharsets.UTF_8)));
   }
 
@@ -261,7 +265,7 @@ class McpProtocolInputTest {
         new McpHttpSecurity(
             Set.of(),
             ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
         transport -> McpServer.sync(transport).serverInfo("input", "1.0").build());
   }
 
@@ -286,15 +290,15 @@ class McpProtocolInputTest {
         "{} {}",
         "{\"jsonrpc\":\"2.0\",\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}"
       })
-  void rejectsMalformedOrAmbiguousJsonBeforeStartingASessionOrEventStream(String body)
+  void rejectsMalformedOrAmbiguousJsonBeforeStartingSessionOrEventStream(String body)
       throws Exception {
-    var mcp = createMcpForRejectsMalformedOrAmbiguousJsonBeforeStartingASessionOrEventStream();
+    var mcp = createMcpForRejectsMalformedOrAmbiguousJsonBeforeStartingSessionOrEventStream();
     var app = new Shoostr();
     app.routes(routes -> routes.path("/mcp", mcp::routes));
 
     try (var test = TestServer.start(app)) {
       var response =
-          sendResponseForRejectsMalformedOrAmbiguousJsonBeforeStartingASessionOrEventStream(
+          sendResponseForRejectsMalformedOrAmbiguousJsonBeforeStartingSessionOrEventStream(
               test, body);
 
       assertEquals(400, response.statusCode());
@@ -311,17 +315,17 @@ class McpProtocolInputTest {
   }
 
   private Mcp<McpSyncServer>
-      createMcpForRejectsMalformedOrAmbiguousJsonBeforeStartingASessionOrEventStream() {
+      createMcpForRejectsMalformedOrAmbiguousJsonBeforeStartingSessionOrEventStream() {
     return Mcp.sync(
         new McpHttpSecurity(
             Set.of(),
             ignoredRequest -> new McpIdentity("public", McpTransportContext.EMPTY, null),
-            (ignoredMcpIdentity, ignoredJSONRPCMessage) -> {}),
+            (ignoredMcpIdentity, ignoredJsonRpcMessage) -> {}),
         transport -> McpServer.sync(transport).serverInfo("input", "1.0").build());
   }
 
   private HttpResponse<String>
-      sendResponseForRejectsMalformedOrAmbiguousJsonBeforeStartingASessionOrEventStream(
+      sendResponseForRejectsMalformedOrAmbiguousJsonBeforeStartingSessionOrEventStream(
           TestServer test, String body) throws IOException, InterruptedException {
     return test.send(
         request ->

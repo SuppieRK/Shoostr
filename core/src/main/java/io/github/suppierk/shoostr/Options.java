@@ -57,6 +57,27 @@ public final class Options {
   }
 
   /**
+   * Rejects durations that cannot represent a positive whole-millisecond transport timeout.
+   *
+   * @param value resolved nonnull timeout
+   * @throws IllegalArgumentException if precision, sign or range is invalid
+   */
+  private static void validateTimeout(Duration value) {
+    if (!value.equals(value.truncatedTo(ChronoUnit.MILLIS))) {
+      throw new IllegalArgumentException("Timeouts must be positive whole milliseconds");
+    }
+
+    try {
+      if (value.toMillis() < 1) {
+        throw new IllegalArgumentException("Timeouts must be positive whole milliseconds");
+      }
+    } catch (ArithmeticException failure) {
+      throw new IllegalArgumentException(
+          "Timeout exceeds the supported millisecond range", failure);
+    }
+  }
+
+  /**
    * Reads the host setting.
    *
    * @return listener bind address or host name
@@ -222,27 +243,6 @@ public final class Options {
     validateTimeout(resolved);
 
     shutdownTimeout = resolved;
-  }
-
-  /**
-   * Rejects durations that cannot represent a positive whole-millisecond transport timeout.
-   *
-   * @param value resolved nonnull timeout
-   * @throws IllegalArgumentException if precision, sign or range is invalid
-   */
-  private static void validateTimeout(Duration value) {
-    if (!value.equals(value.truncatedTo(ChronoUnit.MILLIS))) {
-      throw new IllegalArgumentException("Timeouts must be positive whole milliseconds");
-    }
-
-    try {
-      if (value.toMillis() < 1) {
-        throw new IllegalArgumentException("Timeouts must be positive whole milliseconds");
-      }
-    } catch (ArithmeticException failure) {
-      throw new IllegalArgumentException(
-          "Timeout exceeds the supported millisecond range", failure);
-    }
   }
 
   /**

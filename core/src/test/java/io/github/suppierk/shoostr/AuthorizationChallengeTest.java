@@ -61,7 +61,7 @@ class AuthorizationChallengeTest {
   }
 
   @Test
-  void restoresTheRequiredChallengeWhenACustomRendererReplacesIt() throws Exception {
+  void restoresTheRequiredChallengeWhenCustomRendererReplacesIt() throws Exception {
     {
       var app = new Shoostr();
 
@@ -86,7 +86,7 @@ class AuthorizationChallengeTest {
   }
 
   @Test
-  void preservesTheChallengeWhenACustomRendererStartsAStream() throws Exception {
+  void preservesTheChallengeWhenCustomRendererStartsStream() throws Exception {
     {
       var app = new Shoostr();
 
@@ -135,7 +135,7 @@ class AuthorizationChallengeTest {
   }
 
   @Test
-  void doesNotInventAChallengeForAPlainForbiddenException() throws Exception {
+  void doesNotInventChallengeForPlainForbiddenException() throws Exception {
     {
       var app = new Shoostr();
 
