@@ -11,7 +11,7 @@ dependencies {
 	api('io.projectreactor:reactor-core:3.8.8') {
 		because 'Fix CVE-2026-47863 and CVE-2026-47857 in the SDK Reactor dependency.'
 	}
-	api platform('com.fasterxml.jackson:jackson-bom:2.22.4')
+	api platform('com.fasterxml.jackson:jackson-bom:2.23.0')
 	implementation 'io.modelcontextprotocol.sdk:mcp-json-jackson2'
 	testImplementation project(':test')
 	testImplementation 'nl.jqno.equalsverifier:equalsverifier:4.5.2'
