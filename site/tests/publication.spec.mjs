@@ -8,6 +8,11 @@ const output = fileURLToPath(new URL('../dist/', import.meta.url));
 const basePath = process.env.BASE_PATH || '/';
 const published = new URL(basePath, process.env.SITE_URL || 'https://suppierk.github.io');
 
+test.beforeEach(async ({page}) => {
+    await page.route('https://static.cloudflareinsights.com/beacon.min.js', route =>
+        route.fulfill({contentType: 'text/javascript', body: ''}));
+});
+
 test('published pages keep their links and assets inside the hosting path', async ({page}) => {
     const files = await readdir(output, {recursive: true});
     const pages = files.filter(file => file.endsWith('.html'));
