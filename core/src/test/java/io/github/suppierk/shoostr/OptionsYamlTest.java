@@ -109,8 +109,9 @@ class OptionsYamlTest {
 
   @Test
   void mappedInvalidValuesInvokeSetterValidation() {
-    var failure =
-        assertThrows(YAMLException.class, () -> new Yaml().loadAs("port: -1", Options.class));
+    var yaml = new Yaml();
+
+    var failure = assertThrows(YAMLException.class, () -> yaml.loadAs("port: -1", Options.class));
 
     Throwable cause = failure;
     Throwable next = cause.getCause();

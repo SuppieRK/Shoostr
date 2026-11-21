@@ -584,10 +584,13 @@ class StreamingInputOutputTest {
               (ignoredRequest, response) -> {
                 try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
                   executor
-                      .submit(() ->
-                          assertThrows(
-                              IllegalStateException.class,
-                              () -> response.input(unreadableInput(closes), "application/foreign")))
+                      .submit(() -> {
+                        var input = unreadableInput(closes);
+
+                        return assertThrows(
+                            IllegalStateException.class,
+                            () -> response.input(input, "application/foreign"));
+                      })
                       .get(3, TimeUnit.SECONDS);
                 }
 

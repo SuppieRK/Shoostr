@@ -24,9 +24,11 @@ class CsrfBuilderTest {
   void rejectsNullAdditionalOrigin() {
     String[] additional = {"https://second.example", null};
 
+    var builder = Csrf.builder();
+
     assertThrows(
         NullPointerException.class,
-        () -> Csrf.builder().trustedOrigins("https://first.example", additional));
+        () -> builder.trustedOrigins("https://first.example", additional));
   }
 
   @Test

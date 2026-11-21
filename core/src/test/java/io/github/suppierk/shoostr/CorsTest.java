@@ -475,8 +475,9 @@ class CorsTest {
 
     assertDoesNotThrow(
         () -> CorsPolicy.builder().origins(Set.of("https://client.example:65535")).build());
-    assertThrows(
-        IllegalArgumentException.class, () -> CorsPolicy.builder().origins(nonExactOrigin).build());
+    var invalid = CorsPolicy.builder().origins(nonExactOrigin);
+
+    assertThrows(IllegalArgumentException.class, invalid::build);
   }
 
   @Test
@@ -485,30 +486,29 @@ class CorsTest {
     var validOrigin = Set.of("https://client.example");
     var getMethod = Set.of(HttpMethods.GET);
     var emptyHeaders = Set.<HttpHeaders>of();
+
+    var credentialedWildcard = CorsPolicy.builder();
+    credentialedWildcard
+        .origins(wildcardOrigin)
+        .methods(getMethod)
+        .allowedHeaders(emptyHeaders)
+        .credentials(true)
+        .exposedHeaders(emptyHeaders)
+        .maxAgeSeconds(5);
+
+    assertThrows(IllegalArgumentException.class, credentialedWildcard::build);
+    var negativeLifetime = CorsPolicy.builder();
+    negativeLifetime
+        .origins(validOrigin)
+        .methods(getMethod)
+        .allowedHeaders(emptyHeaders)
+        .credentials(false)
+        .exposedHeaders(emptyHeaders);
+
+    assertThrows(IllegalArgumentException.class, () -> negativeLifetime.maxAgeSeconds(-1));
+
     var wildcardHeader = Set.of(HttpHeaders.of("*"));
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            CorsPolicy.builder()
-                .origins(wildcardOrigin)
-                .methods(getMethod)
-                .allowedHeaders(emptyHeaders)
-                .credentials(true)
-                .exposedHeaders(emptyHeaders)
-                .maxAgeSeconds(5)
-                .build());
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            CorsPolicy.builder()
-                .origins(validOrigin)
-                .methods(getMethod)
-                .allowedHeaders(emptyHeaders)
-                .credentials(false)
-                .exposedHeaders(emptyHeaders)
-                .maxAgeSeconds(-1)
-                .build());
     assertDoesNotThrow(() ->
         CorsPolicy.builder()
             .origins(validOrigin)
@@ -527,17 +527,16 @@ class CorsTest {
             .exposedHeaders(wildcardHeader)
             .maxAgeSeconds(5)
             .build());
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            CorsPolicy.builder()
-                .origins(validOrigin)
-                .methods(getMethod)
-                .allowedHeaders(emptyHeaders)
-                .credentials(true)
-                .exposedHeaders(wildcardHeader)
-                .maxAgeSeconds(5)
-                .build());
+    var credentialedWildcardHeaders = CorsPolicy.builder();
+    credentialedWildcardHeaders
+        .origins(validOrigin)
+        .methods(getMethod)
+        .allowedHeaders(emptyHeaders)
+        .credentials(true)
+        .exposedHeaders(wildcardHeader)
+        .maxAgeSeconds(5);
+
+    assertThrows(IllegalArgumentException.class, credentialedWildcardHeaders::build);
 
     for (var origin :
         Set.of(
@@ -552,10 +551,9 @@ class CorsTest {
             "https://*.example")) {
       var origins = Set.of(origin);
 
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> CorsPolicy.builder().origins(origins).build(),
-          origin);
+      var builder = CorsPolicy.builder().origins(origins);
+
+      assertThrows(IllegalArgumentException.class, builder::build, origin);
     }
   }
 
@@ -1079,7 +1077,6 @@ class CorsTest {
 
       try (Closeable appCleanup11 = app::close) {
         var cors = createCorsForExplicitOptions();
-        if (enabled) {}
 
         app.routes()
             .path(

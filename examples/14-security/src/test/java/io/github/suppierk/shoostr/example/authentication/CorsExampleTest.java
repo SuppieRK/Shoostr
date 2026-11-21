@@ -434,16 +434,15 @@ class CorsExampleTest {
     var methods = Set.of(HttpMethods.GET);
     var headers = Set.<HttpHeaders>of();
 
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            CorsPolicy.builder()
-                .origins(origins)
-                .methods(methods)
-                .allowedHeaders(headers)
-                .credentials(true)
-                .exposedHeaders(headers)
-                .maxAgeSeconds(0)
-                .build());
+    var builder = CorsPolicy.builder();
+    builder
+        .origins(origins)
+        .methods(methods)
+        .allowedHeaders(headers)
+        .credentials(true)
+        .exposedHeaders(headers)
+        .maxAgeSeconds(0);
+
+    assertThrows(IllegalArgumentException.class, builder::build);
   }
 }

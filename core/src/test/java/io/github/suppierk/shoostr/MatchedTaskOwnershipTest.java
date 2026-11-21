@@ -86,7 +86,9 @@ class MatchedTaskOwnershipTest {
       }
 
       @Override
-      public void complete(RequestOutcome outcome) {}
+      public void complete(RequestOutcome outcome) {
+        // This observation only exercises request ownership during application execution.
+      }
     };
   }
 
@@ -432,7 +434,12 @@ class MatchedTaskOwnershipTest {
     var tasksField = Shoostr.class.getDeclaredField("pendingMatches");
     tasksField.setAccessible(true);
     return Objects.requireNonNull(
-        getUnderLock(lock, () -> ((Collection<?>) tasksField.get(app)).size()));
+        getUnderLock(
+            lock,
+            () -> {
+              var tasks = (Collection<?>) tasksField.get(app);
+              return tasks.size();
+            }));
   }
 
   private static final class TrackingExecutor extends AbstractExecutorService {

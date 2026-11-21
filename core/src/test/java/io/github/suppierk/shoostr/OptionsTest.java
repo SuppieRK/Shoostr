@@ -91,7 +91,7 @@ class OptionsTest {
             o -> o.setStreamBufferBytes(0),
             o -> o.setStreamBufferBytes(-1),
             o -> o.setShutdownTimeout(Duration.ZERO))
-        .map(mutation -> Arguments.of(mutation));
+        .map(Arguments::of);
   }
 
   private static Stream<Duration> invalidTimeouts() {

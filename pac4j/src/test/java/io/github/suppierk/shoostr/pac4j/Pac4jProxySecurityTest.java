@@ -170,9 +170,13 @@ class Pac4jProxySecurityTest {
         ? ""
         : family == ForwardedHeaders.RFC7239
             ? "Forwarded: for=203.0.113.7;proto=https;host=\"public.example:9443\"\r\n"
-            : "X-Forwarded-For: 203.0.113.7\r\nX-Forwarded-Proto: "
-                + "https\r\nX-Forwarded-Host: public.example:9443\r\n"
-                + "X-Forwarded-Port: 9443\r\n";
+            :
+                """
+                X-Forwarded-For: 203.0.113.7\r
+                X-Forwarded-Proto: https\r
+                X-Forwarded-Host: public.example:9443\r
+                X-Forwarded-Port: 9443\r
+                """;
   }
 
   private String createRequestForReadsOriginMetadataWithoutParsingTheOpaqueRawQuery(

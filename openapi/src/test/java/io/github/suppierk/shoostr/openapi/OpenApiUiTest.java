@@ -98,7 +98,7 @@ class OpenApiUiTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup = app::close) {
-        app.withExtension(docs, operation -> operation.hidden())
+        app.withExtension(docs, OpenApiOperation::hidden)
             .routes(routes -> {
               routes.get("/docs/", ui);
               routes.get("/docs/{*asset}", ui);
@@ -172,7 +172,7 @@ class OpenApiUiTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup1 = app::close) {
-        app.withExtension(docs, operation -> operation.hidden())
+        app.withExtension(docs, OpenApiOperation::hidden)
             .routes(routes -> {
               routes.path(
                   "/docs",

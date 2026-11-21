@@ -73,17 +73,21 @@ class ShoostrOwnershipTest {
   private java.util.logging.Handler shutdownLog(CompletableFuture<Throwable> logged) {
     return new java.util.logging.Handler() {
       @Override
-      public void publish(LogRecord record) {
-        if ("Shoostr shutdown failed".equals(record.getMessage())) {
-          logged.complete(record.getThrown());
+      public void publish(LogRecord entry) {
+        if ("Shoostr shutdown failed".equals(entry.getMessage())) {
+          logged.complete(entry.getThrown());
         }
       }
 
       @Override
-      public void flush() {}
+      public void flush() {
+        /* Captures records immediately. */
+      }
 
       @Override
-      public void close() {}
+      public void close() {
+        /* Holds no resources. */
+      }
     };
   }
 
@@ -95,14 +99,15 @@ class ShoostrOwnershipTest {
 
     try (Closeable appCleanup = app::close) {
       var outer = nestedInstallingProvider(app, innerInstalls, outerCloses);
+      var routes = app.routes();
+
       assertThrows(
           IllegalStateException.class,
           () ->
-              app.routes()
-                  .get(
-                      "/outer",
-                      (request, response) -> {},
-                      lifecycle -> lifecycle.withExtension(outer)));
+              routes.get(
+                  "/outer",
+                  (request, response) -> {},
+                  lifecycle -> lifecycle.withExtension(outer)));
 
       assertEquals(0, innerInstalls.get());
       assertEquals(1, outerCloses.get());
@@ -280,14 +285,15 @@ class ShoostrOwnershipTest {
 
     try (Closeable appCleanup = app::close) {
       var provider = closingProvider(app, installs, closes);
+      var routes = app.routes();
+
       assertThrows(
           IllegalStateException.class,
           () ->
-              app.routes()
-                  .get(
-                      "/owned",
-                      (request, response) -> {},
-                      lifecycle -> lifecycle.withExtension(provider)));
+              routes.get(
+                  "/owned",
+                  (request, response) -> {},
+                  lifecycle -> lifecycle.withExtension(provider)));
 
       assertEquals(1, installs.get());
       assertEquals(1, closes.get());

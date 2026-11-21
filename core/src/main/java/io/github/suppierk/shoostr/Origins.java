@@ -6,6 +6,9 @@ import org.jspecify.annotations.Nullable;
 
 /** Shared exact origin parsing for independent browser policies. */
 final class Origins {
+  private static final String HTTP = "http";
+  private static final String HTTPS = "https";
+
   /**
    * Prevents utility-class construction.
    *
@@ -22,7 +25,7 @@ final class Origins {
    * @return whether the scheme is HTTP or HTTPS, ignoring case
    */
   static boolean isHttpScheme(@Nullable String scheme) {
-    return "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme);
+    return HTTP.equalsIgnoreCase(scheme) || HTTPS.equalsIgnoreCase(scheme);
   }
 
   /**
@@ -88,7 +91,7 @@ final class Origins {
       return uri.getPort();
     }
 
-    return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
+    return HTTPS.equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
   }
 
   /**
@@ -103,7 +106,7 @@ final class Origins {
     }
 
     var uri = URI.create(origin);
-    if ((!"http".equals(uri.getScheme()) && !"https".equals(uri.getScheme()))
+    if ((!HTTP.equals(uri.getScheme()) && !HTTPS.equals(uri.getScheme()))
         || uri.getHost() == null
         || uri.getRawUserInfo() != null
         || !uri.getRawPath().isEmpty()

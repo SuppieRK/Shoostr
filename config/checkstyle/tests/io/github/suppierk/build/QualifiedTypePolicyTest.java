@@ -82,8 +82,11 @@ class QualifiedTypePolicyTest {
         annotationViolations(
             profile,
             "package-info.java",
-            "@NullMarked\npackage io.github.suppierk.fixture;\n"
-                + "import org.jspecify.annotations.NullMarked;"));
+            """
+            @NullMarked
+            package io.github.suppierk.fixture;
+            import org.jspecify.annotations.NullMarked;\
+            """));
     assertEquals(
         0,
         annotationViolations(

@@ -80,8 +80,11 @@ class ExtensionCompositionTest {
           retained.get().summary("Changed after startup");
 
           assertEquals(
-              "GET /users/{id} users One user\nGET /users/search "
-                  + "users Users\nGET /openapi.json  API description",
+              """
+              GET /users/{id} users One user
+              GET /users/search users Users
+              GET /openapi.json  API description\
+              """,
               test.send(
                       request -> request.path("/openapi.json"),
                       HttpResponse.BodyHandlers.ofString())

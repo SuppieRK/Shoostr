@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import java.beans.FeatureDescriptor;
 import java.beans.Introspector;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
@@ -105,7 +106,7 @@ class MultipartOptionsTest {
             "maxPartHeadersBytes",
             "maxMemoryPartBytes",
             "temporaryDirectory"),
-        Stream.of(properties).map(property -> property.getName()).collect(Collectors.toSet()));
+        Stream.of(properties).map(FeatureDescriptor::getName).collect(Collectors.toSet()));
     for (var property : properties) {
       assertNotNull(property.getReadMethod(), property.getName());
       assertNotNull(property.getWriteMethod(), property.getName());

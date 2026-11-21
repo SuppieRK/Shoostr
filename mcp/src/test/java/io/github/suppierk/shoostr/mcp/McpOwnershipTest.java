@@ -112,7 +112,9 @@ class McpOwnershipTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup = app::close) {
-        assertThrows(IllegalStateException.class, () -> app.routes().path("/mcp", mcp::routes));
+        var routes = app.routes();
+
+        assertThrows(IllegalStateException.class, () -> routes.path("/mcp", mcp::routes));
       }
     }
   }
@@ -129,8 +131,9 @@ class McpOwnershipTest {
         var rejected = new Shoostr();
 
         try (Closeable rejectedCleanup = rejected::close) {
-          assertThrows(
-              IllegalStateException.class, () -> rejected.routes().path("/mcp", mcp::routes));
+          var routes = rejected.routes();
+
+          assertThrows(IllegalStateException.class, () -> routes.path("/mcp", mcp::routes));
         }
 
         try (var client = openClient(test)) {

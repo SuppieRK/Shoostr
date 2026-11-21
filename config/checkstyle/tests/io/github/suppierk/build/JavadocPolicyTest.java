@@ -79,23 +79,29 @@ class JavadocPolicyTest {
         "/** Documented. */ record Example(int value) {}",
         "/** Documented. */ enum Example { VALUE }",
         "/** Documented. */ class Example { /** Creates. */ private Example() {} }",
-        "/** Documented. */ record Example(int value) { "
-            + "/** Copies.\n * @param value stored value\n */ "
-            + "Example {} }",
-        "/** Documented. */ class Example { /** Reads.\n * "
-            + "@return description\n */ @Override public String "
-            + "toString() { return \"x\"; } }",
+        """
+        /** Documented. */ record Example(int value) { /** Copies.
+         * @param value stored value
+         */ Example {} }\
+        """,
+        """
+        /** Documented. */ class Example { /** Reads.
+         * @return description
+         */ @Override public String toString() { return \"x\"; } }\
+        """,
         "/** Documented. */ class Example { Runnable task "
             + "= new Runnable() { /** Runs. */ @Override public "
             + "void run() {} }; }",
         "/** Documented. */ class Example { /** Runs. */ "
             + "void run() { /** Local. */ class Local { /** "
             + "Works. */ private void work() {} } } }",
-        "/** Documented. */ class Example { /** Counts.\n * "
-            + "@param count input\n * @return count\n * @throws "
-            + "IllegalArgumentException if negative\n */ private "
-            + "int count(int count) { if (count < 0) { throw new "
-            + "IllegalArgumentException(); } return count; } }"
+        """
+        /** Documented. */ class Example { /** Counts.
+         * @param count input
+         * @return count
+         * @throws IllegalArgumentException if negative
+         */ private int count(int count) { if (count < 0) { throw new IllegalArgumentException(); } return count; } }\
+        """
       })
   void acceptsCompleteDocumentation(String declaration) throws Exception {
     assertEquals(0, violations(declaration), declaration);

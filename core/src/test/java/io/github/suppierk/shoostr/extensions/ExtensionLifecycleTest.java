@@ -325,9 +325,9 @@ class ExtensionLifecycleTest {
       try (Closeable appCleanup12 = app::close) {
         final var routes = app.routes();
 
-        var failure =
-            assertThrows(
-                IllegalStateException.class, () -> app.withExtension(first).withExtension(broken));
+        app.withExtension(first);
+
+        var failure = assertThrows(IllegalStateException.class, () -> app.withExtension(broken));
         assertEquals("setup failed", failure.getMessage());
         assertEquals(1, failure.getSuppressed().length);
         assertThrows(IllegalStateException.class, app::start);

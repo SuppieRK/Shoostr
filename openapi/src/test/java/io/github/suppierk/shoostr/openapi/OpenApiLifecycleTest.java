@@ -61,11 +61,13 @@ class OpenApiLifecycleTest {
           var operation = retained.get();
 
           assertThrows(IllegalStateException.class, () -> operation.summary("Late mutation"));
+          var schema = new JsonSchema();
+
           assertEquals(
               "OpenAPI value must not be blank",
               assertThrows(
                       IllegalArgumentException.class,
-                      () -> operation.queryParameter(" ", "Query", new JsonSchema(), false))
+                      () -> operation.queryParameter(" ", "Query", schema, false))
                   .getMessage());
           assertEquals(
               "OpenAPI configuration is frozen at startup",

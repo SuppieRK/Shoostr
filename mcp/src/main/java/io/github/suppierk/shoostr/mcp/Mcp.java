@@ -213,15 +213,24 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
       return null;
     }
 
-    if (hasResult) {
-      return fields.get(FIELD_RESULT) instanceof Map<?, ?> ? McpSchema.JSONRPCResponse.class : null;
-    }
+    final var validPayload =
+        hasResult
+            ? fields.get(FIELD_RESULT) instanceof Map<?, ?>
+            : validError(fields.get(FIELD_ERROR));
 
-    return fields.get(FIELD_ERROR) instanceof Map<?, ?> error
-            && error.get(CODE) instanceof Integer
-            && error.get(MESSAGE) instanceof String
-        ? McpSchema.JSONRPCResponse.class
-        : null;
+    return validPayload ? McpSchema.JSONRPCResponse.class : null;
+  }
+
+  /**
+   * Checks that an error response supplies the required wire code and message.
+   *
+   * @param value original error field
+   * @return whether the error object has an integer code and a string message
+   */
+  private static boolean validError(@Nullable Object value) {
+    return value instanceof Map<?, ?> error
+        && error.get(CODE) instanceof Integer
+        && error.get(MESSAGE) instanceof String;
   }
 
   /**
@@ -274,6 +283,8 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
    * @throws IllegalArgumentException if the factory does not bind the supplied transport
    */
   private S createServer(Function<McpStreamableServerTransportProvider, S> factory) {
+    boolean initialized = false;
+
     try {
       final var nativeServer = Objects.requireNonNull(factory.apply(provider));
       if (provider.factory == null) {
@@ -283,10 +294,12 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
 
       provider.startIdleExpiry(deadlines);
 
+      initialized = true;
       return nativeServer;
-    } catch (Throwable failure) {
-      closeTransport();
-      throw failure;
+    } finally {
+      if (!initialized) {
+        closeTransport();
+      }
     }
   }
 
@@ -1293,15 +1306,19 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
         lock.unlock();
       }
 
+      boolean subscribed = false;
+
       try {
         subscribeDispatch(nativeStream.handle(request), context, dispatch);
 
+        subscribed = true;
         return nativeStream;
-      } catch (Throwable failure) {
-        dispatch.dispose();
-        releaseStream(stream, nativeStream);
-        stream.finish();
-        throw failure;
+      } finally {
+        if (!subscribed) {
+          dispatch.dispose();
+          releaseStream(stream, nativeStream);
+          stream.finish();
+        }
       }
     }
 
@@ -1343,6 +1360,8 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
         lock.unlock();
       }
 
+      boolean subscribed = false;
+
       try {
         subscribeDispatch(
             Mono.defer(() -> {
@@ -1358,9 +1377,11 @@ public final class Mcp<S> implements RouteExtension<Mcp<S>> {
             }),
             context,
             dispatch);
-      } catch (Throwable failure) {
-        dispatch.dispose();
-        throw failure;
+        subscribed = true;
+      } finally {
+        if (!subscribed) {
+          dispatch.dispose();
+        }
       }
     }
 

@@ -30,6 +30,8 @@ final class OpenApiUi implements Handler {
 
   private final String basePath;
   private final String specPath;
+
+  @SuppressWarnings("java:S3077") // Publication assigns only immutable resource maps.
   private volatile @Nullable Map<String, Resource> resources;
 
   /**
@@ -58,10 +60,11 @@ final class OpenApiUi implements Handler {
         <!doctype html>
         <html lang="en">
         <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>API documentation</title><link rel="stylesheet" href="swagger-ui.css"></head>
-        <body><div id="swagger-ui"></div><script src="swagger-ui-bundle.js"></script>
+        <title>API documentation</title><link rel="stylesheet" href="%s"></head>
+        <body><div id="swagger-ui"></div><script src="%s"></script>
         <script src="swagger-initializer.js"></script></body></html>
-        """;
+        """
+        .formatted(STYLESHEET_NAME, BUNDLE_NAME);
   }
 
   /**

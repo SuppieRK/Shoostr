@@ -295,7 +295,7 @@ class ExceptionHandlerTest {
   }
 
   private Handler createStreamHandlerForAbortsCommittedOutputWithoutRedispatch(
-      CountDownLatch release) throws IOException, InterruptedException {
+      CountDownLatch release) {
     return (ignoredRequest, response) -> {
       var stream = response.startStream("text/plain");
       stream.write("visible");

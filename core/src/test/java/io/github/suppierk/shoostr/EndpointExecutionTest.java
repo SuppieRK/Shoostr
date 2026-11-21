@@ -88,30 +88,27 @@ class EndpointExecutionTest {
                 Arguments.of(
                     "matched",
                     executorType,
-                    (BiConsumer<Lifecycle, Handler>) (scope, hook) -> scope.onRouteMatched(hook),
+                    (BiConsumer<Lifecycle, Handler>) Lifecycle::onRouteMatched,
                     (BiConsumer<Shoostr, Handler>) Shoostr::onRouteMatched),
                 Arguments.of(
                     "before",
                     executorType,
-                    (BiConsumer<Lifecycle, Handler>)
-                        (scope, hook) -> scope.beforeRouteHandler(hook),
+                    (BiConsumer<Lifecycle, Handler>) Lifecycle::beforeRouteHandler,
                     (BiConsumer<Shoostr, Handler>) Shoostr::beforeRouteHandler),
                 Arguments.of(
                     "after",
                     executorType,
-                    (BiConsumer<Lifecycle, Handler>) (scope, hook) -> scope.afterRouteHandler(hook),
+                    (BiConsumer<Lifecycle, Handler>) Lifecycle::afterRouteHandler,
                     (BiConsumer<Shoostr, Handler>) Shoostr::afterRouteHandler),
                 Arguments.of(
                     "before-flush",
                     executorType,
-                    (BiConsumer<Lifecycle, Handler>)
-                        (scope, hook) -> scope.beforeResponseFlush(hook),
+                    (BiConsumer<Lifecycle, Handler>) Lifecycle::beforeResponseFlush,
                     (BiConsumer<Shoostr, Handler>) Shoostr::beforeResponseFlush),
                 Arguments.of(
                     "after-flush",
                     executorType,
-                    (BiConsumer<Lifecycle, Handler>)
-                        (scope, hook) -> scope.afterResponseFlush(hook),
+                    (BiConsumer<Lifecycle, Handler>) Lifecycle::afterResponseFlush,
                     (BiConsumer<Shoostr, Handler>) Shoostr::afterResponseFlush)));
   }
 

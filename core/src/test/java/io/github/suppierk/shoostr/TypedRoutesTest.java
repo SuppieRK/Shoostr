@@ -895,7 +895,7 @@ class TypedRoutesTest {
   }
 
   private Handler.Typed createHandlerForRegistersTypedHttpOverloadsOnExistingRouter(
-      RegistrationCase selected, AtomicReference<Thread> workerThread) throws Exception {
+      RegistrationCase selected, AtomicReference<Thread> workerThread) {
     return (request, response) -> {
       if (selected.worker()) {
         assertSame(workerThread.get(), Thread.currentThread());

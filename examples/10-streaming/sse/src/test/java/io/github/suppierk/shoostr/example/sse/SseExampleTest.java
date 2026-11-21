@@ -168,9 +168,20 @@ class SseExampleTest {
           () -> assertEquals(200, response.statusCode()),
           () ->
               assertEquals(
-                  "id: 1\nretry: 1000\ndata: Entry 1\n\nid: 2\nretry: "
-                      + "1000\ndata: Entry 2\n\nid: 3\nretry: 1000\ndata: Entry "
-                      + "3\n\n",
+                  """
+                      id: 1
+                      retry: 1000
+                      data: Entry 1
+
+                      id: 2
+                      retry: 1000
+                      data: Entry 2
+
+                      id: 3
+                      retry: 1000
+                      data: Entry 3
+
+                      """,
                   response.body()));
     }
   }
@@ -189,9 +200,22 @@ class SseExampleTest {
           () -> assertEquals(200, response.statusCode()),
           () ->
               assertEquals(
-                  ": connection ready\n\n:\n\nevent: progress\nid: 1\n"
-                      + "retry: 2000\ndata: Preparing\ndata: Waiting\n\nevent: "
-                      + "done\nid: 2\ndata: Complete\n\n",
+                  """
+                      : connection ready
+
+                      :
+
+                      event: progress
+                      id: 1
+                      retry: 2000
+                      data: Preparing
+                      data: Waiting
+
+                      event: done
+                      id: 2
+                      data: Complete
+
+                      """,
                   response.body()));
     }
   }

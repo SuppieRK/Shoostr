@@ -65,14 +65,13 @@ class RadixRoutesLifecycleTest {
   @Test
   @SuppressWarnings("NullAway")
   void validatesMountAndOptionsBeforeFactoryAcquisition() {
+    var options = StaticOptions.defaults();
+
     assertThrows(
         NullPointerException.class,
         () ->
             new StaticFiles(
-                null,
-                directory,
-                StaticOptions.defaults(),
-                () -> fail("Factory acquired before mount validation")));
+                null, directory, options, () -> fail("Factory acquired before mount validation")));
     assertThrows(
         NullPointerException.class,
         () ->
@@ -97,13 +96,16 @@ class RadixRoutesLifecycleTest {
 
   private IllegalArgumentException mountResolutionFailure(
       AtomicInteger acquisitions, List<String> closeOrder, RuntimeException cleanupFailure) {
+    var missingDirectory = directory.resolve("missing");
+    var options = StaticOptions.defaults();
+
     return assertThrows(
         IllegalArgumentException.class,
         () ->
             new StaticFiles(
                 "/files",
-                directory.resolve("missing"),
-                StaticOptions.defaults(),
+                missingDirectory,
+                options,
                 () -> {
                   acquisitions.incrementAndGet();
                   return nativeFactory(

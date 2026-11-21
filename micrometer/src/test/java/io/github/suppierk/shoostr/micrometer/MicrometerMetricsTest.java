@@ -812,6 +812,7 @@ class MicrometerMetricsTest {
           Meter.Id id, DistributionStatisticConfig configuration, PauseDetector pauseDetector) {
         return new NoopTimer(id) {
           @Override
+          @SuppressWarnings("java:S6213") // This method implements the Timer interface.
           public void record(long amount, TimeUnit unit) {
             failureReached.set(true);
             throw new IllegalStateException("Completed recording failed");

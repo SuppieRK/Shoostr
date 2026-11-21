@@ -13,10 +13,31 @@ for (const target of [{ pullRequest: '74' }, { branch: 'main' }, { branch: 'feat
       return responses()[endpoint];
     });
 
-    assert.equal(queries.length, 4);
-    assert.deepEqual(queries[2].query, { componentKeys: 'SuppieRK_Shoostr', ...target, resolved: 'false', ps: '1' });
+    assert.equal(queries.length, target.pullRequest ? 4 : 6);
+    const issueLookup = queries.find(entry => entry.endpoint === 'issues/search');
+    assert.deepEqual(issueLookup.query, { componentKeys: 'SuppieRK_Shoostr', ...target, resolved: 'false', ps: '1' });
   });
 }
+
+test('verifies a short-lived branch against its published revision', async () => {
+  const shortBranch = { revision, taskId: 'task', branch: 'improve/devex' };
+  const data = responses();
+  data['project_branches/list'] = {
+    branches: [{ name: shortBranch.branch, type: 'SHORT', commit: { sha: revision } }],
+  };
+  const lookup = async endpoint => {
+    assert.notEqual(endpoint, 'project_analyses/search');
+    return data[endpoint];
+  };
+
+  await verify(shortBranch, lookup);
+  await assert.rejects(verify(shortBranch, async endpoint => {
+    if (endpoint === 'issues/search') {
+      data['project_branches/list'].branches[0].commit.sha = 'b'.repeat(40);
+    }
+    return lookup(endpoint);
+  }), /expected revision/);
+});
 
 for (const total of [1, undefined, '0', -1]) {
   test(`rejects a nonzero or missing issue count (${total})`, async () => {
@@ -73,6 +94,7 @@ function responses(overrides = {}) {
   return {
     'ce/task': { task: { id: 'task', componentKey: 'SuppieRK_Shoostr', status: 'SUCCESS', analysisId: 'analysis', warningCount: 0 } },
     'project_pull_requests/list': { pullRequests: [{ key: '74', commit: { sha: revision } }] },
+    'project_branches/list': { branches: [{ name: 'main', type: 'LONG' }, { name: 'feature', type: 'LONG' }] },
     'project_analyses/search': { analyses: [{ key: 'analysis', revision }] },
     'issues/search': { total: 0 }, ...overrides,
   };

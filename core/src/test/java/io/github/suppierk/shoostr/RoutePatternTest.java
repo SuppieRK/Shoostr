@@ -89,7 +89,9 @@ class RoutePatternTest {
     assertEquals(2, endpoint.firstParameterSegment());
     assertSame(HANDLER, endpoint.handler());
     assertSame(FACTORY, endpoint.websocketFactory());
-    assertThrows(UnsupportedOperationException.class, () -> endpoint.parameters().put("extra", 5));
+    var parameters = endpoint.parameters();
+
+    assertThrows(UnsupportedOperationException.class, () -> parameters.put("extra", 5));
     assertEquals("42", endpoint.parameter("/items/42/events/a/b", "id"));
     assertEquals("a/b", endpoint.parameter("/items/42/events/a/b", "tail"));
   }

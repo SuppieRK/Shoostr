@@ -1,10 +1,12 @@
 package io.github.suppierk.shoostr;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.github.suppierk.shoostr.testing.TestServer;
+import java.io.Closeable;
 import java.net.http.HttpResponse;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -129,14 +131,12 @@ class ExtensionActivationTest {
     var setups = new AtomicInteger();
     var app = new Shoostr();
 
-    try {
+    try (Closeable appCleanup = app::close) {
       app.routes().get("/ready", (request, response) -> response.text("ready"));
+      var extension = new ConfigurableExtension(setups);
 
-      assertThrows(
-          IllegalStateException.class, () -> app.withExtension(new ConfigurableExtension(setups)));
+      assertThrows(IllegalStateException.class, () -> app.withExtension(extension));
       assertEquals(0, setups.get());
-    } finally {
-      app.close();
     }
   }
 
@@ -243,15 +243,16 @@ class ExtensionActivationTest {
     var app = new Shoostr();
 
     try (var worker = Executors.newSingleThreadExecutor()) {
-      app.withExtension(
-          new ConfigurableExtension(new AtomicInteger()),
-          defaults -> {
-            try {
-              worker.submit(() -> app.modifyServer(ignored -> {})).get(3, TimeUnit.SECONDS);
-            } catch (Exception failure) {
-              throw new IllegalStateException(failure);
-            }
-          });
+      assertDoesNotThrow(() ->
+          app.withExtension(
+              new ConfigurableExtension(new AtomicInteger()),
+              defaults -> {
+                try {
+                  worker.submit(() -> app.modifyServer(ignored -> {})).get(3, TimeUnit.SECONDS);
+                } catch (Exception failure) {
+                  throw new IllegalStateException(failure);
+                }
+              }));
     } finally {
       app.close();
     }

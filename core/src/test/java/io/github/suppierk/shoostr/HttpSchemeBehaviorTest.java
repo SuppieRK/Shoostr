@@ -56,10 +56,11 @@ class HttpSchemeBehaviorTest {
   @ParameterizedTest
   @ValueSource(strings = {"HTTP://client.example", "HTTPS://client.example"})
   void configuredOriginsRequireLowercaseSchemes(String origin) {
-    assertThrows(
-        IllegalArgumentException.class, () -> CorsPolicy.builder().origins(origin).build());
-    assertThrows(
-        IllegalArgumentException.class, () -> Csrf.builder().trustedOrigins(origin).build());
+    var cors = CorsPolicy.builder().origins(origin);
+    var csrf = Csrf.builder().trustedOrigins(origin);
+
+    assertThrows(IllegalArgumentException.class, cors::build);
+    assertThrows(IllegalArgumentException.class, csrf::build);
   }
 
   @ParameterizedTest

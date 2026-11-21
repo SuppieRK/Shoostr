@@ -551,10 +551,11 @@ class ConstrainedRoutingTest {
 
     try (Closeable appCleanup = app::close) {
       var pattern = "/items/{id:[" + atom + "]}";
+      var routes = app.routes();
+
       var failure =
           assertThrows(
-              IllegalArgumentException.class,
-              () -> app.routes().get(pattern, (request, response) -> {}));
+              IllegalArgumentException.class, () -> routes.get(pattern, (request, response) -> {}));
 
       assertEquals("Unsupported route constraint character: " + atom, failure.getMessage());
     }
@@ -622,10 +623,12 @@ class ConstrainedRoutingTest {
     var app = new Shoostr();
 
     try (Closeable appCleanup = app::close) {
+      var routes = app.routes();
+
       var failure =
           assertThrows(
               IllegalArgumentException.class,
-              () -> app.routes().get("/items/{id:xA]}", (request, response) -> {}));
+              () -> routes.get("/items/{id:xA]}", (request, response) -> {}));
       assertEquals("Expected one character class in route constraint", failure.getMessage());
     }
   }
@@ -710,10 +713,11 @@ class ConstrainedRoutingTest {
 
     try (Closeable appCleanup = app::close) {
       var pattern = "/items/{id:[0-9]" + repetition + "}";
+      var routes = app.routes();
+
       var failure =
           assertThrows(
-              IllegalArgumentException.class,
-              () -> app.routes().get(pattern, (request, response) -> {}));
+              IllegalArgumentException.class, () -> routes.get(pattern, (request, response) -> {}));
 
       assertEquals("Unsupported route constraint repetition: " + repetition, failure.getMessage());
     }

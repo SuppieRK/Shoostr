@@ -33,11 +33,20 @@ export async function verify({ revision, taskId, pullRequest, branch }, request 
       const data = await request('project_pull_requests/list', { project });
       assert(data.pullRequests?.find(item => item.key === pullRequest)?.commit?.sha === revision,
         'Sonar analysis does not match the expected revision');
-    } else {
-      const data = await request('project_analyses/search', { project, branch, ps: '1' });
-      assert(data.analyses?.[0]?.key === task.analysisId && data.analyses[0].revision === revision,
-        'Sonar analysis does not match the scanner task and expected revision');
+      return;
     }
+
+    const { branches } = await request('project_branches/list', { project });
+    const targetBranch = branches?.find(item => item.name === branch);
+    if (targetBranch?.type === 'SHORT') {
+      // Sonar only exposes analysis history for long-lived branches.
+      assert(targetBranch.commit?.sha === revision, 'Sonar analysis does not match the expected revision');
+      return;
+    }
+
+    const data = await request('project_analyses/search', { project, branch, ps: '1' });
+    assert(data.analyses?.[0]?.key === task.analysisId && data.analyses[0].revision === revision,
+      'Sonar analysis does not match the scanner task and expected revision');
   }
 }
 

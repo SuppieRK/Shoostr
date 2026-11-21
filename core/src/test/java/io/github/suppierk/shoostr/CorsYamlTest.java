@@ -55,9 +55,9 @@ class CorsYamlTest {
     }
     for (var mapping :
         new String[] {"methods: [GET]\nallMethods: true", "allMethods: true\nmethods: [GET]"}) {
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> new Cors(new Yaml().loadAs(mapping, CorsPolicy.class)));
+      var policy = new Yaml().loadAs(mapping, CorsPolicy.class);
+
+      assertThrows(IllegalArgumentException.class, () -> new Cors(policy));
     }
   }
 
@@ -66,8 +66,9 @@ class CorsYamlTest {
     var settings = createSettingsForSettersRestoreDefaultsAndInvalidValuesRetainPreviousSettings();
     final var snapshot = new Cors(settings).policy();
 
-    assertThrows(
-        IllegalArgumentException.class, () -> settings.setOrigins(Set.of("not-an-origin")));
+    var invalidOrigins = Set.of("not-an-origin");
+
+    assertThrows(IllegalArgumentException.class, () -> settings.setOrigins(invalidOrigins));
     assertThrows(IllegalArgumentException.class, () -> settings.setMaxAgeSeconds(-1L));
     assertEquals(Set.of("https://client.example"), settings.getOrigins());
     assertEquals(60L, settings.getMaxAgeSeconds());
@@ -125,9 +126,9 @@ class CorsYamlTest {
           "origins: ['*']\ncredentials: true",
           "origins: [https://client.example]\ncredentials: true\nexposedHeaders: ['*']"
         }) {
-      assertThrows(
-          IllegalArgumentException.class,
-          () -> new Cors(new Yaml().loadAs(mapping, CorsPolicy.class)));
+      var policy = new Yaml().loadAs(mapping, CorsPolicy.class);
+
+      assertThrows(IllegalArgumentException.class, () -> new Cors(policy));
     }
   }
 

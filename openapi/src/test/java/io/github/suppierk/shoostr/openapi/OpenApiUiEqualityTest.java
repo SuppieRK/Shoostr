@@ -67,7 +67,7 @@ class OpenApiUiEqualityTest {
     assertEquals(1, handlers.size());
 
     {
-      var app = new Shoostr().withExtension(document, operation -> operation.hidden());
+      var app = new Shoostr().withExtension(document, OpenApiOperation::hidden);
 
       try (Closeable appCleanup = app::close) {
         app.routes().get("/docs/", ui).get("/{id:[0-9]+}/first", ui).get("/{id:[0-9]+}/second", ui);

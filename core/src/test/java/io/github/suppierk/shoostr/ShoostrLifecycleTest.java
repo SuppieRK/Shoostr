@@ -988,7 +988,7 @@ class ShoostrLifecycleTest {
   }
 
   private Runnable createCloseForConcurrentCloseCallsCompleteWithoutDuplicatingShutdown(
-      Shoostr app, AtomicReference<Throwable> failure) throws IOException {
+      Shoostr app, AtomicReference<Throwable> failure) {
     return () -> {
       try {
         app.close();

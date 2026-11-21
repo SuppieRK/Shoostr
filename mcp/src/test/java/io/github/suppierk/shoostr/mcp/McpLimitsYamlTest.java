@@ -91,9 +91,11 @@ class McpLimitsYamlTest {
     assertEquals(4, limits.maxSessions());
     assertEquals(2, limits.maxSessionsPerOwner());
     assertEquals(Duration.ofSeconds(1), limits.idleTimeout());
+    var loader = yaml();
+
     assertThrows(
-        YAMLException.class, () -> yaml().loadAs("maxSessions: 0", McpSessionLimits.class));
+        YAMLException.class, () -> loader.loadAs("maxSessions: 0", McpSessionLimits.class));
     assertThrows(
-        YAMLException.class, () -> yaml().loadAs("idleTimeout: PT0S", McpSessionLimits.class));
+        YAMLException.class, () -> loader.loadAs("idleTimeout: PT0S", McpSessionLimits.class));
   }
 }

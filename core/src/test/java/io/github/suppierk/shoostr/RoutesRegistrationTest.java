@@ -16,6 +16,7 @@ import java.io.Closeable;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpResponse;
+import java.net.http.WebSocket;
 import java.net.http.WebSocket.Listener;
 import java.net.http.WebSocketHandshakeException;
 import java.nio.file.Files;
@@ -91,7 +92,9 @@ class RoutesRegistrationTest {
       var actual = failedRouteRegistration(routes, retained, failure);
 
       assertSame(failure, actual);
-      assertThrows(IllegalStateException.class, () -> retained.get().afterRequest(ignored -> {}));
+      var closedScope = retained.get();
+
+      assertThrows(IllegalStateException.class, () -> closedScope.afterRequest(ignored -> {}));
       routes.get("/retry", (request, response) -> response.text("ready"));
 
       try (var test = TestServer.start(app)) {
@@ -153,9 +156,11 @@ class RoutesRegistrationTest {
     var app = new Shoostr();
 
     try (Closeable appCleanup = app::close) {
+      var extension = provider();
+
       assertThrows(
           IllegalStateException.class,
-          () -> app.withExtension(provider(), ignored -> assertDoesNotThrow(app::close)));
+          () -> app.withExtension(extension, ignored -> assertDoesNotThrow(app::close)));
       assertThrows(IllegalStateException.class, app::start);
     }
   }
@@ -231,7 +236,9 @@ class RoutesRegistrationTest {
 
     try (Closeable appCleanup = app::close) {
       app.routes().staticFiles("/assets", directory);
-      assertThrows(IllegalStateException.class, () -> app.withExtension(provider()));
+      var extension = provider();
+
+      assertThrows(IllegalStateException.class, () -> app.withExtension(extension));
     }
   }
 
@@ -286,7 +293,7 @@ class RoutesRegistrationTest {
 
   private ExecutionException rejectedHandshake(HttpClient client, URI uri) {
     var opening = client.newWebSocketBuilder().buildAsync(uri, new Listener() {});
-    var completed = opening.thenAccept(socket -> socket.abort());
+    var completed = opening.thenAccept(WebSocket::abort);
 
     try {
       return assertThrows(ExecutionException.class, () -> completed.get(3, TimeUnit.SECONDS));
@@ -316,7 +323,9 @@ class RoutesRegistrationTest {
               }));
 
       assertEquals(1, configured.get());
-      assertThrows(IllegalStateException.class, () -> retained.get().afterRequest(ignored -> {}));
+      var closedScope = retained.get();
+
+      assertThrows(IllegalStateException.class, () -> closedScope.afterRequest(ignored -> {}));
     }
   }
 

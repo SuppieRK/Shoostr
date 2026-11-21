@@ -106,21 +106,25 @@ class ObservationLoggingTest {
       Throwable failure, CompletableFuture<Throwable> logged, AtomicInteger cleanupErrors) {
     return new Handler() {
       @Override
-      public void publish(LogRecord record) {
-        if (record.getThrown() == failure) {
+      public void publish(LogRecord entry) {
+        if (entry.getThrown() == failure) {
           logged.complete(failure);
         }
 
-        if ("Request instrumentation scope cleanup failed".equals(record.getMessage())) {
+        if ("Request instrumentation scope cleanup failed".equals(entry.getMessage())) {
           cleanupErrors.incrementAndGet();
         }
       }
 
       @Override
-      public void flush() {}
+      public void flush() {
+        /* Captures records immediately. */
+      }
 
       @Override
-      public void close() {}
+      public void close() {
+        /* Holds no resources. */
+      }
     };
   }
 }

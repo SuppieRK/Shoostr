@@ -255,11 +255,12 @@ class ExtensionShutdownTest {
         var first = capability("first", events);
         var last = capability("last", events);
 
+        app.withExtension(first);
+
         assertSame(
             setupFailure,
-            assertThrows(
-                IllegalArgumentException.class,
-                () -> app.withExtension(first).withExtension(broken).withExtension(last)));
+            assertThrows(IllegalArgumentException.class, () -> app.withExtension(broken)));
+        assertThrows(IllegalStateException.class, () -> app.withExtension(last));
         assertEquals(
             List.of("before-broken", "before-first", "close-broken", "close-first"), events);
       }

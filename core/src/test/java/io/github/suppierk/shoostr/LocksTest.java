@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assertions.fail;
 
 import java.io.IOException;
 import java.util.concurrent.locks.ReentrantLock;
@@ -29,17 +28,17 @@ class LocksTest {
     var lock = new ReentrantLock();
     var failure = new IOException("Supplier failed");
 
-    try {
-      getUnderLock(
-          lock,
-          () -> {
-            assertTrue(lock.isHeldByCurrentThread());
-            throw failure;
-          });
-      fail("The supplier must propagate its checked failure");
-    } catch (IOException actual) {
-      assertSame(failure, actual);
-    }
+    assertSame(
+        failure,
+        assertThrows(
+            IOException.class,
+            () ->
+                getUnderLock(
+                    lock,
+                    () -> {
+                      assertTrue(lock.isHeldByCurrentThread());
+                      throw failure;
+                    })));
 
     assertFalse(lock.isLocked());
   }
@@ -49,17 +48,17 @@ class LocksTest {
     var lock = new ReentrantLock();
     var failure = new IOException("Operation failed");
 
-    try {
-      runUnderLock(
-          lock,
-          () -> {
-            assertTrue(lock.isHeldByCurrentThread());
-            throw failure;
-          });
-      fail("The operation must propagate its checked failure");
-    } catch (IOException actual) {
-      assertSame(failure, actual);
-    }
+    assertSame(
+        failure,
+        assertThrows(
+            IOException.class,
+            () ->
+                runUnderLock(
+                    lock,
+                    () -> {
+                      assertTrue(lock.isHeldByCurrentThread());
+                      throw failure;
+                    })));
 
     assertFalse(lock.isLocked());
   }

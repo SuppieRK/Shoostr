@@ -67,9 +67,11 @@ class ScopedExtensionsTest {
   }
 
   private void registerScopedChild(Routes routes, AtomicReference<Lifecycle> retained) {
+    var frozenScope = retained.get();
+
     assertThrows(
         IllegalStateException.class,
-        () -> retained.get().beforeRouteHandler((request, response) -> response.text("late")));
+        () -> frozenScope.beforeRouteHandler((request, response) -> response.text("late")));
     routes.get("/child", (request, response) -> response.text("child"));
   }
 
@@ -104,7 +106,9 @@ class ScopedExtensionsTest {
               .getMessage());
 
       assertFalse(registered.get());
-      assertThrows(IllegalStateException.class, () -> retained.get().withoutExtension(cors));
+      var frozenScope = retained.get();
+
+      assertThrows(IllegalStateException.class, () -> frozenScope.withoutExtension(cors));
       assertDoesNotThrow(() -> registerTenGroups(app.routes()));
     }
   }
@@ -125,23 +129,27 @@ class ScopedExtensionsTest {
     var app = new Shoostr();
 
     try (Closeable appCleanup = app::close) {
-      assertThrows(
-          IllegalStateException.class,
-          () -> {
-            if (inherited) {
-              app.routes()
-                  .path(
-                      "/parent",
-                      parent -> parent.path("/child", child -> registered.set(true)),
-                      lifecycle -> lifecycle.withExtension(closingInheritedProvider(app)));
-            } else {
-              app.routes()
-                  .path(
-                      "/child",
-                      child -> registered.set(true),
-                      lifecycle -> assertDoesNotThrow(app::close));
-            }
-          });
+      var routes = app.routes();
+
+      if (inherited) {
+        var extension = closingInheritedProvider(app);
+
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                routes.path(
+                    "/parent",
+                    parent -> parent.path("/child", child -> registered.set(true)),
+                    lifecycle -> lifecycle.withExtension(extension)));
+      } else {
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                routes.path(
+                    "/child",
+                    child -> registered.set(true),
+                    lifecycle -> assertDoesNotThrow(app::close)));
+      }
 
       assertFalse(registered.get());
       assertThrows(IllegalStateException.class, app::start);

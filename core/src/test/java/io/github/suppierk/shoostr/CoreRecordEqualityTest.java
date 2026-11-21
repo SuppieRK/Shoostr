@@ -179,10 +179,8 @@ class CoreRecordEqualityTest {
     var second = new Lifecycle(Set.of(), ignored -> {}, null);
     first.onRouteMatched((request, response) -> {});
     second.afterRouteHandler((request, response) -> {});
-    BiFunction<Lifecycle, Object, Object> firstConfigure =
-        createFirstConfigureForExtensionSelectionComparesConfigurationContributionAndInclusion();
-    BiFunction<Lifecycle, Object, Object> secondConfigure =
-        createSecondConfigureForExtensionSelectionComparesConfigurationContributionAndInclusion();
+    var firstConfigure = new FixtureConfiguration("first");
+    var secondConfigure = new FixtureConfiguration("second");
     var type = nested(Lifecycle.class, "Selection");
     EqualsVerifier.forExamples(
             constructRecord(type, "first", first, false, firstConfigure),
@@ -193,24 +191,13 @@ class CoreRecordEqualityTest {
         .verify();
   }
 
-  private BiFunction<Lifecycle, Object, Object>
-      createFirstConfigureForExtensionSelectionComparesConfigurationContributionAndInclusion() {
-    return new BiFunction<>() {
-      @Override
-      public Object apply(Lifecycle scope, Object inherited) {
-        return "first";
-      }
-    };
-  }
-
-  private BiFunction<Lifecycle, Object, Object>
-      createSecondConfigureForExtensionSelectionComparesConfigurationContributionAndInclusion() {
-    return new BiFunction<>() {
-      @Override
-      public Object apply(Lifecycle scope, Object inherited) {
-        return "second";
-      }
-    };
+  // EqualsVerifier loads fixture classes by name, which Java lambda classes do not support.
+  private record FixtureConfiguration(String value)
+      implements BiFunction<Lifecycle, Object, Object> {
+    @Override
+    public Object apply(Lifecycle scope, Object inherited) {
+      return value;
+    }
   }
 
   @Test

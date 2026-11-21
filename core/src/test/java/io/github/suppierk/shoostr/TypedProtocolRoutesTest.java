@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertSame;
 import io.github.suppierk.shoostr.WebSocket.Typed;
 import io.github.suppierk.shoostr.testing.TestServer;
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.http.HttpClient;
@@ -100,7 +99,7 @@ class TypedProtocolRoutesTest {
 
   private Handler.Typed
       createEventsForCarriesCodecThroughGroupsConditionsExecutorsAndAllManagedOverloads(
-          Thread owner) throws Exception, IOException {
+          Thread owner) {
     return (request, response) -> {
       if (request.path().contains("executor")) {
         assertSame(owner, Thread.currentThread());

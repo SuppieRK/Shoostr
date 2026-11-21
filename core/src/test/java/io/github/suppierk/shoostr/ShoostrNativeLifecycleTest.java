@@ -22,6 +22,7 @@ import org.eclipse.jetty.session.SessionHandler;
 import org.eclipse.jetty.util.component.AbstractLifeCycle;
 import org.eclipse.jetty.util.component.LifeCycle;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.function.Executable;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -127,9 +128,9 @@ class ShoostrNativeLifecycleTest {
     return new LifeCycle.Listener() {
       @Override
       public void lifeCycleStarted(LifeCycle event) {
-        assertDoesNotThrow(() -> {
-          event.stop();
-        });
+        Executable stop = event::stop;
+
+        assertDoesNotThrow(stop);
         stopped.incrementAndGet();
       }
     };

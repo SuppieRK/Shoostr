@@ -33,7 +33,9 @@ class RoutesFluentTest {
     return new Session.Listener() {};
   }
 
-  private static void configureEvents(WebSocket ignored) {}
+  private static void configureEvents(WebSocket ignored) {
+    // This route only needs to register a WebSocket endpoint.
+  }
 
   @ParameterizedTest(name = "{0}")
   @MethodSource("registrations")

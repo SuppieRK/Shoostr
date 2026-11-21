@@ -33,13 +33,16 @@ class CsrfYamlTest {
   void invalidOriginsRetainPreviousSettingsAndRuntimeStateIsNotProperty() {
     var settings = new Yaml().loadAs("trustedOrigins: [https://client.example]", Csrf.class);
     for (var invalid : new String[] {"*", "null", "not-an-origin", "https://client.example/path"}) {
-      assertThrows(
-          IllegalArgumentException.class, () -> settings.setTrustedOrigins(Set.of(invalid)));
+      var origins = Set.of(invalid);
+
+      assertThrows(IllegalArgumentException.class, () -> settings.setTrustedOrigins(origins));
       assertEquals(Set.of("https://client.example"), settings.getTrustedOrigins());
     }
 
-    assertThrows(YAMLException.class, () -> new Yaml().loadAs("trustedOrigins: ['*']", Csrf.class));
-    assertThrows(YAMLException.class, () -> new Yaml().loadAs("random: {}", Csrf.class));
+    var yaml = new Yaml();
+
+    assertThrows(YAMLException.class, () -> yaml.loadAs("trustedOrigins: ['*']", Csrf.class));
+    assertThrows(YAMLException.class, () -> yaml.loadAs("random: {}", Csrf.class));
   }
 
   @Test
@@ -135,10 +138,14 @@ class CsrfYamlTest {
               });
 
       try (var server = TestServer.start(app)) {
-        assertThrows(IllegalStateException.class, () -> global.get().setTrustedOrigins(null));
+        var frozenGlobal = global.get();
+
+        assertThrows(IllegalStateException.class, () -> frozenGlobal.setTrustedOrigins(null));
+        var frozenLocal = local.get();
+        var changedOrigins = Set.of("https://changed.example");
+
         assertThrows(
-            IllegalStateException.class,
-            () -> local.get().setTrustedOrigins(Set.of("https://changed.example")));
+            IllegalStateException.class, () -> frozenLocal.setTrustedOrigins(changedOrigins));
 
         source.setTrustedOrigins(null);
         var token =

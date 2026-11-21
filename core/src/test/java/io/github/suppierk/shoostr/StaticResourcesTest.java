@@ -1168,9 +1168,11 @@ class StaticResourcesTest {
     var app = new Shoostr();
 
     try (Closeable appCleanup = app::close) {
+      var routes = app.routes();
+
       var failure =
           assertThrows(
-              IllegalArgumentException.class, () -> app.routes().staticFiles("/assets", directory));
+              IllegalArgumentException.class, () -> routes.staticFiles("/assets", directory));
       assertEquals("Static source must be a readable directory", failure.getMessage());
     }
   }

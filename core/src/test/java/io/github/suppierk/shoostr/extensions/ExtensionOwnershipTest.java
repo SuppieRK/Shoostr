@@ -133,9 +133,10 @@ class ExtensionOwnershipTest {
         try (Closeable rejectedCleanup1 = rejected::close) {
           owner.withExtension(foreign);
 
-          assertThrows(
-              IllegalStateException.class,
-              () -> rejected.withExtension(first).withExtension(foreign).withExtension(unclaimed));
+          rejected.withExtension(first);
+
+          assertThrows(IllegalStateException.class, () -> rejected.withExtension(foreign));
+          assertThrows(IllegalStateException.class, () -> rejected.withExtension(unclaimed));
           assertEquals(1, first.closes.get());
           assertEquals(0, foreign.closes.get());
           assertEquals(0, unclaimed.closes.get());
@@ -174,9 +175,8 @@ class ExtensionOwnershipTest {
         try (Closeable rejectedCleanup2 = rejected::close) {
           owner.withExtension(foreign);
 
-          assertThrows(
-              IllegalArgumentException.class,
-              () -> rejected.withExtension(broken).withExtension(foreign));
+          assertThrows(IllegalArgumentException.class, () -> rejected.withExtension(broken));
+          assertThrows(IllegalStateException.class, () -> rejected.withExtension(foreign));
           assertEquals(1, setups.get());
           assertEquals(1, closes.get());
           assertEquals(0, foreign.closes.get());
@@ -219,9 +219,10 @@ class ExtensionOwnershipTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup = app::close) {
-        assertThrows(
-            IllegalArgumentException.class,
-            () -> app.withExtension(first).withExtension(broken).withExtension(last));
+        app.withExtension(first);
+
+        assertThrows(IllegalArgumentException.class, () -> app.withExtension(broken));
+        assertThrows(IllegalStateException.class, () -> app.withExtension(last));
       }
     }
 
@@ -322,9 +323,9 @@ class ExtensionOwnershipTest {
         try (Closeable rejectedCleanup3 = rejected::close) {
           owner.withExtension(authentication);
 
-          assertThrows(
-              IllegalStateException.class,
-              () -> rejected.withExtension(prefixAuthentication).withExtension(authentication));
+          rejected.withExtension(prefixAuthentication);
+
+          assertThrows(IllegalStateException.class, () -> rejected.withExtension(authentication));
           assertEquals(1, prefix.closes.get());
           assertEquals(0, owned.closes.get());
         }
@@ -368,10 +369,9 @@ class ExtensionOwnershipTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup2 = app::close) {
-        var failure =
-            assertThrows(
-                IllegalStateException.class,
-                () -> app.withExtension(prefix).withExtension(rejected));
+        app.withExtension(prefix);
+
+        var failure = assertThrows(IllegalStateException.class, () -> app.withExtension(rejected));
         assertSame(rejection, failure);
         assertEquals(1, failure.getSuppressed().length);
         assertEquals("cleanup failed", failure.getSuppressed()[0].getCause().getMessage());
@@ -390,9 +390,10 @@ class ExtensionOwnershipTest {
       var app = new Shoostr();
 
       try (Closeable appCleanup3 = app::close) {
-        assertThrows(
-            LinkageError.class,
-            () -> app.withExtension(prefix).withExtension(rejected).withExtension(unclaimed));
+        app.withExtension(prefix);
+
+        assertThrows(LinkageError.class, () -> app.withExtension(rejected));
+        assertThrows(IllegalStateException.class, () -> app.withExtension(unclaimed));
         assertEquals(1, prefix.closes.get());
         assertEquals(0, rejectedCloses.get());
         assertEquals(0, unclaimed.closes.get());

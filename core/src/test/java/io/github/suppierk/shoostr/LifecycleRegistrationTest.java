@@ -256,7 +256,9 @@ class LifecycleRegistrationTest {
                           "/recovered",
                           (request, response) -> response.text("discarded"),
                           lifecycle -> lifecycle.withExtension(provider))));
-      assertThrows(IllegalStateException.class, () -> retained.get().afterRequest(outcome -> {}));
+      var closedScope = retained.get();
+
+      assertThrows(IllegalStateException.class, () -> closedScope.afterRequest(outcome -> {}));
 
       app.routes().get("/recovered", (request, response) -> response.text("ready"));
 
@@ -337,7 +339,9 @@ class LifecycleRegistrationTest {
                 assertThrows(IllegalArgumentException.class, () -> lifecycle.status(99, renderer));
                 assertThrows(IllegalArgumentException.class, () -> lifecycle.status(600, renderer));
               });
-      assertThrows(IllegalStateException.class, () -> retainedScope.get().status(200, renderer));
+      var frozenScope = retainedScope.get();
+
+      assertThrows(IllegalStateException.class, () -> frozenScope.status(200, renderer));
 
       try (var test = TestServer.start(app)) {
         var result =
